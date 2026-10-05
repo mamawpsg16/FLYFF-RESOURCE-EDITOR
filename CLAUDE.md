@@ -33,7 +33,7 @@ The user is a web developer learning C++. When server behaviour matters, explain
 - **Client copies.** The game client reads a loose file in `Client/` if there is one, otherwise an old copy packed in `data.res` (`b7645c52`). `character-etc.inc` and `character-school.inc` have no loose copy. `Client/Spec_Item.txt` is LF while the Server copy is CRLF; the content is the same. Every proven data commit changes both copies ("Client copy synced").
 - **Custom systems:**
   - `DonationShop.inc`: prices are each item's `dwReferValue1`. It is LF (its header comment says CRLF). Categories must be leaves of the client-only `Client/Client/DonationShopTree.inc`. Never list Nexus Shield / Icecrown Purple Shield: buying them crashed the server (`ae345504`).
-  - `BattlePass.inc`: on a duplicate level or monster the first wins; values are clamped to 1–10000.
+  - `BattlePass.inc`: on a duplicate level or monster the first wins; values are clamped to 1–10000. LF (its header says CRLF). A season = end date + nType on the pass AND every reward row; the pass item is reused (`2f783090`). Monster prices follow level bands × rank (`c0a828d7`, `3b8e8410`).
   - `Exchange_Script.txt`: an unknown name becomes -1 silently.
 
 ## Layout
@@ -43,13 +43,14 @@ src/core/           bytes, num, sourcefile (byte model + round-trip gate), lexer
                     diff (Myers), workspace (data-module registry, apply/applyGroup/undo, newBlocking),
                     client-sync (Client/ copy modes: identical / eol / missing / different)
 src/loaders/        defines, strings (*.txt.txt), textclient (TID_ texts), item-tooltip (MakeToolTipText port),
-                    specitem, character, vendor-sim (shop contents), donation, donation-tree (client category tree)
+                    specitem, propmover (monster name/level/rank), character, vendor-sim (shop contents), donation,
+                    donation-tree (client category tree), battlepass
 src/validate/       help.js (text for every diagnostic code), character.js
-src/edit/           text-ops (shared row/statement splices), shop-ops, donation-ops, item-ops (Spec_Item chip price)
+src/edit/           text-ops (shared row/statement splices), shop-ops, donation-ops, item-ops (Spec_Item chip price), battlepass-ops
 src/io/             fsa (File System Access), save (conflict check -> verified backup -> write+verify -> restore on failure;
                     Server files, then the same change in the Client/ copies)
 src/ui/             dom, common (FRE.ui registry + helpers), tooltip (item hover), chip-price (shared price input),
-                    npc-shops, donation, app (shell: modes, item DB, problems, save)
+                    npc-shops, donation, battlepass, app (shell: modes, item DB, problems, save)
 tests/              run-tests.js (gjs core suite), ui-harness.js + run-ui.sh (headless Firefox, fake FS), gjs-env.js
 tools/oracle.py     independent Python reference (differential tests)
 docs/               INVESTIGATION.md, DESIGN.md, ROADMAP.md (what's next)

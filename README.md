@@ -45,7 +45,8 @@ Safety rules the editor enforces (details in [docs/DESIGN.md](docs/DESIGN.md)):
 `test-data/Resource/` (git-ignored) holds copies of the files the editor reads. Refresh them with:
 ```
 mkdir -p test-data/Resource && cp -p ../FLYFF-V19-SOURCE/Server/Resource/{Masquerade.prj,character*.inc,character*.txt.txt,Spec_Item.txt,propItem.txt.txt,propMover.txt,propMover.txt.txt,propMoverEx.inc,DonationShop.inc,BattlePass.inc,Exchange_Script.txt,textClient.inc,textClient.txt.txt,define*.h,ResData.h,WndStyle.h,lang.h,ContinentDef.h} test-data/Resource/
-mkdir -p test-data/Client/Client && cp -p ../FLYFF-V19-SOURCE/Client/{character.inc,DonationShop.inc,Spec_Item.txt} test-data/Client/ && cp -p ../FLYFF-V19-SOURCE/Client/Client/DonationShopTree.inc test-data/Client/Client/
+mkdir -p test-data/Client/Client && cp -p ../FLYFF-V19-SOURCE/Client/{character.inc,DonationShop.inc,BattlePass.inc,Spec_Item.txt} test-data/Client/ && cp -p ../FLYFF-V19-SOURCE/Client/Client/DonationShopTree.inc test-data/Client/Client/
+mkdir -p test-data/Client/Theme && cp -p ../FLYFF-V19-SOURCE/Client/Theme/BattlePass_*.tga test-data/Client/Theme/
 ```
 Pick `test-data/Client` as the Client folder while testing.
 

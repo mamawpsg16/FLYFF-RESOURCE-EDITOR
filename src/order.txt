@@ -8,10 +8,12 @@ loaders/strings.js
 loaders/textclient.js
 loaders/item-tooltip.js
 loaders/specitem.js
+loaders/propmover.js
 loaders/character.js
 loaders/vendor-sim.js
 loaders/donation.js
 loaders/donation-tree.js
+loaders/battlepass.js
 validate/help.js
 validate/character.js
 core/diff.js
@@ -19,6 +21,7 @@ edit/text-ops.js
 edit/shop-ops.js
 edit/donation-ops.js
 edit/item-ops.js
+edit/battlepass-ops.js
 core/workspace.js
 core/client-sync.js
 io/fsa.js
@@ -29,4 +32,5 @@ ui/tooltip.js
 ui/chip-price.js
 ui/npc-shops.js
 ui/donation.js
+ui/battlepass.js
 ui/app.js

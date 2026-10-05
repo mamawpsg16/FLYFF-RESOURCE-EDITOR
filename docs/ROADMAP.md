@@ -2,7 +2,7 @@
 
 _Last updated 2026-10-05._
 
-> **Handoff (end of session 2026-10-05):** Steps B, B+ and C are built, user-tested in Brave on `test-data/` and committed (one commit, shared files). Next: **D. Battle Pass**. Before designing it, check `git -C ../FLYFF-V19-SOURCE log` for BattlePass commits (CLAUDE.md rule). Tests: `gjs -m tests/run-tests.js` (197 pass), `tests/run-ui.sh` (66 pass; the result box shows only failures). Headless Brave does not run in this environment, only Firefox. The user's Brave window sits partly behind the OS taskbar, so keep important UI away from the bottom edge.
+> **Handoff (2026-10-05):** Step D (Battle Pass) is built, user-tested in Brave on `test-data/` and committed. Next: apply the new season on the real `Server/Resource` (season 1 ended 2026-10-05 00:00), then **E. Exchanges**. Tests: `gjs -m tests/run-tests.js` (299 pass), `tests/run-ui.sh` (88 pass; the result box shows only failures). `gjs -m tools/bp-sim.js` replays a season change with a port of the server logic.
 
 ## Done
 - **Build 1** (`1c785ce`): NPC shop editor (`character*.inc`). Add, remove, price and tab edits; byte-exact save with verified backup. Tested by the user in Brave on `test-data`.
@@ -34,19 +34,23 @@ _Last updated 2026-10-05._
   - Toolbar: file chips collapsed into one summary chip; only changed or read-only files get their own chip.
   - User-test fixes: the editor scrolls inside the window (`#editor` needed `min-height: 0`), keeps its scroll position after an edit, and hides a stuck tooltip; the editor switch is labelled "Editing:"; the NPC list defaults to "Shops with editable items" (6 NPCs with AddShopItem / AddVenderItem2; rule-only shops like Boboku stay under "All shops").
 
-## Next (in this order, agreed with the user)
+- **Step D** (committed): Battle Pass editor (`ui/battlepass.js`, `loaders/battlepass.js`, `edit/battlepass-ops.js`, `loaders/propmover.js`).
+  - Loader: port of `CProject::LoadBattlePass` (`ProjectCmn.cpp:1682`). Every table is a `std::map` filled with `insert`, so the FIRST duplicate wins. At login the server uses the pass with the LOWEST item id (`mapBattPassItem.begin()`).
+  - `loaders/propmover.js`: port of `CProject::LoadPropMover` (`ProjectCmn.cpp:380`), read-only, for each monster's name, level and rank. Checked against a column read of propMover.txt in `tools/oracle.py`.
+  - **Season:** the end date is a date box. `YYYYMMDD` = 00:00 at the START of that day, shown in words. **Start new season** sets the date (first day + length) and bumps nType on the pass and every reward row in one undo step. The item is reused (`2f783090`). The dialog says whether players roll over at next login (old season ended) or need `/rrbp`/SQL.
+  - **Reward ladder:** qty, cost, item (↺ then +), rarity/icon textures (checked against `Client/Theme` when the Client folder is chosen). Add the next level from the item list; only the last level can be removed. The last level's cost is never used, so reaching level 50 takes **146,000** points, not the 150,000 the file header says.
+  - **Monster points:** min/max per row, add/remove, filters Listed / Off band / Not listed. The level-band rule (`c0a828d7`, `3b8e8410`) matches all 863 season-1 rows exactly: base band by level, ×1.25 midboss, ×1.5 boss, ×2 super, half rounds up. "Re-price off-band rows" sets the band price and refreshes the `// lvN rank - Name` comment.
+  - Rules: `BP_BRACES`, `BP_FORMAT`, `BP_UNDEF`, `BP_NO_ITEM`, `BP_NO_MONSTER`, `BP_DUP_*`, `BP_LEVEL_GAP`, `BP_DATE`, `BP_TYPE` (BLOCK); `BP_EXPIRED`, `BP_MULTI_PASS`, `BP_CLAMP`, `BP_TYPE_ROW`, `BP_TEXTURE`, `BP_BAND`, `BP_DATE_FORMAT`, `BP_NO_PASS` (WARN); `BP_LOGO_UNUSED` (INFO: the client never draws strLogo).
+  - Real file today: only `BP_EXPIRED`. Season 1 ended 2026-10-05 00:00, so nobody earns points until a new season is set.
+  - `BattlePass.inc` is LF in both copies (its header says CRLF) and identical in `Client/`.
+  - After the user's review: only BP5 monsters pay points (`AttackArbiter.cpp:966`, killing blow only). **"Add all unlisted monsters"** adds the 32 real monsters missing from season 1 (ship, dream and Hern dungeons, zombies, Mirrored Soul) at their band price. Town NPCs, guards and pets are left out (`battlePass.isMonster`).
+  - Pets (98) and town NPCs (8) listed in season 1 are hidden in the editor (they never pay points); a note offers to delete them from the file.
+  - The date box shows the LAST playable day; the file gets the day after (00:00 = midnight after it). New seasons default to 30 full days.
+  - Season-change tests (`tests/bp-server.js`, a port of OnJoin / OnDied / AddBPUpdate / GiveBattlePassReward / OnDoBP): S1 buyers restart S2 on the free track and keep S1 rewards; an unused S1 pass unlocks S2; a pass used while no season runs is wasted.
+  - Texture column hidden (all 50 rows use "" = the item's own icon); the file keeps the three "" per row because the server reads three tokens. "↺" became a "Change" button.
+  - **Server issue (C++, not fixed here):** `CDPSrvr::OnDoBP` activates a pass whose season has already ended. The Donation Shop still sells it, so a player who uses it while no season runs loses the item for only the level-1 reward. Start the new season before that happens; a C++ end-date check would close it for good.
 
-### D. Battle Pass (`BattlePass.inc`, `CProject::LoadBattlePass`, `ProjectCmn.cpp:1682`)
-- **What to edit:**
-  - `BP1` holds the pass item and season end date (`YYYYMMDD` = midnight at the *start* of that day; show it in words);
-  - `BP4` holds the reward ladder (`BPReward type level points item qty "logo" "rarity" "icon"`);
-  - `BP5` holds the monster points (`BPMonster MI_x min max`, 863 rows; names from `propMover.txt.txt`).
-- **Rules:**
-  - `std::map::insert` keeps the FIRST entry, so duplicates are ignored (BLOCK if new);
-  - clamps to 1–10000 (`MAX_BPOINTS`);
-  - `nType` must match between the pass and its rewards;
-  - level gaps;
-  - date validity.
+## Next (in this order, agreed with the user)
 
 ### E. Exchanges (`Exchange_Script.txt`, `CExchange::Load_Script`, `_Common/Exchange.cpp:32`)
 - **Format:** `MMI_x { DESCRIPTION SET TID { RESULTMSG CONDITION REMOVE PAY n { II_x n prob [flag] } } }`.
@@ -67,6 +71,7 @@ _Last updated 2026-10-05._
 ## Deferred (needs in-game testing on the user's Windows PC)
 - Editing `AddVendorItem` rules (the simulator in `loaders/vendor-sim.js` is ready for a live preview).
 - The first save against the real `Server/Resource`, then copy to `Client/`, restart, and check in-game.
+- A new Battle Pass season in game: free track at login, kill points, buying the pass back-pays (the season-1 pass item reused).
 
 ## Known data findings (pre-existing, shown as warnings or info)
 - 6 NPCs have no `{` after their name (they work by accident).

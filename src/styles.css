@@ -170,3 +170,30 @@ table.items td select { min-width: 150px; }
 .modes .mode:first-of-type { border-radius: 14px 0 0 14px; }
 .modes .mode:last-of-type { border-radius: 0 14px 14px 0; }
 .item-count { padding: 6px 10px 0; }   /* at the top: the bottom edge can sit behind the OS taskbar */
+
+/* Battle Pass tables: narrow number boxes, the two texture names stacked */
+table.bp td input.num-input { width: 84px; }
+table.bp td.tex input { display: block; width: 12em; margin: 2px 0; }
+
+/* Battle Pass season page */
+.bp-hero { margin: 14px 0 12px; padding: 16px 18px; border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: var(--radius); background: var(--panel-2); }
+.bp-hero.ok { border-left-color: var(--ok); }
+.bp-hero.bad { border-left-color: var(--bad); background: linear-gradient(90deg, #2a1618, var(--panel-2) 60%); }
+.bp-hero-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.bp-status { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; padding: 2px 8px; border-radius: 10px; border: 1px solid currentColor; }
+.bp-hero.ok .bp-status { color: var(--ok); }
+.bp-hero.bad .bp-status { color: var(--bad); }
+.bp-head { font-size: 20px; font-weight: 600; margin-top: 6px; }
+.bp-sub { color: var(--muted); margin-top: 2px; }
+.bp-cta { padding: 9px 18px; font-size: 14px; }
+.bp-effects { margin: 12px 0 0; padding-left: 18px; color: var(--text); }
+.bp-effects li { margin: 3px 0; }
+.bp-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.bp-fact { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.bp-label { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+.bp-value { font-size: 16px; margin: 6px 0 4px; }
+.bp-value input[type=date] { font-size: 14px; }
+.bp-note { font-size: 11px; color: var(--muted); font-family: Consolas, monospace; }
+.bp-how { margin: 4px 0 10px; color: var(--muted); }
+.bp-how summary { cursor: pointer; color: var(--text); }
+.bp-how ul { margin: 8px 0 0; padding-left: 18px; }

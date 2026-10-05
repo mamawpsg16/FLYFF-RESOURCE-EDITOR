@@ -193,6 +193,39 @@ def vendor_sim(root):
     return out, empty
 
 
+def battlepass(root, path):
+    """BattlePass.inc by regex over comment-stripped text, monster levels from
+    propMover.txt read as tab-separated columns (one record per line)."""
+    raw = open(path, 'rb').read()
+    t = raw.decode('latin-1')
+    t = re.sub(r'/\*.*?\*/', '', t, flags=re.S)
+    t = re.sub(r'//[^\r\n]*', '', t)
+    defs = read_defines(root, ['define.h', 'defineItem.h', 'defineObj.h', 'defineAttribute.h'])
+    passes = re.findall(r'\bBPItem\s+(\S+)\s+(\S+)\s+(\S+)', t)
+    rewards = re.findall(r'\bBPReward\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+"([^"]*)"\s+"([^"]*)"\s+"([^"]*)"', t)
+    monsters = re.findall(r'\bBPMonster\s+(\S+)\s+(\S+)\s+(\S+)', t)
+    movers = {}
+    for line in open(os.path.join(root, 'propMover.txt'), 'rb').read().decode('latin-1').splitlines():
+        c = [x.strip() for x in line.split('\t')]
+        if len(c) > 16 and c[0].startswith('MI_'):
+            movers[c[0]] = (num(c[12], defs), num(c[15], defs))
+    bands = [(20, 4, 6), (40, 8, 12), (60, 14, 20), (80, 22, 32), (100, 32, 44), (120, 44, 60), (140, 60, 80), (10 ** 9, 80, 110)]
+    mult = {4: 1.5, 5: 1.25, 7: 2}
+    off = 0
+    for name, lo, hi in monsters:
+        lv, rk = movers[name]
+        b = next(x for x in bands if lv <= x[0])
+        k = mult.get(rk, 1)
+        if (int(lo), int(hi)) != (int(b[1] * k + 0.5), int(b[2] * k + 0.5)):
+            off += 1
+    levels = sorted(int(r[1]) for r in rewards)
+    return {'passes': [[int(a), b, int(c)] for a, b, c in passes], 'rewards': len(rewards), 'levels': levels,
+            'reach_top': sum(int(r[2]) for r in rewards if int(r[1]) < max(levels)) if levels else 0,
+            'monsters': len(monsters), 'off_band': off,
+            'mover_levels': {n: list(movers[n]) for n, _, _ in monsters},
+            'eol': 'crlf' if b'\r\n' in raw else 'lf'}
+
+
 def main(root):
     res = {}
     spec = values(tokens(open(os.path.join(root, 'Spec_Item.txt'), 'rb').read()))
@@ -220,6 +253,9 @@ def main(root):
                 cats.append(c)
         res['donation'] = {'rows': len(rows), 'items': len({d for _, d in rows}), 'categories': cats,
                            'eol': 'crlf' if b'\r\n' in open(ds, 'rb').read() else 'lf'}
+    bp = os.path.join(root, 'BattlePass.inc')
+    if os.path.exists(bp):
+        res['battlepass'] = battlepass(root, bp)
     shops, empty = vendor_sim(root)
     res['vendor'] = shops
     res['vendor_empty_rules'] = empty

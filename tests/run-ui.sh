@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "$0")/.."
 python3 build.py --harness >/dev/null
 PROFILE=$(mktemp -d)
-for stage in ${STAGES:-loaded shoptype review end}; do
+for stage in ${STAGES:-loaded shoptype review bpexpired bpseason bpladder bpmonsters end}; do
   firefox --headless --profile "$PROFILE" --window-size 1600,1000 \
     --screenshot "$PWD/test-data/ui-$stage.png" "file://$PWD/test-data/harness.html?stop=$stage" >/dev/null 2>&1 || true
   echo "screenshot: test-data/ui-$stage.png"

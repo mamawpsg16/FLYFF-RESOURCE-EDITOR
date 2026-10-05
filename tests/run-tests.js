@@ -5,6 +5,7 @@
 import GLib from 'gi://GLib';
 import System from 'system';
 import { FRE, ROOT, readBytes, listDir, loadFolder, openSource, exists } from './gjs-env.js';
+import { bpServer } from './bp-server.js';
 
 const FIXTURES = ROOT + '/test-data/Resource';
 const REAL = ROOT + '/../FLYFF-V19-SOURCE/Server/Resource';
@@ -474,6 +475,240 @@ editCase('donation: category not in the client tree', w => {
   const d = w.diags.find(x => x.code === 'DS_NO_LEAF');
   ok(d && d.severity === 'WARN', 'parent "Fashion" is not a leaf -> DS_NO_LEAF warning');
   eq(w.newBlocking().length, 0, 'DS_NO_LEAF does not block');
+});
+
+// ---------------------------------------------------------------- Battle Pass (BattlePass.inc, commit cc73ccdd)
+section('battle pass');
+{
+  const m = W.models.battlepass;
+  const [okp, out] = GLib.spawn_command_line_sync(`python3 ${ROOT}/tools/oracle.py ${FIXTURES}`);
+  const o = JSON.parse(new TextDecoder().decode(out)).battlepass;
+  eq(m.rows.BP1.length, 1, 'one pass row');
+  eq(m.rows.BP4.length, 50, '50 reward levels');
+  eq(m.rows.BP5.length, 863, '863 monsters');
+  eq(o.monsters, m.rows.BP5.length, 'oracle agrees: monsters');
+  eq(o.rewards, m.rows.BP4.length, 'oracle agrees: rewards');
+  eq(JSON.stringify(o.passes), JSON.stringify(m.rows.BP1.map(r => [r.type.value, r.define, r.time.value])), 'oracle agrees: pass row');
+  eq(JSON.stringify(o.levels), JSON.stringify(m.rows.BP4.map(r => r.level.value).sort((a, b) => a - b)), 'oracle agrees: levels');
+  eq(o.eol, 'lf', 'BattlePass.inc is LF (its own header comment says CRLF)');
+  const reach = m.rows.BP4.filter(r => r.level.value < 50).reduce((s, r) => s + r.points.value, 0);
+  eq(reach, o.reach_top, 'oracle agrees: points to reach the top level (146,000)');
+  // propMover port: every BP monster's level and rank match a column-based read of propMover.txt
+  const mv = W.movers.movers;
+  eq(mv.size, 1114, 'propMover.txt: 1114 movers');
+  ok(m.rows.BP5.every(r => { const x = mv.get(r.id), y = o.mover_levels[r.define]; return x && y && x.level === y[0] && x.rankId === y[1]; }), 'oracle agrees: level and rank of every listed monster');
+  eq(mv.get(W.defines.defines.get('MI_KINGSTER01')).name, 'Small Kingster', 'mover display name from propMover.txt.txt');
+  eq(o.off_band, 0, 'oracle: every monster pays its band price');
+  const codes = W.moduleDiags.battlepass.map(d => d.code);
+  eq(JSON.stringify(codes), JSON.stringify(['BP_EXPIRED']), 'real file: only BP_EXPIRED (season 1 ended 2026-10-05; clock-dependent)');
+  // dates: BattlePassConfigTime
+  const se = FRE.battlePass.seasonEnd;
+  eq(se(20261005).date.getDate(), 5, 'YYYYMMDD -> that day 00:00');
+  eq(se(20260000), null, 'month 00 -> 0 (no season)');
+  eq(se(19700101), null, 'year < 1971 -> 0');
+  ok(se(20261131).rolled && se(20261131).date.getMonth() === 11, 'Nov 31 rolls over to Dec 1');
+  eq(JSON.stringify(FRE.battlePass.band(43, 5)), JSON.stringify({ min: 18, max: 25, label: 'lv41-60' }), 'band: lv43 midboss 18-25 (17.5 rounds up)');
+  eq(JSON.stringify(FRE.battlePass.band(145, 4)), JSON.stringify({ min: 120, max: 165, label: 'lv141+' }), 'band: lv145 boss 120-165');
+}
+
+const bpf = w => w.files.get('battlepass.inc');
+const bpm = w => w.models.battlepass;
+const bpNow = (w, y, mo, d) => { w.now = () => new Date(y, mo - 1, d); w.reparse('battlepass.inc'); };
+editCase('battle pass: new season = date + nType on pass and all 50 rewards, one undo', w => {
+  const f = bpf(w), before = f.serialize();
+  const plan = FRE.battlePassOps.newSeasonPlan(bpm(w), 20261104);
+  w.apply('battlepass.inc', plan.splices, 'season');
+  eq(plan.rows.length, 50, '50 reward rows bumped');
+  eq(bpm(w).pass.type.value, 2, 'pass nType 2');
+  eq(bpm(w).pass.time.value, 20261104, 'end date written');
+  ok(bpm(w).rows.BP4.every(r => r.type.value === 2), 'every reward has nType 2');
+  eq(changedLines(f).length, 51 * 2, '51 lines changed (pass + 50 rewards), nothing else');
+  bpNow(w, 2026, 10, 6);
+  eq(w.moduleDiags.battlepass.length, 0, 'no problems after the new season (on 2026-10-06)');
+  bpNow(w, 2026, 11, 4);
+  ok(w.moduleDiags.battlepass.some(d => d.code === 'BP_EXPIRED'), 'expired at 2026-11-04 00:00 (start of the day)');
+  w.undo();
+  ok(B.bytesEqual(f.serialize(), before), 'one undo restores identical bytes');
+  throws(() => FRE.battlePassOps.setEndDate(bpm(w).pass, 20261131), 'Nov 31 refused');
+});
+editCase('battle pass: ladder add / edit / remove', w => {
+  const f = bpf(w), before = f.serialize();
+  const r = FRE.battlePassOps.addReward(f.text, bpm(w), 'II_CHP_RED', 5, 4000);
+  w.apply('battlepass.inc', r.splices, 'add');
+  eq(r.level, 51, 'next level is 51');
+  const ch = changedLines(f);
+  eq(ch.length, 1, 'one line added');
+  eq(FRE.diff.splitKeepEol(f.text)[ch[0].b], '\tBPReward\t1\t51\t4000\tII_CHP_RED                      5\t""\t""\t""\n', 'row copies tabs, the padded item column and LF');
+  eq(w.newBlocking().length, 0, 'no new blocking problems');
+  const top = bpm(w).ladder.get(51);
+  w.apply('battlepass.inc', FRE.battlePassOps.setRewardValue(top, 'qty', 7), 'qty');
+  w.apply('battlepass.inc', FRE.battlePassOps.setRewardTexture(bpm(w).ladder.get(51), 'icon', 'BattlePass_New.tga'), 'icon');
+  eq(bpm(w).ladder.get(51).icon.text, 'BattlePass_New.tga', 'icon texture set');
+  throws(() => FRE.battlePassOps.removeReward(f.text, bpm(w), bpm(w).ladder.get(20)), 'a middle level cannot be removed');
+  throws(() => FRE.battlePassOps.setRewardValue(bpm(w).ladder.get(3), 'points', 10001), 'cost above 10,000 refused');
+  w.apply('battlepass.inc', FRE.battlePassOps.removeReward(f.text, bpm(w), bpm(w).ladder.get(51)), 'remove');
+  ok(B.bytesEqual(f.serialize(), before), 'add + edit + remove = identical bytes');
+});
+editCase('battle pass: monsters re-price / add / remove', w => {
+  const f = bpf(w), before = f.serialize();
+  const D = w.defines.defines, M = w.movers.movers;
+  const row = bpm(w).rows.BP5.find(r => r.define === 'MI_KINGSTER01');
+  w.apply('battlepass.inc', FRE.battlePassOps.setMonsterPoints(row, 14, 20), 'old price');
+  const d = w.diags.find(x => x.code === 'BP_BAND');
+  ok(d && d.severity === 'WARN' && /lv123 normal\) pays 14-20; the file's lv121-140 normal band is 60-80/.test(d.message), 'off-band price -> BP_BAND warning');
+  const r2 = bpm(w).rows.BP5.find(r => r.define === 'MI_KINGSTER01');
+  w.apply('battlepass.inc', FRE.battlePassOps.repriceMonster(r2, M.get(r2.id)), 'reprice');
+  ok(B.bytesEqual(f.serialize(), before), 're-price back to the band = identical bytes');
+  w.apply('battlepass.inc', FRE.battlePassOps.removeMonster(f.text, bpm(w).rows.BP5.find(r => r.define === 'MI_KINGSTER01')), 'remove');
+  eq(changedLines(f).length, 1, 'remove deletes one line');
+  const mv = M.get(D.get('MI_KINGSTER01')), b = FRE.battlePass.band(mv.level, mv.rankId);
+  w.apply('battlepass.inc', FRE.battlePassOps.addMonster(f.text, bpm(w), mv, b.min, b.max, M), 'add');
+  // its old row sat among the lv43 rows (listed before its level changed, c0a828d7); re-added, it goes in level order
+  const ch2 = changedLines(f);
+  eq(ch2.length, 2, 'remove + add = one line moved');
+  const added = FRE.diff.splitKeepEol(f.text)[ch2.find(o => o.type === 'add').b];
+  eq(added, '\tBPMonster\tMI_KINGSTER01             60\t80\t// lv123 normal - Small Kingster\n', 'same row text, comment from propMover');
+  const lines = FRE.diff.splitKeepEol(f.text), at = lines.indexOf(added);
+  ok(/lv123 /.test(lines[at - 1]) || /lv12[0-3] /.test(lines[at - 1]), 'placed after a monster of level <= 123');
+  throws(() => FRE.battlePassOps.addMonster(f.text, bpm(w), M.get(D.get('MI_AIBATT1')), 4, 6, M), 'a listed monster cannot be added twice');
+  throws(() => FRE.battlePassOps.setMonsterPoints(bpm(w).rows.BP5[0], 9, 3), 'min above max refused');
+});
+editCase('battle pass: add every unlisted real monster at its band price', w => {
+  const f = bpf(w), before = f.serialize(), M = w.movers.movers;
+  const list = [...M.values()].filter(x => FRE.battlePass.isMonster(x) && !bpm(w).monsters.has(x.id));
+  eq(list.length, 32, '32 real monsters pay no points today (town NPCs, guards and pets excluded)');
+  ok(!list.some(x => /^MI_PET_/.test(x.define) || x.rankId > 7), 'no pets, citizens or guards');
+  w.apply('battlepass.inc', FRE.battlePassOps.addMonstersAtBand(f.text, bpm(w), list, M), 'all');
+  eq(bpm(w).rows.BP5.length, 895, '895 monsters listed');
+  eq(changedLines(f).length, 32, '32 lines added, nothing else changed');
+  eq(w.diags.filter(d => d.code === 'BP_BAND').length, 0, 'all at their band price');
+  eq(w.newBlocking().length, 0, 'no new blocking problems');
+  w.undo();
+  ok(B.bytesEqual(f.serialize(), before), 'one undo restores identical bytes');
+});
+editCase('battle pass: remove pets and town NPCs (never killed as monsters)', w => {
+  const f = bpf(w), before = f.serialize(), M = w.movers.movers;
+  const junk = bpm(w).rows.BP5.filter(r => M.get(r.id) && !FRE.battlePass.isMonster(M.get(r.id)));
+  eq(junk.length, 106, 'season 1 lists 106 non-monsters');
+  eq(junk.filter(r => /^MI_PET_/.test(r.define)).length, 98, '98 of them are pets');
+  w.apply('battlepass.inc', FRE.battlePassOps.removeMonsters(f.text, junk), 'clean');
+  eq(bpm(w).rows.BP5.length, 757, '757 real monsters left');
+  eq(changedLines(f).length, 106, '106 lines removed, nothing else');
+  eq(w.newBlocking().length, 0, 'no new blocking problems');
+  w.undo();
+  ok(B.bytesEqual(f.serialize(), before), 'one undo restores identical bytes');
+});
+
+// ---------------------------------------------------------------- season change, replayed with a port of the server logic
+// tests/bp-server.js copies OnJoin / OnDied / AddBPUpdate / GiveBattlePassReward / OnDoBP / the speed check.
+// Ana buys season 1, Ben stays free and keeps an unused pass, Cy uses a pass after season 1 ended.
+section('battle pass: season change (server replay)');
+{
+  const w = freshWorkspace();
+  const S = bpServer(FRE, w);
+  const day = (y, m, d, hr = 12) => new Date(y, m - 1, d, hr);
+  const s1 = S.config(w.models.battlepass);
+  const ana = S.player('Ana'), ben = S.player('Ben'), cy = S.player('Cy');
+  let now = day(2026, 9, 6);
+  [ana, ben, cy].forEach(p => S.login(s1, p, now));
+  ok([ana, ben, cy].every(p => p.level === 1 && p.type === 1 && p.enable === 0), 'S1 login: everyone on the free track, level 1');
+  ana.passItems = 1; S.usePass(s1, ana, now);
+  S.grindTo(s1, ana, 12, 'MI_KINGSTER01', now);
+  S.grindTo(s1, ben, 8, 'MI_KINGSTER01', now);
+  ben.passItems = 1;
+  eq(ana.got.length, 12, 'S1 buyer at level 12 owns 12 rewards');
+  ok(S.speedBonus(ana, now), 'S1 buyer has +20% speed');
+  eq(ben.got.length, 0, 'S1 free player at level 8 owns no rewards');
+
+  now = day(2026, 10, 5, 18);                       // season 1 over, no new season yet
+  [ana, ben, cy].forEach(p => S.login(s1, p, now));
+  ok(![ana, ben, cy].some(p => S.isBP(p, now)), 'after 5 Oct 00:00 nobody is on a pass');
+  ok(!S.speedBonus(ana, now), 'the buyer\'s speed bonus is gone');
+  eq(S.kill(s1, ana, 'MI_KINGSTER01', now), 0, 'kills earn no points');
+  cy.passItems = 1; S.usePass(s1, cy, now);
+  eq(cy.passItems, 0, 'a pass used while no season runs is used up...');
+  eq(cy.got.length, 1, '...for the level 1 reward only');
+  ok(!S.isBP(cy, now) && S.kill(s1, cy, 'MI_KINGSTER01', now) === 0, '...and Cy still earns nothing');
+
+  // what-if: the new season is set BEFORE season 1 ends (players stay on season 1 until it does)
+  {
+    const w2 = freshWorkspace(), S2 = bpServer(FRE, w2);
+    const p = S2.player('Dee'); S2.login(S2.config(w2.models.battlepass), p, day(2026, 10, 1));
+    w2.apply('battlepass.inc', FRE.battlePassOps.newSeasonPlan(w2.models.battlepass, 20261105).splices, 's2');
+    const early = S2.config(w2.models.battlepass);
+    S2.login(early, p, day(2026, 10, 2));
+    eq(p.type, 1, 'early switch: a player on season 1 stays there until it ends');
+    p.passItems = 1; S2.usePass(early, p, day(2026, 10, 2));
+    ok(p.passItems === 1 && /different battle pass season/.test(p.log.join('\n')), 'early switch: the pass is refused (not used up) until the player is on season 2');
+    S2.login(early, p, day(2026, 10, 6));
+    eq(p.type, 2, 'early switch: after season 1 ends the next login moves them to season 2');
+  }
+
+  // "Start new season" on 6 Oct, server restarted
+  w.apply('battlepass.inc', FRE.battlePassOps.newSeasonPlan(w.models.battlepass, 20261105).splices, 'season 2');
+  const s2 = S.config(w.models.battlepass);
+  now = day(2026, 10, 6);
+  [ana, ben, cy].forEach(p => S.login(s2, p, now));
+  ok([ana, ben, cy].every(p => p.level === 1 && p.points === 0 && p.type === 2 && p.enable === 0), 'S2 login: everyone starts season 2 at level 1 on the free track (S1 purchase does not carry over)');
+  eq(ana.got.length, 12, 'S1 rewards already given are kept');
+  ok(!S.speedBonus(ana, now), 'no speed bonus until the pass is bought again');
+  S.grindTo(s2, ana, 5, 'MI_KINGSTER01', now);
+  eq(ana.got.length, 12, 'S2 free-track levels pay nothing yet');
+  ana.passItems = 1; S.usePass(s2, ana, now);
+  eq(ana.got.length, 17, 'buying again back-pays S2 levels 1-5');
+  ok(S.speedBonus(ana, now), 'speed bonus back');
+  S.grindTo(s2, ben, 4, 'MI_KINGSTER01', now);
+  S.usePass(s2, ben, now);
+  ok(ben.passItems === 0 && ben.got.length === 4 && ben.enable === 1, 'an unused pass bought in S1 unlocks S2 (same item, 2f783090)');
+  S.grindTo(s2, ana, 6, 'MI_KINGSTER01', now);
+  eq(ana.got.length, 18, 'bought track: each new level pays on arrival');
+
+  // alternative: re-run season 1 by changing only the date (nType stays 1) - same effect today
+  {
+    const w3 = freshWorkspace(), S3 = bpServer(FRE, w3);
+    const p = S3.player('Eve'); S3.login(S3.config(w3.models.battlepass), p, day(2026, 9, 6));
+    p.passItems = 1; S3.usePass(S3.config(w3.models.battlepass), p, day(2026, 9, 6));
+    w3.apply('battlepass.inc', FRE.battlePassOps.setEndDate(w3.models.battlepass.pass, 20261105), 'date');
+    S3.login(S3.config(w3.models.battlepass), p, day(2026, 10, 6));
+    ok(p.type === 1 && p.level === 1 && p.enable === 0, 'date-only re-run: season 1 starts over, buyers must buy again');
+  }
+}
+
+const bpRaw = (w, find, repl) => {
+  const f = bpf(w), i = f.text.indexOf(find);
+  if (i < 0) throw new Error('fixture text not found: ' + find);
+  w.apply('battlepass.inc', [{ start: i, end: i + find.length, insert: repl }], 'raw');
+};
+function bpMutation(name, code, sev, find, repl) {
+  editCase('battle pass: ' + name, w => {
+    bpRaw(w, find, repl);
+    const hit = w.diags.find(d => d.code === code);
+    ok(hit && hit.severity === sev, `${name} -> ${code} ${sev}`, JSON.stringify(w.moduleDiags.battlepass.map(d => d.code)));
+    if (sev === 'BLOCK') ok(w.newBlocking().some(d => d.code === code), `${code} blocks saving`);
+  });
+}
+bpMutation('duplicate level', 'BP_DUP_LEVEL', 'BLOCK', '\tBPReward\t1\t2\t2000', '\tBPReward\t1\t1\t2000');
+bpMutation('missing level', 'BP_LEVEL_GAP', 'BLOCK', '\tBPReward\t1\t2\t2000', '\tBPReward\t1\t99\t2000');
+bpMutation('reward of another season', 'BP_TYPE_ROW', 'WARN', '\tBPReward\t1\t7\t2000', '\tBPReward\t2\t7\t2000');
+bpMutation('no reward matches the pass', 'BP_TYPE', 'BLOCK', 'BPItem\t\t1\t', 'BPItem\t\t3\t');
+bpMutation('invalid date', 'BP_DATE', 'BLOCK', 'BPPASS1\t20261005', 'BPPASS1\t20261305');
+bpMutation('cost over 10,000', 'BP_CLAMP', 'WARN', '\tBPReward\t1\t2\t2000', '\tBPReward\t1\t2\t20000');
+bpMutation('unknown reward item', 'E_UNDEF', 'BLOCK', 'II_SYS_SYS_SCR_VIP_30', 'II_SYS_SYS_SCR_VIP_99');
+bpMutation('duplicate monster', 'BP_DUP_MONSTER', 'BLOCK', 'BPMonster\tMI_AIBATT2 ', 'BPMonster\tMI_AIBATT1 ');
+bpMutation('not a monster', 'BP_NO_MONSTER', 'BLOCK', 'BPMonster\tMI_AIBATT2 ', 'BPMonster\t14000 ');
+bpMutation('unquoted texture', 'BP_FORMAT', 'BLOCK', '10\t""\t""\t""\n\tBPReward\t1\t2\t', '10\tx\t""\t""\n\tBPReward\t1\t2\t');
+bpMutation('banner texture', 'BP_LOGO_UNUSED', 'INFO', '10\t""\t""\t""\n\tBPReward\t1\t2\t', '10\t"x.tga"\t""\t""\n\tBPReward\t1\t2\t');
+editCase('battle pass: missing closing brace', w => {
+  const f = bpf(w), i = f.text.lastIndexOf('}');
+  w.apply('battlepass.inc', [{ start: i, end: i + 1, insert: '' }], 'raw');
+  ok(w.newBlocking().some(d => d.code === 'BP_BRACES'), 'no closing } -> BP_BRACES');
+});
+editCase('battle pass: textures checked against Client/Theme', w => {
+  w.setClientTheme(['BattlePass_New.tga']);
+  w.apply('battlepass.inc', FRE.battlePassOps.setRewardTexture(bpm(w).ladder.get(4), 'rarity', 'BattlePass_New.tga'), 'ok');
+  eq(w.diags.filter(d => d.code === 'BP_TEXTURE').length, 0, 'existing texture: no warning');
+  w.apply('battlepass.inc', FRE.battlePassOps.setRewardTexture(bpm(w).ladder.get(4), 'icon', 'Nope.tga'), 'missing');
+  eq(w.diags.filter(d => d.code === 'BP_TEXTURE').length, 1, 'missing texture -> BP_TEXTURE');
 });
 
 // ---------------------------------------------------------------- mutations: each rule must fire as a NEW block

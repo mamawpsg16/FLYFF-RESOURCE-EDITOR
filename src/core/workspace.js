@@ -45,6 +45,18 @@
         return FRE.donation.validateDonation(model, { items: ws.items.items, textOf: n => ws.textOf(n), defines: ws.defines.defines, tree: ws.donationTree });
       },
     },
+    {
+      // BattlePass.inc (commit cc73ccdd). propMover.txt gives each monster's name, level and rank.
+      id: 'battlepass', label: 'Battle Pass',
+      required: ['BattlePass.inc', 'propMover.txt', 'propMover.txt.txt'], editable: ['BattlePass.inc'], client: ['BattlePass.inc'],
+      parse(ws) {
+        if (!ws.movers) ws.movers = FRE.propMover.loadPropMover(ws.files.get('propmover.txt'), { defines: ws.defines.defines, strings: ws.strings.map });
+        return FRE.battlePass.loadBattlePass(ws.files.get('battlepass.inc'), { defines: ws.defines.defines, strings: ws.strings.map });
+      },
+      validate(ws, model) {
+        return FRE.battlePass.validateBattlePass(model, { items: ws.items.items, movers: ws.movers.movers, defines: ws.defines.defines, now: ws.now ? ws.now() : new Date(), theme: ws.clientTheme });
+      },
+    },
   ];
   const ALL_FILES = [...new Set([...CORE, ...MODULES.flatMap(m => m.required), ...OPTIONAL])];
 
@@ -60,6 +72,7 @@
       this.available = {};
       this.editable = new Set();
       this.donationTree = null;
+      this.clientTheme = null;      // lowercase file names in Client/Theme (Battle Pass textures), when the Client folder is chosen
       for (const m of MODULES) {
         const miss = m.required.filter(n => !files.has(n.toLowerCase()));
         this.available[m.id] = miss.length ? { ok: false, missing: miss } : { ok: true };
@@ -106,6 +119,12 @@
     setDonationTree(tree) {
       this.donationTree = tree || null;
       if (this.available.donation && this.available.donation.ok) this.reparse('donationshop.inc');
+    }
+
+    // file names in the client's Theme folder (BattlePass.inc rarity / icon textures)
+    setClientTheme(names) {
+      this.clientTheme = names ? new Set([...names].map(n => n.toLowerCase())) : null;
+      if (this.available.battlepass && this.available.battlepass.ok) this.reparse('battlepass.inc');
     }
 
     textOf(name) { return (this.files.get(String(name).toLowerCase()) || { text: '' }).text; }

@@ -52,8 +52,13 @@
   // Spec_Item.txt with LF line endings, no loose character-etc.inc / character-school.inc
   const clientDir = new FakeDir('Client');
   const lfOnly = b => { const o = []; for (let i = 0; i < b.length; i++) if (!(b[i] === 13 && b[i + 1] === 10)) o.push(b[i]); return new Uint8Array(o); };
-  for (const n of ['character.inc', 'DonationShop.inc']) clientDir.children.set(n, new FakeFile(n, original.get(n).slice()));
+  for (const n of ['character.inc', 'DonationShop.inc', 'BattlePass.inc']) clientDir.children.set(n, new FakeFile(n, original.get(n).slice()));
   clientDir.children.set('Spec_Item.txt', new FakeFile('Spec_Item.txt', lfOnly(original.get('Spec_Item.txt'))));
+  {                                       // Client/Theme: Battle Pass textures (names only)
+    const th = new FakeDir('Theme');
+    for (const n of ['BattlePass_New.tga', 'BattlePass_Fire.tga', 'BattlePass_Image0.tga']) th.children.set(n, new FakeFile(n, new Uint8Array(0)));
+    clientDir.children.set('Theme', th);
+  }
   const clientOriginal = new Map([...clientDir.children].map(([n, f]) => [n, f.bytes]));
   if (FRE.HARNESS_TREE) {                 // Client/Client/DonationShopTree.inc (client-only category tree)
     const sub = new FakeDir('Client'), bin = atob(FRE.HARNESS_TREE), u8 = new Uint8Array(bin.length);
@@ -198,7 +203,7 @@
 
     // ---- Client sync + chip price edit (Spec_Item.txt dwReferValue1)
     click($('btn-client-dir'));
-    await waitFor(() => S.client && S.client.files.size === 3, 'client folder');
+    await waitFor(() => S.client && S.client.files.size === 4, 'client folder');
     ok(/Client sync on/.test($('banners').textContent) && /Spec_Item.txt: same, LF/.test($('banners').textContent), 'banner shows the Client sync modes');
     const waf = [...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MaFl_Waforu'));
     click(waf);
@@ -271,7 +276,67 @@
     ok(sc.scrollTop === 0 && document.body.scrollTop === 0 && $('toolbar').getBoundingClientRect().top === 0, 'the page itself never scrolls (toolbar stays on screen)');
     ok($('layout').getBoundingClientRect().bottom <= window.innerHeight + 1 && lastIn.getBoundingClientRect().bottom <= window.innerHeight + 1, 'focused last row is visible inside the window');
     lastIn.blur();
-    if (STOP === 'end') click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.startsWith('Shields')));
+
+    // ---- Battle Pass
+    click([...document.querySelectorAll('#mode-tabs button')].find(b => b.textContent.includes('Battle Pass')));
+    ok(S.mode === 'battlepass', 'Battle Pass mode');
+    ok(S.ws.clientTheme && S.ws.clientTheme.has('battlepass_new.tga'), 'Client/Theme texture names read');
+    const bpText0 = S.ws.files.get('battlepass.inc').text;
+    ok($('editor').querySelector('input[type=date]').value === '2026-10-04', 'date box shows the last day (4 Oct; the file says 20261005)');
+    ok(/Season 1 ended/.test($('editor').textContent) && /Donation Shop still sells the pass/.test($('editor').textContent), 'status card: season ended + pass warning');
+    if (STOP === 'bpexpired') return;
+    click(btnByText($('editor'), 'Start new season'));
+    await waitFor(() => btnByText(document.querySelector('.modal'), 'Start new season'), 'new season dialog');
+    const nm = document.querySelector('.modal');
+    const sIn = nm.querySelector('input[type=date]');
+    sIn.value = '2026-10-06'; sIn.dispatchEvent(new Event('change'));
+    ok(/Runs 30 full days: Tue 06 Oct 2026 to Wed 04 Nov 2026/.test(nm.textContent) && /nTime 20261105/.test(nm.textContent) && /1 → 2 on the pass and on all 50 reward levels/.test(nm.textContent), 'dialog: 30 days from 6 Oct -> nTime 20261105, nType 1 -> 2');
+    ok(nm.querySelectorAll('.diff .add').length === 51, 'dialog previews the 51 changed lines');
+    ok(S.ws.files.get('battlepass.inc').text === bpText0, 'preview does not edit the file');
+    if (STOP === 'bpseason') return;
+    click(btnByText(nm.querySelector('footer'), 'Start new season'));
+    ok(S.ws.models.battlepass.pass.time.value === 20261105 && S.ws.models.battlepass.pass.type.value === 2, 'new season written');
+    ok(S.ws.models.battlepass.rows.BP4.every(r => r.type.value === 2), 'all rewards moved to season 2');
+
+    click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.startsWith('Reward ladder')));
+    ok(/Levels \(50\)/.test($('editor').textContent) && /Reaching level 50 takes 146,000 points/.test($('editor').textContent), 'ladder: 50 levels, 146,000 points to the top');
+    search.value = 'II_CHP_RED'; search.dispatchEvent(new Event('input'));
+    const plus3 = [...document.querySelectorAll('#item-list .item')].find(r => r.querySelector('.def').textContent === 'II_CHP_RED').querySelector('button');
+    ok(!plus3.disabled && /level 51/.test(plus3.title), '+ adds level 51');
+    ok(!$('editor').querySelector('td.tex') && btnByText($('editor'), 'Change'), 'no texture column; rows have a "Change" button');
+    click(plus3);
+    ok(/Levels \(51\)/.test($('editor').textContent), 'level 51 added');
+    ok(S.ws.newBlocking().length === 0, 'no blocking problems');
+    if (STOP === 'bpladder') return;
+
+    click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.startsWith('Monster points')));
+    ok(/Monsters \(757\)/.test($('editor').textContent), 'monsters: 757 real monsters shown (106 pets / town NPCs hidden)');
+    const kRow = [...$('editor').querySelectorAll('table.items tr')].find(tr => tr.textContent.includes('MI_KINGSTER01'));
+    const kMin = kRow.querySelectorAll('input.num-input')[0];
+    kMin.value = '14'; kMin.dispatchEvent(new Event('change'));
+    const kRow2 = [...$('editor').querySelectorAll('table.items tr')].find(tr => tr.textContent.includes('MI_KINGSTER01'));
+    const kMax = kRow2.querySelectorAll('input.num-input')[1];
+    kMax.value = '20'; kMax.dispatchEvent(new Event('change'));
+    ok(S.ws.diags.some(d => d.code === 'BP_BAND'), 'off-band price warns');
+    click(btnByText($('editor'), 'Re-price off-band rows (1)'));
+    await waitFor(() => btnByText(document.querySelector('.modal'), 'Re-price'), 're-price dialog');
+    ok(/Small Kingster/.test(document.querySelector('.modal').textContent) && /60-80/.test(document.querySelector('.modal').textContent), 're-price dialog lists Kingster 14-20 -> 60-80');
+    ok(/Add all unlisted monsters \(32\)/.test($('editor').textContent), 'button offers the 32 unlisted real monsters');
+    ok(/106 pets and town NPCs in the file are hidden/.test($('editor').textContent) && !/MI_PET_CHICKEN/.test($('editor').textContent), 'pets hidden; note offers to delete the 106 rows');
+    if (STOP === 'bpmonsters') return;
+    click(btnByText(document.querySelector('.modal footer'), 'Re-price'));
+    ok(!S.ws.diags.some(d => d.code === 'BP_BAND'), 're-priced: no off-band rows');
+
+    // save: the Client copy gets the same bytes (identical file)
+    click($('btn-save'));
+    await waitFor(() => btnByText(document, 'Back up and write'), 'review dialog (battle pass)');
+    click(btnByText(document, 'Back up and write'));
+    await waitFor(() => [...document.querySelectorAll('.modal header')].some(h => /^Saved|failed/.test(h.textContent) && !/Client sync/.test(h.textContent)), 'save finished (battle pass)');
+    const bpSrv = res.children.get('BattlePass.inc').bytes, bpCli = clientDir.children.get('BattlePass.inc').bytes;
+    ok(FRE.bytes.bytesEqual(bpSrv, S.ws.files.get('battlepass.inc').bytes) && FRE.bytes.bytesEqual(bpSrv, bpCli), 'BattlePass.inc saved, Client copy identical');
+    ok(!FRE.bytes.bytesEqual(bpSrv, original.get('BattlePass.inc')), 'file changed on disk');
+    document.querySelectorAll('.modal-back').forEach(m => m.remove());
+    if (STOP === 'end') click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.startsWith('Season')));
   }
 
   document.addEventListener('DOMContentLoaded', () => scenario().catch(e => ok(false, 'exception: ' + e.message + ' ' + e.stack)).then(() => {

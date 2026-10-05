@@ -112,8 +112,15 @@
       const th = (await FRE.fsa.findFiles(sub, ['DonationShopTree.inc'])).get('donationshoptree.inc');
       if (th) tree = FRE.donationTree.loadTree(new FRE.SourceFile(th.name, (await FRE.fsa.readHandle(th)).bytes));
     } catch (e) { if (e.name !== 'NotFoundError' && e.name !== 'TypeMismatchError') toast('DonationShopTree.inc: ' + e.message, 'bad'); }
-    S.client = { dir, files, tree };
-    if (S.ws) S.ws.setDonationTree(tree);
+    // Battle Pass rarity / icon textures live in Client/Theme (WndBattlePass.cpp MakePath(DIR_THEME, ...))
+    let theme = null;
+    try {
+      const th = await dir.getDirectoryHandle('Theme');
+      theme = [];
+      for await (const [name, handle] of th.entries()) if (handle.kind === 'file') theme.push(name);
+    } catch (e) { if (e.name !== 'NotFoundError' && e.name !== 'TypeMismatchError') toast('Client/Theme: ' + e.message, 'bad'); }
+    S.client = { dir, files, tree, theme };
+    if (S.ws) { S.ws.setDonationTree(tree); S.ws.setClientTheme(theme); }
     S.createMissing = new Set(clientNames().map(n => n.toLowerCase()).filter(n => !files.has(n)));   // offered, can be unticked
   }
 
