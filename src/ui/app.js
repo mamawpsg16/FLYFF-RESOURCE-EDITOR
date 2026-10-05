@@ -27,7 +27,7 @@
   async function loadFrom(dir) {
     if (S.ws && S.ws.dirtyFiles().length && !confirm('Discard unsaved changes and load another folder?')) return;
     if (!(await FRE.fsa.ensurePermission(dir))) { toast('Permission to the folder was not granted.', 'bad'); return; }
-    const found = await FRE.fsa.findFiles(dir, FRE.Workspace.REQUIRED);
+    const found = await FRE.fsa.findFiles(dir, [...FRE.Workspace.REQUIRED, ...FRE.Workspace.OPTIONAL]);
     for (const must of ['masquerade.prj', 'character.inc', 'spec_item.txt']) {
       if (!found.has(must)) {
         toast(`"${dir.name}" does not look like Server/Resource (no ${must}). Nothing was loaded.`, 'bad');
@@ -185,11 +185,16 @@
     const canEdit = S.ws.isEditable(f.name.toLowerCase());
     const chip = npc.venderType === 1 || npc.venderType === 2;
     const entries = npc.statements.map(r => ({ r, e: FRE.character.shopEntry(r) })).filter(x => x.e);
+    const D0 = S.ws.defines;
 
     el.appendChild(h('div.npc-title', h('h2', npc.name || npc.key), h('span.def', npc.key),
       h('span.line', `${npc.file}:${f.lineOf(npc.start) + 1}`),
       chip ? h('span.tag.chip', npc.venderType === 1 ? 'Red Chip shop' : 'Donate Chip shop') : h('span.tag', 'Penya shop'),
       canEdit ? null : h('span.tag.bad', 'read-only')));
+    const menus = npc.menus.map(v => D0.byValue('MMI_', v) || String(v));
+    if (menus.length) el.appendChild(h('div.menus', 'Menus: ', menus.map(m => S.ws.exchangeMenus.has(m)
+      ? h('span.tag.exch', { title: `${m} is an item exchange defined in Exchange_Script.txt (not editable here yet)` }, `${pretty(m)} ⇄ exchange`)
+      : h('span.tag', { title: m }, pretty(m)))));
 
     const tabs = h('div.tabs');
     for (let t = 0; t < 4; t++) {
@@ -226,26 +231,65 @@
       el.appendChild(tb);
     }
 
-    // generated stock (read-only in Build 1)
+    // generated stock rules (read-only in Build 1)
     const gen = entries.filter(x => x.e.kind === 'generated' && x.e.slot === S.tab);
+    const tabSim = S.ws.simulate(npc).tabs[S.tab];
+    const D = S.ws.defines;
     if (gen.length) {
-      el.appendChild(h('h3', 'Generated stock (AddVendorItem) · read-only'));
-      const D = S.ws.defines;
-      const tb = h('table', h('tr', h('th', 'Item kind'), h('th', 'Job'), h('th.num', 'Rarity'), h('th.num', 'Count'), h('th', '')));
+      el.appendChild(h('h3', 'Generated stock rules (AddVendorItem) · read-only'));
+      el.appendChild(h('p.muted.small', 'Each rule adds every sellable item of that type whose rarity (dwItemRare) is in the range. The server fills the shop from these rules at startup.'));
+      const tb = h('table', h('tr', h('th', 'Item type'), h('th', 'Job'), h('th.num', 'Rarity'), h('th.num', 'Adds'), h('th', '')));
       for (const { r, e } of gen) {
-        const ik3 = e.ik3.define || D.byValue('IK3_', e.ik3.value) || e.ik3.value;
-        const job = e.job.value === -1 ? 'any' : (e.job.define || D.byValue('JOB_', e.job.value) || e.job.value);
-        tb.appendChild(h('tr', h('td.def', ik3, e.lang ? ` (lang ${e.lang.value})` : ''), h('td.def', job),
-          h('td.num', `${e.rareMin.value}–${e.rareMax.value}`), h('td.num', e.count.value), h('td.line', 'L' + (f.lineOf(r.start) + 1))));
+        const ik3 = e.ik3.define || D.byValue('IK3_', e.ik3.value) || String(e.ik3.value);
+        const job = e.job.value === -1 ? 'any job' : (e.job.define || D.byValue('JOB_', e.job.value) || String(e.job.value));
+        const res = tabSim.rules.find(x => x.rec === r) || {};
+        const adds = e.lang ? 'other language only' : res.empty ? 'nothing (no item matches)' : `${res.added} item${res.added === 1 ? '' : 's'}`;
+        tb.appendChild(h('tr', h('td', pretty(ik3), ' ', h('span.def', ik3), ' ', diagTags(diagsIn(npc, r))), h('td', pretty(job)),
+          h('td.num', `${e.rareMin.value}–${e.rareMax.value}`),
+          h('td.num', { title: `The last argument (${e.count.value}) is read but ignored by the server; a tab holds at most 100 items.` }, adds),
+          h('td.line', 'L' + (f.lineOf(r.start) + 1))));
       }
       el.appendChild(tb);
+    }
+
+    // what the server actually puts in this tab
+    el.appendChild(h('h3', `Players see in this tab (${tabSim.entries.length}/100)`));
+    if (!tabSim.entries.length) el.appendChild(h('p.muted', 'Nothing.'));
+    else {
+      const tb = h('table', h('tr', h('th.num', '#'), h('th', 'Item'), h('th', 'Define'), h('th.num', chip ? 'Chip price' : 'Price'), h('th', 'From')));
+      tabSim.entries.forEach((en, i) => {
+        const info = S.ws.itemInfo(en.prop.item);
+        const price = chip ? `${fmt(info.chipCost)} ${npc.venderType === 2 ? 'Donate' : 'Red'} chips`
+          : (en.kind === 'fixed' && en.source.args.cost ? fmt(en.source.args.cost.value) : fmt(info.cost));
+        tb.appendChild(h('tr', h('td.num.line', i + 1), h('td', h('span.r-' + info.rarity, info.name)), h('td.def', info.define),
+          h('td.num', { title: chip ? '' : 'Base price before the server shop-rate multipliers' }, price),
+          h('td.line', `${en.kind === 'generated' ? 'rule' : en.kind === 'chip' ? 'chip item' : 'fixed'} L${f.lineOf(en.source.start) + 1}`)));
+      });
+      el.appendChild(tb);
+    }
+    if (tabSim.dropped.length) {
+      el.appendChild(h('p.small', { style: 'color:var(--warn)' }, `Left out: ` + tabSim.dropped.map(d => `${d.prop ? d.prop.item.define : d.rec.cmd} (${d.reason})`).join(', ')));
     }
 
     const nd = diagsIn(npc, null);
     if (nd.length) {
       el.appendChild(h('h3', 'Problems for this NPC'));
-      nd.forEach(d => el.appendChild(h('div.diag', h('span.sev.' + d.severity, d.severity), h('span', d.message))));
+      nd.forEach(d => el.appendChild(diagRow(d)));
     }
+  }
+
+  // 'IK3_COLLECTER' -> 'Collecter', 'JOB_MERCENARY' -> 'Mercenary'
+  function pretty(def) {
+    if (!/^[A-Z0-9]+_/.test(def)) return def;
+    return def.replace(/^[A-Z0-9]+_/, '').toLowerCase().replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+  }
+
+  function diagRow(d, extra) {
+    const help = FRE.diagHelp[d.code];
+    return h('div.diag', extra && extra.on ? { on: extra.on } : null,
+      h('span.sev.' + d.severity, d.severity), extra && extra.isNew ? h('span.new', 'new') : null,
+      h('div', h('div', d.message), help ? h('div.help', `ⓘ ${help[0]} → ${help[1]}`) : null),
+      extra && extra.where ? h('span.line', extra.where) : null);
   }
 
   // ------------------------------------------------------------------ item database
@@ -318,12 +362,9 @@
     el.appendChild(h('div.pad.muted.small', `${list.length} problem(s). Blocking problems introduced by your edits (⛔ new) prevent saving; problems that were already in the files are shown for information.`));
     for (const d of list) {
       const f = S.ws.files.get((d.file || '').toLowerCase());
-      el.appendChild(h('div.diag', { on: { click: () => {
-        const npc = d.npcKey && S.ws.chars.npcs.find(n => n.key === d.npcKey && n.file === d.file);
-        if (npc) { S.sel = npcId(npc); renderAll(false); }
-      } } },
-        h('span.sev.' + d.severity, d.severity), fresh.has(d) ? h('span.new', 'new') : null,
-        h('span', d.message), h('span.line', f && d.start !== undefined ? `${d.file}:${f.lineOf(d.start) + 1}` : d.file || '')));
+      const npcOf = () => d.npcKey && S.ws.chars.npcs.find(n => n.key === d.npcKey && n.file === d.file);
+      el.appendChild(diagRow(d, { isNew: fresh.has(d), where: f && d.start !== undefined ? `${d.file}:${f.lineOf(d.start) + 1}` : d.file || '',
+        on: { click: () => { const npc = npcOf(); if (npc) { S.sel = npcId(npc); renderAll(false); } } } }));
     }
   }
 

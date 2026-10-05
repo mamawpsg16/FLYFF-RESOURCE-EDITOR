@@ -112,6 +112,25 @@ const W = freshWorkspace();
   for (const k of ['AddShopItem', 'AddVenderItem2', 'AddVendorItem', 'SetVenderType', 'AddVendorSlot', 'SetName', 'AddMenu']) {
     eq(cnt[k] || 0, oracle.character[k], `oracle agrees: ${k} count`);
   }
+  // shop simulation: every tab of every NPC must match the independent Python port, item for item
+  let mism = [], compared = 0;
+  for (const npc of W.chars.npcs) {
+    const exp = oracle.vendor[`${npc.file}|${npc.key}`];
+    if (!exp) { mism.push('missing in oracle: ' + npc.key); continue; }
+    const got = W.simulate(npc).tabs.map(t => t.entries.map(e => e.prop.id));
+    compared++;
+    if (JSON.stringify(got) !== JSON.stringify(exp)) mism.push(`${npc.key}: ${JSON.stringify(got).slice(0, 80)} vs ${JSON.stringify(exp).slice(0, 80)}`);
+  }
+  ok(mism.length === 0, `oracle agrees: shop contents of all ${compared} NPCs (order included)`, mism.slice(0, 3).join(' | '));
+  eq(W.diags.filter(d => d.code === 'C_RULE_EMPTY').length, oracle.vendor_empty_rules, 'oracle agrees: number of AddVendorItem rules matching nothing');
+  eq(W.diags.filter(d => d.code === 'C_RULE_EMPTY' && d.file !== 'character-school.inc').length, 0, 'all empty rules are in character-school.inc');
+  eq(W.diags.filter(d => d.code === 'C_TAB_FULL').length, 3, 'KePe_Rocbin: 3 tabs over 100 items');
+  const luiTab1 = W.simulate(W.chars.byKey.get('mafl_lui')[0]).tabs[1].entries;
+  eq(luiTab1.length, 11, 'Lui tab 1: 10 generated + 1 fixed item');
+  eq(luiTab1[luiTab1.length - 1].prop.item.define, 'II_GEN_FOO_COO_DDUKGUKHOT', 'fixed items come after generated ones');
+  ok(W.diags.find(d => d.code === 'C_NO_TRADE' && d.severity === 'INFO' && /on purpose/.test(d.message)), 'SecretRoom Trade menu detected as disabled on purpose');
+  ok(Object.keys(FRE.diagHelp).length > 20 && W.diags.every(d => FRE.diagHelp[d.code]), 'every diagnostic code has help text');
+
   const axe = W.itemById(W.defines.defines.get('II_WEA_AXE_RODNEY'));
   eq(axe && axe.name, 'Rodney Axe', 'item name resolved through propItem.txt.txt');
   const lui = W.chars.byKey.get('mafl_lui')[0];

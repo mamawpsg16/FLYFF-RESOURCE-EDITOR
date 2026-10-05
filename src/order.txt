@@ -6,6 +6,8 @@ loaders/defines.js
 loaders/strings.js
 loaders/specitem.js
 loaders/character.js
+loaders/vendor-sim.js
+validate/help.js
 validate/character.js
 core/diff.js
 edit/shop-ops.js

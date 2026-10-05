@@ -146,6 +146,11 @@ tr.changed td:first-child { box-shadow: inset 3px 0 var(--warn); }
 .toast { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 14px; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
 .toast.bad { border-color: var(--bad); } .toast.ok { border-color: var(--ok); }
 
+.help { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.menus { margin-top: 8px; display: flex; gap: 5px; flex-wrap: wrap; align-items: center; font-size: 12px; color: var(--muted); }
+.tag.exch { color: var(--baruna); border-color: #2b6672; }
+button.primary:disabled { background: var(--panel-2); border-color: var(--line); }
+
 </style>
 </head>
 <body>
@@ -207,7 +212,7 @@ tr.changed td:first-child { box-shadow: inset 3px 0 var(--warn); }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 · 67a6df3';
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 · 1c785ce';
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -1217,6 +1222,201 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
   FRE.character = { loadCharacters, CHARACTER_FILES, SHOP_CMDS, shopEntry };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/vendor-sim.js ----
+// What players actually see in an NPC shop: a port of how the WorldServer
+// fills shop tabs at startup.
+//   buildIndex   <- CProject::OnAfterLoadPropItem   (_Common/Project.cpp:4983)
+//                   + the __NEW_STACKABLE_AMPS clones made in LoadPropItem
+//   expandRule   <- CMover::GenerateVendorItem      (_Common/Mover.cpp:5414)
+//   simulateNpc  <- CMover::ProcessRegenItem        (_Common/Mover.cpp:1630)
+// The server's sorts are not stable, so they are copied exactly to get the
+// same item order.
+(function (FRE) {
+  'use strict';
+  const MAX_VENDOR_INVENTORY = 100;
+  const MAX_UNIQUE_SIZE = 400;     // defineItemkind.h
+  const MAX_ITEM_KIND3 = 300;      // defineItemkind.h
+  const AMP_FIRST_ID = 60000;      // nAmpCopyID in LoadPropItem
+  const u = v => v >>> 0;          // DWORD view of a signed value
+
+  function propOf(item, id) {
+    const g = f => FRE.specItem.get(item, f);
+    return {
+      id: id === undefined ? item.id : id, item,
+      ik1: u(g('dwItemKind1')), ik3: u(g('dwItemKind3')), rare: u(g('dwItemRare')),
+      job: u(g('dwItemJob')), shopAble: u(g('dwShopAble')), chip: g('dwReferValue1'),
+    };
+  }
+
+  // Item table in server index order, then per-kind arrays sorted by rarity.
+  function buildIndex(itemsState, defines) {
+    const byId = new Map();
+    for (const [id, item] of itemsState.items) byId.set(id, propOf(item));
+    // __NEW_STACKABLE_AMPS: EXP scrolls with nMaxDuplication > 1 get copies at 60000+
+    const ampKind = defines.get('IK3_EXP_RATE');
+    let ampId = AMP_FIRST_ID;
+    for (const row of itemsState.rows) {
+      if (row.ver > FRE.specItem.SERVER_VER) continue;
+      if (FRE.specItem.get(row, 'dwItemKind3') !== ampKind) continue;
+      const dup = FRE.specItem.get(row, 'nMaxDuplication');
+      for (let i = 0; i < dup - 1; i++) byId.set(ampId, Object.assign(propOf(row, ampId++), { ampCopyOf: row.id }));
+    }
+    const ordered = [...byId.values()].sort((a, b) => a.id - b.id);
+
+    const kinds = new Map();         // ik3 -> array
+    for (const p of ordered) {
+      if (p.ik3 === 0xffffffff || p.ik3 >= MAX_ITEM_KIND3) continue;
+      if (!kinds.has(p.ik3)) kinds.set(p.ik3, []);
+      kinds.get(p.ik3).push(p);
+    }
+    const minMax = new Map();        // ik3 -> Map(rare -> [first, last])
+    for (const [k, arr] of kinds) {
+      for (let j = 0; j < arr.length - 1; j++) {
+        for (let m = j + 1; m < arr.length; m++) {
+          if (arr[m].rare < arr[j].rare) { const t = arr[j]; arr[j] = arr[m]; arr[m] = t; }
+        }
+      }
+      const mm = new Map();
+      let cur = 0xffffffff;
+      arr.forEach((p, j) => {
+        if (p.rare !== cur) { cur = p.rare; if (cur !== 0xffffffff) mm.set(cur, [j, j]); }
+        else if (cur !== 0xffffffff) mm.get(cur)[1] = j;
+      });
+      minMax.set(k, mm);
+    }
+    return { byId, kinds, minMax };
+  }
+
+  function getIdx(index, ik3, rare, which) {
+    const r = u(rare);
+    if (r >= MAX_UNIQUE_SIZE) return -1;
+    const mm = index.minMax.get(u(ik3));
+    const v = mm && mm.get(r);
+    return v ? v[which] : -1;
+  }
+
+  // Appends the rule's items to `list` (shared by all rules of a tab, capped at 100).
+  function expandRule(index, rule, list) {
+    const res = { matched: 0, added: 0, empty: false };
+    if (list.length >= MAX_VENDOR_INVENTORY) return res;
+    const lo = rule.rareMin, hi = rule.rareMax;
+    let minIdx = -1, maxIdx = -1;
+    for (let j = lo; j <= Math.min(hi, lo + MAX_UNIQUE_SIZE); j++) { minIdx = getIdx(index, rule.ik3, j, 0); if (minIdx !== -1) break; }
+    for (let j = hi; j >= lo && j > hi - MAX_UNIQUE_SIZE - 1; j--) { maxIdx = getIdx(index, rule.ik3, j, 1); if (maxIdx !== -1) break; }
+    if (minIdx < 0) { res.empty = true; return res; }          // server: WriteError("VENDORITEM//...")
+    const arr = index.kinds.get(u(rule.ik3)) || [];
+    for (let k = minIdx; k <= maxIdx; k++) {
+      const p = arr[k];
+      if (!p || p.shopAble === 0xffffffff || (rule.job !== -1 && p.job !== u(rule.job))) continue;
+      res.matched++;
+      if (list.length >= MAX_VENDOR_INVENTORY) continue;
+      list.push({ prop: p, source: rule.rec, kind: 'generated' });
+      res.added++;
+    }
+    return res;
+  }
+
+  // Returns { tabs: [ {entries, dropped, rules} x4 ], chip }
+  function simulateNpc(index, npc) {
+    const chip = npc.venderType === 1 || npc.venderType === 2;
+    const tabs = [0, 1, 2, 3].map(() => ({ entries: [], dropped: [], rules: [] }));
+    for (const rec of npc.statements) {
+      const e = FRE.character.shopEntry(rec);
+      if (!e || !(e.slot >= 0 && e.slot < 4)) continue;
+      const tab = tabs[e.slot];
+      (tab.byKind || (tab.byKind = { generated: [], fixed: [], chip: [] }))[e.kind].push({ rec, e });
+    }
+    tabs.forEach(tab => {
+      const by = tab.byKind || { generated: [], fixed: [], chip: [] };
+      if (chip) {
+        for (const { rec, e } of by.chip) {
+          const p = index.byId.get(u(e.item.value));
+          if (!p) { tab.dropped.push({ rec, reason: 'not in Spec_Item.txt' }); continue; }
+          if (p.chip < 1) { tab.dropped.push({ rec, prop: p, reason: 'no chip price (dwReferValue1)' }); continue; }
+          if (tab.entries.length >= MAX_VENDOR_INVENTORY) { tab.dropped.push({ rec, prop: p, reason: 'tab full' }); continue; }
+          tab.entries.push({ prop: p, source: rec, kind: 'chip' });
+        }
+      } else if (by.generated.length) {
+        const gen = [];
+        for (const { rec, e } of by.generated) {
+          if (e.lang) { tab.rules.push({ rec, langOnly: true }); continue; }     // only for one server language
+          const r = expandRule(index, { ik3: e.ik3.value, job: e.job.value, rareMin: e.rareMin.value, rareMax: e.rareMax.value, rec }, gen);
+          tab.rules.push(Object.assign({ rec }, r));
+        }
+        for (let j = 0; j < gen.length - 1; j++) {            // ProcessRegenItem's sort
+          for (let k = j + 1; k < gen.length; k++) {
+            const a = gen[j].prop, b = gen[k].prop;
+            if (b.ik1 < a.ik1 || (b.ik1 === a.ik1 && b.rare < a.rare)) { const t = gen[j]; gen[j] = gen[k]; gen[k] = t; }
+          }
+        }
+        tab.entries.push(...gen);
+      }
+      // __ADDSHOPITEM entries are appended in every kind of shop
+      let full = tab.entries.length >= MAX_VENDOR_INVENTORY;
+      for (const { rec, e } of by.fixed) {
+        const p = index.byId.get(u(e.item.value));
+        if (!p) { tab.dropped.push({ rec, reason: 'not in Spec_Item.txt' }); continue; }
+        if (full || tab.entries.length >= MAX_VENDOR_INVENTORY) { full = true; tab.dropped.push({ rec, prop: p, reason: 'tab full' }); continue; }
+        tab.entries.push({ prop: p, source: rec, kind: 'fixed' });
+      }
+      delete tab.byKind;
+    });
+    return { tabs, chip };
+  }
+
+  FRE.vendorSim = { buildIndex, simulateNpc, expandRule, MAX_VENDOR_INVENTORY };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- validate/help.js ----
+// Plain-language help for every diagnostic code: what it means and what to do.
+(function (FRE) {
+  'use strict';
+  FRE.diagHelp = {
+    E_UNDEF: ['A name (II_..., IK3_..., MMI_...) is not #defined in any define*.h the server loads. The server logs "Not Found" and uses 0 instead.',
+      'Check the spelling, or add the #define first (defineItem.h for II_ items).'],
+    E_UNTERM_STR: ['A "quoted text" has no closing quote on its line. The server reads the rest of the line as part of it, which shifts everything after.',
+      'Add the missing " .'],
+    E_UNTERM_CMT: ['A /* comment is never closed with */. The server ignores everything after it.',
+      'Add the missing */ .'],
+    E_NUL: ['The file contains a NUL byte. The server stops reading the file there.', 'Remove the NUL byte with a hex editor.'],
+    C_BRACES: ['This NPC block never closes with }. The server keeps reading into the next NPC(s) until the end of the file.',
+      'Add the missing } at the end of the NPC block.'],
+    C_NO_OPEN_BRACE: ['There is no { after the NPC name. The server takes the next word ("setting") as if it were the {, and the inner setting { } braces then make everything balance. It works by accident and is harmless.',
+      'Nothing to do. If you ever fix it by hand, add { after the name AND remove one } at the end of the block, otherwise the block structure changes.'],
+    C_DUP_NPC: ['Two NPC blocks have the same name (upper/lower case does not matter, across character.inc, character-etc.inc and character-school.inc). The last one loaded replaces the others.',
+      'Rename or remove one of them.'],
+    C_SLOT: ['A shop tab number outside 0-3. The server does not check it and writes into memory that does not belong to the shop.',
+      'Use tab 0, 1, 2 or 3.'],
+    C_ITEM: ['The item is not in Spec_Item.txt (or is skipped there), so the shop silently leaves it out.',
+      'Pick an existing item, or add the item to Spec_Item.txt first.'],
+    C_ARGS: ['The punctuation of this command is wrong (missing comma or parenthesis). The server skips separators without checking, so the following values are read into the wrong arguments.',
+      'Fix the ( , ) of the command.'],
+    C_HANG: ['A block like SetEquip( or randomItem { is never closed. The server would loop forever at startup.',
+      'Close the block.'],
+    C_PRICE_CONFLICT: ['AddShopItem\'s price changes the item\'s price for the whole server, not just this shop. With different prices in different shops, the last one loaded wins everywhere.',
+      'Use the same price in every shop for this item, or leave the price out to use the item\'s own price.'],
+    C_PRICE_ZERO: ['The item is sold for 0 (or less) Penya.', 'Set a positive price unless it is meant to be free.'],
+    C_TAB_FULL: ['A shop tab holds at most 100 items. Items beyond that (generated ones first, then AddShopItem ones in file order) are silently left out.',
+      'Narrow the AddVendorItem rules of that tab or move items to another tab.'],
+    C_RULE_EMPTY: ['This AddVendorItem rule matches no item: no item of that type has a rarity (dwItemRare) inside the range. The server logs a VENDORITEM error and adds nothing.',
+      'Check the item type and the rarity range, or remove the rule.'],
+    C_CHIP_TYPE: ['AddVenderItem2 only works in chip shops (SetVenderType(1) Red Chip or (2) Donate Chip). In a Penya shop the server ignores it.',
+      'Use AddShopItem for Penya shops, or make the NPC a chip shop.'],
+    C_CHIP_COST: ['The item has no chip price (dwReferValue1 in Spec_Item.txt), so the chip shop leaves it out.',
+      'Give the item a chip price in Spec_Item.txt (Build 3), or remove it from the chip shop.'],
+    C_NO_TRADE: ['The NPC lists shop items but has no AddMenu(MMI_TRADE). The buy code requires a Trade menu, so players cannot buy here.',
+      'If the shop should work, add AddMenu( MMI_TRADE ); to the NPC. If the Trade menu was disabled on purpose, ignore this.'],
+    S_ID_ZERO: ['An item id in Spec_Item.txt resolves to 0 (undefined II_). The server stops reading Spec_Item.txt there: every item after it is missing.',
+      'Define the II_ in defineItem.h or fix the name.'],
+    S_DUP_ID: ['The same item id appears twice in Spec_Item.txt. The later row silently replaces the earlier one.', 'Remove or renumber one row.'],
+    S_VER: ['The row\'s version is above 19, so the v19 server skips it.', 'Use a version of 19 or lower.'],
+    S_TRUNCATED: ['Spec_Item.txt ends in the middle of a record.', 'Restore the missing values.'],
+    T_KEY: ['A line in a .txt.txt string table does not start with an IDS_ key. The server logs an error and skips it.', 'Fix the key.'],
+    T_DUP: ['The same IDS_ key appears twice. The first one wins.', 'Remove the duplicate.'],
+    D_BRACE: ['A define header contains {. The server stops reading defines from that file there.', 'Remove the {.'],
+  };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- validate/character.js ----
 // Validation rules for character*.inc (docs/DESIGN.md §3.2).
 // Every diagnostic gets a stable `key` (no offsets) so the save step can tell
@@ -1265,7 +1465,6 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
           message: `${npc.key}: no "{" after the name; the server silently uses "${npc.braceTok.text}" as the brace (works by accident)` }, at));
       }
       let shopCount = 0;
-      const fixedPerTab = [0, 0, 0, 0];
       for (const rec of npc.statements) {
         if (rec.hang) {
           add(Object.assign({ code: 'C_HANG', severity: 'BLOCK', start: rec.start, end: rec.end, key: `C_HANG|${npc.file}|${npc.key}|${rec.cmd}`,
@@ -1300,7 +1499,6 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
               key: `C_ITEM|${npc.file}|${npc.key}|${itemName}`,
               message: `${npc.key}: ${itemName} is not a loaded item in Spec_Item.txt; the shop silently skips it` }, at));
           }
-          if (slotArg && slotArg.value >= 0 && slotArg.value < MAX_TAB) fixedPerTab[slotArg.value]++;
           if (e.kind === 'fixed' && e.cost) {
             const c = e.cost.value;
             if (c <= 0) add(Object.assign({ code: 'C_PRICE_ZERO', severity: 'WARN', start: rec.start, end: rec.end,
@@ -1321,14 +1519,32 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
           }
         }
       }
-      fixedPerTab.forEach((n, tab) => {
-        if (n > MAX_TAB_ITEMS) add(Object.assign({ code: 'C_TAB_FULL', severity: 'WARN', start: npc.start, end: npc.keyEnd,
-          key: `C_TAB_FULL|${npc.file}|${npc.key}|${tab}`,
-          message: `${npc.key}: tab ${tab} lists ${n} fixed items; a tab holds ${MAX_TAB_ITEMS}, the rest are dropped` }, at));
-      });
+      // What the server really puts in each tab (generated rules + fixed items, 100 max)
+      const sim = ctx.simulate ? ctx.simulate(npc) : null;
+      if (sim) {
+        sim.tabs.forEach((tab, t) => {
+          const full = tab.dropped.filter(d => d.reason === 'tab full');
+          const overflow = tab.rules.reduce((n, r) => n + Math.max(0, (r.matched || 0) - (r.added || 0)), 0);
+          if (full.length || overflow) {
+            const names = full.map(d => (d.prop && d.prop.item.define) || d.rec.cmd).slice(0, 5).join(', ');
+            add(Object.assign({ code: 'C_TAB_FULL', severity: 'WARN', start: npc.start, end: npc.keyEnd, key: `C_TAB_FULL|${npc.file}|${npc.key}|${t}`,
+              message: `${npc.key}: tab ${t} would hold more than ${MAX_TAB_ITEMS} items; ${overflow + full.length} are left out${names ? ' (' + names + (full.length > 5 ? ', …' : '') + ')' : ''}` }, at));
+          }
+          for (const r of tab.rules) {
+            if (!r.empty) continue;
+            const ik3 = r.rec.args.ik3.define || r.rec.args.ik3.value;
+            add(Object.assign({ code: 'C_RULE_EMPTY', severity: 'INFO', start: r.rec.start, end: r.rec.end,
+              key: `C_RULE_EMPTY|${npc.file}|${npc.key}|${t}|${ik3}|${r.rec.args.rareMin.value}-${r.rec.args.rareMax.value}`,
+              message: `${npc.key}: ${r.rec.cmd}(${t}, ${ik3}, rarity ${r.rec.args.rareMin.value}-${r.rec.args.rareMax.value}) matches no item; the server logs a VENDORITEM error and adds nothing` }, at));
+          }
+        });
+      }
       if (shopCount && tradeMenu !== undefined && !npc.menus.includes(tradeMenu)) {
-        add(Object.assign({ code: 'C_NO_TRADE', severity: 'WARN', start: npc.start, end: npc.keyEnd, key: `C_NO_TRADE|${npc.file}|${npc.key}`,
-          message: `${npc.key}: has shop items but no AddMenu(MMI_TRADE) (to verify: players may not be able to open the shop)` }, at));
+        const text = ctx.textOf ? ctx.textOf(npc.file) : '';
+        const disabled = /\/\/[ \t]*AddMenu[ \t]*\([ \t]*MMI_TRADE/.test(text.slice(npc.start, npc.end));
+        add(Object.assign({ code: 'C_NO_TRADE', severity: 'INFO', start: npc.start, end: npc.keyEnd, key: `C_NO_TRADE|${npc.file}|${npc.key}`,
+          message: `${npc.key}: players can't buy here: shop items but no Trade menu (the buy code requires MMI_TRADE)` +
+            (disabled ? '. The Trade menu is commented out in this NPC, so it was disabled on purpose.' : '') }, at));
       }
     }
 
@@ -1594,6 +1810,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
     'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt',
     ...FRE.DEFINE_FILES,
   ];
+  // Read when present, never required (context only).
+  const OPTIONAL = ['Exchange_Script.txt'];
   const EDITABLE = new Set(FRE.character.CHARACTER_FILES.map(n => n.toLowerCase()));
 
   class Workspace {
@@ -1611,6 +1829,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
       const spec = this.files.get('spec_item.txt');
       this.items = spec ? FRE.specItem.loadSpecItem(spec, { defines: this.defines.defines, strings: this.strings.map })
         : { items: new Map(), rows: [], diags: [], stopped: null };
+      // exchange menus (MMI_ names at the start of a line in Exchange_Script.txt), for display only
+      const ex = this.files.get('exchange_script.txt');
+      this.exchangeMenus = new Set(ex ? (ex.text.match(/^MMI_\w+/gm) || []) : []);
+      this.vendorIndex = FRE.vendorSim.buildIndex(this.items, this.defines.defines);
       this.reparse();
       this.baseline = this.keyCounts(this.diags);
       return this;
@@ -1618,7 +1840,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
 
     reparse() {
       this.chars = FRE.character.loadCharacters(this.files, { defines: this.defines.defines, strings: this.strings.map });
-      const charDiags = FRE.validateCharacters(this.chars, { items: this.items.items, defines: this.defines.defines });
+      this._sim = new Map();
+      const charDiags = FRE.validateCharacters(this.chars, {
+        items: this.items.items, defines: this.defines.defines,
+        simulate: npc => this.simulate(npc),
+        textOf: name => (this.files.get(name.toLowerCase()) || { text: '' }).text,
+      });
       const itemDiags = this.items.diags.map(d => Object.assign({}, d, { key: `${d.code}|${d.file}|${d.name || d.message}` }));
       this.diags = [...charDiags, ...itemDiags];
     }
@@ -1649,6 +1876,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
       const name = this.redoStack.pop(); if (!name) return null;
       const label = this.files.get(name).redo();
       this.history.push(name); this.reparse(); return label;
+    }
+
+    // What players see in this NPC's shop (cached until the next edit).
+    simulate(npc) {
+      if (!this._sim.has(npc)) this._sim.set(npc, FRE.vendorSim.simulateNpc(this.vendorIndex, npc));
+      return this._sim.get(npc);
     }
 
     dirtyFiles() { return [...this.files.values()].filter(f => f.dirty); }
@@ -1697,6 +1930,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
   }
 
   Workspace.REQUIRED = REQUIRED;
+  Workspace.OPTIONAL = OPTIONAL;
   Workspace.EDITABLE = EDITABLE;
   FRE.Workspace = Workspace;
 })(globalThis.FRE = globalThis.FRE || {});
@@ -1993,7 +2227,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
   async function loadFrom(dir) {
     if (S.ws && S.ws.dirtyFiles().length && !confirm('Discard unsaved changes and load another folder?')) return;
     if (!(await FRE.fsa.ensurePermission(dir))) { toast('Permission to the folder was not granted.', 'bad'); return; }
-    const found = await FRE.fsa.findFiles(dir, FRE.Workspace.REQUIRED);
+    const found = await FRE.fsa.findFiles(dir, [...FRE.Workspace.REQUIRED, ...FRE.Workspace.OPTIONAL]);
     for (const must of ['masquerade.prj', 'character.inc', 'spec_item.txt']) {
       if (!found.has(must)) {
         toast(`"${dir.name}" does not look like Server/Resource (no ${must}). Nothing was loaded.`, 'bad');
@@ -2151,11 +2385,16 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
     const canEdit = S.ws.isEditable(f.name.toLowerCase());
     const chip = npc.venderType === 1 || npc.venderType === 2;
     const entries = npc.statements.map(r => ({ r, e: FRE.character.shopEntry(r) })).filter(x => x.e);
+    const D0 = S.ws.defines;
 
     el.appendChild(h('div.npc-title', h('h2', npc.name || npc.key), h('span.def', npc.key),
       h('span.line', `${npc.file}:${f.lineOf(npc.start) + 1}`),
       chip ? h('span.tag.chip', npc.venderType === 1 ? 'Red Chip shop' : 'Donate Chip shop') : h('span.tag', 'Penya shop'),
       canEdit ? null : h('span.tag.bad', 'read-only')));
+    const menus = npc.menus.map(v => D0.byValue('MMI_', v) || String(v));
+    if (menus.length) el.appendChild(h('div.menus', 'Menus: ', menus.map(m => S.ws.exchangeMenus.has(m)
+      ? h('span.tag.exch', { title: `${m} is an item exchange defined in Exchange_Script.txt (not editable here yet)` }, `${pretty(m)} ⇄ exchange`)
+      : h('span.tag', { title: m }, pretty(m)))));
 
     const tabs = h('div.tabs');
     for (let t = 0; t < 4; t++) {
@@ -2192,26 +2431,65 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
       el.appendChild(tb);
     }
 
-    // generated stock (read-only in Build 1)
+    // generated stock rules (read-only in Build 1)
     const gen = entries.filter(x => x.e.kind === 'generated' && x.e.slot === S.tab);
+    const tabSim = S.ws.simulate(npc).tabs[S.tab];
+    const D = S.ws.defines;
     if (gen.length) {
-      el.appendChild(h('h3', 'Generated stock (AddVendorItem) · read-only'));
-      const D = S.ws.defines;
-      const tb = h('table', h('tr', h('th', 'Item kind'), h('th', 'Job'), h('th.num', 'Rarity'), h('th.num', 'Count'), h('th', '')));
+      el.appendChild(h('h3', 'Generated stock rules (AddVendorItem) · read-only'));
+      el.appendChild(h('p.muted.small', 'Each rule adds every sellable item of that type whose rarity (dwItemRare) is in the range. The server fills the shop from these rules at startup.'));
+      const tb = h('table', h('tr', h('th', 'Item type'), h('th', 'Job'), h('th.num', 'Rarity'), h('th.num', 'Adds'), h('th', '')));
       for (const { r, e } of gen) {
-        const ik3 = e.ik3.define || D.byValue('IK3_', e.ik3.value) || e.ik3.value;
-        const job = e.job.value === -1 ? 'any' : (e.job.define || D.byValue('JOB_', e.job.value) || e.job.value);
-        tb.appendChild(h('tr', h('td.def', ik3, e.lang ? ` (lang ${e.lang.value})` : ''), h('td.def', job),
-          h('td.num', `${e.rareMin.value}–${e.rareMax.value}`), h('td.num', e.count.value), h('td.line', 'L' + (f.lineOf(r.start) + 1))));
+        const ik3 = e.ik3.define || D.byValue('IK3_', e.ik3.value) || String(e.ik3.value);
+        const job = e.job.value === -1 ? 'any job' : (e.job.define || D.byValue('JOB_', e.job.value) || String(e.job.value));
+        const res = tabSim.rules.find(x => x.rec === r) || {};
+        const adds = e.lang ? 'other language only' : res.empty ? 'nothing (no item matches)' : `${res.added} item${res.added === 1 ? '' : 's'}`;
+        tb.appendChild(h('tr', h('td', pretty(ik3), ' ', h('span.def', ik3), ' ', diagTags(diagsIn(npc, r))), h('td', pretty(job)),
+          h('td.num', `${e.rareMin.value}–${e.rareMax.value}`),
+          h('td.num', { title: `The last argument (${e.count.value}) is read but ignored by the server; a tab holds at most 100 items.` }, adds),
+          h('td.line', 'L' + (f.lineOf(r.start) + 1))));
       }
       el.appendChild(tb);
+    }
+
+    // what the server actually puts in this tab
+    el.appendChild(h('h3', `Players see in this tab (${tabSim.entries.length}/100)`));
+    if (!tabSim.entries.length) el.appendChild(h('p.muted', 'Nothing.'));
+    else {
+      const tb = h('table', h('tr', h('th.num', '#'), h('th', 'Item'), h('th', 'Define'), h('th.num', chip ? 'Chip price' : 'Price'), h('th', 'From')));
+      tabSim.entries.forEach((en, i) => {
+        const info = S.ws.itemInfo(en.prop.item);
+        const price = chip ? `${fmt(info.chipCost)} ${npc.venderType === 2 ? 'Donate' : 'Red'} chips`
+          : (en.kind === 'fixed' && en.source.args.cost ? fmt(en.source.args.cost.value) : fmt(info.cost));
+        tb.appendChild(h('tr', h('td.num.line', i + 1), h('td', h('span.r-' + info.rarity, info.name)), h('td.def', info.define),
+          h('td.num', { title: chip ? '' : 'Base price before the server shop-rate multipliers' }, price),
+          h('td.line', `${en.kind === 'generated' ? 'rule' : en.kind === 'chip' ? 'chip item' : 'fixed'} L${f.lineOf(en.source.start) + 1}`)));
+      });
+      el.appendChild(tb);
+    }
+    if (tabSim.dropped.length) {
+      el.appendChild(h('p.small', { style: 'color:var(--warn)' }, `Left out: ` + tabSim.dropped.map(d => `${d.prop ? d.prop.item.define : d.rec.cmd} (${d.reason})`).join(', ')));
     }
 
     const nd = diagsIn(npc, null);
     if (nd.length) {
       el.appendChild(h('h3', 'Problems for this NPC'));
-      nd.forEach(d => el.appendChild(h('div.diag', h('span.sev.' + d.severity, d.severity), h('span', d.message))));
+      nd.forEach(d => el.appendChild(diagRow(d)));
     }
+  }
+
+  // 'IK3_COLLECTER' -> 'Collecter', 'JOB_MERCENARY' -> 'Mercenary'
+  function pretty(def) {
+    if (!/^[A-Z0-9]+_/.test(def)) return def;
+    return def.replace(/^[A-Z0-9]+_/, '').toLowerCase().replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+  }
+
+  function diagRow(d, extra) {
+    const help = FRE.diagHelp[d.code];
+    return h('div.diag', extra && extra.on ? { on: extra.on } : null,
+      h('span.sev.' + d.severity, d.severity), extra && extra.isNew ? h('span.new', 'new') : null,
+      h('div', h('div', d.message), help ? h('div.help', `ⓘ ${help[0]} → ${help[1]}`) : null),
+      extra && extra.where ? h('span.line', extra.where) : null);
   }
 
   // ------------------------------------------------------------------ item database
@@ -2284,12 +2562,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
     el.appendChild(h('div.pad.muted.small', `${list.length} problem(s). Blocking problems introduced by your edits (⛔ new) prevent saving; problems that were already in the files are shown for information.`));
     for (const d of list) {
       const f = S.ws.files.get((d.file || '').toLowerCase());
-      el.appendChild(h('div.diag', { on: { click: () => {
-        const npc = d.npcKey && S.ws.chars.npcs.find(n => n.key === d.npcKey && n.file === d.file);
-        if (npc) { S.sel = npcId(npc); renderAll(false); }
-      } } },
-        h('span.sev.' + d.severity, d.severity), fresh.has(d) ? h('span.new', 'new') : null,
-        h('span', d.message), h('span.line', f && d.start !== undefined ? `${d.file}:${f.lineOf(d.start) + 1}` : d.file || '')));
+      const npcOf = () => d.npcKey && S.ws.chars.npcs.find(n => n.key === d.npcKey && n.file === d.file);
+      el.appendChild(diagRow(d, { isNew: fresh.has(d), where: f && d.start !== undefined ? `${d.file}:${f.lineOf(d.start) + 1}` : d.file || '',
+        on: { click: () => { const npc = npcOf(); if (npc) { S.sel = npcId(npc); renderAll(false); } } } }));
     }
   }
 

@@ -10,6 +10,8 @@
     'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt',
     ...FRE.DEFINE_FILES,
   ];
+  // Read when present, never required (context only).
+  const OPTIONAL = ['Exchange_Script.txt'];
   const EDITABLE = new Set(FRE.character.CHARACTER_FILES.map(n => n.toLowerCase()));
 
   class Workspace {
@@ -27,6 +29,10 @@
       const spec = this.files.get('spec_item.txt');
       this.items = spec ? FRE.specItem.loadSpecItem(spec, { defines: this.defines.defines, strings: this.strings.map })
         : { items: new Map(), rows: [], diags: [], stopped: null };
+      // exchange menus (MMI_ names at the start of a line in Exchange_Script.txt), for display only
+      const ex = this.files.get('exchange_script.txt');
+      this.exchangeMenus = new Set(ex ? (ex.text.match(/^MMI_\w+/gm) || []) : []);
+      this.vendorIndex = FRE.vendorSim.buildIndex(this.items, this.defines.defines);
       this.reparse();
       this.baseline = this.keyCounts(this.diags);
       return this;
@@ -34,7 +40,12 @@
 
     reparse() {
       this.chars = FRE.character.loadCharacters(this.files, { defines: this.defines.defines, strings: this.strings.map });
-      const charDiags = FRE.validateCharacters(this.chars, { items: this.items.items, defines: this.defines.defines });
+      this._sim = new Map();
+      const charDiags = FRE.validateCharacters(this.chars, {
+        items: this.items.items, defines: this.defines.defines,
+        simulate: npc => this.simulate(npc),
+        textOf: name => (this.files.get(name.toLowerCase()) || { text: '' }).text,
+      });
       const itemDiags = this.items.diags.map(d => Object.assign({}, d, { key: `${d.code}|${d.file}|${d.name || d.message}` }));
       this.diags = [...charDiags, ...itemDiags];
     }
@@ -65,6 +76,12 @@
       const name = this.redoStack.pop(); if (!name) return null;
       const label = this.files.get(name).redo();
       this.history.push(name); this.reparse(); return label;
+    }
+
+    // What players see in this NPC's shop (cached until the next edit).
+    simulate(npc) {
+      if (!this._sim.has(npc)) this._sim.set(npc, FRE.vendorSim.simulateNpc(this.vendorIndex, npc));
+      return this._sim.get(npc);
     }
 
     dirtyFiles() { return [...this.files.values()].filter(f => f.dirty); }
@@ -113,6 +130,7 @@
   }
 
   Workspace.REQUIRED = REQUIRED;
+  Workspace.OPTIONAL = OPTIONAL;
   Workspace.EDITABLE = EDITABLE;
   FRE.Workspace = Workspace;
 })(globalThis.FRE = globalThis.FRE || {});

@@ -45,7 +45,6 @@
           message: `${npc.key}: no "{" after the name; the server silently uses "${npc.braceTok.text}" as the brace (works by accident)` }, at));
       }
       let shopCount = 0;
-      const fixedPerTab = [0, 0, 0, 0];
       for (const rec of npc.statements) {
         if (rec.hang) {
           add(Object.assign({ code: 'C_HANG', severity: 'BLOCK', start: rec.start, end: rec.end, key: `C_HANG|${npc.file}|${npc.key}|${rec.cmd}`,
@@ -80,7 +79,6 @@
               key: `C_ITEM|${npc.file}|${npc.key}|${itemName}`,
               message: `${npc.key}: ${itemName} is not a loaded item in Spec_Item.txt; the shop silently skips it` }, at));
           }
-          if (slotArg && slotArg.value >= 0 && slotArg.value < MAX_TAB) fixedPerTab[slotArg.value]++;
           if (e.kind === 'fixed' && e.cost) {
             const c = e.cost.value;
             if (c <= 0) add(Object.assign({ code: 'C_PRICE_ZERO', severity: 'WARN', start: rec.start, end: rec.end,
@@ -101,14 +99,32 @@
           }
         }
       }
-      fixedPerTab.forEach((n, tab) => {
-        if (n > MAX_TAB_ITEMS) add(Object.assign({ code: 'C_TAB_FULL', severity: 'WARN', start: npc.start, end: npc.keyEnd,
-          key: `C_TAB_FULL|${npc.file}|${npc.key}|${tab}`,
-          message: `${npc.key}: tab ${tab} lists ${n} fixed items; a tab holds ${MAX_TAB_ITEMS}, the rest are dropped` }, at));
-      });
+      // What the server really puts in each tab (generated rules + fixed items, 100 max)
+      const sim = ctx.simulate ? ctx.simulate(npc) : null;
+      if (sim) {
+        sim.tabs.forEach((tab, t) => {
+          const full = tab.dropped.filter(d => d.reason === 'tab full');
+          const overflow = tab.rules.reduce((n, r) => n + Math.max(0, (r.matched || 0) - (r.added || 0)), 0);
+          if (full.length || overflow) {
+            const names = full.map(d => (d.prop && d.prop.item.define) || d.rec.cmd).slice(0, 5).join(', ');
+            add(Object.assign({ code: 'C_TAB_FULL', severity: 'WARN', start: npc.start, end: npc.keyEnd, key: `C_TAB_FULL|${npc.file}|${npc.key}|${t}`,
+              message: `${npc.key}: tab ${t} would hold more than ${MAX_TAB_ITEMS} items; ${overflow + full.length} are left out${names ? ' (' + names + (full.length > 5 ? ', …' : '') + ')' : ''}` }, at));
+          }
+          for (const r of tab.rules) {
+            if (!r.empty) continue;
+            const ik3 = r.rec.args.ik3.define || r.rec.args.ik3.value;
+            add(Object.assign({ code: 'C_RULE_EMPTY', severity: 'INFO', start: r.rec.start, end: r.rec.end,
+              key: `C_RULE_EMPTY|${npc.file}|${npc.key}|${t}|${ik3}|${r.rec.args.rareMin.value}-${r.rec.args.rareMax.value}`,
+              message: `${npc.key}: ${r.rec.cmd}(${t}, ${ik3}, rarity ${r.rec.args.rareMin.value}-${r.rec.args.rareMax.value}) matches no item; the server logs a VENDORITEM error and adds nothing` }, at));
+          }
+        });
+      }
       if (shopCount && tradeMenu !== undefined && !npc.menus.includes(tradeMenu)) {
-        add(Object.assign({ code: 'C_NO_TRADE', severity: 'WARN', start: npc.start, end: npc.keyEnd, key: `C_NO_TRADE|${npc.file}|${npc.key}`,
-          message: `${npc.key}: has shop items but no AddMenu(MMI_TRADE) (to verify: players may not be able to open the shop)` }, at));
+        const text = ctx.textOf ? ctx.textOf(npc.file) : '';
+        const disabled = /\/\/[ \t]*AddMenu[ \t]*\([ \t]*MMI_TRADE/.test(text.slice(npc.start, npc.end));
+        add(Object.assign({ code: 'C_NO_TRADE', severity: 'INFO', start: npc.start, end: npc.keyEnd, key: `C_NO_TRADE|${npc.file}|${npc.key}`,
+          message: `${npc.key}: players can't buy here: shop items but no Trade menu (the buy code requires MMI_TRADE)` +
+            (disabled ? '. The Trade menu is commented out in this NPC, so it was disabled on purpose.' : '') }, at));
       }
     }
 

@@ -78,6 +78,8 @@
     ok($('editor').textContent.includes('Lui'), 'Lui selected');
     click(btnByText(document.querySelector('.tabs'), 'Magic Tools'));
     ok($('editor').textContent.includes('II_GEN_FOO_COO_DDUKGUKHOT'), 'tab 1 shows the existing AddShopItem');
+    ok(/Players see in this tab \(11\/100\)/.test($('editor').textContent), '"Players see" lists 11 items for Lui tab 1');
+    ok($('editor').textContent.includes('Refresher'), 'rules show readable type names');
     if (STOP === 'loaded') return;
 
     const search = $('item-search');
