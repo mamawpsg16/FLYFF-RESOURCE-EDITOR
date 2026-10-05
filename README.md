@@ -40,12 +40,13 @@ Safety rules the editor enforces (details in [docs/DESIGN.md](docs/DESIGN.md)):
 ### Testing on a copy
 `test-data/Resource/` (git-ignored) holds copies of the files the editor reads. Refresh them with:
 ```
-mkdir -p test-data/Resource && cp -p ../FLYFF-V19-SOURCE/Server/Resource/{Masquerade.prj,character*.inc,character*.txt.txt,Spec_Item.txt,propItem.txt.txt,propMover.txt,propMover.txt.txt,propMoverEx.inc,define*.h,ResData.h,WndStyle.h,lang.h,ContinentDef.h} test-data/Resource/
+mkdir -p test-data/Resource && cp -p ../FLYFF-V19-SOURCE/Server/Resource/{Masquerade.prj,character*.inc,character*.txt.txt,Spec_Item.txt,propItem.txt.txt,propMover.txt,propMover.txt.txt,propMoverEx.inc,DonationShop.inc,BattlePass.inc,Exchange_Script.txt,define*.h,ResData.h,WndStyle.h,lang.h,ContinentDef.h} test-data/Resource/
 ```
 
 ## Docs
 - [docs/INVESTIGATION.md](docs/INVESTIGATION.md): how the server actually parses each file, and the encoding forensics.
 - [docs/DESIGN.md](docs/DESIGN.md): file model, save/backup pipeline, validation rules, architecture.
+- [docs/ROADMAP.md](docs/ROADMAP.md): what's done, what's next (shop-type switch, Donation Shop, Battle Pass, Exchanges, drops).
 
 ## Roadmap
 1. ~~Build 1: NPC shops~~

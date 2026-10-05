@@ -1,20 +1,40 @@
-// Build 1 UI: NPC Shop Editor. All data changes go through Workspace.apply()
-// with splices from FRE.shopOps; everything shown is re-derived from the file
-// text after each edit.
+// App shell: toolbar (mode switch, load, save, backup, undo), the left list and
+// centre editor of the active module, the shared item database, the problems
+// panel and the save flow. Editors live in ui/<module>.js (FRE.ui.modules).
+// Every data change goes through Workspace.apply() with splices; everything
+// shown is re-derived from the file text after each edit.
 (function (FRE) {
   'use strict';
   const { h, $, fmt, toast, modal } = FRE.dom;
+  const { diagRow } = FRE.ui;
   const ROW_H = 40;
 
   const S = {
-    ws: null, resDir: null, backupDir: null,
-    sel: null, tab: 0, shopsOnly: true, npcQuery: '',
-    items: [], filtered: [], rarity: new Set(), ik1: '', ik3: '', itemQuery: '',
+    ws: null, resDir: null, backupDir: null, mode: 'npc',
+    queries: {}, items: [], filtered: [], rarity: new Set(), ik1: '', ik3: '', itemQuery: '',
     edited: new Set(), diagOpen: false,
   };
-  const npcId = npc => `${npc.file}|${npc.key}`;
-  const selNpc = () => S.ws && S.sel ? S.ws.chars.npcs.find(n => npcId(n) === S.sel) || null : null;
-  const isShopNpc = npc => npc.statements.some(r => FRE.character.shopEntry(r)) || npc.venderType > 0;
+  const modules = () => FRE.ui.modules;
+  const active = () => modules().find(m => m.id === S.mode) || modules()[0];
+
+  // Context handed to modules
+  const ctx = {
+    get ws() { return S.ws; },
+    get query() { return S.queries[S.mode] || ''; },
+    get edited() { return S.edited; },
+    renderAll: (withItems) => renderAll(withItems),
+    renderList: () => renderList(),
+    // Apply an edit op: make(text) -> splices. `key` marks what was edited (list badges).
+    edit(lowerFile, make, label, key) {
+      const f = S.ws.files.get(lowerFile);
+      try {
+        const splices = make(f.text);
+        S.ws.apply(lowerFile, splices, label);
+        if (key) S.edited.add(key);
+      } catch (e) { toast(e.message, 'bad'); }
+      renderAll(false);
+    },
+  };
 
   // ------------------------------------------------------------------ loading
   async function pickResource() {
@@ -27,8 +47,8 @@
   async function loadFrom(dir) {
     if (S.ws && S.ws.dirtyFiles().length && !confirm('Discard unsaved changes and load another folder?')) return;
     if (!(await FRE.fsa.ensurePermission(dir))) { toast('Permission to the folder was not granted.', 'bad'); return; }
-    const found = await FRE.fsa.findFiles(dir, [...FRE.Workspace.REQUIRED, ...FRE.Workspace.OPTIONAL]);
-    for (const must of ['masquerade.prj', 'character.inc', 'spec_item.txt']) {
+    const found = await FRE.fsa.findFiles(dir, FRE.Workspace.ALL_FILES);
+    for (const must of ['masquerade.prj', 'spec_item.txt']) {
       if (!found.has(must)) {
         toast(`"${dir.name}" does not look like Server/Resource (no ${must}). Nothing was loaded.`, 'bad');
         return;
@@ -45,8 +65,8 @@
     S.edited.clear();
     FRE.fsa.remember('resource', dir);
     buildItems();
-    const first = S.ws.chars.npcs.find(isShopNpc);
-    S.sel = first ? npcId(first) : null; S.tab = 0;
+    for (const m of modules()) if (S.ws.available[m.id] && S.ws.available[m.id].ok && m.onLoad) m.onLoad(ctx);
+    if (!S.ws.available[S.mode].ok) S.mode = (modules().find(m => S.ws.available[m.id].ok) || modules()[0]).id;
     renderAll();
     toast(`Loaded ${files.size} files from "${dir.name}" in ${Math.round(performance.now() - t0)} ms`, 'ok');
   }
@@ -63,34 +83,33 @@
     } catch (e) { if (e.name !== 'AbortError') toast(e.message, 'bad'); return false; }
   }
 
-  // ------------------------------------------------------------------ editing
-  function edit(npc, makeSplices, label) {
-    const f = S.ws.fileOfNpc(npc);
-    try {
-      const splices = makeSplices(f.text);
-      S.ws.apply(f.name.toLowerCase(), splices, label);
-      S.edited.add(npcId(npc));
-    } catch (e) { toast(e.message, 'bad'); }
-    renderAll(false);
-  }
-
-  function addItemToSelected(info) {
-    const npc = selNpc();
-    if (!npc) { toast('Select an NPC first.', 'bad'); return; }
-    const p = $('new-price').value.trim();
-    const cost = p === '' ? null : Number(p);
-    edit(npc, text => FRE.shopOps.addItem(text, npc, S.tab, info.define, cost), `add ${info.define}`);
-  }
-
   function undo() { if (S.ws && S.ws.undo() !== null) renderAll(false); }
   function redo() { if (S.ws && S.ws.redo() !== null) renderAll(false); }
 
+  function setMode(id) {
+    S.mode = id;
+    $('list-search').value = S.queries[id] || '';
+    renderAll(false);
+  }
+
   // ------------------------------------------------------------------ rendering
   function renderAll(withItems = true) {
-    renderToolbar(); renderBanners(); renderNpcList(); renderEditor();
+    renderToolbar(); renderBanners(); renderModes(); renderList(); renderEditor();
     if (withItems) renderItemFilters();
     renderItems();
     if (S.diagOpen) renderDiagPanel();
+  }
+
+  function renderModes() {
+    const el = $('mode-tabs'); el.textContent = '';
+    for (const m of modules()) {
+      const av = S.ws ? S.ws.available[m.id] : { ok: false, missing: [] };
+      el.appendChild(h('button.mode' + (m.id === S.mode ? '.sel' : ''), {
+        disabled: !S.ws || !av.ok,
+        title: !S.ws ? 'Load a folder first' : av.ok ? m.label : `Not available: missing ${av.missing.join(', ')}`,
+        on: { click: () => setMode(m.id) },
+      }, m.label));
+    }
   }
 
   function renderToolbar() {
@@ -104,12 +123,14 @@
     $('btn-backup').disabled = !ws;
     const fs = $('file-status'); fs.textContent = '';
     if (ws) {
-      const chip = (label, lower) => {
+      const shown = new Set(['spec_item.txt', 'propitem.txt.txt']);
+      for (const m of FRE.Workspace.MODULES) m.editable.forEach(n => shown.add(n.toLowerCase()));
+      for (const lower of shown) {
         const f = ws.files.get(lower);
-        const cls = !f ? 'missing' : f.readOnly ? 'ro' : f.dirty ? 'ok.dirty' : 'ok';
-        fs.appendChild(h('span.file-chip.' + cls, { title: f ? (f.readOnly ? f.readOnlyReasons.join('\n') : `${f.kind}, ${fmt(f.bytes.length)} bytes`) : 'not found' }, label + (f && f.dirty ? ' •' : '')));
-      };
-      ['character.inc', 'character-etc.inc', 'character-school.inc', 'Spec_Item.txt', 'propItem.txt.txt', 'character.txt.txt'].forEach(n => chip(n, n.toLowerCase()));
+        if (!f) continue;
+        const cls = f.readOnly ? 'ro' : f.dirty ? 'ok.dirty' : 'ok';
+        fs.appendChild(h('span.file-chip.' + cls, { title: f.readOnly ? f.readOnlyReasons.join('\n') : `${f.kind}, ${fmt(f.bytes.length)} bytes` }, f.name + (f.dirty ? ' •' : '')));
+      }
       const nd = FRE.DEFINE_FILES.filter(n => ws.files.has(n.toLowerCase())).length;
       fs.appendChild(h('span.file-chip.' + (nd === FRE.DEFINE_FILES.length ? 'ok' : 'missing'), { title: ws.defines.missing.join(', ') || 'all define headers found' }, `defines ${nd}/${FRE.DEFINE_FILES.length}`));
       const nb = ws.newBlocking().length;
@@ -123,173 +144,33 @@
   function renderBanners() {
     const el = $('banners'); el.textContent = '';
     const add = (cls, ...c) => el.appendChild(h('div.banner.' + cls, ...c));
-    if (!FRE.fsa.supported()) add('bad', 'This browser cannot open folders (File System Access API). Use Chrome or Edge.');
+    if (!FRE.fsa.supported()) add('bad', 'This browser cannot open folders (File System Access API). Use Chrome or Edge (in Brave: enable brave://flags/#file-system-access-api).');
     if (!S.ws) return;
     const ws = S.ws;
     if (ws.missing.length) add('bad', `Missing files: ${ws.missing.join(', ')}`);
     for (const f of ws.files.values()) if (f.readOnly) add('bad', `🔒 ${f.name} is READ-ONLY: ${f.readOnlyReasons.join('; ')}`);
     if (ws.items.stopped) add('bad', `Spec_Item.txt: the server stops loading items at offset ${ws.items.stopped.start}; later items are missing.`);
     if (S.resDir && S.resDir.name.toLowerCase() !== 'resource') add('info', `Editing folder "${S.resDir.name}" (a test copy?).`);
-    add('info', 'Only Server/Resource is edited. The game client reads its own copy: after saving, also copy the changed character*.inc files to Client/ so shop lists and prices match. Restart the WorldServer to apply.');
+    const mod = FRE.Workspace.MODULES.find(m => m.id === S.mode);
+    add('info', `Only Server/Resource is edited. The game client reads its own copy of ${mod ? mod.client.join(', ') : 'these files'}: after saving, copy the changed files to Client/ too. Restart the WorldServer to apply.`);
   }
 
-  function renderNpcList() {
-    const el = $('npc-list'); el.textContent = '';
-    if (!S.ws) return;
-    const q = S.npcQuery.toLowerCase();
-    const diagBy = new Map();
-    for (const d of S.ws.diags) if (d.npcKey) {
-      const k = `${d.file}|${d.npcKey}`; const o = diagBy.get(k) || { w: 0, b: 0 };
-      if (d.severity === 'BLOCK') o.b++; else if (d.severity === 'WARN') o.w++;
-      diagBy.set(k, o);
-    }
-    const frag = document.createDocumentFragment();
-    let shown = 0;
-    for (const npc of S.ws.chars.npcs) {
-      if (S.shopsOnly && !isShopNpc(npc)) continue;
-      const label = npc.name || npc.key;
-      if (q && !label.toLowerCase().includes(q) && !npc.key.toLowerCase().includes(q)) continue;
-      const id = npcId(npc), dg = diagBy.get(id);
-      shown++;
-      frag.appendChild(h('div.npc' + (id === S.sel ? '.sel' : ''), { on: { click: () => { S.sel = id; S.tab = 0; renderAll(false); } } },
-        h('div.n', h('span', label),
-          h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : null,
-            S.edited.has(id) ? h('span.tag.edit', 'edited') : null,
-            dg && dg.b ? h('span.tag.bad', '⛔' + dg.b) : dg && dg.w ? h('span.tag.warn', '⚠' + dg.w) : null)),
-        h('div.k', `${npc.key} · ${npc.file}`)));
-    }
-    if (!shown) frag.appendChild(h('div.pad.muted', 'No NPCs match.'));
-    el.appendChild(frag);
-  }
-
-  function itemLabel(id) {
-    const it = S.ws.itemById(id);
-    if (!it) return { name: '(not in Spec_Item.txt)', rarity: '', info: null };
-    const info = S.ws.itemInfo(it);
-    return { name: info.name, rarity: info.rarity, info };
-  }
-
-  function diagsIn(npc, rec) {
-    return S.ws.diags.filter(d => d.file === npc.file && d.start !== undefined && (rec ? (d.start >= rec.start && d.start < Math.max(rec.end, rec.start + 1)) : d.npcKey === npc.key));
-  }
-  function diagTags(list) {
-    return list.map(d => h('span.tag.' + (d.severity === 'BLOCK' ? 'bad' : 'warn'), { title: d.message }, (d.severity === 'BLOCK' ? '⛔ ' : '⚠ ') + d.code));
+  function renderList() {
+    const el = $('list'); el.textContent = '';
+    const extra = $('list-extra'); extra.textContent = '';
+    if (!S.ws || !S.ws.available[S.mode].ok) return;
+    const m = active();
+    $('list-search').placeholder = m.searchPlaceholder || 'Search';
+    if (m.listExtra) { const x = m.listExtra(ctx); if (x) extra.appendChild(x); }
+    m.renderList(el, ctx);
   }
 
   function renderEditor() {
     const el = $('editor');
-    const npc = selNpc();
-    if (!S.ws || !npc) { if (S.ws) { el.className = 'empty-state'; el.innerHTML = '<p>Select an NPC on the left.</p>'; } return; }
+    if (!S.ws) return;
     el.className = ''; el.textContent = '';
-    const f = S.ws.fileOfNpc(npc);
-    const canEdit = S.ws.isEditable(f.name.toLowerCase());
-    const chip = npc.venderType === 1 || npc.venderType === 2;
-    const entries = npc.statements.map(r => ({ r, e: FRE.character.shopEntry(r) })).filter(x => x.e);
-    const D0 = S.ws.defines;
-
-    el.appendChild(h('div.npc-title', h('h2', npc.name || npc.key), h('span.def', npc.key),
-      h('span.line', `${npc.file}:${f.lineOf(npc.start) + 1}`),
-      chip ? h('span.tag.chip', npc.venderType === 1 ? 'Red Chip shop' : 'Donate Chip shop') : h('span.tag', 'Penya shop'),
-      canEdit ? null : h('span.tag.bad', 'read-only')));
-    const menus = npc.menus.map(v => D0.byValue('MMI_', v) || String(v));
-    if (menus.length) el.appendChild(h('div.menus', 'Menus: ', menus.map(m => S.ws.exchangeMenus.has(m)
-      ? h('span.tag.exch', { title: `${m} is an item exchange defined in Exchange_Script.txt (not editable here yet)` }, `${pretty(m)} ⇄ exchange`)
-      : h('span.tag', { title: m }, pretty(m)))));
-
-    const tabs = h('div.tabs');
-    for (let t = 0; t < 4; t++) {
-      const n = entries.filter(x => x.e.slot === t).length;
-      tabs.appendChild(h('button' + (t === S.tab ? '.sel' : ''), { on: { click: () => { S.tab = t; renderEditor(); renderItems(); } } },
-        npc.slotTitles[t] || `Tab ${t}`, h('span.count', n ? `(${n})` : '')));
-    }
-    el.appendChild(tabs);
-
-    // fixed items (AddShopItem / AddVenderItem2)
-    const fixed = entries.filter(x => (x.e.kind === 'fixed' || x.e.kind === 'chip') && x.e.slot === S.tab);
-    el.appendChild(h('h3', chip ? 'Chip items (AddVenderItem2)' : 'Fixed items (AddShopItem)'));
-    if (!fixed.length) el.appendChild(h('p.muted', 'None in this tab. Use + in the item list on the right to add one.'));
-    else {
-      const tb = h('table', h('tr', h('th', 'Item'), h('th', 'Define'), h('th.num', chip ? 'Chip price' : 'Price'), h('th', 'Tab'), h('th', ''), h('th', '')));
-      for (const { r, e } of fixed) {
-        const id = e.item.value >>> 0;
-        const lab = itemLabel(id);
-        const def = e.item.define || f.text.slice(e.item.start, e.item.end);
-        let priceCell;
-        if (e.kind === 'chip') priceCell = h('td.num', lab.info ? fmt(lab.info.chipCost) : '');
-        else {
-          const inp = h('input', { type: 'number', min: 0, step: 1, value: e.cost ? e.cost.value : '', placeholder: lab.info ? fmt(lab.info.cost) + ' (item)' : '', disabled: !canEdit,
-            title: 'Empty = the item\'s own price from Spec_Item.txt. A price here changes the item\'s price everywhere (server-wide).',
-            on: { change: ev => { const v = ev.target.value.trim(); edit(npc, text => FRE.shopOps.setCost(text, r, v === '' ? null : Number(v)), 'price'); } } });
-          priceCell = h('td.num', inp);
-        }
-        const sel = h('select', { disabled: !canEdit, on: { change: ev => edit(npc, text => FRE.shopOps.setSlot(text, r, Number(ev.target.value)), 'move tab') } },
-          [0, 1, 2, 3].map(t => h('option', { value: t, selected: t === e.slot }, String(t))));
-        tb.appendChild(h('tr', h('td', h('span.r-' + lab.rarity, lab.name), ' ', diagTags(diagsIn(npc, r))),
-          h('td.def', def), priceCell, h('td', sel), h('td.line', 'L' + (f.lineOf(r.start) + 1)),
-          h('td', h('button.icon.danger', { disabled: !canEdit, title: 'Remove', on: { click: () => edit(npc, text => FRE.shopOps.removeStatement(text, r), `remove ${def}`) } }, '✕'))));
-      }
-      el.appendChild(tb);
-    }
-
-    // generated stock rules (read-only in Build 1)
-    const gen = entries.filter(x => x.e.kind === 'generated' && x.e.slot === S.tab);
-    const tabSim = S.ws.simulate(npc).tabs[S.tab];
-    const D = S.ws.defines;
-    if (gen.length) {
-      el.appendChild(h('h3', 'Generated stock rules (AddVendorItem) · read-only'));
-      el.appendChild(h('p.muted.small', 'Each rule adds every sellable item of that type whose rarity (dwItemRare) is in the range. The server fills the shop from these rules at startup.'));
-      const tb = h('table', h('tr', h('th', 'Item type'), h('th', 'Job'), h('th.num', 'Rarity'), h('th.num', 'Adds'), h('th', '')));
-      for (const { r, e } of gen) {
-        const ik3 = e.ik3.define || D.byValue('IK3_', e.ik3.value) || String(e.ik3.value);
-        const job = e.job.value === -1 ? 'any job' : (e.job.define || D.byValue('JOB_', e.job.value) || String(e.job.value));
-        const res = tabSim.rules.find(x => x.rec === r) || {};
-        const adds = e.lang ? 'other language only' : res.empty ? 'nothing (no item matches)' : `${res.added} item${res.added === 1 ? '' : 's'}`;
-        tb.appendChild(h('tr', h('td', pretty(ik3), ' ', h('span.def', ik3), ' ', diagTags(diagsIn(npc, r))), h('td', pretty(job)),
-          h('td.num', `${e.rareMin.value}–${e.rareMax.value}`),
-          h('td.num', { title: `The last argument (${e.count.value}) is read but ignored by the server; a tab holds at most 100 items.` }, adds),
-          h('td.line', 'L' + (f.lineOf(r.start) + 1))));
-      }
-      el.appendChild(tb);
-    }
-
-    // what the server actually puts in this tab
-    el.appendChild(h('h3', `Players see in this tab (${tabSim.entries.length}/100)`));
-    if (!tabSim.entries.length) el.appendChild(h('p.muted', 'Nothing.'));
-    else {
-      const tb = h('table', h('tr', h('th.num', '#'), h('th', 'Item'), h('th', 'Define'), h('th.num', chip ? 'Chip price' : 'Price'), h('th', 'From')));
-      tabSim.entries.forEach((en, i) => {
-        const info = S.ws.itemInfo(en.prop.item);
-        const price = chip ? `${fmt(info.chipCost)} ${npc.venderType === 2 ? 'Donate' : 'Red'} chips`
-          : (en.kind === 'fixed' && en.source.args.cost ? fmt(en.source.args.cost.value) : fmt(info.cost));
-        tb.appendChild(h('tr', h('td.num.line', i + 1), h('td', h('span.r-' + info.rarity, info.name)), h('td.def', info.define),
-          h('td.num', { title: chip ? '' : 'Base price before the server shop-rate multipliers' }, price),
-          h('td.line', `${en.kind === 'generated' ? 'rule' : en.kind === 'chip' ? 'chip item' : 'fixed'} L${f.lineOf(en.source.start) + 1}`)));
-      });
-      el.appendChild(tb);
-    }
-    if (tabSim.dropped.length) {
-      el.appendChild(h('p.small', { style: 'color:var(--warn)' }, `Left out: ` + tabSim.dropped.map(d => `${d.prop ? d.prop.item.define : d.rec.cmd} (${d.reason})`).join(', ')));
-    }
-
-    const nd = diagsIn(npc, null);
-    if (nd.length) {
-      el.appendChild(h('h3', 'Problems for this NPC'));
-      nd.forEach(d => el.appendChild(diagRow(d)));
-    }
-  }
-
-  // 'IK3_COLLECTER' -> 'Collecter', 'JOB_MERCENARY' -> 'Mercenary'
-  function pretty(def) {
-    if (!/^[A-Z0-9]+_/.test(def)) return def;
-    return def.replace(/^[A-Z0-9]+_/, '').toLowerCase().replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
-  }
-
-  function diagRow(d, extra) {
-    const help = FRE.diagHelp[d.code];
-    return h('div.diag', extra && extra.on ? { on: extra.on } : null,
-      h('span.sev.' + d.severity, d.severity), extra && extra.isNew ? h('span.new', 'new') : null,
-      h('div', h('div', d.message), help ? h('div.help', `ⓘ ${help[0]} → ${help[1]}`) : null),
-      extra && extra.where ? h('span.line', extra.where) : null);
+    if (!S.ws.available[S.mode].ok) { el.appendChild(h('p.empty-state', `Not available: missing ${S.ws.available[S.mode].missing.join(', ')}`)); return; }
+    active().renderEditor(el, ctx);
   }
 
   // ------------------------------------------------------------------ item database
@@ -321,19 +202,31 @@
   }
 
   function renderItems() {
-    const list = $('item-list');
     if (!S.ws) return;
     applyItemFilter();
     $('item-spacer').style.height = S.filtered.length * ROW_H + 'px';
     $('item-count').textContent = `${fmt(S.filtered.length)} of ${fmt(S.items.length)} items`;
+    const target = S.ws.available[S.mode].ok ? active().addTarget(ctx) : { ok: false, title: '' };
+    $('new-price-row').hidden = !(target.ok && target.usesPrice);
     paintItems();
+  }
+
+  function addFromDb(info) {
+    const target = active().addTarget(ctx);
+    if (!target.ok) { toast(target.title, 'bad'); return; }
+    let cost = null;
+    if (target.usesPrice) {
+      const parsed = FRE.num.parseAmount($('new-price').value);
+      if (!parsed.ok) { toast('Price for new items: ' + parsed.error, 'bad'); return; }
+      cost = parsed.value;
+    }
+    target.add(info, cost);
   }
 
   function paintItems() {
     const list = $('item-list');
     [...list.querySelectorAll('.item')].forEach(n => n.remove());
-    const npc = selNpc();
-    const canAdd = npc && S.ws.isEditable(npc.file.toLowerCase());
+    const target = S.ws.available[S.mode].ok ? active().addTarget(ctx) : { ok: false, title: '' };
     const from = Math.max(0, Math.floor(list.scrollTop / ROW_H) - 5);
     const to = Math.min(S.filtered.length, from + Math.ceil(list.clientHeight / ROW_H) + 10);
     const frag = document.createDocumentFragment();
@@ -341,11 +234,11 @@
       const it = S.filtered[i];
       const atk = it.atkMax > 0 ? `${it.atkMin}–${it.atkMax}` : '';
       frag.appendChild(h('div.item', { style: `top:${i * ROW_H}px` },
-        h('div.nm', { title: `${it.name}\n${it.define} (${it.id})\nprice ${fmt(it.cost)}` }, h('span.r-' + it.rarity, it.name), h('span.def', it.define)),
+        h('div.nm', { title: `${it.name}\n${it.define} (${it.id})\nprice ${fmt(it.cost)} Penya · chip price ${it.chipCost > 0 ? fmt(it.chipCost) : 'none'}` }, h('span.r-' + it.rarity, it.name), h('span.def', it.define)),
         h('div.ty', { title: it.ik3Name || '' }, (it.ik3Name || '').replace(/^IK3_/, '')),
         h('div.num', it.level > 0 ? it.level : ''),
         h('div.num', atk),
-        h('button', { disabled: !canAdd, title: npc ? `Add to ${npc.name || npc.key}, tab ${S.tab}` : 'Select an NPC first', on: { click: () => addItemToSelected(it) } }, '+')));
+        h('button', { disabled: !target.ok, title: target.title, on: { click: () => addFromDb(it) } }, '+')));
     }
     list.appendChild(frag);
   }
@@ -362,10 +255,17 @@
     el.appendChild(h('div.pad.muted.small', `${list.length} problem(s). Blocking problems introduced by your edits (⛔ new) prevent saving; problems that were already in the files are shown for information.`));
     for (const d of list) {
       const f = S.ws.files.get((d.file || '').toLowerCase());
-      const npcOf = () => d.npcKey && S.ws.chars.npcs.find(n => n.key === d.npcKey && n.file === d.file);
       el.appendChild(diagRow(d, { isNew: fresh.has(d), where: f && d.start !== undefined ? `${d.file}:${f.lineOf(d.start) + 1}` : d.file || '',
-        on: { click: () => { const npc = npcOf(); if (npc) { S.sel = npcId(npc); renderAll(false); } } } }));
+        on: { click: () => locate(d) } }));
     }
+  }
+
+  function locate(d) {
+    const dm = S.ws.moduleOfFile(d.file || '');
+    const m = dm && modules().find(x => x.id === dm.id);
+    if (!m || !m.locate || !m.locate(d, ctx)) return;
+    S.mode = m.id;
+    renderAll(false);
   }
 
   // ------------------------------------------------------------------ save
@@ -384,14 +284,14 @@
     });
     return box;
   }
+  FRE.ui.renderDiff = renderDiff;
 
   async function onSave() {
     const ws = S.ws;
     if (!ws || !ws.dirtyFiles().length) return;
     const nb = ws.newBlocking();
     if (nb.length) {
-      modal({ title: '⛔ Cannot save: your edits introduced blocking problems',
-        body: h('div', nb.map(d => h('div.diag', h('span.sev.BLOCK', 'BLOCK'), h('span', d.message)))) });
+      modal({ title: '⛔ Cannot save: your edits introduced blocking problems', body: h('div', nb.map(d => diagRow(d))) });
       return;
     }
     if (!S.backupDir) {
@@ -404,11 +304,12 @@
 
     const dirty = ws.dirtyFiles();
     const warns = ws.diags.filter(d => d.severity === 'WARN');
+    const client = ws.clientCopiesNeeded();
     const body = h('div',
       h('p', `These lines will change. Everything else in the file${dirty.length > 1 ? 's' : ''} stays byte-for-byte identical.`),
       dirty.map(f => [h('h3', `${f.name}`), renderDiff(f)]),
       warns.length ? h('p.muted', `${warns.length} warning(s) (not blocking) — see the problems panel.`) : null,
-      h('p.muted.small', `Backup folder: ${S.backupDir.name}/<timestamp>/ · Remember to copy changed character*.inc files to Client/.`));
+      h('p.muted.small', `Backup folder: ${S.backupDir.name}/<timestamp>/` + (client.length ? ` · After saving, also copy to Client/: ${client.join(', ')}` : '')));
     modal({ title: `Review changes (${dirty.length} file${dirty.length > 1 ? 's' : ''})`, body, wide: true, buttons: [
       { label: 'Cancel' },
       { label: `Back up and write ${dirty.length} file${dirty.length > 1 ? 's' : ''}`, cls: 'primary', onClick: runSave },
@@ -417,11 +318,16 @@
 
   async function runSave() {
     const log = h('div.log');
+    const client = S.ws.clientCopiesNeeded();
     const m = modal({ title: 'Saving…', body: log, buttons: [{ label: 'Close' }] });
     const report = await FRE.save.save(S.ws, S.backupDir, msg => log.appendChild(document.createTextNode(msg + '\n')))
       .catch(e => ({ ok: false, steps: [String(e && e.message || e)] }));
     if (!report.ok) log.appendChild(h('div', { style: 'color:var(--bad)' }, '\nNot saved: ' + (report.steps[report.steps.length - 1] || '')));
-    else { S.edited.clear(); toast('Saved. Copy changed files to Client/ and restart the WorldServer.', 'ok'); }
+    else {
+      S.edited.clear();
+      if (client.length) log.appendChild(h('div', { style: 'color:var(--warn)' }, `\nNow copy to Client/: ${client.join(', ')}`));
+      toast('Saved. Copy changed files to Client/ and restart the WorldServer.', 'ok');
+    }
     m.el.querySelector('header').textContent = report.ok ? 'Saved' : 'Save failed';
     renderAll(false);
   }
@@ -444,8 +350,7 @@
     $('btn-undo').onclick = undo;
     $('btn-redo').onclick = redo;
     $('btn-diag').onclick = () => { S.diagOpen = !S.diagOpen; renderDiagPanel(); };
-    $('npc-search').oninput = e => { S.npcQuery = e.target.value; renderNpcList(); };
-    $('npc-shops-only').onchange = e => { S.shopsOnly = e.target.checked; renderNpcList(); };
+    $('list-search').oninput = e => { S.queries[S.mode] = e.target.value; renderList(); };
     $('item-search').oninput = e => { S.itemQuery = e.target.value; $('item-list').scrollTop = 0; renderItems(); };
     $('item-ik1').onchange = e => { S.ik1 = e.target.value; S.ik3 = ''; renderItemFilters(); renderItems(); };
     $('item-ik3').onchange = e => { S.ik3 = e.target.value; renderItems(); };
@@ -462,6 +367,7 @@
       else if (k === 's') { e.preventDefault(); onSave(); }
     });
     window.addEventListener('beforeunload', e => { if (S.ws && S.ws.dirtyFiles().length) { e.preventDefault(); e.returnValue = ''; } });
+    renderModes();
     renderBanners();
     if (!FRE.fsa.supported()) { $('btn-load').disabled = true; return; }
     const last = await FRE.fsa.recall('resource');
@@ -475,6 +381,6 @@
     else if (bk) { $('backup-name').textContent = `${bk.name} (click to re-allow)`; $('btn-backup-dir').onclick = async () => { if (await FRE.fsa.ensurePermission(bk)) { S.backupDir = bk; $('btn-backup-dir').onclick = pickBackup; renderToolbar(); } else pickBackup(); }; }
   }
 
-  FRE.app = { init, state: S };
+  FRE.app = { init, state: S, ctx, setMode };
   if (typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', init);
 })(globalThis.FRE = globalThis.FRE || {});

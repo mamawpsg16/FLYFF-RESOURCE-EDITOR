@@ -99,7 +99,7 @@ table { width: 100%; border-collapse: collapse; }
 td, th { padding: 5px 8px; border-bottom: 1px solid #1f2633; text-align: left; vertical-align: middle; }
 th { font-weight: 500; color: var(--muted); font-size: 12px; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-td input[type=number] { width: 130px; text-align: right; }
+td input[type=number], td input.num-input { width: 130px; text-align: right; font-variant-numeric: tabular-nums; }
 td select { width: 70px; }
 tr.changed td:first-child { box-shadow: inset 3px 0 var(--warn); }
 .def { font-family: Consolas, monospace; font-size: 12px; color: var(--muted); }
@@ -151,6 +151,15 @@ tr.changed td:first-child { box-shadow: inset 3px 0 var(--warn); }
 .tag.exch { color: var(--baruna); border-color: #2b6672; }
 button.primary:disabled { background: var(--panel-2); border-color: var(--line); }
 
+.modes .mode { border-radius: 14px; padding: 4px 12px; }
+.modes .mode.sel { background: #1d2c47; border-color: var(--accent); }
+.def.block { display: block; font-size: 11px; }
+.rules { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0 6px; }
+.tag.rule { font-size: 11px; color: var(--text); }
+.tag.info { color: var(--muted); }
+tr.dropped td { opacity: .55; }
+select.shop-type { padding: 2px 6px; font-size: 12px; border-radius: 10px; }
+
 </style>
 </head>
 <body>
@@ -167,6 +176,7 @@ button.primary:disabled { background: var(--panel-2); border-color: var(--line);
     <button id="btn-save" class="primary" title="Save (Ctrl+S)" disabled>Save</button>
     <button id="btn-backup" title="Snapshot all loaded files into the backup folder" disabled>Backup</button>
   </div>
+  <div id="mode-tabs" class="tb-group modes"></div>
   <div id="file-status" class="tb-files"></div>
   <button id="btn-diag" class="diag-badge" title="Problems">0</button>
 </header>
@@ -174,14 +184,14 @@ button.primary:disabled { background: var(--panel-2); border-color: var(--line);
 <main id="layout">
   <aside id="left">
     <div class="panel-head">
-      <input id="npc-search" type="search" placeholder="Search NPCs" autocomplete="off">
-      <label class="check"><input id="npc-shops-only" type="checkbox" checked> shops only</label>
+      <input id="list-search" type="search" placeholder="Search" autocomplete="off">
+      <span id="list-extra"></span>
     </div>
-    <div id="npc-list" class="list"></div>
+    <div id="list" class="list"></div>
   </aside>
   <section id="center">
     <div id="editor" class="empty-state">
-      <h2>NPC Shop Editor</h2>
+      <h2>FLYFF Resource Editor</h2>
       <p>Click <b>Load Folder</b> and pick <code>FLYFF-V19-SOURCE/Server/Resource</code><br>(or a test copy such as <code>test-data/Resource</code>).</p>
       <p class="muted">Works in Chrome and Edge. Nothing is written until you press Save and confirm the changes.</p>
     </div>
@@ -200,8 +210,8 @@ button.primary:disabled { background: var(--panel-2); border-color: var(--line);
         <button class="chip" data-r="ultimate">Ultimate</button>
         <button class="chip" data-r="baruna">Baruna</button>
       </div>
-      <label class="row small">Price for new items
-        <input id="new-price" type="number" min="0" step="1" placeholder="item's own price">
+      <label class="row small" id="new-price-row">Price for new items
+        <input id="new-price" type="text" inputmode="numeric" placeholder="item's own price">
       </label>
     </div>
     <div class="item-head"><span>Name</span><span>Type</span><span>Lv</span><span>ATK</span><span></span></div>
@@ -212,7 +222,7 @@ button.primary:disabled { background: var(--panel-2); border-color: var(--line);
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 · 1c785ce';
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 · b79f374';
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -340,6 +350,43 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
     bytesToBinaryString, binaryStringToBytes, utf16leToString, stringToUtf16le,
     concatBytes, bytesEqual, scanLines, lineIndexAt, isPrintableAscii, isAllAscii, isValidUtf8,
   };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- core/num.js ----
+// Number helpers for display and input. Commas are for people only: values
+// written into resource files are always plain digits, because the server's
+// tokenizer treats ',' as a separator (a "1,000" would become two values).
+(function (FRE) {
+  'use strict';
+
+  // 1234567 -> "1,234,567"
+  function group(n) {
+    if (n === null || n === undefined || Number.isNaN(n)) return '';
+    const s = String(n);
+    const neg = s.startsWith('-');
+    const [int, frac] = (neg ? s.slice(1) : s).split('.');
+    return (neg ? '-' : '') + int.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (frac !== undefined ? '.' + frac : '');
+  }
+
+  // "25,000" / "25 000" / "25000" -> { ok: true, value: 25000 }; "" -> { ok: true, value: null }
+  function parseAmount(text, { min = 0, max = 2147483647 } = {}) {
+    const s = String(text).trim().replace(/[,\s_]/g, '');
+    if (s === '') return { ok: true, value: null };
+    if (!/^-?\d+$/.test(s)) return { ok: false, error: `"${text}" is not a whole number` };
+    const v = Number(s);
+    if (v < min || v > max) return { ok: false, error: `${group(v)} is outside ${group(min)} – ${group(max)}` };
+    return { ok: true, value: v };
+  }
+
+  // chance on a given scale -> "0.0125%"
+  function percent(value, scale) {
+    const p = (value / scale) * 100;
+    if (p === 0) return '0%';
+    const digits = p >= 1 ? 2 : Math.min(8, Math.max(2, 1 - Math.floor(Math.log10(p)) + 2));
+    return p.toFixed(digits).replace(/\.?0+$/, '') + '%';
+  }
+
+  FRE.num = { group, parseAmount, percent };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- core/sourcefile.js ----
@@ -1367,6 +1414,94 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
   FRE.vendorSim = { buildIndex, simulateNpc, expandRule, MAX_VENDOR_INVENTORY };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/donation.js ----
+// DonationShop.inc loader, ported from CProject::LoadDonationShop
+// (_Common/ProjectCmn.cpp:1845, custom __DONATIONSHOP).
+//   DONATIONSHOP { DSItem "<category>" II_x  ... }
+// Inside the block the server reads a token; on "DSItem" it reads the category
+// token and the item number, then reads one more token and loops until '}'.
+// Unknown words are skipped. The catalog is a map item -> category, so an item
+// listed twice ends up in the LAST category. Prices are not in this file: they
+// are each item's dwReferValue1 (donate chips) in Spec_Item.txt.
+(function (FRE) {
+  'use strict';
+  const { Script } = FRE.lexer;
+  const FILE = 'DonationShop.inc';
+
+  function loadDonation(file, ctx) {
+    const script = new Script(file.text, { file: file.name, defines: ctx.defines, strings: ctx.strings, diags: [] });
+    const rows = [];
+    const blocks = [];
+    let t = script.getToken();
+    while (!script.eof) {
+      if (t.text === 'DONATIONSHOP') {
+        const block = { start: t.start, open: script.getToken(), closed: false, end: t.end };
+        blocks.push(block);
+        t = script.getToken();
+        while (t.text[0] !== '}') {
+          if (t.type === 'eof') {
+            // the server's loop (`while( *scanner.token != '}' )`) never ends here
+            script.diag('DS_BRACES', 'BLOCK', `${file.name}: the DONATIONSHOP block is never closed with "}" - the server would hang at startup`, block.start, file.text.length);
+            break;
+          }
+          if (t.text === 'DSItem') {
+            const cat = script.getToken();
+            const item = script.getNumber();
+            const row = { cmd: 'DSItem', start: t.start, end: item.end, cat, category: cat.text, item, id: item.value >>> 0, define: item.define || null };
+            if (cat.type !== 'string') row.badCategory = true;
+            rows.push(row);
+          }
+          t = script.getToken();
+        }
+        block.closed = t.text[0] === '}';
+        block.end = t.end;
+      }
+      t = script.getToken();
+    }
+    // the server's map: id -> category (later rows overwrite earlier ones)
+    const catalog = new Map();
+    for (const r of rows) if (r.id !== 0) catalog.set(r.id, r);
+    const categories = [];
+    for (const r of rows) if (!categories.includes(r.category)) categories.push(r.category);
+    return { file: file.name, rows, blocks, catalog, categories, diags: script.diags };
+  }
+
+  function validateDonation(model, ctx) {
+    const out = [];
+    const add = d => out.push(Object.assign({ file: model.file, module: 'donation' }, d));
+    for (const d of model.diags) add(Object.assign({}, d, { key: `${d.code}|${d.file}|${d.name || d.message}` }));
+    if (!model.blocks.length) add({ code: 'DS_FORMAT', severity: 'BLOCK', start: 0, end: 0, key: 'DS_FORMAT|noblock', message: `${model.file} has no DONATIONSHOP { } block: the shop is empty` });
+    const seen = new Map();
+    for (const r of model.rows) {
+      const name = r.define || ctx.textOf(model.file).slice(r.item.start, r.item.end);
+      if (r.badCategory) add({ code: 'DS_FORMAT', severity: 'BLOCK', start: r.start, end: r.end, key: `DS_FORMAT|${name}|${r.category}`, itemName: name,
+        message: `DSItem ${name}: the category must be a "quoted" name (found ${r.cat.text || 'nothing'}); otherwise the values shift` });
+      if (r.id === 0) {
+        add({ code: 'DS_UNDEF', severity: 'BLOCK', start: r.start, end: r.end, key: `DS_UNDEF|${name}`, itemName: name,
+          message: `DSItem "${r.category}" ${name}: the item id is undefined or 0, so the server leaves it out (and logs an error)` });
+        continue;
+      }
+      const item = ctx.items.get(r.id);
+      if (!item) {
+        add({ code: 'DS_NO_ITEM', severity: 'BLOCK', start: r.start, end: r.end, key: `DS_NO_ITEM|${name}`, itemName: name,
+          message: `${name} is not a loaded item in Spec_Item.txt: it can't be bought` });
+      } else {
+        const chip = FRE.specItem.get(item, 'dwReferValue1');
+        if (chip < 1) add({ code: 'DS_NO_PRICE', severity: 'WARN', start: r.start, end: r.end, key: `DS_NO_PRICE|${name}`, itemName: name,
+          message: `${item.name || name} (${name}) has no donate-chip price (dwReferValue1 = ${chip < 0 ? '=' : chip}): the server refuses to sell it` });
+      }
+      if (seen.has(r.id)) {
+        const first = seen.get(r.id);
+        add({ code: 'DS_DUP', severity: 'WARN', start: r.start, end: r.end, key: `DS_DUP|${name}`, itemName: name,
+          message: `${name} is listed twice ("${first.category}" and "${r.category}"): it only appears under "${r.category}" (the last one wins)` });
+      } else seen.set(r.id, r);
+    }
+    return out;
+  }
+
+  FRE.donation = { loadDonation, validateDonation, FILE };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- validate/help.js ----
 // Plain-language help for every diagnostic code: what it means and what to do.
 (function (FRE) {
@@ -1413,6 +1548,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
     S_TRUNCATED: ['Spec_Item.txt ends in the middle of a record.', 'Restore the missing values.'],
     T_KEY: ['A line in a .txt.txt string table does not start with an IDS_ key. The server logs an error and skips it.', 'Fix the key.'],
     T_DUP: ['The same IDS_ key appears twice. The first one wins.', 'Remove the duplicate.'],
+    DS_BRACES: ['The DONATIONSHOP { block never closes with }. The server\'s reading loop never ends: it hangs at startup.', 'Add the missing } at the end of the block.'],
+    DS_FORMAT: ['A DSItem row is not DSItem "Category" II_NAME (the category must be in quotes), or the file has no DONATIONSHOP block. The server reads values in fixed order, so the rest shifts.', 'Fix the row to: DSItem "Category" II_NAME'],
+    DS_UNDEF: ['The item name is not #defined (or is 0). The server logs an error and leaves the row out of the shop.', 'Check the II_ name, or add it to defineItem.h first.'],
+    DS_NO_ITEM: ['The item is not in Spec_Item.txt, so it cannot be bought (and the client may show a broken entry).', 'Pick an existing item, or add it to Spec_Item.txt first.'],
+    DS_NO_PRICE: ['Donation prices are not in DonationShop.inc: each item\'s price is its dwReferValue1 in Spec_Item.txt (donate chips). This item has none, so the server refuses to sell it.', 'Give the item a chip price in Spec_Item.txt (Build 3), or remove it from the shop.'],
+    DS_DUP: ['The same item is listed twice. The shop keeps one entry per item, in the category of the LAST row.', 'Remove one of the rows.'],
     D_BRACE: ['A define header contains {. The server stops reading defines from that file there.', 'Remove the {.'],
   };
 })(globalThis.FRE = globalThis.FRE || {});
@@ -1649,10 +1790,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
   FRE.diff = { splitKeepEol, diffLines, hunks };
 })(globalThis.FRE = globalThis.FRE || {});
 
-// ---- edit/shop-ops.js ----
-// Shop edits expressed as minimal splices on a SourceFile's current text
-// (docs/DESIGN.md §1.5). Each function returns [{start, end, insert}] and
-// never touches bytes outside the statement being changed.
+// ---- edit/text-ops.js ----
+// Line/statement helpers shared by every editor. All functions work on the
+// current text and return splices [{start, end, insert}]; nothing outside the
+// touched statement or row changes. New rows copy the anchor row's indent and
+// line ending (some files are CRLF, some LF).
 (function (FRE) {
   'use strict';
 
@@ -1712,25 +1854,74 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
     return true;
   }
 
-  function formatStmt(cmd, args, text) {
-    // follow the file's existing spacing for this command: "Cmd( a, b );" vs "Cmd(a, b);"
-    const re = new RegExp(cmd + '\\s*\\(( ?)');
-    const m = re.exec(text);
-    const pad = m ? m[1] : ' ';
-    return `${cmd}(${pad}${args.join(', ')}${pad});`;
+  // Insert `row` as a new line after the line holding `anchor` ({start, end}).
+  // If something else follows the anchor on its line, insert inline instead.
+  function insertRowAfter(text, anchor, row) {
+    const ext = stmtExtent(text, anchor);
+    if (restOfLineIsFree(text, ext.end)) {
+      const at = lineEnd(text, ext.end);
+      let eol = eolAt(text, ext.end);
+      let prefix = '';
+      if (!eol) { eol = dominantEol(text); prefix = eol; }        // anchor is on the last line
+      return [{ start: at, end: at, insert: prefix + indentOf(text, anchor.start) + row + (prefix ? '' : eol) }];
+    }
+    return [{ start: ext.end, end: ext.end, insert: ' ' + row }];
   }
 
-  function checkCost(cost) {
-    if (!Number.isInteger(cost) || cost < 0 || cost > 2147483647) throw new Error('price must be a whole number between 0 and 2,147,483,647');
+  // Insert `row` on a new line right after the line containing offset `pos`
+  // (e.g. an opening brace), indented one tab deeper than that line.
+  function insertRowBelowLine(text, pos, row) {
+    const at = lineEnd(text, pos);
+    const eol = eolAt(text, pos) || dominantEol(text);
+    return [{ start: at, end: at, insert: indentOf(text, pos) + '\t' + row + eol }];
   }
+
+  // Remove a statement/row; whole line(s) if it stands alone, else just its span.
+  function removeRow(text, rec) {
+    const ext = stmtExtent(text, rec);
+    if (prefixIsBlank(text, ext.start) && restOfLineIsFree(text, ext.end)) {
+      return [{ start: lineStart(text, ext.start), end: lineEnd(text, ext.end), insert: '' }];
+    }
+    let s = ext.start;
+    if (s > 0 && isSpace(text[s - 1]) && !prefixIsBlank(text, s)) s--;
+    return [{ start: s, end: ext.end, insert: '' }];
+  }
+
+  // Replace one token or value span ({start, end}).
+  function replaceSpan(span, insert) { return [{ start: span.start, end: span.end, insert: String(insert) }]; }
+
   function checkDefine(name) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`"${name}" is not a valid define name`);
   }
+  function checkAmount(v, min = 0, max = 2147483647, what = 'value') {
+    if (!Number.isInteger(v) || v < min || v > max) throw new Error(`${what} must be a whole number between ${FRE.num.group(min)} and ${FRE.num.group(max)}`);
+  }
+
+  FRE.textOps = {
+    lineStart, lineContentEnd, lineEnd, eolAt, dominantEol, indentOf, stmtExtent, restOfLineIsFree, prefixIsBlank,
+    insertRowAfter, insertRowBelowLine, removeRow, replaceSpan, checkDefine, checkAmount,
+  };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- edit/shop-ops.js ----
+// NPC shop edits (character*.inc) as minimal splices. Built on FRE.textOps.
+(function (FRE) {
+  'use strict';
+  const T = FRE.textOps;
+
+  function formatStmt(cmd, args, text) {
+    // follow the file's existing spacing for this command: "Cmd( a, b );" vs "Cmd(a, b);"
+    const m = new RegExp(cmd + '\\s*\\(( ?)').exec(text);
+    const pad = m ? m[1] : ' ';
+    return `${cmd}(${pad}${args.join(', ')}${pad});`;
+  }
+  const checkCost = c => T.checkAmount(c, 0, 2147483647, 'price');
+  const checkSlot = s => { if (!(s >= 0 && s <= 3)) throw new Error('tab must be 0-3'); };
 
   // Add a fixed item (AddShopItem) or, for chip shops, AddVenderItem2.
   function addItem(text, npc, slot, define, cost) {
-    checkDefine(define);
-    if (!(slot >= 0 && slot <= 3)) throw new Error('tab must be 0-3');
+    T.checkDefine(define);
+    checkSlot(slot);
     const chip = npc.venderType === 1 || npc.venderType === 2;
     let stmt;
     if (chip) stmt = formatStmt('AddVenderItem2', [slot, define], text);
@@ -1739,41 +1930,17 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
       if (cost !== null && cost !== undefined) { checkCost(cost); args.push(cost); }
       stmt = formatStmt('AddShopItem', args, text);
     }
-
     // anchor: last shop statement in the same tab, else any shop statement,
     // else the last AddMenu, else the opening brace.
     const shop = npc.statements.filter(r => FRE.character.shopEntry(r));
     const sameTab = shop.filter(r => r.args.slot && r.args.slot.value === slot);
     const anchor = sameTab[sameTab.length - 1] || shop[shop.length - 1]
       || npc.statements.filter(r => r.cmd === 'AddMenu').pop() || null;
-
-    if (anchor) {
-      const ext = stmtExtent(text, anchor);
-      if (restOfLineIsFree(text, ext.end)) {
-        const at = lineEnd(text, ext.end);
-        let eol = eolAt(text, ext.end);
-        let prefix = '';
-        if (!eol) { eol = dominantEol(text); prefix = eol; }   // anchor is on the last line
-        return [{ start: at, end: at, insert: prefix + indentOf(text, anchor.start) + stmt + (prefix ? '' : eol) }];
-      }
-      return [{ start: ext.end, end: ext.end, insert: ' ' + stmt }];
-    }
-    const b = npc.braceTok;
-    const at = lineEnd(text, b.end);
-    const eol = eolAt(text, b.end) || dominantEol(text);
-    return [{ start: at, end: at, insert: indentOf(text, b.start) + '\t' + stmt + eol }];
+    if (anchor) return T.insertRowAfter(text, anchor, stmt);
+    return T.insertRowBelowLine(text, npc.braceTok.start, stmt);
   }
 
-  function removeStatement(text, rec) {
-    const ext = stmtExtent(text, rec);
-    if (prefixIsBlank(text, ext.start) && restOfLineIsFree(text, ext.end)) {
-      return [{ start: lineStart(text, ext.start), end: lineEnd(text, ext.end), insert: '' }];
-    }
-    // shares its line with something else: remove only the statement (and one space before it)
-    let s = ext.start;
-    if (s > 0 && isSpace(text[s - 1]) && !prefixIsBlank(text, s)) s--;
-    return [{ start: s, end: ext.end, insert: '' }];
-  }
+  const removeStatement = (text, rec) => T.removeRow(text, rec);
 
   function setCost(text, rec, cost) {
     if (rec.cmd !== 'AddShopItem') throw new Error('only AddShopItem entries have a price');
@@ -1783,36 +1950,109 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
       return [{ start: comma.start, end: rec.args.cost.end, insert: '' }];
     }
     checkCost(cost);
-    if (rec.args.cost) return [{ start: rec.args.cost.start, end: rec.args.cost.end, insert: String(cost) }];
+    if (rec.args.cost) return T.replaceSpan(rec.args.cost, cost);
     const it = rec.args.item;
     return [{ start: it.end, end: it.end, insert: `, ${cost}` }];
   }
 
   function setSlot(text, rec, slot) {
-    if (!(slot >= 0 && slot <= 3)) throw new Error('tab must be 0-3');
-    const a = rec.args.slot;
-    return [{ start: a.start, end: a.end, insert: String(slot) }];
+    checkSlot(slot);
+    return T.replaceSpan(rec.args.slot, slot);
   }
 
-  FRE.shopOps = { addItem, removeStatement, setCost, setSlot, stmtExtent, _internal: { lineStart, lineEnd, eolAt, indentOf } };
+  FRE.shopOps = { addItem, removeStatement, setCost, setSlot, stmtExtent: T.stmtExtent };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- edit/donation-ops.js ----
+// DonationShop.inc edits as minimal splices.
+(function (FRE) {
+  'use strict';
+  const T = FRE.textOps;
+
+  // Rebuild a row in the file's own layout ("DSItem<sep>"Cat"<sep>II_X"), copied from an existing row.
+  function rowText(text, model, category, define) {
+    const sample = model.rows[0];
+    let sep1 = '\t', sep2 = '\t';
+    if (sample) {
+      const line = text.slice(sample.start, sample.end);
+      const m = /^DSItem([ \t]+)"[^"]*"([ \t]+)/.exec(line);
+      if (m) { sep1 = m[1]; sep2 = m[2]; }
+    }
+    return `DSItem${sep1}"${category}"${sep2}${define}`;
+  }
+
+  function checkCategory(cat) {
+    if (!cat || /["\r\n]/.test(cat)) throw new Error('category must be a non-empty name without quotes');
+  }
+
+  function addItem(text, model, category, define) {
+    T.checkDefine(define);
+    checkCategory(category);
+    const inCat = model.rows.filter(r => r.category === category);
+    const anchor = inCat[inCat.length - 1] || model.rows[model.rows.length - 1];
+    const row = rowText(text, model, category, define);
+    if (anchor) return T.insertRowAfter(text, anchor, row);
+    const block = model.blocks[0];
+    if (!block) throw new Error('DonationShop.inc has no DONATIONSHOP block');
+    return T.insertRowBelowLine(text, block.open.start, row);
+  }
+
+  const removeItem = (text, row) => T.removeRow(text, row);
+
+  function setCategory(text, row, category) {
+    checkCategory(category);
+    return T.replaceSpan(row.cat, `"${category}"`);
+  }
+
+  FRE.donationOps = { addItem, removeItem, setCategory };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- core/workspace.js ----
 // Workspace: the loaded Resource folder as the editor sees it. No DOM here,
 // so it can be tested outside the browser (tests/run-tests.js under gjs).
+//
+// Shared data (defines, strings, Spec_Item items) is loaded once. Each editor
+// is a "data module" that owns some files, parses them and validates them;
+// a module whose required files are missing is simply unavailable.
 (function (FRE) {
   'use strict';
 
-  // Files Build 1 needs. Only the character files are ever written.
-  const REQUIRED = [
-    'Masquerade.prj', 'Spec_Item.txt', 'propItem.txt.txt',
-    'character.inc', 'character-etc.inc', 'character-school.inc',
-    'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt',
-    ...FRE.DEFINE_FILES,
-  ];
+  // Needed by every editor.
+  const CORE = ['Masquerade.prj', 'Spec_Item.txt', 'propItem.txt.txt', ...FRE.DEFINE_FILES];
   // Read when present, never required (context only).
   const OPTIONAL = ['Exchange_Script.txt'];
-  const EDITABLE = new Set(FRE.character.CHARACTER_FILES.map(n => n.toLowerCase()));
+
+  // id, files it needs, files it may write, files the game client also reads,
+  // parse(ws) -> model, validate(ws, model) -> diagnostics
+  const MODULES = [
+    {
+      id: 'npc', label: 'NPC Shops',
+      required: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt'],
+      editable: ['character.inc', 'character-etc.inc', 'character-school.inc'],
+      client: ['character.inc', 'character-etc.inc', 'character-school.inc'],
+      parse(ws) {
+        ws._sim = new Map();
+        return (ws.chars = FRE.character.loadCharacters(ws.files, { defines: ws.defines.defines, strings: ws.strings.map }));
+      },
+      validate(ws, model) {
+        return FRE.validateCharacters(model, {
+          items: ws.items.items, defines: ws.defines.defines,
+          simulate: npc => ws.simulate(npc), textOf: n => ws.textOf(n),
+        }).map(d => Object.assign({ module: 'npc' }, d));
+      },
+    },
+    {
+      id: 'donation', label: 'Donation Shop',
+      required: ['DonationShop.inc'], editable: ['DonationShop.inc'], client: ['DonationShop.inc'],
+      parse(ws) {
+        return FRE.donation.loadDonation(ws.files.get('donationshop.inc'), { defines: ws.defines.defines, strings: ws.strings.map });
+      },
+      validate(ws, model) {
+        return FRE.donation.validateDonation(model, { items: ws.items.items, textOf: n => ws.textOf(n) });
+      },
+    },
+  ];
+  const ALL_FILES = [...new Set([...CORE, ...MODULES.flatMap(m => m.required), ...OPTIONAL])];
 
   class Workspace {
     // files: Map lowercase name -> SourceFile
@@ -1820,7 +2060,16 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
       this.files = files;
       this.history = [];      // lowercase file names, in edit order (for global undo)
       this.redoStack = [];
-      this.missing = REQUIRED.filter(n => !files.has(n.toLowerCase()));
+      this.missing = CORE.filter(n => !files.has(n.toLowerCase()));
+      this.models = {};
+      this.moduleDiags = {};
+      this.available = {};
+      this.editable = new Set();
+      for (const m of MODULES) {
+        const miss = m.required.filter(n => !files.has(n.toLowerCase()));
+        this.available[m.id] = miss.length ? { ok: false, missing: miss } : { ok: true };
+        if (!miss.length) m.editable.forEach(n => this.editable.add(n.toLowerCase()));
+      }
     }
 
     load() {
@@ -1829,6 +2078,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
       const spec = this.files.get('spec_item.txt');
       this.items = spec ? FRE.specItem.loadSpecItem(spec, { defines: this.defines.defines, strings: this.strings.map })
         : { items: new Map(), rows: [], diags: [], stopped: null };
+      this.itemDiags = this.items.diags.map(d => Object.assign({}, d, { key: `${d.code}|${d.file}|${d.name || d.message}` }));
       // exchange menus (MMI_ names at the start of a line in Exchange_Script.txt), for display only
       const ex = this.files.get('exchange_script.txt');
       this.exchangeMenus = new Set(ex ? (ex.text.match(/^MMI_\w+/gm) || []) : []);
@@ -1838,44 +2088,46 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
       return this;
     }
 
-    reparse() {
-      this.chars = FRE.character.loadCharacters(this.files, { defines: this.defines.defines, strings: this.strings.map });
-      this._sim = new Map();
-      const charDiags = FRE.validateCharacters(this.chars, {
-        items: this.items.items, defines: this.defines.defines,
-        simulate: npc => this.simulate(npc),
-        textOf: name => (this.files.get(name.toLowerCase()) || { text: '' }).text,
-      });
-      const itemDiags = this.items.diags.map(d => Object.assign({}, d, { key: `${d.code}|${d.file}|${d.name || d.message}` }));
-      this.diags = [...charDiags, ...itemDiags];
+    // Re-parse the modules that own `lowerName` (all modules when omitted).
+    reparse(lowerName) {
+      for (const m of MODULES) {
+        if (!this.available[m.id].ok) continue;
+        if (lowerName && !m.required.some(n => n.toLowerCase() === lowerName)) continue;
+        this.models[m.id] = m.parse(this);
+        this.moduleDiags[m.id] = m.validate(this, this.models[m.id]);
+      }
+      this.diags = [...Object.values(this.moduleDiags).flat(), ...this.itemDiags];
     }
+
+    textOf(name) { return (this.files.get(String(name).toLowerCase()) || { text: '' }).text; }
+    moduleOfFile(name) { const l = String(name).toLowerCase(); return MODULES.find(m => m.required.some(n => n.toLowerCase() === l)) || null; }
 
     isEditable(lowerName) {
       const f = this.files.get(lowerName);
-      return !!f && EDITABLE.has(lowerName) && !f.readOnly;
+      return !!f && this.editable.has(lowerName) && !f.readOnly;
     }
 
     fileOfNpc(npc) { return this.files.get(npc.file.toLowerCase()); }
 
-    // Apply splices produced by FRE.shopOps to one file, then re-derive everything.
+    // Apply splices from an edit op to one file, then re-derive what depends on it.
     apply(lowerName, splices, label) {
       if (!this.isEditable(lowerName)) throw new Error(`${lowerName} is not editable`);
       if (!splices.length) return;
       this.files.get(lowerName).applySplices(splices, label);
       this.history.push(lowerName);
       this.redoStack = [];
-      this.reparse();
+      this.reparse(lowerName);
     }
 
     undo() {
       const name = this.history.pop(); if (!name) return null;
       const label = this.files.get(name).undo();
-      this.redoStack.push(name); this.reparse(); return label;
+      this.redoStack.push(name); this.reparse(name); return label;
     }
     redo() {
       const name = this.redoStack.pop(); if (!name) return null;
       const label = this.files.get(name).redo();
-      this.history.push(name); this.reparse(); return label;
+      this.history.push(name); this.reparse(name); return label;
     }
 
     // What players see in this NPC's shop (cached until the next edit).
@@ -1885,6 +2137,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
     }
 
     dirtyFiles() { return [...this.files.values()].filter(f => f.dirty); }
+
+    // Changed files that the game client also reads (must be copied to Client/).
+    clientCopiesNeeded() {
+      const names = new Set(MODULES.flatMap(m => m.client).map(n => n.toLowerCase()));
+      return this.dirtyFiles().filter(f => names.has(f.name.toLowerCase())).map(f => f.name);
+    }
 
     keyCounts(diags) {
       const m = new Map();
@@ -1904,9 +2162,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
       return out;
     }
 
-    isNew(d) { return d.severity === 'BLOCK' && this.newBlocking().includes(d); }
-
-    // After a verified save of `savedFiles`.
+    // After a verified save.
     markSaved() {
       this.history = []; this.redoStack = [];
       this.baseline = this.keyCounts(this.diags);
@@ -1922,6 +2178,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
         id: item.id, define: item.define, name: item.name || item.nameKey,
         ik1: g('dwItemKind1'), ik2: g('dwItemKind2'), ik3: g('dwItemKind3'),
         ik3Name: D.byValue('IK3_', g('dwItemKind3')),
+        job: g('dwItemJob'), jobName: g('dwItemJob') === -1 ? null : D.byValue('JOB_', g('dwItemJob')),
         level: g('dwLimitLevel1'), atkMin: g('dwAbilityMin'), atkMax: g('dwAbilityMax'),
         grade, rarity: grade === 100 ? 'normal' : grade === 200 ? 'unique' : grade === 300 ? 'ultimate' : grade === 400 ? 'baruna' : 'other',
         cost: g('dwCost'), chipCost: g('dwReferValue1'), icon: g('szIcon'), packMax: g('dwPackMax'),
@@ -1929,9 +2186,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
     }
   }
 
-  Workspace.REQUIRED = REQUIRED;
-  Workspace.OPTIONAL = OPTIONAL;
-  Workspace.EDITABLE = EDITABLE;
+  Workspace.CORE = CORE;
+  Workspace.MODULES = MODULES;
+  Workspace.ALL_FILES = ALL_FILES;
+  Workspace.REQUIRED = ALL_FILES;      // everything the editor looks for in the folder
+  Workspace.OPTIONAL = [];
   FRE.Workspace = Workspace;
 })(globalThis.FRE = globalThis.FRE || {});
 
@@ -2173,7 +2432,25 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
   }
 
   const $ = id => document.getElementById(id);
-  const fmt = n => (n === null || n === undefined || Number.isNaN(n)) ? '' : Number(n).toLocaleString('en-US');
+  const fmt = n => FRE.num.group(n);
+
+  // Amount box: shows "1,000,000" when idle and plain digits while editing.
+  // onCommit(value|null) gets a plain number; commas never reach the files.
+  function numInput({ value = null, placeholder = '', disabled = false, title = '', min = 0, max = 2147483647, onCommit }) {
+    const el = h('input.num-input', { type: 'text', inputMode: 'numeric', placeholder, disabled, title, value: fmt(value) });
+    el.dataset.value = value === null ? '' : String(value);
+    el.addEventListener('focus', () => { el.value = el.dataset.value; el.select(); });
+    el.addEventListener('blur', () => { el.value = fmt(el.dataset.value === '' ? null : Number(el.dataset.value)); });
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') el.blur(); if (e.key === 'Escape') { el.value = el.dataset.value; el.blur(); } });
+    el.addEventListener('change', () => {
+      const r = FRE.num.parseAmount(el.value, { min, max });
+      if (!r.ok) { toast(r.error, 'bad'); el.value = document.activeElement === el ? el.dataset.value : fmt(el.dataset.value === '' ? null : Number(el.dataset.value)); return; }
+      el.dataset.value = r.value === null ? '' : String(r.value);
+      if (document.activeElement !== el) el.value = fmt(r.value);
+      onCommit(r.value);
+    });
+    return el;
+  }
 
   function toast(msg, kind = '') {
     const t = h('div.toast' + (kind ? '.' + kind : ''), msg);
@@ -2194,27 +2471,271 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
     return { close, el: back };
   }
 
-  FRE.dom = { h, $, fmt, toast, modal };
+  FRE.dom = { h, $, fmt, toast, modal, numInput };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- ui/common.js ----
+// Shared UI helpers and the registry of editor modules (one per toolbar mode).
+// A module: { id, label, searchPlaceholder, listExtra(ctx), renderList(el, ctx),
+//             renderEditor(el, ctx), addTarget(ctx) -> {ok, title, usesPrice, add(info, cost)},
+//             locate(diag, ctx) -> bool, onLoad(ctx) }
+(function (FRE) {
+  'use strict';
+  const { h } = FRE.dom;
+
+  // 'IK3_COLLECTER' -> 'Collecter', 'JOB_MERCENARY' -> 'Mercenary'
+  function pretty(def) {
+    if (!def || !/^[A-Z0-9]+_/.test(def)) return def || '';
+    return def.replace(/^[A-Z0-9]+_/, '').toLowerCase().replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+  }
+
+  function diagRow(d, extra) {
+    const help = FRE.diagHelp[d.code];
+    return h('div.diag', extra && extra.on ? { on: extra.on } : null,
+      h('span.sev.' + d.severity, d.severity), extra && extra.isNew ? h('span.new', 'new') : null,
+      h('div', h('div', d.message), help ? h('div.help', `ⓘ ${help[0]} → ${help[1]}`) : null),
+      extra && extra.where ? h('span.line', extra.where) : null);
+  }
+
+  function diagTags(list) {
+    return list.map(d => h('span.tag.' + (d.severity === 'BLOCK' ? 'bad' : d.severity === 'WARN' ? 'warn' : 'info'),
+      { title: d.message + (FRE.diagHelp[d.code] ? '\n\n' + FRE.diagHelp[d.code].join('\n→ ') : '') },
+      (d.severity === 'BLOCK' ? '⛔ ' : d.severity === 'WARN' ? '⚠ ' : 'ⓘ ') + d.code));
+  }
+
+  // Diagnostics of `file` whose start lies inside [start, end).
+  function diagsInSpan(ws, file, start, end) {
+    return ws.diags.filter(d => d.file === file && d.start !== undefined && d.start >= start && d.start < Math.max(end, start + 1));
+  }
+
+  // Item cell: coloured name with the define underneath.
+  function itemCell(info, fallbackDefine) {
+    if (!info) return h('td', h('span.muted', '(not in Spec_Item.txt)'), h('span.def.block', fallbackDefine || ''));
+    return h('td', { title: `${info.name}\n${info.define} (${info.id})` }, h('span.r-' + info.rarity, info.name), h('span.def.block', info.define));
+  }
+
+  function jobCell(info) {
+    return h('td', info && info.jobName ? pretty(info.jobName) : h('span.muted', 'any'));
+  }
+
+  FRE.ui = { modules: [], pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- ui/npc-shops.js ----
+// NPC Shops module (character*.inc). One table per tab: exactly what players
+// see, in server order. Fixed items (AddShopItem / AddVenderItem2) are edited
+// in place; generated items come from AddVendorItem rules (read-only).
+(function (FRE) {
+  'use strict';
+  const { h, fmt, numInput } = FRE.dom;
+  const { pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell } = FRE.ui;
+
+  const st = { sel: null, tab: 0, shopsOnly: true };
+  const npcId = npc => `${npc.file}|${npc.key}`;
+  const isShopNpc = npc => npc.statements.some(r => FRE.character.shopEntry(r)) || npc.venderType > 0;
+  const selNpc = ctx => (ctx.ws && st.sel ? ctx.ws.chars.npcs.find(n => npcId(n) === st.sel) : null) || null;
+  const TYPES = [{ v: 0, label: 'Penya shop' }, { v: 1, label: 'Red Chip shop' }, { v: 2, label: 'Donate Chip shop' }];
+
+  function edit(ctx, npc, make, label) {
+    ctx.edit(npc.file.toLowerCase(), make, label, 'npc|' + npcId(npc));
+  }
+
+  function shopTypeSelect(ctx, npc, canEdit) {
+    const ready = !!FRE.ui.previewShopType;      // the conversion (plan Step B) is not built yet
+    const sel = h('select.shop-type', { disabled: !canEdit || !ready, title: ready ? 'Which currency this NPC sells for. Changing it converts the item lines (preview first).' : 'Shows this NPC\'s currency. Changing it is coming next (plan Step B).' },
+      TYPES.map(t => h('option', { value: t.v, selected: t.v === (npc.venderType === 1 || npc.venderType === 2 ? npc.venderType : 0) }, t.label)));
+    sel.addEventListener('change', () => {
+      const to = Number(sel.value);
+      sel.value = String(npc.venderType === 1 || npc.venderType === 2 ? npc.venderType : 0);   // only changes after confirming
+      if (FRE.ui.previewShopType) FRE.ui.previewShopType(ctx, npc, to);
+    });
+    return sel;
+  }
+
+  const mod = {
+    id: 'npc', label: 'NPC Shops', searchPlaceholder: 'Search NPCs',
+    st, npcId,
+
+    onLoad(ctx) {
+      const first = ctx.ws.chars.npcs.find(isShopNpc);
+      st.sel = first ? npcId(first) : null; st.tab = 0;
+    },
+
+    listExtra(ctx) {
+      return h('label.check', h('input', { type: 'checkbox', checked: st.shopsOnly, on: { change: e => { st.shopsOnly = e.target.checked; ctx.renderList(); } } }), ' shops only');
+    },
+
+    renderList(el, ctx) {
+      const q = ctx.query.toLowerCase();
+      const diagBy = new Map();
+      for (const d of ctx.ws.diags) if (d.npcKey && d.severity !== 'INFO') {
+        const k = `${d.file}|${d.npcKey}`; const o = diagBy.get(k) || { w: 0, b: 0 };
+        if (d.severity === 'BLOCK') o.b++; else o.w++;
+        diagBy.set(k, o);
+      }
+      let shown = 0;
+      for (const npc of ctx.ws.chars.npcs) {
+        if (st.shopsOnly && !isShopNpc(npc)) continue;
+        const label = npc.name || npc.key;
+        if (q && !label.toLowerCase().includes(q) && !npc.key.toLowerCase().includes(q)) continue;
+        const id = npcId(npc), dg = diagBy.get(id);
+        shown++;
+        el.appendChild(h('div.npc' + (id === st.sel ? '.sel' : ''), { on: { click: () => { st.sel = id; st.tab = 0; ctx.renderAll(false); } } },
+          h('div.n', h('span', label),
+            h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : null,
+              ctx.edited.has('npc|' + id) ? h('span.tag.edit', 'edited') : null,
+              dg && dg.b ? h('span.tag.bad', '⛔' + dg.b) : dg && dg.w ? h('span.tag.warn', '⚠' + dg.w) : null)),
+          h('div.k', `${npc.key} · ${npc.file}`)));
+      }
+      if (!shown) el.appendChild(h('div.pad.muted', 'No NPCs match.'));
+    },
+
+    renderEditor(el, ctx) {
+      const ws = ctx.ws, npc = selNpc(ctx);
+      if (!npc) { el.appendChild(h('p.empty-state', 'Select an NPC on the left.')); return; }
+      const f = ws.fileOfNpc(npc);
+      const canEdit = ws.isEditable(f.name.toLowerCase());
+      const chip = npc.venderType === 1 || npc.venderType === 2;
+      const chipName = npc.venderType === 2 ? 'Donate' : 'Red';
+      const D = ws.defines;
+      const entries = npc.statements.map(r => ({ r, e: FRE.character.shopEntry(r) })).filter(x => x.e);
+      const line = pos => 'L' + (f.lineOf(pos) + 1);
+
+      el.appendChild(h('div.npc-title', h('h2', npc.name || npc.key), h('span.def', npc.key),
+        h('span.line', `${npc.file}:${f.lineOf(npc.start) + 1}`),
+        shopTypeSelect(ctx, npc, canEdit),
+        canEdit ? null : h('span.tag.bad', 'read-only')));
+      const menus = npc.menus.map(v => D.byValue('MMI_', v) || String(v));
+      if (menus.length) el.appendChild(h('div.menus', 'Menus: ', menus.map(m => ws.exchangeMenus.has(m)
+        ? h('span.tag.exch', { title: `${m} is an item exchange defined in Exchange_Script.txt (Exchanges editor coming)` }, `${pretty(m)} ⇄ exchange`)
+        : h('span.tag', { title: m }, pretty(m)))));
+
+      const sim = ws.simulate(npc);
+      const tabs = h('div.tabs');
+      for (let t = 0; t < 4; t++) {
+        const n = sim.tabs[t].entries.length;
+        tabs.appendChild(h('button' + (t === st.tab ? '.sel' : ''), { on: { click: () => { st.tab = t; ctx.renderAll(false); } } },
+          npc.slotTitles[t] || `Tab ${t}`, h('span.count', n ? `(${n})` : '')));
+      }
+      el.appendChild(tabs);
+      const tab = sim.tabs[st.tab];
+
+      // the rules that fill this tab, as one compact line
+      const rules = entries.filter(x => x.e.kind === 'generated' && x.e.slot === st.tab);
+      if (rules.length) {
+        el.appendChild(h('div.rules', h('span.muted.small', chip ? 'Rules (ignored in chip shops): ' : 'Auto-filled by rules (read-only): '), rules.map(({ r, e }) => {
+          const ik3 = e.ik3.define || D.byValue('IK3_', e.ik3.value) || String(e.ik3.value);
+          const job = e.job.value === -1 ? 'any job' : pretty(e.job.define || D.byValue('JOB_', e.job.value));
+          const res = tab.rules.find(x => x.rec === r) || {};
+          const adds = chip ? 'ignored' : e.lang ? 'other language only' : res.empty ? 'matches nothing' : `${res.added}`;
+          return h('span.tag.rule' + (res.empty || chip ? '.warn' : ''), {
+            title: `${f.text.slice(r.start, r.end)}\n\nAdds every sellable ${pretty(ik3)} item${e.job.value === -1 ? '' : ' for ' + job} with rarity (dwItemRare) ${e.rareMin.value}–${e.rareMax.value}. The last number (${e.count.value}) is ignored by the server.`,
+          }, `${pretty(ik3)} · ${job} · rarity ${e.rareMin.value}–${e.rareMax.value} → ${adds}`, h('span.line', ' ' + line(r.start)));
+        })));
+      }
+
+      // one table: every item players see, in server order, plus fixed items left out
+      el.appendChild(h('h3', `Items in this tab (${tab.entries.length}/100)`));
+      const rows = tab.entries.map(en => ({ rec: en.source, kind: en.kind, prop: en.prop }))
+        .concat(tab.dropped.map(d => ({ rec: d.rec, kind: d.rec.cmd === 'AddShopItem' ? 'fixed' : 'chip', prop: d.prop || null, dropped: d.reason })));
+      if (!rows.length) el.appendChild(h('p.muted', 'Empty. Use + in the item list on the right to add an item.'));
+      else {
+        const tb = h('table.items', h('tr', h('th.num', '#'), h('th', 'Item'), h('th', 'Job'),
+          h('th.num', chip ? `Price (${chipName} chips)` : 'Price (Penya)'), h('th', 'Tab'), h('th', ''), h('th', 'From')));
+        rows.forEach((row, i) => {
+          const info = row.prop ? ws.itemInfo(row.prop.item) : null;
+          const r = row.rec;
+          const editable = row.kind !== 'generated';
+          const def = row.prop ? row.prop.item.define : (r.args.item && (r.args.item.define || f.text.slice(r.args.item.start, r.args.item.end)));
+          let price;
+          if (chip) price = info ? fmt(info.chipCost) : '';
+          else if (row.kind === 'fixed') {
+            price = numInput({ value: r.args.cost ? r.args.cost.value : null, placeholder: info ? fmt(info.cost) + ' (item)' : '', disabled: !canEdit,
+              title: 'Empty = the item\'s own price from Spec_Item.txt. A price here changes the item\'s price everywhere (server-wide). Commas are only for display.',
+              onCommit: v => edit(ctx, npc, text => FRE.shopOps.setCost(text, r, v), 'price') });
+          } else price = info ? fmt(info.cost) : '';
+          const tabCell = editable
+            ? h('select', { disabled: !canEdit, on: { change: ev => edit(ctx, npc, text => FRE.shopOps.setSlot(text, r, Number(ev.target.value)), 'move tab') } },
+              [0, 1, 2, 3].map(t => h('option', { value: t, selected: t === st.tab }, npc.slotTitles[t] || `Tab ${t}`)))
+            : '';
+          const rm = editable ? h('button.icon.danger', { disabled: !canEdit, title: 'Remove from this shop', on: { click: () => edit(ctx, npc, text => FRE.shopOps.removeStatement(text, r), `remove ${def}`) } }, '✕') : '';
+          const from = row.dropped ? h('span.tag.warn', `left out: ${row.dropped}`)
+            : h('span.line', { title: f.text.slice(r.start, r.end) }, `${row.kind === 'generated' ? 'rule' : 'fixed'} ${line(r.start)}`);
+          tb.appendChild(h('tr' + (editable ? '.fixed' : '') + (row.dropped ? '.dropped' : ''),
+            h('td.num.line', row.dropped ? '–' : i + 1), itemCell(info, def), jobCell(info),
+            h('td.num', { title: chip || row.kind === 'fixed' ? '' : 'Base price before the server shop-rate multipliers' }, price),
+            h('td', tabCell), h('td', rm, ' ', editable ? diagTags(diagsInSpan(ws, npc.file, r.start, r.end)) : null), h('td', from)));
+        });
+        el.appendChild(tb);
+      }
+
+      const nd = ws.diags.filter(d => d.file === npc.file && d.npcKey === npc.key);
+      if (nd.length) {
+        el.appendChild(h('h3', 'Problems for this NPC'));
+        nd.forEach(d => el.appendChild(diagRow(d)));
+      }
+    },
+
+    addTarget(ctx) {
+      const npc = selNpc(ctx);
+      if (!npc) return { ok: false, title: 'Select an NPC first' };
+      if (!ctx.ws.isEditable(npc.file.toLowerCase())) return { ok: false, title: `${npc.file} is read-only` };
+      const tabName = npc.slotTitles[st.tab] || `tab ${st.tab}`;
+      return {
+        ok: true, title: `Add to ${npc.name || npc.key}, ${tabName}`, usesPrice: !(npc.venderType === 1 || npc.venderType === 2),
+        add(info, cost) { edit(ctx, npc, text => FRE.shopOps.addItem(text, npc, st.tab, info.define, cost), `add ${info.define}`); },
+      };
+    },
+
+    locate(d, ctx) {
+      const npc = d.npcKey && ctx.ws.chars.npcs.find(n => n.key === d.npcKey && n.file === d.file);
+      if (!npc) return false;
+      st.sel = npcId(npc);
+      return true;
+    },
+  };
+
+  FRE.ui.modules.push(mod);
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/app.js ----
-// Build 1 UI: NPC Shop Editor. All data changes go through Workspace.apply()
-// with splices from FRE.shopOps; everything shown is re-derived from the file
-// text after each edit.
+// App shell: toolbar (mode switch, load, save, backup, undo), the left list and
+// centre editor of the active module, the shared item database, the problems
+// panel and the save flow. Editors live in ui/<module>.js (FRE.ui.modules).
+// Every data change goes through Workspace.apply() with splices; everything
+// shown is re-derived from the file text after each edit.
 (function (FRE) {
   'use strict';
   const { h, $, fmt, toast, modal } = FRE.dom;
+  const { diagRow } = FRE.ui;
   const ROW_H = 40;
 
   const S = {
-    ws: null, resDir: null, backupDir: null,
-    sel: null, tab: 0, shopsOnly: true, npcQuery: '',
-    items: [], filtered: [], rarity: new Set(), ik1: '', ik3: '', itemQuery: '',
+    ws: null, resDir: null, backupDir: null, mode: 'npc',
+    queries: {}, items: [], filtered: [], rarity: new Set(), ik1: '', ik3: '', itemQuery: '',
     edited: new Set(), diagOpen: false,
   };
-  const npcId = npc => `${npc.file}|${npc.key}`;
-  const selNpc = () => S.ws && S.sel ? S.ws.chars.npcs.find(n => npcId(n) === S.sel) || null : null;
-  const isShopNpc = npc => npc.statements.some(r => FRE.character.shopEntry(r)) || npc.venderType > 0;
+  const modules = () => FRE.ui.modules;
+  const active = () => modules().find(m => m.id === S.mode) || modules()[0];
+
+  // Context handed to modules
+  const ctx = {
+    get ws() { return S.ws; },
+    get query() { return S.queries[S.mode] || ''; },
+    get edited() { return S.edited; },
+    renderAll: (withItems) => renderAll(withItems),
+    renderList: () => renderList(),
+    // Apply an edit op: make(text) -> splices. `key` marks what was edited (list badges).
+    edit(lowerFile, make, label, key) {
+      const f = S.ws.files.get(lowerFile);
+      try {
+        const splices = make(f.text);
+        S.ws.apply(lowerFile, splices, label);
+        if (key) S.edited.add(key);
+      } catch (e) { toast(e.message, 'bad'); }
+      renderAll(false);
+    },
+  };
 
   // ------------------------------------------------------------------ loading
   async function pickResource() {
@@ -2227,8 +2748,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
   async function loadFrom(dir) {
     if (S.ws && S.ws.dirtyFiles().length && !confirm('Discard unsaved changes and load another folder?')) return;
     if (!(await FRE.fsa.ensurePermission(dir))) { toast('Permission to the folder was not granted.', 'bad'); return; }
-    const found = await FRE.fsa.findFiles(dir, [...FRE.Workspace.REQUIRED, ...FRE.Workspace.OPTIONAL]);
-    for (const must of ['masquerade.prj', 'character.inc', 'spec_item.txt']) {
+    const found = await FRE.fsa.findFiles(dir, FRE.Workspace.ALL_FILES);
+    for (const must of ['masquerade.prj', 'spec_item.txt']) {
       if (!found.has(must)) {
         toast(`"${dir.name}" does not look like Server/Resource (no ${must}). Nothing was loaded.`, 'bad');
         return;
@@ -2245,8 +2766,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
     S.edited.clear();
     FRE.fsa.remember('resource', dir);
     buildItems();
-    const first = S.ws.chars.npcs.find(isShopNpc);
-    S.sel = first ? npcId(first) : null; S.tab = 0;
+    for (const m of modules()) if (S.ws.available[m.id] && S.ws.available[m.id].ok && m.onLoad) m.onLoad(ctx);
+    if (!S.ws.available[S.mode].ok) S.mode = (modules().find(m => S.ws.available[m.id].ok) || modules()[0]).id;
     renderAll();
     toast(`Loaded ${files.size} files from "${dir.name}" in ${Math.round(performance.now() - t0)} ms`, 'ok');
   }
@@ -2263,34 +2784,33 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
     } catch (e) { if (e.name !== 'AbortError') toast(e.message, 'bad'); return false; }
   }
 
-  // ------------------------------------------------------------------ editing
-  function edit(npc, makeSplices, label) {
-    const f = S.ws.fileOfNpc(npc);
-    try {
-      const splices = makeSplices(f.text);
-      S.ws.apply(f.name.toLowerCase(), splices, label);
-      S.edited.add(npcId(npc));
-    } catch (e) { toast(e.message, 'bad'); }
-    renderAll(false);
-  }
-
-  function addItemToSelected(info) {
-    const npc = selNpc();
-    if (!npc) { toast('Select an NPC first.', 'bad'); return; }
-    const p = $('new-price').value.trim();
-    const cost = p === '' ? null : Number(p);
-    edit(npc, text => FRE.shopOps.addItem(text, npc, S.tab, info.define, cost), `add ${info.define}`);
-  }
-
   function undo() { if (S.ws && S.ws.undo() !== null) renderAll(false); }
   function redo() { if (S.ws && S.ws.redo() !== null) renderAll(false); }
 
+  function setMode(id) {
+    S.mode = id;
+    $('list-search').value = S.queries[id] || '';
+    renderAll(false);
+  }
+
   // ------------------------------------------------------------------ rendering
   function renderAll(withItems = true) {
-    renderToolbar(); renderBanners(); renderNpcList(); renderEditor();
+    renderToolbar(); renderBanners(); renderModes(); renderList(); renderEditor();
     if (withItems) renderItemFilters();
     renderItems();
     if (S.diagOpen) renderDiagPanel();
+  }
+
+  function renderModes() {
+    const el = $('mode-tabs'); el.textContent = '';
+    for (const m of modules()) {
+      const av = S.ws ? S.ws.available[m.id] : { ok: false, missing: [] };
+      el.appendChild(h('button.mode' + (m.id === S.mode ? '.sel' : ''), {
+        disabled: !S.ws || !av.ok,
+        title: !S.ws ? 'Load a folder first' : av.ok ? m.label : `Not available: missing ${av.missing.join(', ')}`,
+        on: { click: () => setMode(m.id) },
+      }, m.label));
+    }
   }
 
   function renderToolbar() {
@@ -2304,12 +2824,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
     $('btn-backup').disabled = !ws;
     const fs = $('file-status'); fs.textContent = '';
     if (ws) {
-      const chip = (label, lower) => {
+      const shown = new Set(['spec_item.txt', 'propitem.txt.txt']);
+      for (const m of FRE.Workspace.MODULES) m.editable.forEach(n => shown.add(n.toLowerCase()));
+      for (const lower of shown) {
         const f = ws.files.get(lower);
-        const cls = !f ? 'missing' : f.readOnly ? 'ro' : f.dirty ? 'ok.dirty' : 'ok';
-        fs.appendChild(h('span.file-chip.' + cls, { title: f ? (f.readOnly ? f.readOnlyReasons.join('\n') : `${f.kind}, ${fmt(f.bytes.length)} bytes`) : 'not found' }, label + (f && f.dirty ? ' •' : '')));
-      };
-      ['character.inc', 'character-etc.inc', 'character-school.inc', 'Spec_Item.txt', 'propItem.txt.txt', 'character.txt.txt'].forEach(n => chip(n, n.toLowerCase()));
+        if (!f) continue;
+        const cls = f.readOnly ? 'ro' : f.dirty ? 'ok.dirty' : 'ok';
+        fs.appendChild(h('span.file-chip.' + cls, { title: f.readOnly ? f.readOnlyReasons.join('\n') : `${f.kind}, ${fmt(f.bytes.length)} bytes` }, f.name + (f.dirty ? ' •' : '')));
+      }
       const nd = FRE.DEFINE_FILES.filter(n => ws.files.has(n.toLowerCase())).length;
       fs.appendChild(h('span.file-chip.' + (nd === FRE.DEFINE_FILES.length ? 'ok' : 'missing'), { title: ws.defines.missing.join(', ') || 'all define headers found' }, `defines ${nd}/${FRE.DEFINE_FILES.length}`));
       const nb = ws.newBlocking().length;
@@ -2323,173 +2845,33 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
   function renderBanners() {
     const el = $('banners'); el.textContent = '';
     const add = (cls, ...c) => el.appendChild(h('div.banner.' + cls, ...c));
-    if (!FRE.fsa.supported()) add('bad', 'This browser cannot open folders (File System Access API). Use Chrome or Edge.');
+    if (!FRE.fsa.supported()) add('bad', 'This browser cannot open folders (File System Access API). Use Chrome or Edge (in Brave: enable brave://flags/#file-system-access-api).');
     if (!S.ws) return;
     const ws = S.ws;
     if (ws.missing.length) add('bad', `Missing files: ${ws.missing.join(', ')}`);
     for (const f of ws.files.values()) if (f.readOnly) add('bad', `🔒 ${f.name} is READ-ONLY: ${f.readOnlyReasons.join('; ')}`);
     if (ws.items.stopped) add('bad', `Spec_Item.txt: the server stops loading items at offset ${ws.items.stopped.start}; later items are missing.`);
     if (S.resDir && S.resDir.name.toLowerCase() !== 'resource') add('info', `Editing folder "${S.resDir.name}" (a test copy?).`);
-    add('info', 'Only Server/Resource is edited. The game client reads its own copy: after saving, also copy the changed character*.inc files to Client/ so shop lists and prices match. Restart the WorldServer to apply.');
+    const mod = FRE.Workspace.MODULES.find(m => m.id === S.mode);
+    add('info', `Only Server/Resource is edited. The game client reads its own copy of ${mod ? mod.client.join(', ') : 'these files'}: after saving, copy the changed files to Client/ too. Restart the WorldServer to apply.`);
   }
 
-  function renderNpcList() {
-    const el = $('npc-list'); el.textContent = '';
-    if (!S.ws) return;
-    const q = S.npcQuery.toLowerCase();
-    const diagBy = new Map();
-    for (const d of S.ws.diags) if (d.npcKey) {
-      const k = `${d.file}|${d.npcKey}`; const o = diagBy.get(k) || { w: 0, b: 0 };
-      if (d.severity === 'BLOCK') o.b++; else if (d.severity === 'WARN') o.w++;
-      diagBy.set(k, o);
-    }
-    const frag = document.createDocumentFragment();
-    let shown = 0;
-    for (const npc of S.ws.chars.npcs) {
-      if (S.shopsOnly && !isShopNpc(npc)) continue;
-      const label = npc.name || npc.key;
-      if (q && !label.toLowerCase().includes(q) && !npc.key.toLowerCase().includes(q)) continue;
-      const id = npcId(npc), dg = diagBy.get(id);
-      shown++;
-      frag.appendChild(h('div.npc' + (id === S.sel ? '.sel' : ''), { on: { click: () => { S.sel = id; S.tab = 0; renderAll(false); } } },
-        h('div.n', h('span', label),
-          h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : null,
-            S.edited.has(id) ? h('span.tag.edit', 'edited') : null,
-            dg && dg.b ? h('span.tag.bad', '⛔' + dg.b) : dg && dg.w ? h('span.tag.warn', '⚠' + dg.w) : null)),
-        h('div.k', `${npc.key} · ${npc.file}`)));
-    }
-    if (!shown) frag.appendChild(h('div.pad.muted', 'No NPCs match.'));
-    el.appendChild(frag);
-  }
-
-  function itemLabel(id) {
-    const it = S.ws.itemById(id);
-    if (!it) return { name: '(not in Spec_Item.txt)', rarity: '', info: null };
-    const info = S.ws.itemInfo(it);
-    return { name: info.name, rarity: info.rarity, info };
-  }
-
-  function diagsIn(npc, rec) {
-    return S.ws.diags.filter(d => d.file === npc.file && d.start !== undefined && (rec ? (d.start >= rec.start && d.start < Math.max(rec.end, rec.start + 1)) : d.npcKey === npc.key));
-  }
-  function diagTags(list) {
-    return list.map(d => h('span.tag.' + (d.severity === 'BLOCK' ? 'bad' : 'warn'), { title: d.message }, (d.severity === 'BLOCK' ? '⛔ ' : '⚠ ') + d.code));
+  function renderList() {
+    const el = $('list'); el.textContent = '';
+    const extra = $('list-extra'); extra.textContent = '';
+    if (!S.ws || !S.ws.available[S.mode].ok) return;
+    const m = active();
+    $('list-search').placeholder = m.searchPlaceholder || 'Search';
+    if (m.listExtra) { const x = m.listExtra(ctx); if (x) extra.appendChild(x); }
+    m.renderList(el, ctx);
   }
 
   function renderEditor() {
     const el = $('editor');
-    const npc = selNpc();
-    if (!S.ws || !npc) { if (S.ws) { el.className = 'empty-state'; el.innerHTML = '<p>Select an NPC on the left.</p>'; } return; }
+    if (!S.ws) return;
     el.className = ''; el.textContent = '';
-    const f = S.ws.fileOfNpc(npc);
-    const canEdit = S.ws.isEditable(f.name.toLowerCase());
-    const chip = npc.venderType === 1 || npc.venderType === 2;
-    const entries = npc.statements.map(r => ({ r, e: FRE.character.shopEntry(r) })).filter(x => x.e);
-    const D0 = S.ws.defines;
-
-    el.appendChild(h('div.npc-title', h('h2', npc.name || npc.key), h('span.def', npc.key),
-      h('span.line', `${npc.file}:${f.lineOf(npc.start) + 1}`),
-      chip ? h('span.tag.chip', npc.venderType === 1 ? 'Red Chip shop' : 'Donate Chip shop') : h('span.tag', 'Penya shop'),
-      canEdit ? null : h('span.tag.bad', 'read-only')));
-    const menus = npc.menus.map(v => D0.byValue('MMI_', v) || String(v));
-    if (menus.length) el.appendChild(h('div.menus', 'Menus: ', menus.map(m => S.ws.exchangeMenus.has(m)
-      ? h('span.tag.exch', { title: `${m} is an item exchange defined in Exchange_Script.txt (not editable here yet)` }, `${pretty(m)} ⇄ exchange`)
-      : h('span.tag', { title: m }, pretty(m)))));
-
-    const tabs = h('div.tabs');
-    for (let t = 0; t < 4; t++) {
-      const n = entries.filter(x => x.e.slot === t).length;
-      tabs.appendChild(h('button' + (t === S.tab ? '.sel' : ''), { on: { click: () => { S.tab = t; renderEditor(); renderItems(); } } },
-        npc.slotTitles[t] || `Tab ${t}`, h('span.count', n ? `(${n})` : '')));
-    }
-    el.appendChild(tabs);
-
-    // fixed items (AddShopItem / AddVenderItem2)
-    const fixed = entries.filter(x => (x.e.kind === 'fixed' || x.e.kind === 'chip') && x.e.slot === S.tab);
-    el.appendChild(h('h3', chip ? 'Chip items (AddVenderItem2)' : 'Fixed items (AddShopItem)'));
-    if (!fixed.length) el.appendChild(h('p.muted', 'None in this tab. Use + in the item list on the right to add one.'));
-    else {
-      const tb = h('table', h('tr', h('th', 'Item'), h('th', 'Define'), h('th.num', chip ? 'Chip price' : 'Price'), h('th', 'Tab'), h('th', ''), h('th', '')));
-      for (const { r, e } of fixed) {
-        const id = e.item.value >>> 0;
-        const lab = itemLabel(id);
-        const def = e.item.define || f.text.slice(e.item.start, e.item.end);
-        let priceCell;
-        if (e.kind === 'chip') priceCell = h('td.num', lab.info ? fmt(lab.info.chipCost) : '');
-        else {
-          const inp = h('input', { type: 'number', min: 0, step: 1, value: e.cost ? e.cost.value : '', placeholder: lab.info ? fmt(lab.info.cost) + ' (item)' : '', disabled: !canEdit,
-            title: 'Empty = the item\'s own price from Spec_Item.txt. A price here changes the item\'s price everywhere (server-wide).',
-            on: { change: ev => { const v = ev.target.value.trim(); edit(npc, text => FRE.shopOps.setCost(text, r, v === '' ? null : Number(v)), 'price'); } } });
-          priceCell = h('td.num', inp);
-        }
-        const sel = h('select', { disabled: !canEdit, on: { change: ev => edit(npc, text => FRE.shopOps.setSlot(text, r, Number(ev.target.value)), 'move tab') } },
-          [0, 1, 2, 3].map(t => h('option', { value: t, selected: t === e.slot }, String(t))));
-        tb.appendChild(h('tr', h('td', h('span.r-' + lab.rarity, lab.name), ' ', diagTags(diagsIn(npc, r))),
-          h('td.def', def), priceCell, h('td', sel), h('td.line', 'L' + (f.lineOf(r.start) + 1)),
-          h('td', h('button.icon.danger', { disabled: !canEdit, title: 'Remove', on: { click: () => edit(npc, text => FRE.shopOps.removeStatement(text, r), `remove ${def}`) } }, '✕'))));
-      }
-      el.appendChild(tb);
-    }
-
-    // generated stock rules (read-only in Build 1)
-    const gen = entries.filter(x => x.e.kind === 'generated' && x.e.slot === S.tab);
-    const tabSim = S.ws.simulate(npc).tabs[S.tab];
-    const D = S.ws.defines;
-    if (gen.length) {
-      el.appendChild(h('h3', 'Generated stock rules (AddVendorItem) · read-only'));
-      el.appendChild(h('p.muted.small', 'Each rule adds every sellable item of that type whose rarity (dwItemRare) is in the range. The server fills the shop from these rules at startup.'));
-      const tb = h('table', h('tr', h('th', 'Item type'), h('th', 'Job'), h('th.num', 'Rarity'), h('th.num', 'Adds'), h('th', '')));
-      for (const { r, e } of gen) {
-        const ik3 = e.ik3.define || D.byValue('IK3_', e.ik3.value) || String(e.ik3.value);
-        const job = e.job.value === -1 ? 'any job' : (e.job.define || D.byValue('JOB_', e.job.value) || String(e.job.value));
-        const res = tabSim.rules.find(x => x.rec === r) || {};
-        const adds = e.lang ? 'other language only' : res.empty ? 'nothing (no item matches)' : `${res.added} item${res.added === 1 ? '' : 's'}`;
-        tb.appendChild(h('tr', h('td', pretty(ik3), ' ', h('span.def', ik3), ' ', diagTags(diagsIn(npc, r))), h('td', pretty(job)),
-          h('td.num', `${e.rareMin.value}–${e.rareMax.value}`),
-          h('td.num', { title: `The last argument (${e.count.value}) is read but ignored by the server; a tab holds at most 100 items.` }, adds),
-          h('td.line', 'L' + (f.lineOf(r.start) + 1))));
-      }
-      el.appendChild(tb);
-    }
-
-    // what the server actually puts in this tab
-    el.appendChild(h('h3', `Players see in this tab (${tabSim.entries.length}/100)`));
-    if (!tabSim.entries.length) el.appendChild(h('p.muted', 'Nothing.'));
-    else {
-      const tb = h('table', h('tr', h('th.num', '#'), h('th', 'Item'), h('th', 'Define'), h('th.num', chip ? 'Chip price' : 'Price'), h('th', 'From')));
-      tabSim.entries.forEach((en, i) => {
-        const info = S.ws.itemInfo(en.prop.item);
-        const price = chip ? `${fmt(info.chipCost)} ${npc.venderType === 2 ? 'Donate' : 'Red'} chips`
-          : (en.kind === 'fixed' && en.source.args.cost ? fmt(en.source.args.cost.value) : fmt(info.cost));
-        tb.appendChild(h('tr', h('td.num.line', i + 1), h('td', h('span.r-' + info.rarity, info.name)), h('td.def', info.define),
-          h('td.num', { title: chip ? '' : 'Base price before the server shop-rate multipliers' }, price),
-          h('td.line', `${en.kind === 'generated' ? 'rule' : en.kind === 'chip' ? 'chip item' : 'fixed'} L${f.lineOf(en.source.start) + 1}`)));
-      });
-      el.appendChild(tb);
-    }
-    if (tabSim.dropped.length) {
-      el.appendChild(h('p.small', { style: 'color:var(--warn)' }, `Left out: ` + tabSim.dropped.map(d => `${d.prop ? d.prop.item.define : d.rec.cmd} (${d.reason})`).join(', ')));
-    }
-
-    const nd = diagsIn(npc, null);
-    if (nd.length) {
-      el.appendChild(h('h3', 'Problems for this NPC'));
-      nd.forEach(d => el.appendChild(diagRow(d)));
-    }
-  }
-
-  // 'IK3_COLLECTER' -> 'Collecter', 'JOB_MERCENARY' -> 'Mercenary'
-  function pretty(def) {
-    if (!/^[A-Z0-9]+_/.test(def)) return def;
-    return def.replace(/^[A-Z0-9]+_/, '').toLowerCase().replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
-  }
-
-  function diagRow(d, extra) {
-    const help = FRE.diagHelp[d.code];
-    return h('div.diag', extra && extra.on ? { on: extra.on } : null,
-      h('span.sev.' + d.severity, d.severity), extra && extra.isNew ? h('span.new', 'new') : null,
-      h('div', h('div', d.message), help ? h('div.help', `ⓘ ${help[0]} → ${help[1]}`) : null),
-      extra && extra.where ? h('span.line', extra.where) : null);
+    if (!S.ws.available[S.mode].ok) { el.appendChild(h('p.empty-state', `Not available: missing ${S.ws.available[S.mode].missing.join(', ')}`)); return; }
+    active().renderEditor(el, ctx);
   }
 
   // ------------------------------------------------------------------ item database
@@ -2521,19 +2903,31 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
   }
 
   function renderItems() {
-    const list = $('item-list');
     if (!S.ws) return;
     applyItemFilter();
     $('item-spacer').style.height = S.filtered.length * ROW_H + 'px';
     $('item-count').textContent = `${fmt(S.filtered.length)} of ${fmt(S.items.length)} items`;
+    const target = S.ws.available[S.mode].ok ? active().addTarget(ctx) : { ok: false, title: '' };
+    $('new-price-row').hidden = !(target.ok && target.usesPrice);
     paintItems();
+  }
+
+  function addFromDb(info) {
+    const target = active().addTarget(ctx);
+    if (!target.ok) { toast(target.title, 'bad'); return; }
+    let cost = null;
+    if (target.usesPrice) {
+      const parsed = FRE.num.parseAmount($('new-price').value);
+      if (!parsed.ok) { toast('Price for new items: ' + parsed.error, 'bad'); return; }
+      cost = parsed.value;
+    }
+    target.add(info, cost);
   }
 
   function paintItems() {
     const list = $('item-list');
     [...list.querySelectorAll('.item')].forEach(n => n.remove());
-    const npc = selNpc();
-    const canAdd = npc && S.ws.isEditable(npc.file.toLowerCase());
+    const target = S.ws.available[S.mode].ok ? active().addTarget(ctx) : { ok: false, title: '' };
     const from = Math.max(0, Math.floor(list.scrollTop / ROW_H) - 5);
     const to = Math.min(S.filtered.length, from + Math.ceil(list.clientHeight / ROW_H) + 10);
     const frag = document.createDocumentFragment();
@@ -2541,11 +2935,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
       const it = S.filtered[i];
       const atk = it.atkMax > 0 ? `${it.atkMin}–${it.atkMax}` : '';
       frag.appendChild(h('div.item', { style: `top:${i * ROW_H}px` },
-        h('div.nm', { title: `${it.name}\n${it.define} (${it.id})\nprice ${fmt(it.cost)}` }, h('span.r-' + it.rarity, it.name), h('span.def', it.define)),
+        h('div.nm', { title: `${it.name}\n${it.define} (${it.id})\nprice ${fmt(it.cost)} Penya · chip price ${it.chipCost > 0 ? fmt(it.chipCost) : 'none'}` }, h('span.r-' + it.rarity, it.name), h('span.def', it.define)),
         h('div.ty', { title: it.ik3Name || '' }, (it.ik3Name || '').replace(/^IK3_/, '')),
         h('div.num', it.level > 0 ? it.level : ''),
         h('div.num', atk),
-        h('button', { disabled: !canAdd, title: npc ? `Add to ${npc.name || npc.key}, tab ${S.tab}` : 'Select an NPC first', on: { click: () => addItemToSelected(it) } }, '+')));
+        h('button', { disabled: !target.ok, title: target.title, on: { click: () => addFromDb(it) } }, '+')));
     }
     list.appendChild(frag);
   }
@@ -2562,10 +2956,17 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
     el.appendChild(h('div.pad.muted.small', `${list.length} problem(s). Blocking problems introduced by your edits (⛔ new) prevent saving; problems that were already in the files are shown for information.`));
     for (const d of list) {
       const f = S.ws.files.get((d.file || '').toLowerCase());
-      const npcOf = () => d.npcKey && S.ws.chars.npcs.find(n => n.key === d.npcKey && n.file === d.file);
       el.appendChild(diagRow(d, { isNew: fresh.has(d), where: f && d.start !== undefined ? `${d.file}:${f.lineOf(d.start) + 1}` : d.file || '',
-        on: { click: () => { const npc = npcOf(); if (npc) { S.sel = npcId(npc); renderAll(false); } } } }));
+        on: { click: () => locate(d) } }));
     }
+  }
+
+  function locate(d) {
+    const dm = S.ws.moduleOfFile(d.file || '');
+    const m = dm && modules().find(x => x.id === dm.id);
+    if (!m || !m.locate || !m.locate(d, ctx)) return;
+    S.mode = m.id;
+    renderAll(false);
   }
 
   // ------------------------------------------------------------------ save
@@ -2584,14 +2985,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
     });
     return box;
   }
+  FRE.ui.renderDiff = renderDiff;
 
   async function onSave() {
     const ws = S.ws;
     if (!ws || !ws.dirtyFiles().length) return;
     const nb = ws.newBlocking();
     if (nb.length) {
-      modal({ title: '⛔ Cannot save: your edits introduced blocking problems',
-        body: h('div', nb.map(d => h('div.diag', h('span.sev.BLOCK', 'BLOCK'), h('span', d.message)))) });
+      modal({ title: '⛔ Cannot save: your edits introduced blocking problems', body: h('div', nb.map(d => diagRow(d))) });
       return;
     }
     if (!S.backupDir) {
@@ -2604,11 +3005,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
 
     const dirty = ws.dirtyFiles();
     const warns = ws.diags.filter(d => d.severity === 'WARN');
+    const client = ws.clientCopiesNeeded();
     const body = h('div',
       h('p', `These lines will change. Everything else in the file${dirty.length > 1 ? 's' : ''} stays byte-for-byte identical.`),
       dirty.map(f => [h('h3', `${f.name}`), renderDiff(f)]),
       warns.length ? h('p.muted', `${warns.length} warning(s) (not blocking) — see the problems panel.`) : null,
-      h('p.muted.small', `Backup folder: ${S.backupDir.name}/<timestamp>/ · Remember to copy changed character*.inc files to Client/.`));
+      h('p.muted.small', `Backup folder: ${S.backupDir.name}/<timestamp>/` + (client.length ? ` · After saving, also copy to Client/: ${client.join(', ')}` : '')));
     modal({ title: `Review changes (${dirty.length} file${dirty.length > 1 ? 's' : ''})`, body, wide: true, buttons: [
       { label: 'Cancel' },
       { label: `Back up and write ${dirty.length} file${dirty.length > 1 ? 's' : ''}`, cls: 'primary', onClick: runSave },
@@ -2617,11 +3019,16 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
 
   async function runSave() {
     const log = h('div.log');
+    const client = S.ws.clientCopiesNeeded();
     const m = modal({ title: 'Saving…', body: log, buttons: [{ label: 'Close' }] });
     const report = await FRE.save.save(S.ws, S.backupDir, msg => log.appendChild(document.createTextNode(msg + '\n')))
       .catch(e => ({ ok: false, steps: [String(e && e.message || e)] }));
     if (!report.ok) log.appendChild(h('div', { style: 'color:var(--bad)' }, '\nNot saved: ' + (report.steps[report.steps.length - 1] || '')));
-    else { S.edited.clear(); toast('Saved. Copy changed files to Client/ and restart the WorldServer.', 'ok'); }
+    else {
+      S.edited.clear();
+      if (client.length) log.appendChild(h('div', { style: 'color:var(--warn)' }, `\nNow copy to Client/: ${client.join(', ')}`));
+      toast('Saved. Copy changed files to Client/ and restart the WorldServer.', 'ok');
+    }
     m.el.querySelector('header').textContent = report.ok ? 'Saved' : 'Save failed';
     renderAll(false);
   }
@@ -2644,8 +3051,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
     $('btn-undo').onclick = undo;
     $('btn-redo').onclick = redo;
     $('btn-diag').onclick = () => { S.diagOpen = !S.diagOpen; renderDiagPanel(); };
-    $('npc-search').oninput = e => { S.npcQuery = e.target.value; renderNpcList(); };
-    $('npc-shops-only').onchange = e => { S.shopsOnly = e.target.checked; renderNpcList(); };
+    $('list-search').oninput = e => { S.queries[S.mode] = e.target.value; renderList(); };
     $('item-search').oninput = e => { S.itemQuery = e.target.value; $('item-list').scrollTop = 0; renderItems(); };
     $('item-ik1').onchange = e => { S.ik1 = e.target.value; S.ik3 = ''; renderItemFilters(); renderItems(); };
     $('item-ik3').onchange = e => { S.ik3 = e.target.value; renderItems(); };
@@ -2662,6 +3068,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
       else if (k === 's') { e.preventDefault(); onSave(); }
     });
     window.addEventListener('beforeunload', e => { if (S.ws && S.ws.dirtyFiles().length) { e.preventDefault(); e.returnValue = ''; } });
+    renderModes();
     renderBanners();
     if (!FRE.fsa.supported()) { $('btn-load').disabled = true; return; }
     const last = await FRE.fsa.recall('resource');
@@ -2675,7 +3082,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 �
     else if (bk) { $('backup-name').textContent = `${bk.name} (click to re-allow)`; $('btn-backup-dir').onclick = async () => { if (await FRE.fsa.ensurePermission(bk)) { S.backupDir = bk; $('btn-backup-dir').onclick = pickBackup; renderToolbar(); } else pickBackup(); }; }
   }
 
-  FRE.app = { init, state: S };
+  FRE.app = { init, state: S, ctx, setMode };
   if (typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', init);
 })(globalThis.FRE = globalThis.FRE || {});
 

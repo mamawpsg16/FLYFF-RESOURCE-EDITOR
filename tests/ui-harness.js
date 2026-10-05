@@ -70,15 +70,15 @@
     await waitFor(() => FRE.app.state.ws, 'workspace');
     const S = FRE.app.state;
     ok(S.ws.items.rows.length === 8067, 'items loaded (8067)');
-    ok(document.querySelectorAll('#npc-list .npc').length > 50, 'NPC list rendered');
+    ok(document.querySelectorAll('#list .npc').length > 50, 'NPC list rendered');
     ok(S.ws.diags.filter(d => d.code === 'C_NO_OPEN_BRACE').length === 6, '6 missing-brace warnings');
 
-    const lui = [...document.querySelectorAll('#npc-list .npc')].find(n => n.textContent.includes('MaFl_Lui'));
+    const lui = [...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MaFl_Lui'));
     click(lui);
     ok($('editor').textContent.includes('Lui'), 'Lui selected');
     click(btnByText(document.querySelector('.tabs'), 'Magic Tools'));
     ok($('editor').textContent.includes('II_GEN_FOO_COO_DDUKGUKHOT'), 'tab 1 shows the existing AddShopItem');
-    ok(/Players see in this tab \(11\/100\)/.test($('editor').textContent), '"Players see" lists 11 items for Lui tab 1');
+    ok(/Items in this tab \(11\/100\)/.test($('editor').textContent), 'one table lists the 11 items players see in Lui tab 1');
     ok($('editor').textContent.includes('Refresher'), 'rules show readable type names');
     if (STOP === 'loaded') return;
 
@@ -86,11 +86,12 @@
     search.value = 'II_SYS_SYS_SCR_BLESSEDNESS'; search.dispatchEvent(new Event('input'));
     const plus = [...document.querySelectorAll('#item-list .item')].find(r => r.querySelector('.def').textContent === 'II_SYS_SYS_SCR_BLESSEDNESS').querySelector('button');
     click(plus);
-    ok([...$('editor').querySelectorAll('td.def')].some(td => td.textContent === 'II_SYS_SYS_SCR_BLESSEDNESS'), 'item added to the shop');
-    const priceInputs = [...$('editor').querySelectorAll('input[type=number]')];
+    ok([...$('editor').querySelectorAll('.def.block')].some(td => td.textContent === 'II_SYS_SYS_SCR_BLESSEDNESS'), 'item added to the shop');
+    const priceInputs = [...$('editor').querySelectorAll('input.num-input')];
+    ok(priceInputs[0].value === '1,000,000', 'existing price is shown with commas');
     const inp = priceInputs[priceInputs.length - 1];
-    inp.value = '25000'; inp.dispatchEvent(new Event('change'));
-    ok(/AddShopItem\( 1, II_SYS_SYS_SCR_BLESSEDNESS, 25000 \);/.test(S.ws.files.get('character.inc').text), 'price written into the statement');
+    inp.value = '25,000'; inp.dispatchEvent(new Event('change'));   // typed with a comma
+    ok(/AddShopItem\( 1, II_SYS_SYS_SCR_BLESSEDNESS, 25000 \);/.test(S.ws.files.get('character.inc').text), 'price typed as "25,000" is written as plain 25000');
     ok(!$('btn-save').disabled, 'Save enabled');
 
     click($('btn-save'));

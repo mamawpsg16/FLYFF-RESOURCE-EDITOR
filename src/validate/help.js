@@ -43,6 +43,12 @@
     S_TRUNCATED: ['Spec_Item.txt ends in the middle of a record.', 'Restore the missing values.'],
     T_KEY: ['A line in a .txt.txt string table does not start with an IDS_ key. The server logs an error and skips it.', 'Fix the key.'],
     T_DUP: ['The same IDS_ key appears twice. The first one wins.', 'Remove the duplicate.'],
+    DS_BRACES: ['The DONATIONSHOP { block never closes with }. The server\'s reading loop never ends: it hangs at startup.', 'Add the missing } at the end of the block.'],
+    DS_FORMAT: ['A DSItem row is not DSItem "Category" II_NAME (the category must be in quotes), or the file has no DONATIONSHOP block. The server reads values in fixed order, so the rest shifts.', 'Fix the row to: DSItem "Category" II_NAME'],
+    DS_UNDEF: ['The item name is not #defined (or is 0). The server logs an error and leaves the row out of the shop.', 'Check the II_ name, or add it to defineItem.h first.'],
+    DS_NO_ITEM: ['The item is not in Spec_Item.txt, so it cannot be bought (and the client may show a broken entry).', 'Pick an existing item, or add it to Spec_Item.txt first.'],
+    DS_NO_PRICE: ['Donation prices are not in DonationShop.inc: each item\'s price is its dwReferValue1 in Spec_Item.txt (donate chips). This item has none, so the server refuses to sell it.', 'Give the item a chip price in Spec_Item.txt (Build 3), or remove it from the shop.'],
+    DS_DUP: ['The same item is listed twice. The shop keeps one entry per item, in the category of the LAST row.', 'Remove one of the rows.'],
     D_BRACE: ['A define header contains {. The server stops reading defines from that file there.', 'Remove the {.'],
   };
 })(globalThis.FRE = globalThis.FRE || {});

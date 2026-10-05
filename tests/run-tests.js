@@ -52,6 +52,22 @@ section('lexer');
   eq(atoi('12ab').value, 12, 'atoi prefix');
 }
 
+// ---------------------------------------------------------------- numbers (display only)
+section('numbers');
+{
+  const N = FRE.num;
+  eq(N.group(1000000), '1,000,000', 'group 1,000,000');
+  eq(N.group(-2500), '-2,500', 'group negative');
+  eq(N.group(999), '999', 'no comma under 1000');
+  eq(N.parseAmount('25,000').value, 25000, 'parse "25,000"');
+  eq(N.parseAmount(' 1 000 000 ').value, 1000000, 'parse with spaces');
+  eq(N.parseAmount('').value, null, 'empty = no value');
+  ok(!N.parseAmount('12.5').ok && !N.parseAmount('abc').ok && !N.parseAmount('-1').ok, 'rejects decimals, text, below min');
+  ok(!N.parseAmount('3000000000').ok, 'rejects above INT_MAX');
+  eq(N.percent(375000, 3000000000), '0.0125%', 'percent of the drop scale');
+  eq(N.percent(1000000, 1000000), '100%', 'percent 100');
+}
+
 // ---------------------------------------------------------------- bytes / SourceFile
 section('bytes + SourceFile');
 {

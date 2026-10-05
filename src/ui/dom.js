@@ -26,7 +26,25 @@
   }
 
   const $ = id => document.getElementById(id);
-  const fmt = n => (n === null || n === undefined || Number.isNaN(n)) ? '' : Number(n).toLocaleString('en-US');
+  const fmt = n => FRE.num.group(n);
+
+  // Amount box: shows "1,000,000" when idle and plain digits while editing.
+  // onCommit(value|null) gets a plain number; commas never reach the files.
+  function numInput({ value = null, placeholder = '', disabled = false, title = '', min = 0, max = 2147483647, onCommit }) {
+    const el = h('input.num-input', { type: 'text', inputMode: 'numeric', placeholder, disabled, title, value: fmt(value) });
+    el.dataset.value = value === null ? '' : String(value);
+    el.addEventListener('focus', () => { el.value = el.dataset.value; el.select(); });
+    el.addEventListener('blur', () => { el.value = fmt(el.dataset.value === '' ? null : Number(el.dataset.value)); });
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') el.blur(); if (e.key === 'Escape') { el.value = el.dataset.value; el.blur(); } });
+    el.addEventListener('change', () => {
+      const r = FRE.num.parseAmount(el.value, { min, max });
+      if (!r.ok) { toast(r.error, 'bad'); el.value = document.activeElement === el ? el.dataset.value : fmt(el.dataset.value === '' ? null : Number(el.dataset.value)); return; }
+      el.dataset.value = r.value === null ? '' : String(r.value);
+      if (document.activeElement !== el) el.value = fmt(r.value);
+      onCommit(r.value);
+    });
+    return el;
+  }
 
   function toast(msg, kind = '') {
     const t = h('div.toast' + (kind ? '.' + kind : ''), msg);
@@ -47,5 +65,5 @@
     return { close, el: back };
   }
 
-  FRE.dom = { h, $, fmt, toast, modal };
+  FRE.dom = { h, $, fmt, toast, modal, numInput };
 })(globalThis.FRE = globalThis.FRE || {});

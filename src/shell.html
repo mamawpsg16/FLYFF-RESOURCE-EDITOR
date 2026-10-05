@@ -22,6 +22,7 @@
     <button id="btn-save" class="primary" title="Save (Ctrl+S)" disabled>Save</button>
     <button id="btn-backup" title="Snapshot all loaded files into the backup folder" disabled>Backup</button>
   </div>
+  <div id="mode-tabs" class="tb-group modes"></div>
   <div id="file-status" class="tb-files"></div>
   <button id="btn-diag" class="diag-badge" title="Problems">0</button>
 </header>
@@ -29,14 +30,14 @@
 <main id="layout">
   <aside id="left">
     <div class="panel-head">
-      <input id="npc-search" type="search" placeholder="Search NPCs" autocomplete="off">
-      <label class="check"><input id="npc-shops-only" type="checkbox" checked> shops only</label>
+      <input id="list-search" type="search" placeholder="Search" autocomplete="off">
+      <span id="list-extra"></span>
     </div>
-    <div id="npc-list" class="list"></div>
+    <div id="list" class="list"></div>
   </aside>
   <section id="center">
     <div id="editor" class="empty-state">
-      <h2>NPC Shop Editor</h2>
+      <h2>FLYFF Resource Editor</h2>
       <p>Click <b>Load Folder</b> and pick <code>FLYFF-V19-SOURCE/Server/Resource</code><br>(or a test copy such as <code>test-data/Resource</code>).</p>
       <p class="muted">Works in Chrome and Edge. Nothing is written until you press Save and confirm the changes.</p>
     </div>
@@ -55,8 +56,8 @@
         <button class="chip" data-r="ultimate">Ultimate</button>
         <button class="chip" data-r="baruna">Baruna</button>
       </div>
-      <label class="row small">Price for new items
-        <input id="new-price" type="number" min="0" step="1" placeholder="item's own price">
+      <label class="row small" id="new-price-row">Price for new items
+        <input id="new-price" type="text" inputmode="numeric" placeholder="item's own price">
       </label>
     </div>
     <div class="item-head"><span>Name</span><span>Type</span><span>Lv</span><span>ATK</span><span></span></div>
