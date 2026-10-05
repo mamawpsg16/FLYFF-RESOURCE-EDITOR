@@ -3,10 +3,14 @@
   'use strict';
   const T = FRE.textOps;
 
+  // Spacing used when the file has no statement of that command yet. SetVenderType
+  // is only ever written "SetVenderType(1);" in the original data.
+  const DEFAULT_PAD = { SetVenderType: '' };
+
   function formatStmt(cmd, args, text) {
     // follow the file's existing spacing for this command: "Cmd( a, b );" vs "Cmd(a, b);"
     const m = new RegExp(cmd + '\\s*\\(( ?)').exec(text);
-    const pad = m ? m[1] : ' ';
+    const pad = m ? m[1] : (cmd in DEFAULT_PAD ? DEFAULT_PAD[cmd] : ' ');
     return `${cmd}(${pad}${args.join(', ')}${pad});`;
   }
   const checkCost = c => T.checkAmount(c, 0, 2147483647, 'price');
@@ -54,5 +58,82 @@
     return T.replaceSpan(rec.args.slot, slot);
   }
 
-  FRE.shopOps = { addItem, removeStatement, setCost, setSlot, stmtExtent: T.stmtExtent };
+  // Shop currency (SetVenderType: 0 Penya, 1 Red Chip, 2 Donate Chip; CProject::LoadCharacter,
+  // Project.cpp:3518). Chip shops sell AddVenderItem2 entries for chips (Mover.cpp:1651);
+  // Penya shops sell AddShopItem entries. Converting renames only the command word and
+  // keeps the "( tab, II_X )" text as written, so converting back gives identical bytes.
+  // AddShopItem's Penya price cannot exist on AddVenderItem2 and is dropped.
+  // Returns every splice at once, so the whole change is one undo step.
+  const shopType = v => (v === 1 || v === 2 ? v : 0);
+  const isChipItem = r => r.cmd === 'AddVenderItem2' || r.cmd === 'AddVendorItem2';
+
+  // penyaPrices (optional, converting to Penya): Map rec.start -> price written as
+  // AddShopItem( tab, II_X, price ). Chip prices live in Spec_Item.txt (itemOps.setChipPrice).
+  function setShopType(text, npc, type, penyaPrices) {
+    if (type !== 0 && type !== 1 && type !== 2) throw new Error('shop type must be 0 (Penya), 1 (Red Chip) or 2 (Donate Chip)');
+    const from = shopType(npc.venderType);
+    const splices = [];
+    const rename = (rec, cmd) => splices.push({ start: rec.start, end: rec.start + rec.cmd.length, insert: cmd });
+    if ((from === 0) !== (type === 0)) {
+      for (const rec of npc.statements) {
+        if (type !== 0 && rec.cmd === 'AddShopItem') { rename(rec, 'AddVenderItem2'); splices.push(...setCost(text, rec, null)); }
+        if (type === 0 && isChipItem(rec)) {
+          rename(rec, 'AddShopItem');
+          const cost = penyaPrices && penyaPrices.get(rec.start);
+          if (cost !== undefined && cost !== null) {
+            checkCost(cost);
+            splices.push({ start: rec.args.item.end, end: rec.args.item.end, insert: `, ${cost}` });
+          }
+        }
+      }
+    }
+    const typeRecs = npc.statements.filter(r => r.cmd === 'SetVenderType');
+    if (type === 0) {
+      for (const rec of typeRecs) splices.push(...T.removeRow(text, rec));
+    } else if (typeRecs.length) {
+      const last = typeRecs[typeRecs.length - 1];
+      for (const rec of typeRecs.slice(0, -1)) splices.push(...T.removeRow(text, rec));
+      if (last.args.type.value !== type) splices.push(...T.replaceSpan(last.args.type, type));
+    } else {
+      const stmt = formatStmt('SetVenderType', [type], text);
+      const menu = npc.statements.filter(r => r.cmd === 'AddMenu').pop();
+      splices.push(...(menu ? T.insertRowAfter(text, menu, stmt) : T.insertRowBelowLine(text, npc.braceTok.start, stmt)));
+    }
+    return splices;
+  }
+
+  // What a currency change does to the items, for the preview (no splices).
+  // itemOf(id) -> item info (Workspace.itemInfo) or null.
+  function shopTypePlan(npc, type, itemOf) {
+    const from = shopType(npc.venderType);
+    const plan = { from, to: type, converted: [], droppedPrices: [], noChipPrice: [], noPenyaPrice: [], rulesIgnored: 0, rulesUsedAgain: 0 };
+    if (from === type) return plan;
+    const crossing = (from === 0) !== (type === 0);
+    for (const rec of npc.statements) {
+      const e = FRE.character.shopEntry(rec);
+      if (!e) continue;
+      if (e.kind === 'generated') {
+        if (crossing && type !== 0) plan.rulesIgnored++;
+        if (crossing && type === 0) plan.rulesUsedAgain++;
+        continue;
+      }
+      const info = itemOf(e.item.value);
+      const define = e.item.define || (info && info.define) || String(e.item.value);
+      const row = { rec, define, info, slot: e.slot };
+      // chip shops only sell AddVenderItem2 items with a chip price (dwReferValue1 >= 1)
+      if (!crossing) continue;
+      if (type !== 0 && !(info && info.chipCost >= 1)) plan.noChipPrice.push(row);
+      if (type !== 0 && e.kind === 'fixed') {
+        plan.converted.push(row);
+        if (e.cost) plan.droppedPrices.push(Object.assign({ cost: e.cost.value }, row));
+      }
+      if (type === 0 && e.kind === 'chip') {
+        plan.converted.push(row);
+        if (!(info && info.cost > 0)) plan.noPenyaPrice.push(row);
+      }
+    }
+    return plan;
+  }
+
+  FRE.shopOps = { addItem, removeStatement, setCost, setSlot, setShopType, shopTypePlan, shopType, stmtExtent: T.stmtExtent };
 })(globalThis.FRE = globalThis.FRE || {});

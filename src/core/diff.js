@@ -56,7 +56,7 @@
     let cur = null, lastChange = -1e9;
     ops.forEach((op, i) => {
       if (op.type !== 'eq') {
-        if (!cur || i - lastChange > 2 * ctx) {
+        if (!cur || i - lastChange > 2 * ctx + 1) {     // merge when no line would be hidden between them
           cur = { ops: [] };
           out.push(cur);
           for (let k = Math.max(0, i - ctx); k < i; k++) if (ops[k].type === 'eq') cur.ops.push(ops[k]);

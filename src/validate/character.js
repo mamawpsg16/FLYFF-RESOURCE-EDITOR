@@ -70,6 +70,13 @@
         const e = shopEntry(rec);
         if (!e) continue;
         shopCount++;
+        const chipShop = npc.venderType === 1 || npc.venderType === 2;
+        if (e.kind === 'generated' && chipShop) {
+          const ik3 = e.ik3.define || e.ik3.value;
+          add(Object.assign({ code: 'C_RULE_IGNORED', severity: 'INFO', start: rec.start, end: rec.end,
+            key: `C_RULE_IGNORED|${npc.file}|${npc.key}|${e.slot}|${ik3}|${e.rareMin.value}-${e.rareMax.value}`,
+            message: `${npc.key}: ${rec.cmd}(${e.slot}, ${ik3}, ...) is ignored because this is a chip shop (SetVenderType(${npc.venderType}))` }, at));
+        }
         if (e.kind === 'fixed' || e.kind === 'chip') {
           const id = e.item.value >>> 0;
           const itemName = e.item.define || e.item.tokens.map(t => t.raw || t.text).join('');
@@ -86,7 +93,14 @@
             if (!priceByItem.has(id)) priceByItem.set(id, []);
             priceByItem.get(id).push({ npc, cost: c, rec, itemName });
           }
-          if (e.kind === 'chip' && npc.venderType !== 1 && npc.venderType !== 2) {
+          // Mover.cpp:1723 appends AddShopItem entries in every shop type; DPSrvr.cpp:3516 then
+          // charges chips (dwReferValue1) without the "chip cost < 1" check AddVenderItem2 gets.
+          if (e.kind === 'fixed' && chipShop) {
+            add(Object.assign({ code: 'C_FIXED_IN_CHIP', severity: 'WARN', start: rec.start, end: rec.end,
+              key: `C_FIXED_IN_CHIP|${npc.file}|${npc.key}|${itemName}`,
+              message: `${npc.key}: AddShopItem in a chip shop: ${itemName} is sold for chips without the server's chip-price check` }, at));
+          }
+          if (e.kind === 'chip' && !chipShop) {
             add(Object.assign({ code: 'C_CHIP_TYPE', severity: 'WARN', start: rec.start, end: rec.end,
               key: `C_CHIP_TYPE|${npc.file}|${npc.key}|${itemName}`,
               message: `${npc.key}: ${rec.cmd} only works in chip shops (SetVenderType(1) or (2)); the server ignores it here` }, at));

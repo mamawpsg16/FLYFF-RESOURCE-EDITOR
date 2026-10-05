@@ -216,6 +216,266 @@ editCase('chip shop add uses AddVenderItem2', w => {
   ok(/\tAddVenderItem2\(0, II_SYS_SYS_SCR_BLESSEDNESS\);\r\n/.test(f.text), 'chip style "AddVenderItem2(0, II_X);" copied');
 });
 
+const waforu = w => w.chars.byKey.get('mafl_waforu')[0];
+const changedLines = f => FRE.diff.diffLines(FRE.diff.splitKeepEol(f.originalText), FRE.diff.splitKeepEol(f.text)).filter(o => o.type !== 'eq');
+const setType = (w, npcOf, type) => { const f = ci(w); w.apply('character.inc', FRE.shopOps.setShopType(f.text, npcOf(w), type), 'type'); };
+
+editCase('shop type: Waforu Red Chip -> Penya -> Red Chip round trip', w => {
+  const f = ci(w), before = f.serialize();
+  const n2 = waforu(w).statements.filter(s => s.cmd === 'AddVenderItem2').length;
+  setType(w, waforu, 0);
+  eq(waforu(w).venderType, 0, 'Penya: no SetVenderType left');
+  eq(waforu(w).statements.filter(s => s.cmd === 'AddVenderItem2').length, 0, 'Penya: no AddVenderItem2 left');
+  eq(shopItems(waforu(w)).length, n2, 'Penya: every item became AddShopItem');
+  ok(!/SetVenderType/.test(f.text), 'Penya: SetVenderType line removed (the only one in the file)');
+  setType(w, waforu, 1);
+  ok(B.bytesEqual(f.serialize(), before), 'Red Chip again: identical bytes to the original');
+  w.undo();
+  eq(waforu(w).venderType, 0, 'each conversion is one undo step');
+  w.undo();
+  ok(B.bytesEqual(f.serialize(), before), 'undo x2 restores identical bytes');
+});
+
+editCase('shop type: Waforu Red Chip -> Donate Chip', w => {
+  const f = ci(w);
+  setType(w, waforu, 2);
+  eq(waforu(w).venderType, 2, 'Donate Chip set');
+  const ch = changedLines(f);
+  eq(ch.length, 2, 'exactly one line changes (1 del + 1 add)');
+  ok(/\t\tSetVenderType\(2\);\r\n/.test(f.text), 'SetVenderType(2); written in place');
+  eq(FRE.shopOps.setShopType(f.text, waforu(w), 2).length, 0, 'same type: no splices');
+});
+
+editCase('shop type: Lui Penya -> Red Chip', w => {
+  const f = ci(w), before = f.serialize();
+  const plan = FRE.shopOps.shopTypePlan(lui(w), 1, id => { const it = w.itemById(id); return it ? w.itemInfo(it) : null; });
+  eq(plan.converted.length, 1, 'plan: one AddShopItem converted');
+  eq(plan.droppedPrices.length, 1, 'plan: its Penya price is dropped');
+  eq(plan.droppedPrices[0].cost, 1000000, 'plan: dropped price is 1,000,000');
+  ok(plan.rulesIgnored > 0, 'plan: rules become ignored');
+  setType(w, lui, 1);
+  eq(lui(w).venderType, 1, 'Red Chip set');
+  const lines = FRE.diff.splitKeepEol(f.text);
+  const ch = changedLines(f);
+  eq(ch.filter(o => o.type === 'add').length, 2, 'two lines added (SetVenderType + converted item)');
+  eq(ch.filter(o => o.type === 'del').length, 1, 'one line removed (the old AddShopItem)');
+  const added = ch.filter(o => o.type === 'add').map(o => lines[o.b]);
+  ok(added.includes('\t\tSetVenderType(1);\r\n'), 'SetVenderType(1); with indent and CRLF');
+  ok(added.includes('\t\tAddVenderItem2( 1, II_GEN_FOO_COO_DDUKGUKHOT );\r\n'), 'AddShopItem -> AddVenderItem2, inner spacing kept, price dropped');
+  const at = lines.indexOf('\t\tSetVenderType(1);\r\n');
+  ok(/AddMenu\(\s*MMI_TRADE/.test(lines[at - 1]), 'SetVenderType placed right after the last AddMenu');
+  ok(w.diags.some(d => d.code === 'C_RULE_IGNORED' && d.npcKey === 'MaFl_Lui'), 'rules now flagged C_RULE_IGNORED');
+  ok(!w.diags.some(d => d.code === 'C_FIXED_IN_CHIP'), 'no AddShopItem left in a chip shop');
+  eq(w.newBlocking().length, 0, 'no new blocking problems');
+  setType(w, lui, 0);
+  const back = shopItems(lui(w));
+  eq(back.length, 1, 'back to Penya: AddShopItem again');
+  ok(!back[0].args.cost, 'back to Penya: the dropped price does not come back');
+  while (w.undo());
+  ok(B.bytesEqual(f.serialize(), before), 'undo all restores identical bytes');
+});
+
+editCase('SourceFile.spliceText', w => {
+  const f = ci(w);
+  const sp = FRE.shopOps.setShopType(f.text, lui(w), 2);
+  const t = f.preview(sp);
+  eq(f.dirty, false, 'preview does not change the file');
+  w.apply('character.inc', sp, 'type');
+  eq(f.text, t, 'preview == applied text');
+  throws(() => FRE.SourceFile.spliceText('abcdef', [{ start: 1, end: 3, insert: '' }, { start: 2, end: 4, insert: '' }]), 'overlapping splices rejected');
+  const sf = w.files.get('spec_item.txt');
+  throws(() => sf.preview([{ start: 0, end: 0, insert: '\u00e9' }]), 'byte file: non-ASCII insert rejected');
+  eq(sf.preview([{ start: 0, end: 0, insert: '//x\r\n' }]).slice(0, 5), '//x\r\n', 'byte file: a new line (CR LF) can be inserted');
+});
+
+// ---------------------------------------------------------------- chip prices (Spec_Item.txt dwReferValue1)
+const spec = w => w.files.get('spec_item.txt');
+const itemOfDef = (w, d) => w.itemById(w.defines.defines.get(d));
+const chipOf = (w, d) => FRE.specItem.get(itemOfDef(w, d), 'dwReferValue1');
+
+editCase('chip price: one token, round trip', w => {
+  const f = spec(w), before = f.serialize();
+  eq(w.isEditable('spec_item.txt'), true, 'Spec_Item.txt is editable');
+  eq(chipOf(w, 'II_SYS_SYS_SCR_BLESSEDNESS'), 50, 'Blessing of the Goddess costs 50 Red Chips (commit 93a02124)');
+  const sp = FRE.itemOps.setChipPrice(f.text, itemOfDef(w, 'II_SYS_SYS_SCR_BLESSEDNESS'), 75, w.defines.defines);
+  eq(sp.length, 1, 'one splice');
+  eq(f.text.slice(sp[0].start, sp[0].end), '50', 'the splice covers exactly the old price');
+  w.apply('spec_item.txt', sp, 'chip');
+  eq(chipOf(w, 'II_SYS_SYS_SCR_BLESSEDNESS'), 75, 'new chip price parsed back');
+  eq(f.serialize().length, before.length, 'same byte length (2 digits -> 2 digits)');
+  eq(changedLines(f).length, 2, 'exactly one line changed');
+  ok(FRE.diff.splitKeepEol(f.text).every(l => l.endsWith('\r\n') || !l.endsWith('\n')), 'CRLF kept');
+  const wafTab = w.simulate(waforu(w)).tabs[1].entries.some(e => e.prop.item.define === 'II_SYS_SYS_SCR_BLESSEDNESS');
+  ok(wafTab, 'shop simulation re-derived after the Spec_Item edit');
+  w.apply('spec_item.txt', FRE.itemOps.setChipPrice(f.text, itemOfDef(w, 'II_SYS_SYS_SCR_BLESSEDNESS'), null, w.defines.defines), 'none');
+  eq(chipOf(w, 'II_SYS_SYS_SCR_BLESSEDNESS'), -1, 'empty price writes "=" (no chip price)');
+  ok(w.diags.some(d => d.code === 'C_CHIP_COST' && /BLESSEDNESS/.test(d.message)), 'no chip price -> C_CHIP_COST warning at Waforu');
+  w.apply('spec_item.txt', FRE.itemOps.setChipPrice(f.text, itemOfDef(w, 'II_SYS_SYS_SCR_BLESSEDNESS'), 50, w.defines.defines), 'back');
+  ok(B.bytesEqual(f.serialize(), before), 'setting 50 again gives identical bytes');
+  throws(() => FRE.itemOps.setChipPrice(f.text, itemOfDef(w, 'II_SYS_SYS_SCR_BLESSEDNESS'), 0), 'chip price 0 rejected');
+  eq(w.clientCopiesNeeded().includes('Spec_Item.txt'), false, 'clean again: nothing to copy');
+});
+
+editCase('chip price is shared with the Donation Shop', w => {
+  const id = itemOfDef(w, 'II_SYS_SYS_SCR_BLESSEDNESS').id;
+  eq(FRE.itemOps.chipUses(w, id).length, 1, 'today only Waforu sells it for chips');
+  const d = w.files.get('donationshop.inc');
+  w.apply('donationshop.inc', FRE.donationOps.addItem(d.text, w.models.donation, w.models.donation.rows.find(r => /^[ -~]+$/.test(r.category)).category, 'II_SYS_SYS_SCR_BLESSEDNESS'), 'ds');
+  const uses = FRE.itemOps.chipUses(w, id);
+  eq(uses.length, 2, 'Waforu + Donation Shop');
+  ok(uses.some(u => u.kind === 'donation') && uses.some(u => u.kind === 'npc' && u.npc.key === 'MaFl_Waforu'), 'both places named');
+});
+
+editCase('convert with prices = one undo step over two files', w => {
+  const f = ci(w), sf = spec(w), b1 = f.serialize(), b2 = sf.serialize();
+  const hot = itemOfDef(w, 'II_GEN_FOO_COO_DDUKGUKHOT');
+  w.applyGroup([
+    { file: 'character.inc', splices: FRE.shopOps.setShopType(f.text, lui(w), 1) },
+    { file: 'spec_item.txt', splices: FRE.itemOps.setChipPrice(sf.text, hot, 30, w.defines.defines) },
+  ], 'convert');
+  eq(lui(w).venderType, 1, 'Lui is a Red Chip shop');
+  eq(chipOf(w, 'II_GEN_FOO_COO_DDUKGUKHOT'), 30, 'Hot Ddukguk costs 30 chips');
+  eq(w.simulate(lui(w)).tabs[1].entries.map(e => e.prop.item.define).join(), 'II_GEN_FOO_COO_DDUKGUKHOT', 'tab 1 sells it for chips');
+  eq(w.history.length, 1, 'one history entry');
+  eq(w.clientCopiesNeeded().sort().join(), 'Spec_Item.txt,character.inc', 'both files need the Client copy');
+  w.undo();
+  ok(B.bytesEqual(f.serialize(), b1) && B.bytesEqual(sf.serialize(), b2), 'one undo restores both files byte-for-byte');
+  w.redo();
+  eq(chipOf(w, 'II_GEN_FOO_COO_DDUKGUKHOT'), 30, 'redo re-applies both');
+  throws(() => w.applyGroup([
+    { file: 'character.inc', splices: [{ start: 0, end: 0, insert: '// x\r\n' }] },
+    { file: 'spec_item.txt', splices: [{ start: 5, end: 1, insert: '' }] },
+  ], 'bad'), 'a bad splice in any part is rejected');
+  eq(w.history.length, 1, '...and nothing was applied');
+});
+
+editCase('convert to Penya with a price', w => {
+  const f = ci(w);
+  const waf = waforu(w);
+  const rec = waf.statements.find(r => r.cmd === 'AddVenderItem2' && r.args.item.define === 'II_SYS_SYS_SCR_BLESSEDNESS');
+  w.apply('character.inc', FRE.shopOps.setShopType(f.text, waf, 0, new Map([[rec.start, 25000]])), 'penya');
+  const back = shopItems(waforu(w)).find(r => r.args.item.define === 'II_SYS_SYS_SCR_BLESSEDNESS');
+  eq(back.args.cost && back.args.cost.value, 25000, 'typed Penya price written as AddShopItem(..., 25000)');
+  ok(/AddShopItem\(1, II_SYS_SYS_SCR_BLESSEDNESS, 25000\);/.test(f.text), 'inner spacing kept, price appended');
+});
+
+// ---------------------------------------------------------------- Client/ sync (reads the real Client folder, never writes)
+section('client sync');
+{
+  const CLIENT = ROOT + '/../FLYFF-V19-SOURCE/Client';
+  const REALRES = ROOT + '/../FLYFF-V19-SOURCE/Server/Resource';
+  if (exists(CLIENT + '/Spec_Item.txt')) {
+    const open = (dir, n) => exists(dir + '/' + n) ? openSource({ name: n, path: dir + '/' + n }) : null;
+    const M = n => FRE.clientSync.modeOf(open(REALRES, n), open(CLIENT, n));
+    eq(M('character.inc'), 'identical', 'character.inc: Client copy identical');
+    eq(M('DonationShop.inc'), 'identical', 'DonationShop.inc: Client copy identical');
+    eq(M('Spec_Item.txt'), 'eol', 'Spec_Item.txt: same content, Client is LF');
+    eq(M('character-etc.inc'), 'missing', 'character-etc.inc: no loose Client copy (client reads data.res)');
+    // an edit made on the server copy, carried to the LF client copy
+    const sf = open(REALRES, 'Spec_Item.txt'), cf = open(CLIENT, 'Spec_Item.txt');
+    const wsLike = freshWorkspace();
+    const it = wsLike.itemById(wsLike.defines.defines.get('II_SYS_SYS_SCR_BLESSEDNESS'));
+    sf.applySplices(FRE.itemOps.setChipPrice(sf.text, it, 75, wsLike.defines.defines), 'chip');
+    const out = FRE.clientSync.clientBytes('eol', sf, cf);
+    const outText = FRE.bytes.bytesToBinaryString(out);
+    ok(!outText.includes('\r'), 'Client bytes stay LF');
+    eq(outText, sf.text.replace(/\r\n/g, '\n'), 'Client text == new server text with LF');
+    const changed = FRE.diff.diffLines(FRE.diff.splitKeepEol(cf.text), FRE.diff.splitKeepEol(outText)).filter(o => o.type !== 'eq');
+    eq(changed.length, 2, 'only the edited line differs in the Client copy (like commit 93a02124)');
+    eq(FRE.clientSync.clientBytes('different', sf, cf), null, '"different" copies are never written');
+  } else print('   (skipped: real Client folder not found)');
+}
+
+// ---------------------------------------------------------------- item tooltip (port of MakeToolTipText)
+section('item tooltip');
+{
+  const T = d => { const t = FRE.itemTooltip.build(W, W.itemById(W.defines.defines.get(d))); return { game: t.game.map(l => l.map(s => s.text).join('')), editor: t.editor.map(l => l.map(s => s.text).join('')) }; };
+  const str = T('II_SYS_SYS_SCR_STRONG_STR');
+  eq(str.game.join(' | '), 'Flask of the Tiger | Required Level : 1 | Description: Increases your Strength (STR) by +20.  Lasts 1 hour.', 'buff scroll: game shows name, level, description only');
+  ok(str.editor.includes('STR+20') && str.editor.some(l => /^Buff time: 1 hour/.test(l)), 'editor info: STR+20 and 1 hour buff');
+  const sw = T('II_WEA_SWO_PETAL');
+  eq(sw.game.slice(0, 4).join(' | '), 'Petal Sword | One-handed weapon. | Attack: 40 ~ 42 | Attack speed: Very fast', 'weapon: hands, attack, speed');
+  ok(sw.game.includes('Required Level : 15'), 'weapon: required level');
+  ok(T('II_CHR_SYS_SCR_SHOUTFULL15').game.includes('Time Left : 15 Day(s) 0 Hr(s) 0 Min(s) 0 Sec(s)'), 'dwCircleTime shown as Time Left');
+  ok(T('II_GEN_REF_REF_FIRST').game.includes('Restore MP: 25'), 'refresher: Restore MP');
+  eq(FRE.itemTooltip.cfmt('%s%s%%', 'Attack Speed', '+7'), 'Attack Speed+7%', 'rate format');
+  let n = 0; for (const it of W.items.items.values()) { FRE.itemTooltip.build(W, it); n++; }
+  eq(n, 8067, 'every item builds a tooltip');
+}
+
+// ---------------------------------------------------------------- Donation Shop (DonationShop.inc, commit 7d7df4f9)
+section('donation shop');
+{
+  const m = W.models.donation;
+  const [okp, out] = GLib.spawn_command_line_sync(`python3 ${ROOT}/tools/oracle.py ${FIXTURES}`);
+  const oracle = JSON.parse(new TextDecoder().decode(out)).donation;
+  eq(m.rows.length, 338, 'Donation Shop: 338 rows');
+  eq(m.categories.length, 20, 'Donation Shop: 20 categories');
+  eq(oracle.rows, m.rows.length, 'oracle agrees: rows');
+  eq(JSON.stringify(oracle.categories), JSON.stringify(m.categories), 'oracle agrees: categories in order');
+  eq(oracle.eol, 'lf', 'DonationShop.inc is LF (its own header comment says CRLF)');
+  const dd = W.moduleDiags.donation;
+  eq(dd.filter(d => d.code === 'DS_NO_PRICE').length, 9, '9 shields have no donate-chip price');
+  eq(dd.filter(d => d.code === 'DS_CRASH').length, 0, 'the two crash shields are not listed (ae345504)');
+  const TREE = ROOT + '/test-data/Client/Client/DonationShopTree.inc';
+  if (exists(TREE)) {
+    const tree = FRE.donationTree.loadTree(openSource({ name: 'DonationShopTree.inc', path: TREE }));
+    eq(tree.leaves.length, 20, 'tree: 20 leaf categories');
+    eq(tree.pathOf('shields').join(' > '), 'All Items > Weapon Skins > Shields', 'tree: path of Shields (case-insensitive)');
+    ok(m.categories.every(c => tree.isLeaf(c)), 'every category in the file is a leaf in the client tree');
+    ok(!tree.isLeaf('Fashion') && !tree.isLeaf('All Items'), 'parents are not leaves');
+  } else print('   (skipped tree: test-data/Client/Client/DonationShopTree.inc not found)');
+}
+
+const ds = w => w.files.get('donationshop.inc');
+const dsRows = (w, def) => w.models.donation.rows.filter(r => r.define === def);
+editCase('donation: add / move / remove keep LF and bytes', w => {
+  const f = ds(w), before = f.serialize();
+  w.apply('donationshop.inc', FRE.donationOps.addItem(f.text, w.models.donation, 'Consumables', 'II_SYS_SYS_SCR_BLESSEDNESS'), 'add');
+  eq(dsRows(w, 'II_SYS_SYS_SCR_BLESSEDNESS').length, 1, 'added');
+  const ch = changedLines(f);
+  eq(ch.length, 1, 'exactly one line added');
+  eq(FRE.diff.splitKeepEol(f.text)[ch[0].b], '\tDSItem\t"Consumables"\tII_SYS_SYS_SCR_BLESSEDNESS\n', 'row style, indent and LF copied');
+  const lines = FRE.diff.splitKeepEol(f.text);
+  ok(/Consumables/.test(lines[ch[0].b - 1]), 'added at the end of its category');
+  w.apply('donationshop.inc', FRE.donationOps.setCategory(f.text, dsRows(w, 'II_SYS_SYS_SCR_BLESSEDNESS')[0], 'Functional'), 'move');
+  eq(dsRows(w, 'II_SYS_SYS_SCR_BLESSEDNESS')[0].category, 'Functional', 'moved to Functional');
+  w.apply('donationshop.inc', FRE.donationOps.removeItem(f.text, dsRows(w, 'II_SYS_SYS_SCR_BLESSEDNESS')[0]), 'remove');
+  ok(B.bytesEqual(f.serialize(), before), 'add + move + remove = identical bytes');
+  w.apply('donationshop.inc', FRE.donationOps.removeItem(f.text, dsRows(w, 'II_SYS_SYS_SCR_PET_LIFE')[0]), 'remove');
+  eq(w.models.donation.rows.length, 337, 'removed a real row');
+  eq(changedLines(f).length, 1, 'remove deletes exactly one line');
+  eq(w.newBlocking().length, 0, 'no new blocking problems');
+  while (w.undo());
+  ok(B.bytesEqual(f.serialize(), before), 'undo all restores identical bytes');
+});
+editCase('donation: crash shield is blocked', w => {
+  const f = ds(w);
+  w.apply('donationshop.inc', FRE.donationOps.addItem(f.text, w.models.donation, 'Shields', 'II_ARM_ARM_SHI_NEXUS'), 'add');
+  ok(w.newBlocking().some(d => d.code === 'DS_CRASH'), 'Nexus Shield -> DS_CRASH (blocks saving)');
+});
+editCase('donation: undefined item', w => {
+  const f = ds(w), i = f.text.indexOf('II_SYS_SYS_SCR_PET_LIFE');
+  w.apply('donationshop.inc', [{ start: i, end: i + 23, insert: 'II_NOT_DEFINED_X' }], 'raw');
+  ok(w.newBlocking().some(d => d.code === 'DS_UNDEF'), 'undefined II_ -> DS_UNDEF');
+});
+editCase('donation: missing closing brace', w => {
+  const f = ds(w), i = f.text.lastIndexOf('}');
+  w.apply('donationshop.inc', [{ start: i, end: i + 1, insert: '' }], 'raw');
+  ok(w.newBlocking().some(d => d.code === 'DS_BRACES'), 'no closing } -> DS_BRACES');
+});
+editCase('donation: category not in the client tree', w => {
+  const TREE = ROOT + '/test-data/Client/Client/DonationShopTree.inc';
+  if (!exists(TREE)) return;
+  w.setDonationTree(FRE.donationTree.loadTree(openSource({ name: 'DonationShopTree.inc', path: TREE })));
+  eq(w.diags.filter(d => d.code === 'DS_NO_LEAF').length, 0, 'no DS_NO_LEAF with the real tree');
+  const f = ds(w);
+  w.apply('donationshop.inc', FRE.donationOps.setCategory(f.text, dsRows(w, 'II_SYS_SYS_SCR_PET_LIFE')[0], 'Fashion'), 'move');
+  const d = w.diags.find(x => x.code === 'DS_NO_LEAF');
+  ok(d && d.severity === 'WARN', 'parent "Fashion" is not a leaf -> DS_NO_LEAF warning');
+  eq(w.newBlocking().length, 0, 'DS_NO_LEAF does not block');
+});
+
 // ---------------------------------------------------------------- mutations: each rule must fire as a NEW block
 section('mutations');
 function mutation(name, code, mutate) {
@@ -241,6 +501,14 @@ editCase('missing final brace', w => {
   const i = f.text.lastIndexOf('}');
   w.apply('character.inc', [{ start: i, end: i + 1, insert: '' }], 'raw');
   ok(w.newBlocking().some(d => d.code === 'C_BRACES'), 'missing final brace -> C_BRACES');
+});
+editCase('AddShopItem in a chip shop warns', w => {
+  const f = ci(w);
+  const i = f.text.indexOf('\t\tSetVenderType(1);\r\n');
+  w.apply('character.inc', [{ start: i, end: i, insert: '\t\tAddShopItem( 0, II_GEN_FOO_COO_DDUKGUKHOT );\r\n' }], 'raw');
+  const d = w.diags.find(x => x.code === 'C_FIXED_IN_CHIP');
+  ok(d && d.severity === 'WARN' && d.npcKey === 'MaFl_Waforu', 'AddShopItem in Waforu -> C_FIXED_IN_CHIP warning');
+  eq(w.newBlocking().length, 0, 'C_FIXED_IN_CHIP does not block');
 });
 editCase('price conflict warning', w => {
   const f = ci(w);

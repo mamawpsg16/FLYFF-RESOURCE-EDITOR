@@ -2,6 +2,8 @@
 
 _Last updated 2026-10-05._
 
+> **Handoff (end of session 2026-10-05):** Steps B, B+ and C are built, user-tested in Brave on `test-data/` and committed (one commit, shared files). Next: **D. Battle Pass**. Before designing it, check `git -C ../FLYFF-V19-SOURCE log` for BattlePass commits (CLAUDE.md rule). Tests: `gjs -m tests/run-tests.js` (197 pass), `tests/run-ui.sh` (66 pass; the result box shows only failures). Headless Brave does not run in this environment, only Firefox. The user's Brave window sits partly behind the OS taskbar, so keep important UI away from the bottom edge.
+
 ## Done
 - **Build 1** (`1c785ce`): NPC shop editor (`character*.inc`). Add, remove, price and tab edits; byte-exact save with verified backup. Tested by the user in Brave on `test-data`.
 - **Build 1.1** (`b79f374`): shop simulator ("what players see", identical to an independent Python port for all 594 NPCs), readable rules, help text for every warning.
@@ -11,32 +13,28 @@ _Last updated 2026-10-05._
   - shared `edit/text-ops.js`;
   - **one table per shop tab** with a Job column;
   - Donation Shop **core** (loader + validator + ops; **no UI yet**).
+- **Step B** (committed with B+ and C): shop-type dropdown (Penya / Red Chip / Donate Chip) in the NPC header.
+  - `FRE.shopOps.setShopType` renames only the command word (`AddShopItem` ↔ `AddVenderItem2`) and keeps the `( tab, II_X )` text, so a round trip gives identical bytes. Penya prices are dropped when converting to chips. `SetVenderType(n);` goes after the last `AddMenu`, is replaced in place, or is removed for Penya. All of it is one undo step.
+  - Preview dialog first (`shopTypePlan`): dropped prices, items with no chip/Penya price, ignored rules, and the exact lines.
+  - New codes: `C_RULE_IGNORED` (INFO, AddVendorItem rules in a chip shop) and `C_FIXED_IN_CHIP` (WARN, AddShopItem in a chip shop is charged in chips without the chip-price check).
+  - Also: the browser tab icon is the client's Infinity MMO icon (`src/favicon.png`, from `Design/Logo/infinity_mmo.ico`).
+- **Step B+** (committed):
+  - NPC list filter: All shops / Penya / Red Chip / Donate Chip / All NPCs.
+  - **Chip prices** edited in `Spec_Item.txt` `dwReferValue1` (`edit/item-ops.js`), the way commits `93a02124` / `fea9840b` did it. One price per item, shared with every chip shop and the Donation Shop (`7bedef15`), so other uses are named before writing.
+  - **Convert preview** has a price box per item: chip prices go to Spec_Item.txt; Penya prices become `AddShopItem( tab, II_X, price )`. Conversion and prices are one undo step (`Workspace.applyGroup`).
+  - **Client sync** (`core/client-sync.js`, `io/save.js`): with a Client folder chosen, each save applies the same change to the client's loose copies (identical / LF-only copies), backs them up under `<backup>/<stamp>/Client/`, verifies, and restores on failure. Missing loose copies (`character-etc.inc`, `character-school.inc`) are created after asking (`b7645c52`).
+  - **Item tooltip on hover** (`loaders/item-tooltip.js`, `loaders/textclient.js`, `ui/tooltip.js`): port of `CWndMgr::MakeToolTipText` for a new item, texts from `textClient.inc`, plus "Editor info" (buff effect and `dwSkillTime`, prices) that the game leaves out.
+  - Fix: byte files (e.g. `DonationShop.inc`) rejected every inserted line break (`bytes.isPrintableAscii`). The Donation Shop UI would have hit it.
+- **Step C** (committed): Donation Shop editor (`ui/donation.js`).
+  - Left: All items + categories with counts, in the order of the client's `Client/Client/DonationShopTree.inc` (`loaders/donation-tree.js`, port of `CWndTreeCtrl::InterpriteScript`) when the Client folder is chosen; search lists matching items.
+  - Table: # · Item (hover tooltip) · Job · Price (Donate chips = shared chip price, editable via `ui/chip-price.js`) · Category (move) · ✕ · Line. `+` adds to the selected category.
+  - New rules: `DS_CRASH` BLOCK (Nexus Shield, Icecrown Purple Shield crashed the server when bought, commit `ae345504`), `DS_NO_LEAF` WARN (category not a leaf in the client tree: the item only shows under "All Items").
+  - Categories: only the client tree's leaves (or the file's categories) are offered; the tree file is client-only and not edited.
+  - Oracle cross-check of rows/categories; `DonationShop.inc` stays LF (its header comment wrongly says CRLF).
+  - Toolbar: file chips collapsed into one summary chip; only changed or read-only files get their own chip.
+  - User-test fixes: the editor scrolls inside the window (`#editor` needed `min-height: 0`), keeps its scroll position after an edit, and hides a stuck tooltip; the editor switch is labelled "Editing:"; the NPC list defaults to "Shops with editable items" (6 NPCs with AddShopItem / AddVenderItem2; rule-only shops like Boboku stay under "All shops").
 
 ## Next (in this order, agreed with the user)
-
-### B. Shop-type dropdown: Penya / Red Chips / Donate Chips
-- The dropdown is already in the NPC header (`ui/npc-shops.js`), disabled until `FRE.ui.previewShopType` exists.
-- **Add `setShopType(text, npc, type)`** to `edit/shop-ops.js`:
-  - write, replace or remove `SetVenderType(n);` after the last `AddMenu` in the `setting` block;
-  - convert `AddShopItem( t, II_X[, cost] );` ↔ `AddVenderItem2(t, II_X);` (Penya prices are dropped when converting to chips);
-  - leave `AddVendorItem` rules in place, but flag them with a new `C_RULE_IGNORED` INFO in chip shops (plus help text);
-  - apply everything as **one** undo step: one `applySplices` call with all splices.
-- **Preview dialog** before applying: the changed lines (`FRE.ui.renderDiff` style), items with no chip price, and Penya prices that will be dropped.
-- **Tests:**
-  - Wafor → Penya → Red Chip round-trips to identical bytes;
-  - Lui → Red Chip changes only the expected lines;
-  - a harness click-through.
-- **No Perin:** the server has no Perin NPC shop.
-
-### C. Donation Shop UI (`DonationShop.inc`, LF line endings)
-- **`src/ui/donation.js`** (add it to `src/order.txt`):
-  - left: categories with counts, plus "All";
-  - table: `#` · Item · Job · Price (Donate chips = `dwReferValue1`) · Category dropdown (move) · ✕ · Line;
-  - `+` adds the item to the selected category.
-- **Ops already exist:** `FRE.donationOps.addItem`, `removeItem`, `setCategory`.
-- **New categories** must also exist in `Client/Client/DonationShopTree.inc`, a client-only file. Offer existing categories only, unless the user asks otherwise.
-- **Tests:** golden counts (338 rows, 20 categories), an oracle cross-check, LF kept, undo restores identical bytes, mutations `DS_UNDEF` and `DS_BRACES`, and a harness save.
-- **Real data finding:** 9 shields in "Shields" have no donate-chip price, so they can't be bought (`DS_NO_PRICE`).
 
 ### D. Battle Pass (`BattlePass.inc`, `CProject::LoadBattlePass`, `ProjectCmn.cpp:1682`)
 - **What to edit:**

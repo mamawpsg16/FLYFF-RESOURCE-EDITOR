@@ -49,6 +49,11 @@
     return { file: file.name, rows, blocks, catalog, categories, diags: script.diags };
   }
 
+  // Bought here, these crashed the server every time; root cause never found
+  // (commit ae345504, and the comment above the Shields rows in DonationShop.inc).
+  const CRASH_ITEMS = ['II_ARM_ARM_SHI_NEXUS', 'II_ARM_ARM_SHI_ICECROWNPURPLE'];
+
+  // ctx: { items, textOf, defines, tree (DonationShopTree.inc from Client/, or null) }
   function validateDonation(model, ctx) {
     const out = [];
     const add = d => out.push(Object.assign({ file: model.file, module: 'donation' }, d));
@@ -73,6 +78,12 @@
         if (chip < 1) add({ code: 'DS_NO_PRICE', severity: 'WARN', start: r.start, end: r.end, key: `DS_NO_PRICE|${name}`, itemName: name,
           message: `${item.name || name} (${name}) has no donate-chip price (dwReferValue1 = ${chip < 0 ? '=' : chip}): the server refuses to sell it` });
       }
+      const crash = CRASH_ITEMS.find(d => ctx.defines && ctx.defines.get(d) === r.id);
+      if (crash) add({ code: 'DS_CRASH', severity: 'BLOCK', start: r.start, end: r.end, key: `DS_CRASH|${name}`, itemName: name,
+        message: `${name}: buying this item in the Donation Shop crashed the server (live-tested, commit ae345504); it is excluded on purpose` });
+      if (ctx.tree && !r.badCategory && !ctx.tree.isLeaf(r.category)) add({ code: 'DS_NO_LEAF', severity: 'WARN', start: r.start, end: r.end,
+        key: `DS_NO_LEAF|${name}|${r.category}`, itemName: name,
+        message: `${name}: "${r.category}" is not a category in the client's DonationShopTree.inc, so the item only shows under "All Items"` });
       if (seen.has(r.id)) {
         const first = seen.get(r.id);
         add({ code: 'DS_DUP', severity: 'WARN', start: r.start, end: r.end, key: `DS_DUP|${name}`, itemName: name,
@@ -82,5 +93,5 @@
     return out;
   }
 
-  FRE.donation = { loadDonation, validateDonation, FILE };
+  FRE.donation = { loadDonation, validateDonation, FILE, CRASH_ITEMS };
 })(globalThis.FRE = globalThis.FRE || {});

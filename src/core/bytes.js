@@ -106,7 +106,7 @@
   function isPrintableAscii(s) {
     for (let i = 0; i < s.length; i++) {
       const c = s.charCodeAt(i);
-      if (c !== 9 && (c < 0x20 || c > 0x7e)) return false;
+      if (c !== 9 && c !== 10 && c !== 13 && (c < 0x20 || c > 0x7e)) return false;   // tab, LF, CR allowed (new lines)
     }
     return true;
   }

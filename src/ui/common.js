@@ -34,7 +34,7 @@
   // Item cell: coloured name with the define underneath.
   function itemCell(info, fallbackDefine) {
     if (!info) return h('td', h('span.muted', '(not in Spec_Item.txt)'), h('span.def.block', fallbackDefine || ''));
-    return h('td', { title: `${info.name}\n${info.define} (${info.id})` }, h('span.r-' + info.rarity, info.name), h('span.def.block', info.define));
+    return h('td', { 'data-item-id': info.id }, h('span.r-' + info.rarity, info.name), h('span.def.block', info.define));
   }
 
   function jobCell(info) {

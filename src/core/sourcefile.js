@@ -110,27 +110,35 @@
     }
 
     // splices: [{ start, end, insert }] in offsets of the CURRENT text.
-    // Applied right-to-left so earlier offsets stay valid.
     applySplices(splices, label = 'edit') {
       if (this.readOnly) throw new Error(`${this.name} is read-only: ${this.readOnlyReasons.join('; ')}`);
       if (!splices.length) return;
+      const t = this.preview(splices);
+      this._undo.push({ text: this.text, label });
+      this._redo = [];
+      this.text = t;
+    }
+
+    // The text these splices would produce, without changing the file (edit previews).
+    preview(splices) { return SourceFile.spliceText(this.text, splices, this.kind, this.name); }
+
+    // Pure splice application, applied right-to-left so earlier offsets stay valid.
+    static spliceText(text, splices, kind, name = 'file') {
       const sorted = [...splices].sort((a, b) => a.start - b.start);
       for (let i = 0; i < sorted.length; i++) {
         const s = sorted[i];
-        if (s.start < 0 || s.end < s.start || s.end > this.text.length) throw new Error(`bad splice ${s.start}..${s.end}`);
+        if (s.start < 0 || s.end < s.start || s.end > text.length) throw new Error(`bad splice ${s.start}..${s.end}`);
         if (i > 0 && s.start < sorted[i - 1].end) throw new Error('overlapping splices');
-        if (this.kind === KIND_BYTES && !B.isPrintableAscii(s.insert)) {
-          throw new Error(`${this.name}: only printable ASCII can be inserted into this file`);
+        if (kind === KIND_BYTES && !B.isPrintableAscii(s.insert)) {
+          throw new Error(`${name}: only printable ASCII can be inserted into this file`);
         }
       }
-      let t = this.text;
+      let t = text;
       for (let i = sorted.length - 1; i >= 0; i--) {
         const s = sorted[i];
         t = t.slice(0, s.start) + s.insert + t.slice(s.end);
       }
-      this._undo.push({ text: this.text, label });
-      this._redo = [];
-      this.text = t;
+      return t;
     }
 
     canUndo() { return this._undo.length > 0; }

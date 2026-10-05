@@ -8,6 +8,10 @@ The user is a web developer learning C++. When server behaviour matters, explain
 - **`../FLYFF-V19-SOURCE` is reference-only.** Never modify, build, or commit anything there. Before and after work, check `git -C ../FLYFF-V19-SOURCE status` is clean.
 - **The real data folder is `../FLYFF-V19-SOURCE/Server/Resource/`.** There is no top-level `Resource/`. `Client/` holds copies the game client reads.
 - **Never write to the real `Server/Resource` without asking first.** Test on `test-data/Resource/` (git-ignored copies; the refresh command is in README).
+- **Base the work on what is committed in `../FLYFF-V19-SOURCE`.** Its commits are the user's own changes, and all of them were tested in game, even when the message doesn't say "Verified in game".
+  - Before designing a loader, edit or warning, search `git -C ../FLYFF-V19-SOURCE log` (messages and diffs) for that file or system, and follow the way it was done there.
+  - Cite the commit hash in code comments and docs. Only the parts a commit message calls "not yet tested" are unproven; say so when relying on them.
+  - Examples: chip prices `93a02124` / `fea9840b`, shared Donation price `7bedef15`, loose Client copies `b7645c52`, tooltip `cf6f5502`.
 - **The C++ loader is the authority**, not the file's look. Every loader here cites its C++ function and line. Read the C++ before adding or changing a parser. See `docs/INVESTIGATION.md`.
 - **Byte-exact saves.**
   - `SourceFile` keeps the original bytes. Edits are splices on the current text, and bytes outside a splice are never rewritten.
@@ -25,8 +29,10 @@ The user is a web developer learning C++. When server behaviour matters, explain
 - **Defines** come from the 21 headers in `CProject::LoadDefines`. Only `#define NAME <dec|hex>` is accepted; negatives and aliases are ignored, and the first definition wins.
 - **NPC shops: one currency per NPC** (`SetVenderType` 0 = Penya, 1 = Red Chip, 2 = Donate Chip). There is no Perin NPC shop.
 - **`AddShopItem`'s price overwrites the item's price server-wide.**
+- **`AddShopItem` is added in every shop type.** In a chip shop it is charged in chips without the "chip cost < 1" check that `AddVenderItem2` gets (`C_FIXED_IN_CHIP`). Chip shops ignore `AddVendorItem` rules.
+- **Client copies.** The game client reads a loose file in `Client/` if there is one, otherwise an old copy packed in `data.res` (`b7645c52`). `character-etc.inc` and `character-school.inc` have no loose copy. `Client/Spec_Item.txt` is LF while the Server copy is CRLF; the content is the same. Every proven data commit changes both copies ("Client copy synced").
 - **Custom systems:**
-  - `DonationShop.inc`: prices are each item's `dwReferValue1`.
+  - `DonationShop.inc`: prices are each item's `dwReferValue1`. It is LF (its header comment says CRLF). Categories must be leaves of the client-only `Client/Client/DonationShopTree.inc`. Never list Nexus Shield / Icecrown Purple Shield: buying them crashed the server (`ae345504`).
   - `BattlePass.inc`: on a duplicate level or monster the first wins; values are clamped to 1–10000.
   - `Exchange_Script.txt`: an unknown name becomes -1 silently.
 
@@ -34,12 +40,16 @@ The user is a web developer learning C++. When server behaviour matters, explain
 ```
 src/order.txt       load/build order (classic scripts sharing globalThis.FRE)
 src/core/           bytes, num, sourcefile (byte model + round-trip gate), lexer (CScanner/CScript port),
-                    diff (Myers), workspace (data-module registry, apply/undo, newBlocking)
-src/loaders/        defines, strings (*.txt.txt), specitem, character, vendor-sim (shop contents), donation
+                    diff (Myers), workspace (data-module registry, apply/applyGroup/undo, newBlocking),
+                    client-sync (Client/ copy modes: identical / eol / missing / different)
+src/loaders/        defines, strings (*.txt.txt), textclient (TID_ texts), item-tooltip (MakeToolTipText port),
+                    specitem, character, vendor-sim (shop contents), donation, donation-tree (client category tree)
 src/validate/       help.js (text for every diagnostic code), character.js
-src/edit/           text-ops (shared row/statement splices), shop-ops, donation-ops
-src/io/             fsa (File System Access), save (conflict check -> verified backup -> write+verify -> restore on failure)
-src/ui/             dom, common (FRE.ui registry + helpers), npc-shops, app (shell: modes, item DB, problems, save)
+src/edit/           text-ops (shared row/statement splices), shop-ops, donation-ops, item-ops (Spec_Item chip price)
+src/io/             fsa (File System Access), save (conflict check -> verified backup -> write+verify -> restore on failure;
+                    Server files, then the same change in the Client/ copies)
+src/ui/             dom, common (FRE.ui registry + helpers), tooltip (item hover), chip-price (shared price input),
+                    npc-shops, donation, app (shell: modes, item DB, problems, save)
 tests/              run-tests.js (gjs core suite), ui-harness.js + run-ui.sh (headless Firefox, fake FS), gjs-env.js
 tools/oracle.py     independent Python reference (differential tests)
 docs/               INVESTIGATION.md, DESIGN.md, ROADMAP.md (what's next)

@@ -5,7 +5,7 @@ A page opened from disk (file://) cannot load <script type="module" src=...>,
 so the separate source files in src/ are inlined here in src/order.txt order.
 Standard library only.  Usage: python3 build.py
 """
-import datetime, pathlib, re, subprocess, sys
+import base64, datetime, pathlib, re, subprocess, sys
 
 ROOT = pathlib.Path(__file__).resolve().parent
 SRC = ROOT / 'src'
@@ -28,16 +28,21 @@ def main():
         code = (SRC / rel).read_text(encoding='utf-8')
         parts.append(f'// ---- {rel} ----\n{code}')
     if harness:  # test build: fake file system + scripted UI scenario (tests/ui-harness.js)
-        import base64, json
+        import json
         fx = ROOT / 'test-data' / 'Resource'
         data = {f.name: base64.b64encode(f.read_bytes()).decode() for f in sorted(fx.iterdir()) if f.is_file()}
         parts.append('FRE.HARNESS_FILES = ' + json.dumps(data) + ';')
+        tree = ROOT / 'test-data' / 'Client' / 'Client' / 'DonationShopTree.inc'
+        parts.append('FRE.HARNESS_TREE = ' + json.dumps(base64.b64encode(tree.read_bytes()).decode() if tree.exists() else None) + ';')
         parts.append((ROOT / 'tests' / 'ui-harness.js').read_text(encoding='utf-8'))
     js = '\n'.join(parts)
     js = re.sub(r'</(script)', r'<\\/\1', js, flags=re.I)   # never close the inline <script> early
     css = (SRC / 'styles.css').read_text(encoding='utf-8')
     html = (SRC / 'shell.html').read_text(encoding='utf-8')
-    html = html.replace('/*STYLES*/', css).replace('/*SCRIPTS*/', js)
+    # Tab icon: the 64x64 entry of the client icon (FLYFF-V19-SOURCE Design/Logo/infinity_mmo.ico,
+    # = Neuz/res/main_ico.ico since commit 9df9d5c8 "rebrand client to Infinity MMO").
+    icon = base64.b64encode((SRC / 'favicon.png').read_bytes()).decode()
+    html = html.replace('/*FAVICON*/', icon).replace('/*STYLES*/', css).replace('/*SCRIPTS*/', js)
     out = ROOT / 'test-data' / 'harness.html' if harness else OUT
     out.parent.mkdir(exist_ok=True)
     out.write_text(html, encoding='utf-8', newline='\n')

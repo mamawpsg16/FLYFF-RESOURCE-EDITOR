@@ -6,39 +6,152 @@
   const { h, fmt, numInput } = FRE.dom;
   const { pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell } = FRE.ui;
 
-  const st = { sel: null, tab: 0, shopsOnly: true };
+  const st = { sel: null, tab: 0, show: 'editable' };
   const npcId = npc => `${npc.file}|${npc.key}`;
   const isShopNpc = npc => npc.statements.some(r => FRE.character.shopEntry(r)) || npc.venderType > 0;
   const selNpc = ctx => (ctx.ws && st.sel ? ctx.ws.chars.npcs.find(n => npcId(n) === st.sel) : null) || null;
   const TYPES = [{ v: 0, label: 'Penya shop' }, { v: 1, label: 'Red Chip shop' }, { v: 2, label: 'Donate Chip shop' }];
+  // NPC list filter: which NPCs to list
+  // editable = has fixed items (AddShopItem / AddVenderItem2); AddVendorItem rule items are read-only
+  const hasEditable = npc => npc.statements.some(r => { const e = FRE.character.shopEntry(r); return e && e.kind !== 'generated'; });
+  const SHOW = [
+    { v: 'editable', label: 'Shops with editable items', test: hasEditable },
+    { v: 'shops', label: 'All shops', test: isShopNpc },
+    { v: 'penya', label: 'Penya shops', test: n => isShopNpc(n) && FRE.shopOps.shopType(n.venderType) === 0 },
+    { v: 'red', label: 'Red Chip shops', test: n => FRE.shopOps.shopType(n.venderType) === 1 },
+    { v: 'donate', label: 'Donate Chip shops', test: n => FRE.shopOps.shopType(n.venderType) === 2 },
+    { v: 'all', label: 'All NPCs', test: () => true },
+  ];
+  const showTest = () => (SHOW.find(o => o.v === st.show) || SHOW[0]).test;
 
   function edit(ctx, npc, make, label) {
     ctx.edit(npc.file.toLowerCase(), make, label, 'npc|' + npcId(npc));
   }
 
   function shopTypeSelect(ctx, npc, canEdit) {
-    const ready = !!FRE.ui.previewShopType;      // the conversion (plan Step B) is not built yet
-    const sel = h('select.shop-type', { disabled: !canEdit || !ready, title: ready ? 'Which currency this NPC sells for. Changing it converts the item lines (preview first).' : 'Shows this NPC\'s currency. Changing it is coming next (plan Step B).' },
-      TYPES.map(t => h('option', { value: t.v, selected: t.v === (npc.venderType === 1 || npc.venderType === 2 ? npc.venderType : 0) }, t.label)));
+    const cur = FRE.shopOps.shopType(npc.venderType);
+    const sel = h('select.shop-type', { disabled: !canEdit, title: 'Which currency this NPC sells for. Changing it converts the item lines (preview first).' },
+      // Donate Chips are sold in the Donation Shop window since commit 7d7df4f9 (Adrian's
+      // SetVenderType(2) shop was removed), so type 2 is only offered to an NPC that already has it.
+      TYPES.filter(t => t.v !== 2 || cur === 2).map(t => h('option', { value: t.v, selected: t.v === cur }, t.label)));
     sel.addEventListener('change', () => {
       const to = Number(sel.value);
-      sel.value = String(npc.venderType === 1 || npc.venderType === 2 ? npc.venderType : 0);   // only changes after confirming
-      if (FRE.ui.previewShopType) FRE.ui.previewShopType(ctx, npc, to);
+      sel.value = String(cur);                    // only changes after confirming
+      previewShopType(ctx, npc, to);
     });
     return sel;
   }
 
+  const { chipOf } = FRE.ui.chipPrice;
+  const chipPriceParts = (ws, prices) => FRE.ui.chipPrice.parts(ws, prices);
+  const hereNpc = npc => u => u.kind === 'npc' && npcId(u.npc) === npcId(npc);
+  const confirmShared = (ctx, npc, ids, then) => FRE.ui.chipPrice.confirmShared(ctx, ids, hereNpc(npc), then);
+
+  // Preview of a currency change: each converted item with its new price, then the exact lines.
+  function previewShopType(ctx, npc, to) {
+    const ws = ctx.ws, f = ws.fileOfNpc(npc);
+    const from = FRE.shopOps.shopType(npc.venderType);
+    if (to === from) return;
+    const itemOf = id => { const it = ws.itemById(id); return it ? ws.itemInfo(it) : null; };
+    const plan = FRE.shopOps.shopTypePlan(npc, to, itemOf);
+    const label = TYPES[to].label, chips = to === 2 ? 'Donate chips' : 'Red chips';
+    const toChips = to !== 0;
+    const specOk = ws.isEditable('spec_item.txt');
+    const prices = new Map();     // to chips: itemId -> chip price; to Penya: rec.start -> Penya price
+    const fresh = () => ws.chars.npcs.find(n => npcId(n) === npcId(npc)) || npc;
+
+    function parts() {
+      const now = fresh();
+      const out = [{ file: f.name.toLowerCase(), splices: FRE.shopOps.setShopType(f.text, now, to, toChips ? null : prices) }];
+      if (toChips) {
+        const changed = new Map([...prices].filter(([id, v]) => v !== chipOf(itemOf(id))));
+        out.push(...chipPriceParts(ws, changed));
+      }
+      return out;
+    }
+
+    const dropped = new Map(plan.droppedPrices.map(r => [r.rec.start, r.cost]));
+    const diffBox = h('div');
+    function refreshDiff() {
+      diffBox.textContent = '';
+      try {
+        for (const p of parts()) {
+          const sf = ws.files.get(p.file);
+          diffBox.appendChild(h('h4', sf.name));
+          diffBox.appendChild(FRE.ui.renderDiff(sf, sf.text, sf.preview(p.splices)));
+        }
+      } catch (e) { diffBox.appendChild(h('p.bad', e.message)); }
+    }
+
+    const rows = plan.converted.map(r => {
+      const id = r.info ? r.info.id : null;
+      const key = toChips ? id : r.rec.start;
+      const status = h('span');
+      const update = () => {
+        const v = prices.has(key) ? prices.get(key) : (toChips ? chipOf(r.info) : null);
+        status.textContent = ''; status.className = '';
+        if (toChips) {
+          if (v === null) { status.className = 'tag warn'; status.textContent = 'no chip price: left out of the shop'; }
+        } else if (v === null) {
+          if (r.info && r.info.cost > 0) { status.className = 'muted'; status.textContent = `item's own price: ${fmt(r.info.cost)}`; }
+          else { status.className = 'tag warn'; status.textContent = 'no price: sells for 1 Penya (DPSrvr.cpp:3404)'; }
+        }
+      };
+      const input = numInput({
+        value: toChips ? chipOf(r.info) : null, min: toChips ? 1 : 0,
+        placeholder: toChips ? 'no chip price' : (r.info ? `${fmt(r.info.cost)} (item)` : ''),
+        disabled: toChips && (!specOk || !r.info),
+        title: toChips ? 'Chip price (dwReferValue1 in Spec_Item.txt). One price per item: it also applies in other chip shops and the Donation Shop.'
+          : 'Penya price written as AddShopItem( tab, item, price ). Empty = the item\'s own price (dwCost). AddShopItem prices apply server-wide.',
+        onCommit: v => { prices.set(key, v); update(); refreshDiff(); },
+      });
+      update();
+      const was = toChips
+        ? (dropped.has(r.rec.start) ? `${fmt(dropped.get(r.rec.start))} Penya (removed)` : r.info ? `${fmt(r.info.cost)} Penya (item)` : '')
+        : (chipOf(r.info) ? `${fmt(chipOf(r.info))} chips` : 'no chip price');
+      return h('tr', itemCell(r.info, r.define), h('td.muted', was), h('td', input), h('td', status));
+    });
+
+    const body = h('div',
+      h('p', `${npc.name || npc.key} changes from ${TYPES[from].label} to ${label}. You can undo it in one step.`),
+      plan.converted.length ? [
+        h('p', toChips
+          ? `${plan.converted.length} item line(s) become AddVenderItem2, sold for ${chips}. Set each item's chip price below (Spec_Item.txt, shared by every chip shop and the Donation Shop).`
+          : `${plan.converted.length} item line(s) become AddShopItem, sold for Penya. Type a price, or leave it empty to use the item's own price.`),
+        toChips && !specOk ? h('p.bad', 'Spec_Item.txt is not editable, so chip prices cannot be changed here.') : null,
+        toChips && plan.droppedPrices.length ? h('p.muted', 'Removed AddShopItem prices also stop overriding the item\'s Penya price server-wide.') : null,
+        h('table.items', h('tr', h('th', 'Item'), h('th', 'Before'), h('th.num', toChips ? `Price (${chips})` : 'Price (Penya)'), h('th', '')), rows),
+      ] : null,
+      plan.rulesIgnored ? h('p.muted', `${plan.rulesIgnored} AddVendorItem rule(s) stay in the file but are ignored in chip shops.`) : null,
+      plan.rulesUsedAgain ? h('p.muted', `${plan.rulesUsedAgain} AddVendorItem rule(s) fill the tabs again.`) : null,
+      h('h3', 'Lines that change'), diffBox);
+    refreshDiff();
+    FRE.dom.modal({ title: `Make ${npc.name || npc.key} a ${label}?`, body, wide: true, buttons: [
+      { label: 'Cancel' },
+      { label: `Make it a ${label}`, cls: 'primary', onClick: () => {
+        const changedIds = toChips ? [...prices].filter(([id, v]) => v !== chipOf(itemOf(id))).map(([id]) => id) : [];
+        confirmShared(ctx, npc, changedIds, () => ctx.editGroup(parts, `shop type: ${label}`, ['npc|' + npcId(npc)]));
+      } },
+    ] });
+  }
+  FRE.ui.previewShopType = previewShopType;
+
   const mod = {
     id: 'npc', label: 'NPC Shops', searchPlaceholder: 'Search NPCs',
+    help: 'NPC Shops: what each NPC sells (character.inc, character-etc.inc, character-school.inc), its currency and prices',
     st, npcId,
 
     onLoad(ctx) {
-      const first = ctx.ws.chars.npcs.find(isShopNpc);
+      const first = ctx.ws.chars.npcs.find(showTest()) || ctx.ws.chars.npcs.find(isShopNpc);
       st.sel = first ? npcId(first) : null; st.tab = 0;
     },
 
     listExtra(ctx) {
-      return h('label.check', h('input', { type: 'checkbox', checked: st.shopsOnly, on: { change: e => { st.shopsOnly = e.target.checked; ctx.renderList(); } } }), ' shops only');
+      const npcs = ctx.ws ? ctx.ws.chars.npcs : [];
+      return h('select.npc-filter', { title: 'Which NPCs to list', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
+        SHOW.map(o => ({ o, n: npcs.filter(o.test).length }))
+          .filter(x => x.n > 0 || x.o.v === st.show)            // e.g. no Donate Chip NPC since 7d7df4f9: option hidden
+          .map(({ o, n }) => h('option', { value: o.v, selected: o.v === st.show }, `${o.label} (${n})`)));
     },
 
     renderList(el, ctx) {
@@ -50,8 +163,9 @@
         diagBy.set(k, o);
       }
       let shown = 0;
+      const test = showTest();
       for (const npc of ctx.ws.chars.npcs) {
-        if (st.shopsOnly && !isShopNpc(npc)) continue;
+        if (!test(npc)) continue;
         const label = npc.name || npc.key;
         if (q && !label.toLowerCase().includes(q) && !npc.key.toLowerCase().includes(q)) continue;
         const id = npcId(npc), dg = diagBy.get(id);
@@ -110,6 +224,9 @@
         })));
       }
 
+      if (rules.length && !entries.some(x => x.e.kind !== 'generated' && x.e.slot === st.tab)) {
+        el.appendChild(h('p.muted.small', 'The items below come from the rules above, so they can\'t be removed or priced one by one. You can still add fixed items to this tab with + in the item list.'));
+      }
       // one table: every item players see, in server order, plus fixed items left out
       el.appendChild(h('h3', `Items in this tab (${tab.entries.length}/100)`));
       const rows = tab.entries.map(en => ({ rec: en.source, kind: en.kind, prop: en.prop }))
@@ -124,7 +241,9 @@
           const editable = row.kind !== 'generated';
           const def = row.prop ? row.prop.item.define : (r.args.item && (r.args.item.define || f.text.slice(r.args.item.start, r.args.item.end)));
           let price;
-          if (chip) price = info ? fmt(info.chipCost) : '';
+          if (chip) {
+            price = info ? FRE.ui.chipPrice.input(ctx, info, hereNpc(npc), 'npc|' + npcId(npc)) : '';
+          }
           else if (row.kind === 'fixed') {
             price = numInput({ value: r.args.cost ? r.args.cost.value : null, placeholder: info ? fmt(info.cost) + ' (item)' : '', disabled: !canEdit,
               title: 'Empty = the item\'s own price from Spec_Item.txt. A price here changes the item\'s price everywhere (server-wide). Commas are only for display.',

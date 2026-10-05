@@ -9,8 +9,12 @@
 
   // Needed by every editor.
   const CORE = ['Masquerade.prj', 'Spec_Item.txt', 'propItem.txt.txt', ...FRE.DEFINE_FILES];
+  // Shared files the editor may write. Spec_Item.txt: only dwReferValue1 (chip prices), the
+  // field the proven commits 93a02124 / fea9840b change. The client reads its own copy.
+  const CORE_EDITABLE = ['Spec_Item.txt'];
+  const CORE_CLIENT = ['Spec_Item.txt'];
   // Read when present, never required (context only).
-  const OPTIONAL = ['Exchange_Script.txt'];
+  const OPTIONAL = ['Exchange_Script.txt', 'textClient.inc', 'textClient.txt.txt'];
 
   // id, files it needs, files it may write, files the game client also reads,
   // parse(ws) -> model, validate(ws, model) -> diagnostics
@@ -38,7 +42,7 @@
         return FRE.donation.loadDonation(ws.files.get('donationshop.inc'), { defines: ws.defines.defines, strings: ws.strings.map });
       },
       validate(ws, model) {
-        return FRE.donation.validateDonation(model, { items: ws.items.items, textOf: n => ws.textOf(n) });
+        return FRE.donation.validateDonation(model, { items: ws.items.items, textOf: n => ws.textOf(n), defines: ws.defines.defines, tree: ws.donationTree });
       },
     },
   ];
@@ -55,31 +59,40 @@
       this.moduleDiags = {};
       this.available = {};
       this.editable = new Set();
+      this.donationTree = null;
       for (const m of MODULES) {
         const miss = m.required.filter(n => !files.has(n.toLowerCase()));
         this.available[m.id] = miss.length ? { ok: false, missing: miss } : { ok: true };
         if (!miss.length) m.editable.forEach(n => this.editable.add(n.toLowerCase()));
       }
+      CORE_EDITABLE.forEach(n => { if (files.has(n.toLowerCase())) this.editable.add(n.toLowerCase()); });
     }
 
     load() {
       this.defines = FRE.loadDefines(this.files);
       this.strings = FRE.loadStrings(this.files);
-      const spec = this.files.get('spec_item.txt');
-      this.items = spec ? FRE.specItem.loadSpecItem(spec, { defines: this.defines.defines, strings: this.strings.map })
-        : { items: new Map(), rows: [], diags: [], stopped: null };
-      this.itemDiags = this.items.diags.map(d => Object.assign({}, d, { key: `${d.code}|${d.file}|${d.name || d.message}` }));
+      this.texts = FRE.textClient.load(this.files, this.strings.map, this.defines.defines);
+      this.loadItems();
       // exchange menus (MMI_ names at the start of a line in Exchange_Script.txt), for display only
       const ex = this.files.get('exchange_script.txt');
       this.exchangeMenus = new Set(ex ? (ex.text.match(/^MMI_\w+/gm) || []) : []);
-      this.vendorIndex = FRE.vendorSim.buildIndex(this.items, this.defines.defines);
       this.reparse();
       this.baseline = this.keyCounts(this.diags);
       return this;
     }
 
+    // Spec_Item.txt and everything derived from it (also after a price edit).
+    loadItems() {
+      const spec = this.files.get('spec_item.txt');
+      this.items = spec ? FRE.specItem.loadSpecItem(spec, { defines: this.defines.defines, strings: this.strings.map })
+        : { items: new Map(), rows: [], diags: [], stopped: null };
+      this.itemDiags = this.items.diags.map(d => Object.assign({}, d, { key: `${d.code}|${d.file}|${d.name || d.message}` }));
+      this.vendorIndex = FRE.vendorSim.buildIndex(this.items, this.defines.defines);
+    }
+
     // Re-parse the modules that own `lowerName` (all modules when omitted).
     reparse(lowerName) {
+      if (lowerName === 'spec_item.txt') { this.loadItems(); lowerName = undefined; }   // every module reads items
       for (const m of MODULES) {
         if (!this.available[m.id].ok) continue;
         if (lowerName && !m.required.some(n => n.toLowerCase() === lowerName)) continue;
@@ -87,6 +100,12 @@
         this.moduleDiags[m.id] = m.validate(this, this.models[m.id]);
       }
       this.diags = [...Object.values(this.moduleDiags).flat(), ...this.itemDiags];
+    }
+
+    // Client/Client/DonationShopTree.inc (client-only; read from the Client folder when chosen)
+    setDonationTree(tree) {
+      this.donationTree = tree || null;
+      if (this.available.donation && this.available.donation.ok) this.reparse('donationshop.inc');
     }
 
     textOf(name) { return (this.files.get(String(name).toLowerCase()) || { text: '' }).text; }
@@ -101,23 +120,40 @@
 
     // Apply splices from an edit op to one file, then re-derive what depends on it.
     apply(lowerName, splices, label) {
-      if (!this.isEditable(lowerName)) throw new Error(`${lowerName} is not editable`);
-      if (!splices.length) return;
-      this.files.get(lowerName).applySplices(splices, label);
-      this.history.push(lowerName);
+      this.applyGroup([{ file: lowerName, splices }], label);
+    }
+
+    // Several files changed as ONE undo step. All splices are checked before any file changes.
+    applyGroup(parts, label) {
+      parts = parts.filter(p => p.splices.length);
+      if (!parts.length) return;
+      for (const p of parts) {
+        if (!this.isEditable(p.file)) throw new Error(`${p.file} is not editable`);
+        const f = this.files.get(p.file);
+        FRE.SourceFile.spliceText(f.text, p.splices, f.kind, f.name);       // throws before anything changes
+      }
+      for (const p of parts) this.files.get(p.file).applySplices(p.splices, label);
+      this.history.push(parts.map(p => p.file));
       this.redoStack = [];
-      this.reparse(lowerName);
+      this._reparseAll(parts.map(p => p.file));
+    }
+
+    _reparseAll(names) {
+      if (names.includes('spec_item.txt')) this.reparse('spec_item.txt');   // reparses every module
+      else names.forEach(n => this.reparse(n));
     }
 
     undo() {
-      const name = this.history.pop(); if (!name) return null;
-      const label = this.files.get(name).undo();
-      this.redoStack.push(name); this.reparse(name); return label;
+      const names = this.history.pop(); if (!names) return null;
+      let label = null;
+      for (const n of names) label = this.files.get(n).undo();
+      this.redoStack.push(names); this._reparseAll(names); return label;
     }
     redo() {
-      const name = this.redoStack.pop(); if (!name) return null;
-      const label = this.files.get(name).redo();
-      this.history.push(name); this.reparse(name); return label;
+      const names = this.redoStack.pop(); if (!names) return null;
+      let label = null;
+      for (const n of names) label = this.files.get(n).redo();
+      this.history.push(names); this._reparseAll(names); return label;
     }
 
     // What players see in this NPC's shop (cached until the next edit).
@@ -128,9 +164,14 @@
 
     dirtyFiles() { return [...this.files.values()].filter(f => f.dirty); }
 
+    // Files the game client also reads (it has its own copies in Client/).
+    clientFileNames() {
+      return [...new Set([...CORE_CLIENT, ...MODULES.filter(m => this.available[m.id].ok).flatMap(m => m.client)])];
+    }
+
     // Changed files that the game client also reads (must be copied to Client/).
     clientCopiesNeeded() {
-      const names = new Set(MODULES.flatMap(m => m.client).map(n => n.toLowerCase()));
+      const names = new Set(this.clientFileNames().map(n => n.toLowerCase()));
       return this.dirtyFiles().filter(f => names.has(f.name.toLowerCase())).map(f => f.name);
     }
 
@@ -177,6 +218,7 @@
   }
 
   Workspace.CORE = CORE;
+  Workspace.CORE_CLIENT = CORE_CLIENT;
   Workspace.MODULES = MODULES;
   Workspace.ALL_FILES = ALL_FILES;
   Workspace.REQUIRED = ALL_FILES;      // everything the editor looks for in the folder

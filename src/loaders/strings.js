@@ -9,7 +9,7 @@
   // Subset of the server's list that the editor needs, in the server's order.
   const STRING_FILES = [
     'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt',
-    'propItem.txt.txt', 'propMover.txt.txt',
+    'propItem.txt.txt', 'propMover.txt.txt', 'textClient.txt.txt',
   ];
 
   function loadStringFile(state, file) {

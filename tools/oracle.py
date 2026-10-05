@@ -206,6 +206,20 @@ def main(root):
         for k in ['AddShopItem', 'AddVenderItem2', 'AddVendorItem', 'SetVenderType', 'AddVendorSlot', 'SetName', 'AddMenu']:
             cnt[k] += len(re.findall(r'\b' + k + r'\b', t))
     res['character'] = dict(cnt)
+    # DonationShop.inc: rows inside DONATIONSHOP { }, comments stripped (regex, not the token port)
+    ds = os.path.join(root, 'DonationShop.inc')
+    if os.path.exists(ds):
+        t = open(ds, 'rb').read().decode('latin-1')
+        t = re.sub(r'/\*.*?\*/', '', t, flags=re.S)
+        t = re.sub(r'//[^\r\n]*', '', t)
+        m = re.search(r'DONATIONSHOP\s*\{(.*?)\}', t, flags=re.S)
+        rows = re.findall(r'DSItem\s+"([^"]*)"\s+(\w+)', m.group(1)) if m else []
+        cats = []
+        for c, _ in rows:
+            if c not in cats:
+                cats.append(c)
+        res['donation'] = {'rows': len(rows), 'items': len({d for _, d in rows}), 'categories': cats,
+                           'eol': 'crlf' if b'\r\n' in open(ds, 'rb').read() else 'lf'}
     shops, empty = vendor_sim(root)
     res['vendor'] = shops
     res['vendor_empty_rules'] = empty
