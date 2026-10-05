@@ -2,14 +2,40 @@
 
 **Read this whole file before writing any code.**
 
-**Goal:** from the standalone HTML editor, the user can:
+## How this works (read first)
+
+**Nobody edits the FlyFF V19 files by hand.** Not the user, and not you (Claude).
+
+- **Your job:** build the feature *inside the web app* (`FLYFF-RESOURCE-EDITOR`, a single HTML file).
+- **The user's job:** open the web app in Chrome or Edge, fill in a form, and click Save.
+- **The web app's job:** read the V19 files, check everything (§6), back up, and write the changes itself.
+
+```
+User fills the form in the web app
+      │
+      ▼
+Web app validates (§6)  ──any ERROR──►  nothing is written, user sees what to fix
+      │ all OK
+      ▼
+Web app shows exactly what will change → user clicks Confirm
+      │
+      ▼
+Web app backs up → writes the 6 files → reads them back → validates again (§7)
+      │
+      ▼
+User restarts the servers and checks in game (§8)
+```
+
+This document describes what the web app must do. The text templates (§5) and byte layouts (§3) are **specifications for the web app's code**, not instructions for anyone to follow manually. If you ever catch yourself about to edit `character.inc`, `character.txt.txt` or a `.dyo` in the V19 folder with a text editor, script or tool: stop. That change belongs in the web app.
+
+**Goal:** in the web app, the user can:
 
 1. create a brand-new NPC,
 2. place it on a map at a chosen position,
 3. tick which right-click menus it has (Trade, Bank, Guild Bank, …),
 4. if it has Trade: give it shop tabs (up to 4) and put items in each tab,
 
-and the editor guarantees that the files it writes will load correctly in **this** server (FLYFF-V19-SOURCE).
+and the web app guarantees that the files it writes will load correctly in **this** server (FLYFF-V19-SOURCE).
 
 Everything below was checked against the real C++ loaders and the real files in this repo, not copied from forum posts. File/line references are given so you can re-check anything.
 
@@ -17,13 +43,14 @@ Everything below was checked against the real C++ loaders and the real files in 
 
 ## 0. Ground rules (follow every time)
 
-1. **Never modify anything in `FLYFF-V19-SOURCE/Source/`.** The C++ is read-only reference.
-2. **Never write to the real `FLYFF-V19-SOURCE` files without the user saying yes first.** While developing, test against a copy of the folder (or fixtures in `FLYFF-RESOURCE-EDITOR/test-fixtures/`).
-3. **Before any save, run `git status` in `FLYFF-V19-SOURCE`** (or ask the user to). If it isn't clean, stop and report it. It was clean at commit `ca77a931` when this was written.
-4. **The C++ parser is the authority.** If this file and the C++ ever disagree, the C++ wins. Tell the user about it instead of guessing.
-5. **Unchanged bytes stay unchanged.** Never re-encode, re-indent, trim, or change line endings of lines you didn't touch. Only *insert* new text/records at the documented places.
-6. **Validate first, then back up, then write, then re-read and re-validate.** See §7.
-7. Update `FLYFF-SOURCES-EDIT-GUIDES/SOURCES DOCUMENTATION/FLYFF TODOS.txt` as the repo `CLAUDE.md` requires.
+1. **All changes to V19 files happen through the web app's Save button.** You never hand-edit, script-edit or tool-edit V19 resource files, not even "just to test".
+2. **Never modify anything in `FLYFF-V19-SOURCE/Source/`.** The C++ is read-only reference.
+3. **While developing, the web app only saves into a *copy* of the V19 folder** (the user copies `FLYFF-V19-SOURCE` to e.g. `FLYFF-V19-TEST`). The first save to the real folder happens only after the user says yes, and only after the self-tests in §6.5 pass.
+4. **Before any save to the real folder, `git status` in `FLYFF-V19-SOURCE` must be clean** (ask the user to run it, or run it yourself if you have access). If it isn't clean, stop and report it. It was clean at commit `ca77a931` when this was written. Because every change is then one git diff, the user can review it or undo it with `git checkout`.
+5. **The C++ parser is the authority.** If this file and the C++ ever disagree, the C++ wins. Tell the user about it instead of guessing.
+6. **Unchanged bytes stay unchanged.** The web app must never re-encode, re-indent, trim, or change line endings of lines it didn't touch. It only *inserts* new text/records at the documented places.
+7. **Validate first, then back up, then write, then re-read and re-validate.** See §7.
+8. Update `FLYFF-SOURCES-EDIT-GUIDES/SOURCES DOCUMENTATION/FLYFF TODOS.txt` as the repo `CLAUDE.md` requires.
 
 ---
 
@@ -231,7 +258,9 @@ Map folders are `Server/Resource/World/<Map>/` (48 of them). The `.dyo` file nam
 
 ---
 
-## 5. Exact text the editor writes
+## 5. Exact text the web app writes
+
+(These are what the web app's code generates and writes. Don't type them into the V19 files yourself.)
 
 ### 5.1 New IDs for `character.txt.txt`
 
@@ -284,9 +313,13 @@ Encode as UTF-16LE, append only, and don't touch the BOM or any existing line.
 
 ---
 
-## 6. Validation rules (run all of them before writing anything)
+## 6. Validation rules (the web app runs all of them before writing anything)
 
-**ERROR = block the save. WARN = allow, but show it clearly.**
+These checks are code inside the web app. They run automatically when the user clicks Save (and live while they fill the form). The user never has to check anything by hand.
+
+**ERROR = the Save button is disabled and the message says what to fix. WARN = saving is allowed, but the warning is shown on the confirm screen.**
+
+Every message must name the field and say how to fix it, e.g. *"Key `MaFl_Juria` already exists in character.inc — choose another name."*, not just "invalid".
 
 ### Loading / file safety
 
@@ -343,9 +376,49 @@ Encode as UTF-16LE, append only, and don't touch the BOM or any existing line.
 | V2 | Byte-diff old vs new: only the expected appended/inserted bytes differ. For `.dyo`: new length = old + 200, the prefix up to the insert point is identical, and the suffix after it is identical. | ERROR |
 | V3 | Server and Client outputs are byte-identical to each other. | ERROR |
 
+Rules that compare against "existing NPCs" (N2, S9, P3 …) only judge the **new** NPC against the existing data. Existing data has old quirks (for example, the same item already given different prices by two existing NPCs). Show those in an "existing issues" list, but they must never block the user's new NPC.
+
+### 6.5 Proving the validation itself is correct (self-tests)
+
+A validator with a bug is worse than none, because it says "OK" when it isn't. So before the web app is trusted, build a **"Run self-tests"** button into it (a developer panel is fine). It runs these checks **in memory only, without writing anything**, against the loaded folder. **All of them must pass before the first real save**, and again after any change to the validation or save code.
+
+1. **The current game data passes.** Load the real, unmodified files. Expected:
+   - every `character*.inc` block parses;
+   - every map's NPC walk (§3.2) finishes, except the 2 blocked maps;
+   - `WdMadrigal.dyo` has exactly 364 NPC records, and Juria's record decodes to the values in §3.1;
+   - `Spec_Item.txt` gives 8,067 rows of 175 tokens;
+   - the loader checks (L1–L3) report **zero errors**.
+
+   If the validator flags data the live server loads fine, the validator is wrong.
+2. **Round trip.** For every file the feature can write: decode → encode → bytes identical to the original.
+3. **Every rule can fire, and doesn't fire by mistake.** Keep a table of test cases in the code. Each rule in §6 needs at least one input that must trigger it and one valid input that must not. For example:
+
+   | Test input | Expected result |
+   |---|---|
+   | key `MaFl_Juria` | N2 error |
+   | key `mafl_juria` (other case) | N2 error |
+   | key `II_SYS_SYS_SCR_BLESSEDNESS` | N3 error |
+   | key 32 characters long | N1 error |
+   | name containing `가` | N4 error |
+   | `AddMenu( MMI_NOT_REAL )` | N6 error |
+   | shop tab 4 | S2 error |
+   | item `II_NOT_REAL` | S3 error |
+   | map `WdVolcaneYellow` | P1 error |
+   | Y = `NaN` | P2 error |
+   | the full example from §5 on map `WdMadrigal` | **no errors** |
+
+4. **Golden output.** Build the §5 example NPC in memory, then check:
+   - the new `.dyo` is exactly 200 bytes longer;
+   - the bytes before the insert point and after the inserted record are unchanged;
+   - decoding the new record gives back the form values;
+   - the new `character.inc` / `character.txt.txt` endings equal the expected text from §5, encoded as UTF-16LE + CRLF.
+5. **Independent re-read.** Run the in-memory output through the *loader* again (not the generator). The new NPC must show up in that map's NPC list with the right name, menus, tabs and items. Existing NPC counts must go up by exactly 1.
+
+The self-test results (pass/fail per test) are shown on screen. The final proof is still the in-game test (§8), done first on the test copy.
+
 ---
 
-## 7. Saving (File System Access API)
+## 7. Saving — what the web app does when the user clicks Save (File System Access API)
 
 1. Run all validations (§6). If there's any ERROR, stop.
 2. Show a **summary of changes**: the new `character.inc` block, the new `character.txt.txt` lines, the map + coordinates. The user clicks **Confirm**.
@@ -379,9 +452,9 @@ Browser notes: the user has to grant read/write permission to the folder, and Ch
 
 ---
 
-## 10. Suggested build order
+## 10. Suggested build order (all inside the web app)
 
-1. **Read-only loader:** pick the root folder, load and validate all files in §1, show load status and checkmarks, show the item database (from `Spec_Item.txt` + `propItem.txt.txt` + `defineItem.h`) and the list of existing NPCs per map (from the `.dyo` walk + `character.inc`). No writing yet.
-2. **Form + validation:** the §4 form with all §6 rules and a live preview of the exact text/bytes from §5. Still no writing.
-3. **Save to a test copy** of `FLYFF-V19-SOURCE` (a folder the user copies). Verify with V1–V3, then open the copied `.dyo` in a DYO viewer if available.
-4. **Ask the user** before the first save to the real folder. Then they run the in-game test (§8).
+1. **Read-only loader:** pick the root folder, load and validate all files in §1, show load status and checkmarks, show the item database (from `Spec_Item.txt` + `propItem.txt.txt` + `defineItem.h`) and the list of existing NPCs per map (from the `.dyo` walk + `character.inc`). No writing yet. Self-tests 1–2 (§6.5) must pass.
+2. **Form + validation:** the §4 form with all §6 rules and a live preview of the exact text/bytes from §5. Still no writing. Self-tests 3–5 must pass.
+3. **Save to a test copy** of `FLYFF-V19-SOURCE` (a folder the user copies), using the web app's Save button. The web app re-reads and re-validates (V1–V3). If the user can, they start the servers from the test copy and run §8 there.
+4. **Ask the user** before the first save to the real folder. They use the same Save button there, then run the in-game test (§8). Only then mark the TODO as DONE.
