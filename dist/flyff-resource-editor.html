@@ -1,0 +1,2409 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FLYFF Resource Editor</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0f1218;
+  --panel: #161b24;
+  --panel-2: #1c2330;
+  --line: #2a3342;
+  --text: #dde3ee;
+  --muted: #8a96aa;
+  --accent: #4f8cff;
+  --accent-2: #2f6be0;
+  --ok: #3ccf8e;
+  --warn: #f2b84b;
+  --bad: #ff5d5d;
+  --add: #16391f;
+  --del: #43191b;
+  --normal: #c9d1de;
+  --unique: #f2b84b;
+  --ultimate: #c77dff;
+  --baruna: #4fd1e8;
+  --radius: 6px;
+  font-size: 14px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: "Segoe UI", system-ui, sans-serif; }
+body { display: flex; flex-direction: column; overflow: hidden; }
+button, input, select { font: inherit; color: inherit; }
+button { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 5px 11px; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--accent-2); border-color: var(--accent); }
+button.danger { background: #5a1d22; border-color: var(--bad); }
+button.icon { padding: 2px 8px; }
+input, select { background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 5px 8px; min-width: 0; }
+input:focus, select:focus { outline: 1px solid var(--accent); }
+code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.pad { padding: 6px 10px; }
+.row { display: flex; gap: 6px; align-items: center; }
+.row > * { flex: 1; }
+.check { display: flex; gap: 4px; align-items: center; white-space: nowrap; color: var(--muted); font-size: 12px; }
+
+#toolbar { display: flex; align-items: center; gap: 14px; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.brand { font-weight: 600; letter-spacing: .3px; }
+.tb-group { display: flex; gap: 6px; }
+.tb-files { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+.file-chip { font-size: 12px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); white-space: nowrap; }
+.file-chip.ok::before { content: "✓ "; color: var(--ok); }
+.file-chip.missing::before { content: "✗ "; color: var(--bad); }
+.file-chip.ro::before { content: "🔒 "; }
+.file-chip.dirty { border-color: var(--warn); }
+.diag-badge { border-radius: 12px; min-width: 40px; }
+.diag-badge.has-warn { border-color: var(--warn); color: var(--warn); }
+.diag-badge.has-block { border-color: var(--bad); color: var(--bad); background: #3a1518; }
+
+#banners .banner { padding: 7px 14px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.banner.info { background: #14243f; }
+.banner.warn { background: #3a2e12; }
+.banner.bad { background: #3a1518; }
+
+#layout { flex: 1; display: grid; grid-template-columns: 270px 1fr 430px; min-height: 0; }
+aside, section { min-height: 0; display: flex; flex-direction: column; }
+#left { border-right: 1px solid var(--line); background: var(--panel); }
+#right { border-left: 1px solid var(--line); background: var(--panel); }
+#center { overflow: hidden; }
+.panel-head { padding: 10px; display: flex; gap: 8px; align-items: center; border-bottom: 1px solid var(--line); }
+.panel-head.col { flex-direction: column; align-items: stretch; }
+.panel-head input[type=search] { flex: 1; }
+.list { overflow-y: auto; flex: 1; }
+
+.npc { padding: 7px 12px; border-bottom: 1px solid #1f2633; cursor: pointer; }
+.npc:hover { background: var(--panel-2); }
+.npc.sel { background: #1d2c47; border-left: 3px solid var(--accent); padding-left: 9px; }
+.npc .n { display: flex; justify-content: space-between; gap: 6px; }
+.npc .k { font-size: 11px; color: var(--muted); }
+.tag { font-size: 10px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.tag.chip { color: var(--bad); border-color: #6b2b2b; }
+.tag.edit { color: var(--warn); border-color: #6b5520; }
+.tag.warn { color: var(--warn); }
+.tag.bad { color: var(--bad); }
+
+#editor { flex: 1; overflow-y: auto; padding: 16px 20px; }
+.empty-state { text-align: center; padding-top: 12vh !important; color: var(--text); }
+.npc-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.npc-title h2 { margin: 0; font-size: 20px; }
+.tabs { display: flex; gap: 4px; margin: 14px 0 10px; border-bottom: 1px solid var(--line); }
+.tabs button { border-radius: var(--radius) var(--radius) 0 0; border-bottom: none; background: transparent; }
+.tabs button.sel { background: var(--panel-2); border-color: var(--accent); }
+.tabs .count { color: var(--muted); font-size: 11px; margin-left: 4px; }
+h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 18px 0 6px; }
+table { width: 100%; border-collapse: collapse; }
+td, th { padding: 5px 8px; border-bottom: 1px solid #1f2633; text-align: left; vertical-align: middle; }
+th { font-weight: 500; color: var(--muted); font-size: 12px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td input[type=number] { width: 130px; text-align: right; }
+td select { width: 70px; }
+tr.changed td:first-child { box-shadow: inset 3px 0 var(--warn); }
+.def { font-family: Consolas, monospace; font-size: 12px; color: var(--muted); }
+.line { font-size: 11px; color: var(--muted); }
+.r-normal { color: var(--normal); } .r-unique { color: var(--unique); } .r-ultimate { color: var(--ultimate); } .r-baruna { color: var(--baruna); }
+
+#diag-panel { max-height: 38%; overflow-y: auto; border-top: 1px solid var(--line); background: var(--panel); }
+.diag { padding: 6px 14px; border-bottom: 1px solid #1f2633; font-size: 13px; cursor: pointer; display: flex; gap: 8px; }
+.diag:hover { background: var(--panel-2); }
+.diag .sev { font-weight: 600; min-width: 46px; }
+.diag .sev.BLOCK { color: var(--bad); } .diag .sev.WARN { color: var(--warn); } .diag .sev.INFO { color: var(--muted); }
+.diag .new { color: var(--bad); font-size: 11px; }
+
+.chips { flex-wrap: wrap; }
+.chip { flex: 0 0 auto !important; border-radius: 12px; padding: 2px 10px; font-size: 12px; }
+.chip[data-r=normal].on { border-color: var(--normal); color: var(--normal); }
+.chip[data-r=unique].on { border-color: var(--unique); color: var(--unique); }
+.chip[data-r=ultimate].on { border-color: var(--ultimate); color: var(--ultimate); }
+.chip[data-r=baruna].on { border-color: var(--baruna); color: var(--baruna); }
+.chip.on { background: #222b3a; }
+.item-head, .item { display: grid; grid-template-columns: 1fr 92px 34px 74px 34px; gap: 6px; align-items: center; padding: 0 10px; }
+.item-head { font-size: 11px; color: var(--muted); padding-top: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.virtual { position: relative; }
+.item { position: absolute; left: 0; right: 0; height: 40px; border-bottom: 1px solid #1f2633; font-size: 13px; }
+.item:hover { background: var(--panel-2); }
+.item .nm { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.15; }
+.item .nm .def { display: block; overflow: hidden; text-overflow: ellipsis; }
+.item .ty { font-size: 11px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.item .num { text-align: right; font-size: 12px; font-variant-numeric: tabular-nums; }
+.item button { padding: 0 8px; font-weight: 700; }
+
+.modal-back { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 10; }
+.modal { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; width: min(980px, 92vw); max-height: 88vh; display: flex; flex-direction: column; }
+.modal header { padding: 12px 16px; border-bottom: 1px solid var(--line); font-weight: 600; }
+.modal .body { padding: 12px 16px; overflow-y: auto; flex: 1; }
+.modal footer { padding: 10px 16px; border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+.diff { font-family: Consolas, monospace; font-size: 12px; white-space: pre; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); margin: 6px 0 14px; }
+.diff div { padding: 1px 8px; }
+.diff .add { background: var(--add); } .diff .del { background: var(--del); } .diff .ctx { color: var(--muted); }
+.diff .gap { color: var(--muted); background: var(--panel-2); }
+.log { font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; }
+
+#toasts { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; z-index: 20; }
+.toast { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 14px; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+.toast.bad { border-color: var(--bad); } .toast.ok { border-color: var(--ok); }
+
+</style>
+</head>
+<body>
+<header id="toolbar">
+  <div class="brand">FLYFF Resource Editor <span class="muted" id="version"></span></div>
+  <div class="tb-group">
+    <button id="btn-load" class="primary">Load Folder</button>
+    <button id="btn-reopen" hidden>Reopen last folder</button>
+    <button id="btn-backup-dir" title="Folder where backups are written before every save">Backup folder: <b id="backup-name">not set</b></button>
+  </div>
+  <div class="tb-group">
+    <button id="btn-undo" title="Undo (Ctrl+Z)" disabled>Undo</button>
+    <button id="btn-redo" title="Redo (Ctrl+Y)" disabled>Redo</button>
+    <button id="btn-save" class="primary" title="Save (Ctrl+S)" disabled>Save</button>
+    <button id="btn-backup" title="Snapshot all loaded files into the backup folder" disabled>Backup</button>
+  </div>
+  <div id="file-status" class="tb-files"></div>
+  <button id="btn-diag" class="diag-badge" title="Problems">0</button>
+</header>
+<div id="banners"></div>
+<main id="layout">
+  <aside id="left">
+    <div class="panel-head">
+      <input id="npc-search" type="search" placeholder="Search NPCs" autocomplete="off">
+      <label class="check"><input id="npc-shops-only" type="checkbox" checked> shops only</label>
+    </div>
+    <div id="npc-list" class="list"></div>
+  </aside>
+  <section id="center">
+    <div id="editor" class="empty-state">
+      <h2>NPC Shop Editor</h2>
+      <p>Click <b>Load Folder</b> and pick <code>FLYFF-V19-SOURCE/Server/Resource</code><br>(or a test copy such as <code>test-data/Resource</code>).</p>
+      <p class="muted">Works in Chrome and Edge. Nothing is written until you press Save and confirm the changes.</p>
+    </div>
+    <div id="diag-panel" hidden></div>
+  </section>
+  <aside id="right">
+    <div class="panel-head col">
+      <input id="item-search" type="search" placeholder="Search items (name or II_)" autocomplete="off">
+      <div class="row">
+        <select id="item-ik1"><option value="">All categories</option></select>
+        <select id="item-ik3"><option value="">All types</option></select>
+      </div>
+      <div class="row chips" id="rarity-chips">
+        <button class="chip" data-r="normal">Normal</button>
+        <button class="chip" data-r="unique">Unique</button>
+        <button class="chip" data-r="ultimate">Ultimate</button>
+        <button class="chip" data-r="baruna">Baruna</button>
+      </div>
+      <label class="row small">Price for new items
+        <input id="new-price" type="number" min="0" step="1" placeholder="item's own price">
+      </label>
+    </div>
+    <div class="item-head"><span>Name</span><span>Type</span><span>Lv</span><span>ATK</span><span></span></div>
+    <div id="item-list" class="list virtual"><div id="item-spacer"></div></div>
+    <div id="item-count" class="muted small pad"></div>
+  </aside>
+</main>
+<div id="modal-root"></div>
+<div id="toasts"></div>
+<script>
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = 'build 1 · 2026-10-05 · 67a6df3';
+// ---- core/bytes.js ----
+// Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
+// lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
+(function (FRE) {
+  'use strict';
+
+  const CHUNK = 0x8000;
+
+  // Each byte becomes one char with the same code (0-255). This is NOT
+  // TextDecoder('latin1'), which browsers treat as windows-1252 and which
+  // remaps 0x80-0x9F. The C++ server never decodes these files either.
+  function bytesToBinaryString(u8, start = 0, end = u8.length) {
+    let out = '';
+    for (let i = start; i < end; i += CHUNK) {
+      out += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + CHUNK, end)));
+    }
+    return out;
+  }
+
+  function binaryStringToBytes(s) {
+    const u8 = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c > 0xff) throw new Error(`character U+${c.toString(16)} at ${i} cannot be stored in a byte file`);
+      u8[i] = c;
+    }
+    return u8;
+  }
+
+  // UTF-16LE code units -> JS string, one char per code unit. Lone surrogates
+  // survive (TextDecoder would replace them with U+FFFD).
+  function utf16leToString(u8, start = 0) {
+    const n = (u8.length - start) >> 1;
+    let out = '';
+    const buf = new Array(Math.min(n, CHUNK));
+    for (let i = 0; i < n; i += CHUNK) {
+      const m = Math.min(CHUNK, n - i);
+      buf.length = m;
+      for (let k = 0; k < m; k++) {
+        const o = start + 2 * (i + k);
+        buf[k] = u8[o] | (u8[o + 1] << 8);
+      }
+      out += String.fromCharCode.apply(null, buf);
+    }
+    return out;
+  }
+
+  function stringToUtf16le(s) {
+    const u8 = new Uint8Array(s.length * 2);
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      u8[2 * i] = c & 0xff;
+      u8[2 * i + 1] = c >> 8;
+    }
+    return u8;
+  }
+
+  function concatBytes(parts) {
+    let len = 0;
+    for (const p of parts) len += p.length;
+    const out = new Uint8Array(len);
+    let o = 0;
+    for (const p of parts) { out.set(p, o); o += p.length; }
+    return out;
+  }
+
+  function bytesEqual(a, b) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  // Splits text into lines, keeping each line's exact terminator.
+  // Returns [{ start, contentEnd, end, eol }] where text.slice(start, end)
+  // concatenated over all lines === text.
+  function scanLines(text) {
+    const lines = [];
+    let start = 0;
+    const n = text.length;
+    for (let i = 0; i < n; i++) {
+      const c = text.charCodeAt(i);
+      if (c === 13) {
+        const crlf = i + 1 < n && text.charCodeAt(i + 1) === 10;
+        const end = crlf ? i + 2 : i + 1;
+        lines.push({ start, contentEnd: i, end, eol: crlf ? '\r\n' : '\r' });
+        if (crlf) i++;
+        start = end;
+      } else if (c === 10) {
+        lines.push({ start, contentEnd: i, end: i + 1, eol: '\n' });
+        start = i + 1;
+      }
+    }
+    if (start < n || n === 0) lines.push({ start, contentEnd: n, end: n, eol: '' });
+    return lines;
+  }
+
+  // Binary search: index of the line containing offset.
+  function lineIndexAt(lines, offset) {
+    let lo = 0, hi = lines.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (lines[mid].start <= offset) lo = mid; else hi = mid - 1;
+    }
+    return lo;
+  }
+
+  function isPrintableAscii(s) {
+    for (let i = 0; i < s.length; i++) {
+      const c = s.charCodeAt(i);
+      if (c !== 9 && (c < 0x20 || c > 0x7e)) return false;
+    }
+    return true;
+  }
+
+  function isAllAscii(u8) {
+    for (let i = 0; i < u8.length; i++) if (u8[i] >= 0x80) return false;
+    return true;
+  }
+
+  function isValidUtf8(u8) {
+    try { new TextDecoder('utf-8', { fatal: true }).decode(u8); return true; } catch (e) { return false; }
+  }
+
+  FRE.bytes = {
+    bytesToBinaryString, binaryStringToBytes, utf16leToString, stringToUtf16le,
+    concatBytes, bytesEqual, scanLines, lineIndexAt, isPrintableAscii, isAllAscii, isValidUtf8,
+  };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- core/sourcefile.js ----
+// SourceFile: one resource file held as immutable original bytes plus the
+// current text. Edits are splices on the current text, so bytes outside an
+// edited range are copied verbatim on save. See docs/DESIGN.md §1.
+(function (FRE) {
+  'use strict';
+  const B = FRE.bytes;
+
+  const KIND_UTF16 = 'utf16le-bom';
+  const KIND_BYTES = 'bytes';
+
+  class SourceFile {
+    constructor(name, bytes, opts = {}) {
+      this.name = name;
+      this.handle = opts.handle || null;
+      this.stamp = opts.stamp || null;          // { size, lastModified } at load
+      this.bytes = bytes;                       // original bytes (replaced only after a successful save)
+      this.readOnlyReasons = [];
+      this._undo = [];
+      this._redo = [];
+      this._linesCache = null;
+      this._linesFor = null;
+      this._load();
+    }
+
+    get readOnly() { return this.readOnlyReasons.length > 0; }
+    get dirty() { return this.text !== this.originalText; }
+
+    _load() {
+      const b = this.bytes;
+      const has = (...sig) => sig.every((v, i) => b[i] === v);
+      if (b.length >= 2 && has(0xff, 0xfe)) {
+        this.kind = KIND_UTF16;
+        this.bom = b.subarray(0, 2);
+        if ((b.length & 1) !== 0) {
+          this.readOnlyReasons.push('UTF-16 file has an odd number of bytes');
+          // fall back to a byte view so it can still be displayed
+          this.kind = KIND_BYTES;
+          this.bom = new Uint8Array(0);
+          this.text = B.bytesToBinaryString(b);
+        } else {
+          this.text = B.utf16leToString(b, 2);
+        }
+        this.displayCodec = 'utf-16le';
+      } else {
+        this.kind = KIND_BYTES;
+        this.bom = new Uint8Array(0);
+        this.text = B.bytesToBinaryString(b);
+        if (b.length >= 3 && has(0xef, 0xbb, 0xbf)) {
+          this.readOnlyReasons.push('UTF-8 BOM: the server parser would treat the BOM as part of the first token');
+        } else if (b.length >= 2 && has(0xfe, 0xff)) {
+          this.readOnlyReasons.push('UTF-16 big-endian: not supported by the server parser');
+        }
+        this.displayCodec = B.isAllAscii(b) ? 'ascii' : (B.isValidUtf8(b) ? 'utf-8' : 'euc-kr');
+      }
+      this.originalText = this.text;
+
+      // Round-trip gate: re-encoding the untouched text must give back the
+      // exact original bytes, otherwise the file is read-only.
+      if (!B.bytesEqual(this.encode(this.text), b)) {
+        this.readOnlyReasons.push('round-trip check failed: re-encoding the file does not reproduce its bytes');
+      }
+      const lines = this.lines;
+      let joined = 0;
+      for (const l of lines) joined += l.end - l.start;
+      if (joined !== this.text.length) this.readOnlyReasons.push('line index does not cover the whole file');
+    }
+
+    encode(text) {
+      const body = this.kind === KIND_UTF16 ? B.stringToUtf16le(text) : B.binaryStringToBytes(text);
+      return this.bom.length ? B.concatBytes([this.bom, body]) : body;
+    }
+
+    serialize() { return this.encode(this.text); }
+
+    get lines() {
+      if (this._linesFor !== this.text) {
+        this._linesCache = B.scanLines(this.text);
+        this._linesFor = this.text;
+      }
+      return this._linesCache;
+    }
+
+    get originalLines() {
+      if (!this._origLines || this._origLinesFor !== this.originalText) {
+        this._origLines = B.scanLines(this.originalText);
+        this._origLinesFor = this.originalText;
+      }
+      return this._origLines;
+    }
+
+    lineOf(offset) { return B.lineIndexAt(this.lines, offset); }
+
+    // Decodes a slice of `text` for display only. Never used for saving.
+    display(text, start = 0, end = text.length) {
+      const s = text.slice(start, end);
+      if (this.kind === KIND_UTF16 || this.displayCodec === 'ascii') return s;
+      let bytes;
+      try { bytes = B.binaryStringToBytes(s); } catch (e) { return s; }
+      for (const codec of [this.displayCodec, 'utf-8']) {
+        try { return new TextDecoder(codec === 'ascii' ? 'utf-8' : codec, { fatal: false }).decode(bytes); } catch (e) { /* codec unsupported here */ }
+      }
+      return s;
+    }
+
+    displayLine(i, useOriginal = false) {
+      const text = useOriginal ? this.originalText : this.text;
+      const lines = useOriginal ? this.originalLines : this.lines;
+      const l = lines[i];
+      return this.display(text, l.start, l.contentEnd);
+    }
+
+    // splices: [{ start, end, insert }] in offsets of the CURRENT text.
+    // Applied right-to-left so earlier offsets stay valid.
+    applySplices(splices, label = 'edit') {
+      if (this.readOnly) throw new Error(`${this.name} is read-only: ${this.readOnlyReasons.join('; ')}`);
+      if (!splices.length) return;
+      const sorted = [...splices].sort((a, b) => a.start - b.start);
+      for (let i = 0; i < sorted.length; i++) {
+        const s = sorted[i];
+        if (s.start < 0 || s.end < s.start || s.end > this.text.length) throw new Error(`bad splice ${s.start}..${s.end}`);
+        if (i > 0 && s.start < sorted[i - 1].end) throw new Error('overlapping splices');
+        if (this.kind === KIND_BYTES && !B.isPrintableAscii(s.insert)) {
+          throw new Error(`${this.name}: only printable ASCII can be inserted into this file`);
+        }
+      }
+      let t = this.text;
+      for (let i = sorted.length - 1; i >= 0; i--) {
+        const s = sorted[i];
+        t = t.slice(0, s.start) + s.insert + t.slice(s.end);
+      }
+      this._undo.push({ text: this.text, label });
+      this._redo = [];
+      this.text = t;
+    }
+
+    canUndo() { return this._undo.length > 0; }
+    canRedo() { return this._redo.length > 0; }
+    undo() {
+      const u = this._undo.pop(); if (!u) return null;
+      this._redo.push({ text: this.text, label: u.label });
+      this.text = u.text; return u.label;
+    }
+    redo() {
+      const r = this._redo.pop(); if (!r) return null;
+      this._undo.push({ text: this.text, label: r.label });
+      this.text = r.text; return r.label;
+    }
+    revertAll() {
+      if (!this.dirty) return;
+      this._undo.push({ text: this.text, label: 'revert' });
+      this._redo = [];
+      this.text = this.originalText;
+    }
+
+    // After a verified save: the written bytes become the new baseline.
+    commitSaved(bytes, stamp) {
+      this.bytes = bytes;
+      this.stamp = stamp || this.stamp;
+      this.originalText = this.text;
+      this._undo = [];
+      this._redo = [];
+    }
+  }
+
+  SourceFile.KIND_UTF16 = KIND_UTF16;
+  SourceFile.KIND_BYTES = KIND_BYTES;
+  FRE.SourceFile = SourceFile;
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- core/lexer.js ----
+// Port of the server tokenizer:
+//   Lexer  = CScanner (Source/_Common/scanner.cpp, GetToken / GetLastFull / GetNumber)
+//   Script = CScript  (Source/_Common/Script.cpp, GetToken: string table, then #define lookup)
+// The goal is to read tokens exactly the way the server does, including its
+// quirks, while also recording each token's start/end offsets so the editor
+// can splice precisely. Comma mode (bComma) is not used by the files we edit.
+(function (FRE) {
+  'use strict';
+
+  const NULL_ID = -1;            // 0xFFFFFFFF as a signed int
+  const INT_MAX = 2147483647;
+  const INT_MIN = -2147483648;
+  const MAX_TOKENSTR = 2048;
+
+  // isdelim(): " !:;,+-<>'/*%^=()&|\"{}" plus tab, CR, NUL, LF
+  const DELIM = new Uint8Array(128);
+  for (const ch of " !:;,+-<>'/*%^=()&|\"{}\t\r\n\0") DELIM[ch.charCodeAt(0)] = 1;
+  // single-char delimiter tokens: "+-*^/%=;(),':{}."
+  const SINGLE = new Uint8Array(128);
+  for (const ch of "+-*^/%=;(),':{}.") SINGLE[ch.charCodeAt(0)] = 1;
+
+  const isDelim = c => c < 128 && DELIM[c] === 1;
+  const isWhite = c => c > 0 && c <= 0x20;
+  const isDigit = c => c >= 48 && c <= 57;
+  const isAlpha = c => (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+
+  class Lexer {
+    // text: binary string (byte files) or UTF-16 string (FF FE files)
+    constructor(text, opts = {}) {
+      this.text = text;
+      const nul = text.indexOf('\0');
+      this.limit = nul < 0 ? text.length : nul;   // the server stops at the first NUL
+      this.pos = 0;
+      this.diags = opts.diags || [];
+      this.file = opts.file || '';
+      this.token = null;
+      if (nul >= 0) this.diag('E_NUL', 'WARN', 'file contains a NUL byte: the server ignores everything after it', nul, nul + 1);
+    }
+
+    diag(code, severity, message, start, end, extra) {
+      this.diags.push(Object.assign({ code, severity, message, file: this.file, start, end }, extra || {}));
+    }
+
+    c(i) { return i < this.limit ? this.text.charCodeAt(i) : 0; }
+
+    // CScanner::GetToken( FALSE )
+    next() {
+      const t = this.text;
+      let p = this.pos;
+      // whitespace + comments
+      for (;;) {
+        while (isWhite(this.c(p))) p++;
+        if (this.c(p) === 47 /* / */ && this.c(p + 1) === 47) {
+          p += 2;
+          while (p < this.limit) { const c = this.c(p); if (c === 13 || c === 10) break; p++; }
+          if (this.c(p) === 13) { p++; if (this.c(p) === 10) p++; } else if (this.c(p) === 10) p++;
+          continue;
+        }
+        if (this.c(p) === 47 && this.c(p + 1) === 42 /* * */) {
+          const close = t.indexOf('*/', p + 2);
+          if (close < 0 || close >= this.limit) {
+            this.diag('E_UNTERM_CMT', 'BLOCK', 'unterminated /* comment: the server ignores the rest of the file', p, this.limit);
+            this.pos = this.limit;
+            return (this.token = { type: 'eof', text: '', start: this.limit, end: this.limit });
+          }
+          p = close + 2;
+          continue;
+        }
+        break;
+      }
+      const start = p;
+      const c = this.c(p);
+      let type, text, end;
+
+      if (p >= this.limit) {
+        this.pos = p;
+        return (this.token = { type: 'eof', text: '', start: p, end: p });
+      }
+
+      // relational operators
+      if ((c === 61 /* = */ || c === 33 /* ! */ || c === 60 /* < */ || c === 62 /* > */)) {
+        if (this.c(p + 1) === 61) { type = 'delim'; text = t.substr(p, 2); end = p + 2; }
+        else if (c !== 61) { type = 'delim'; text = t[p]; end = p + 1; }
+      }
+      if (!type && ((c === 38 && this.c(p + 1) === 38) || (c === 124 && this.c(p + 1) === 124))) {
+        type = 'delim'; text = t.substr(p, 2); end = p + 2;
+      }
+      if (!type && c < 128 && SINGLE[c]) { type = 'delim'; text = t[p]; end = p + 1; }
+
+      if (!type && c === 34 /* " */) {
+        let q = p + 1;
+        while (q < this.limit && this.c(q) !== 34 && this.c(q) !== 13 && (q - p - 1) < MAX_TOKENSTR) q++;
+        text = t.slice(p + 1, q);
+        type = 'string';
+        if (this.c(q) === 34) { end = q + 1; this.pos = q + 1; }
+        else {
+          // the server skips the CR too (or stays at EOF)
+          end = q;
+          this.pos = q < this.limit ? q + 1 : q;
+          this.diag('E_UNTERM_STR', 'BLOCK', 'string has no closing quote on this line', p, q);
+          return (this.token = { type, text, start, end });
+        }
+        return (this.token = { type, text, start, end });
+      }
+
+      if (!type && c === 48 && this.c(p + 1) === 120 /* 0x */) {
+        let q = p + 2;
+        while (q < this.limit && !isDelim(this.c(q))) q++;
+        type = 'hex'; text = t.slice(p + 2, q); end = q;
+      }
+      if (!type && isDigit(c)) {
+        let q = p;
+        while (q < this.limit && !isDelim(this.c(q))) q++;
+        type = 'number'; text = t.slice(p, q); end = q;
+      }
+      if (!type && (isAlpha(c) || c >= 128 || c === 35 || c === 95 || c === 64 || c === 36 || c === 63)) {
+        let q = p;
+        while (q < this.limit && !isDelim(this.c(q))) q++;
+        type = 'temp'; text = t.slice(p, q); end = q;
+      }
+      if (!type) { type = 'temp'; text = t[p]; end = p + 1; }
+
+      this.pos = end;
+      return (this.token = { type, text, start, end });
+    }
+
+    putBack(tok) { this.pos = tok.start; }
+
+    // CScanner::GetLastFull: rest of the line up to CR (not LF!), trimmed.
+    lastFull() {
+      let p = this.pos;
+      while (isWhite(this.c(p)) && this.c(p) !== 13) p++;
+      const start = p;
+      while (p < this.limit && this.c(p) !== 13) p++;
+      let end = p;
+      while (end > start && isWhite(this.c(end - 1))) end--;
+      this.pos = p;
+      return { text: this.text.slice(start, end), start, end };
+    }
+  }
+
+  // C atoi() as compiled by MSVC: clamps to INT_MAX / INT_MIN on overflow.
+  function atoi(s) {
+    let i = 0;
+    while (i < s.length && /\s/.test(s[i])) i++;
+    let sign = 1;
+    if (s[i] === '-' || s[i] === '+') { if (s[i] === '-') sign = -1; i++; }
+    let v = 0, any = false, overflow = false;
+    while (i < s.length && s[i] >= '0' && s[i] <= '9') {
+      v = v * 10 + (s.charCodeAt(i) - 48); any = true; i++;
+      if (v > 2147483648) overflow = true;
+    }
+    v *= sign;
+    if (v > INT_MAX) { v = INT_MAX; overflow = true; }
+    if (v < INT_MIN) { v = INT_MIN; overflow = true; }
+    return { value: any ? v : 0, overflow, numeric: any };
+  }
+
+  function atof(s) {
+    const m = /^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?/.exec(s);
+    return m ? parseFloat(m[0]) : 0;
+  }
+
+  // GetNumber's hex branch: lowercase, each char (c >= 'a' ? c-'a'+10 : c-'0') << 4k, low 32 bits.
+  function hexValue(digits) {
+    let v = 0n;
+    const d = digits.toLowerCase();
+    for (let i = d.length - 1, sh = 0n; i >= 0; i--, sh += 4n) {
+      const code = d.charCodeAt(i);
+      let cv = code >= 97 ? code - 97 + 10 : code - 48;
+      cv = ((cv + 128) & 0xff) - 128;     // CHAR is signed
+      v |= BigInt.asUintN(64, BigInt(cv) << sh);
+    }
+    return Number(BigInt.asIntN(32, BigInt.asUintN(32, v)));
+  }
+
+  // CScript layered on the Lexer: identifiers are resolved through the
+  // string table first, then the #define map.
+  class Script {
+    constructor(text, opts = {}) {
+      this.lex = new Lexer(text, opts);
+      this.defines = opts.defines || new Map();
+      this.strings = opts.strings || null;
+      this.def = 0;               // m_dwDef: 1 while inside GetNumber
+      this.token = null;
+    }
+    get diags() { return this.lex.diags; }
+    get file() { return this.lex.file; }
+    diag(...a) { this.lex.diag(...a); }
+
+    getToken() {
+      const raw = this.lex.next();
+      let tok = raw;
+      if (raw.type === 'temp') {
+        if (raw.text.startsWith('#define')) {
+          tok = Object.assign({}, raw, { type: 'keyword' });
+        } else {
+          tok = Object.assign({}, raw, { type: 'ident', raw: raw.text });
+          if (this.strings && this.strings.has(raw.text)) {
+            tok.type = 'string'; tok.text = this.strings.get(raw.text); tok.stringKey = raw.text;
+          } else if (this.defines.has(raw.text)) {
+            const v = this.defines.get(raw.text);
+            tok.type = 'number'; tok.text = String(v); tok.define = raw.text; tok.defineValue = v;
+          } else if (this.def === 1) {
+            const ch = raw.text[0];
+            if (raw.text !== '' && ch !== '=' && ch !== '-' && ch !== '+') {
+              tok.unresolved = true;
+              this.diag('E_UNDEF', 'BLOCK', `${raw.text} is not defined (the server logs "Not Found" and uses 0)`, raw.start, raw.end, { name: raw.text });
+            }
+          }
+        }
+      }
+      this.token = tok;
+      return tok;
+    }
+
+    get eof() { return this.token && this.token.type === 'eof'; }
+
+    // CScanner::GetNumber. Returns { value, start, end, tokens, define, overflow, isNull, unresolved }.
+    getNumber() {
+      this.def = 1;
+      const t = this.getToken();
+      const r = { value: 0, start: t.start, end: t.end, tokens: [t], define: t.define || null, overflow: false, isNull: false, unresolved: !!t.unresolved, eof: t.type === 'eof' };
+      if (t.type === 'hex') {
+        r.value = hexValue(t.text);
+      } else if (t.text !== '') {
+        const ch = t.text[0];
+        if (ch === '=') { r.value = NULL_ID; r.isNull = true; }
+        else if (ch === '-' || ch === '+') {
+          const n = this.getToken();
+          r.tokens.push(n); r.end = n.end; r.define = n.define || null; r.unresolved = !!n.unresolved;
+          const a = atoi(n.text);
+          r.value = ch === '-' ? -a.value | 0 : a.value; r.overflow = a.overflow;
+          r.numeric = a.numeric;
+        } else {
+          const a = atoi(t.text);
+          r.value = a.value; r.overflow = a.overflow; r.numeric = a.numeric;
+        }
+      }
+      this.def = 0;
+      return r;
+    }
+
+    // CScanner::GetFloat
+    getFloat() {
+      this.def = 1;
+      const t = this.getToken();
+      const r = { value: 0, start: t.start, end: t.end, tokens: [t], isNull: false, unresolved: !!t.unresolved, eof: t.type === 'eof' };
+      if (t.text !== '') {
+        const ch = t.text[0];
+        if (ch === '=') { r.value = -1; r.isNull = true; }
+        else if (ch === '-' || ch === '+') {
+          const n = this.getToken();
+          r.tokens.push(n); r.end = n.end; r.unresolved = !!n.unresolved;
+          r.value = ch === '-' ? -atof(n.text) : atof(n.text);
+        } else r.value = atof(t.text);
+      }
+      this.def = 0;
+      return r;
+    }
+  }
+
+  FRE.lexer = { Lexer, Script, atoi, atof, hexValue, NULL_ID, INT_MAX };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/defines.js ----
+// #define loading, ported from CProject::LoadDefines (ProjectCmn.cpp:1369)
+// and CScript::PreScan / ExecDefine (Script.cpp:301, :399).
+// Only "#define NAME <decimal|0xhex>" defines anything. Negative values,
+// aliases (#define A B) and expressions are silently skipped, exactly like
+// the server. The first definition of a name wins.
+(function (FRE) {
+  'use strict';
+  const { Lexer, atoi } = FRE.lexer;
+
+  // Same order as the server (__VER 19, __IMPROVE_MAP_SYSTEM on).
+  const DEFINE_FILES = [
+    'define.h', 'defineNeuz.h', 'defineQuest.h', 'defineJob.h', 'defineItem.h',
+    'defineWorld.h', 'defineItemkind.h', 'lang.h', 'defineObj.h', 'defineAttribute.h',
+    'defineSkill.h', 'defineText.h', 'defineSound.h', 'resdata.h', 'WndStyle.h',
+    'definelordskill.h', 'defineHonor.h', 'ContinentDef.h', 'defineMapComboBoxData.h',
+    'defineItemGrade.h', 'defineItemType.h',
+  ];
+
+  // sscanf("%x"): leading hex digits only
+  function scanHex(s) {
+    const m = /^[0-9a-fA-F]+/.exec(s);
+    return m ? (parseInt(m[0].slice(-8), 16) | 0) : 0;
+  }
+
+  function prescanFile(state, file) {
+    const lex = new Lexer(file.text, { file: file.name, diags: state.diags });
+    const first = lex.next();
+    if (first.text === '#') return;            // "compiler" mode: never defines anything
+    lex.putBack(first);
+    for (;;) {
+      const tok = lex.next();
+      if (tok.type === 'eof') break;
+      if (tok.type === 'temp' && tok.text.startsWith('#define')) {
+        const name = lex.next();
+        const val = lex.next();
+        let n;
+        if (val.type === 'number') n = atoi(val.text).value;
+        else if (val.type === 'hex') n = scanHex(val.text);
+        else {
+          if (val.type === 'temp') lex.putBack(val);
+          state.skipped.push({ name: name.text, file: file.name, start: name.start, value: val.text });
+          continue;
+        }
+        if (state.defines.has(name.text)) {
+          state.dups.push({ name: name.text, file: file.name, start: name.start, value: n, kept: state.defines.get(name.text) });
+        } else {
+          state.defines.set(name.text, n);
+          state.origin.set(name.text, { file: file.name, start: name.start });
+        }
+      } else if (tok.type === 'temp') {   // every other TEMP token is an IDENTIFIER to PreScan
+        const nx = lex.next();
+        if (nx.text === '(') {
+          // PreScan treats "NAME(" as a function and skips to the next ')'
+          const close = file.text.indexOf(')', lex.pos);
+          lex.pos = close < 0 ? lex.limit : close + 1;
+        } else lex.putBack(nx);
+      } else if (tok.text === '{') {
+        // PreScan returns at the first top-level '{': the rest of the file defines nothing.
+        state.diags.push({ code: 'D_BRACE', severity: 'WARN', file: file.name, start: tok.start, end: tok.end,
+          message: `${file.name}: the server stops reading defines at this '{'` });
+        break;
+      }
+    }
+  }
+
+  // files: Map lowercase name -> SourceFile
+  function loadDefines(files) {
+    const state = { defines: new Map(), origin: new Map(), dups: [], skipped: [], diags: [], missing: [] };
+    for (const name of DEFINE_FILES) {
+      const f = files.get(name.toLowerCase());
+      if (!f) { state.missing.push(name); continue; }
+      prescanFile(state, f);
+    }
+    // reverse lookup by prefix, e.g. byValue('IK3_', 2) -> 'IK3_SWD'
+    const reverse = new Map();
+    state.byValue = (prefix, value) => {
+      let m = reverse.get(prefix);
+      if (!m) {
+        m = new Map();
+        for (const [k, v] of state.defines) if (k.startsWith(prefix) && !m.has(v)) m.set(v, k);
+        reverse.set(prefix, m);
+      }
+      return m.get(value) || null;
+    };
+    state.withPrefix = prefix => [...state.defines].filter(([k]) => k.startsWith(prefix));
+    return state;
+  }
+
+  FRE.loadDefines = loadDefines;
+  FRE.DEFINE_FILES = DEFINE_FILES;
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/strings.js ----
+// String tables (*.txt.txt), ported from CProject::LoadStrings (ProjectCmn.cpp:1253)
+// and CScript::LoadString (Script.cpp:103).
+// Each entry: a token starting with "IDS", then the rest of the line up to CR
+// (not LF), whitespace-trimmed. All files share one map; the first key wins.
+(function (FRE) {
+  'use strict';
+  const { Lexer, Script } = FRE.lexer;
+
+  // Subset of the server's list that the editor needs, in the server's order.
+  const STRING_FILES = [
+    'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt',
+    'propItem.txt.txt', 'propMover.txt.txt',
+  ];
+
+  function loadStringFile(state, file) {
+    const script = new Script(file.text, { file: file.name, diags: state.diags });
+    const lex = script.lex;
+    let tok = lex.next();
+    while (tok.type !== 'eof') {
+      if (!tok.text.startsWith('IDS')) {
+        state.diags.push({ code: 'T_KEY', severity: 'WARN', file: file.name, start: tok.start, end: tok.end,
+          message: `"${tok.text}" is not an IDS key: the server logs an error and skips it` });
+        tok = script.getToken();
+        continue;
+      }
+      const v = lex.lastFull();
+      if (state.map.has(tok.text)) {
+        state.diags.push({ code: 'T_DUP', severity: 'WARN', file: file.name, start: tok.start, end: tok.end, name: tok.text,
+          message: `duplicate string key ${tok.text}: the first one wins` });
+      } else {
+        state.map.set(tok.text, v.text);
+        state.meta.set(tok.text, { file: file.name, keyStart: tok.start, start: v.start, end: v.end });
+      }
+      tok = lex.next();
+    }
+  }
+
+  function loadStrings(files) {
+    const state = { map: new Map(), meta: new Map(), diags: [], missing: [] };
+    for (const name of STRING_FILES) {
+      const f = files.get(name.toLowerCase());
+      if (!f) { state.missing.push(name); continue; }
+      loadStringFile(state, f);
+    }
+    return state;
+  }
+
+  FRE.loadStrings = loadStrings;
+  FRE.STRING_FILES = STRING_FILES;
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/specitem.js ----
+// Spec_Item.txt loader, ported from CProject::LoadPropItem (ProjectCmn.cpp:573).
+// With __VER 19 the server loads Spec_Item.txt; propItem.txt is never read.
+// A record is 175 values read as a token stream (line breaks don't matter).
+(function (FRE) {
+  'use strict';
+  const { Script } = FRE.lexer;
+  const SERVER_VER = 19;
+
+  // Fields after (ver, dwID, szName), in the exact order the C++ reads them
+  // (__VER 19, __PROP_0827). n = GetNumber, f = GetFloat, t = GetToken.
+  const SCHEMA_SRC = `
+    dwNum:n dwPackMax:n dwItemKind1:n dwItemKind2:n dwItemKind3:n dwItemJob:n bPermanence:n dwUseable:n
+    dwItemSex:n dwCost:n dwEndurance:n nAbrasion:n nMaxRepair:n dwHanded:n dwFlag:n dwParts:n dwPartsub:n
+    bPartsFile:n dwExclusive:n dwBasePartsIgnore:n dwItemLV:n dwItemRare:n dwShopAble:n nLog:n bCharged:n
+    dwLinkKindBullet:n dwLinkKind:n dwAbilityMin:n dwAbilityMax:n eItemType:n wItemEatk:n dwParry:n
+    dwblockRating:n nAddSkillMin:n nAddSkillMax:n dwAtkStyle:n dwWeaponType:n dwItemAtkOrder1:n
+    dwItemAtkOrder2:n dwItemAtkOrder3:n dwItemAtkOrder4:n tmContinuousPain:n nShellQuantity:n dwRecoil:n
+    dwLoadingTime:n nAdjHitRate:n fAttackSpeed:f dwDmgShift:n dwAttackRange:n nProbability:n
+    dwDestParam1:n dwDestParam2:n dwDestParam3:n dwDestParam4:n dwDestParam5:n dwDestParam6:n
+    nAdjParamVal1:n nAdjParamVal2:n nAdjParamVal3:n nAdjParamVal4:n nAdjParamVal5:n nAdjParamVal6:n
+    dwChgParamVal1:n dwChgParamVal2:n dwChgParamVal3:n dwChgParamVal4:n dwChgParamVal5:n dwChgParamVal6:n
+    nDestData1_1:n nDestData1_2:n nDestData1_3:n nDestData1_4:n nDestData1_5:n nDestData1_6:n
+    dwActiveSkill:n dwActiveSkillLv:n dwActiveSkillRate:n dwReqMp:n dwReqFp:n dwReqDisLV:n dwReSkill1:n
+    dwReSkillLevel1:n dwReSkill2:n dwReSkillLevel2:n dwSkillReadyType:n dwSkillReady:n _dwSkillRange:n
+    dwSfxElemental:n dwSfxObj:n dwSfxObj2:n dwSfxObj3:n dwSfxObj4:n dwSfxObj5:n dwUseMotion:n
+    dwCircleTime:n dwSkillTime:n dwExeTarget:n dwUseChance:n dwSpellRegion:n dwSpellType:n dwReferStat1:n
+    dwReferStat2:n dwReferTarget1:n dwReferTarget2:n dwReferValue1:n dwReferValue2:n dwSkillType:n
+    fResistElecricity:f fResistFire:f fResistWind:f fResistWater:f fResistEarth:f nEvildoing:n
+    dwExpertLV:n dwExpertMax:n dwSubDefine:n dwExp:n dwComboStyle:n fFlightSpeed:f fFlightLRAngle:f
+    fFlightTBAngle:f dwFlightLimit:n dwFFuelReMax:n dwAFuelReMax:n dwFuelRe:n dwLimitLevel1:n nReflect:n
+    dwSndAttack1:n dwSndAttack2:n
+    iconOpen:t szIcon:t iconClose:t dwQuestId:n textOpen:t szTextFileName:t textClose:t szCommand:t
+    nMinLimitLevel:n nMaxLimitLevel:n nItemGroup:n nUseLimitGroup:n nMaxDuplication:n nEffectValue:n
+    nTargetMinEnchant:n nTargetMaxEnchant:n bResetBind:n nBindCondition:n nResetBindCondition:n
+    dwHitActiveSkillId:n dwHitActiveSkillLv:n dwHitActiveSkillProb:n dwHitActiveSkillTarget:n
+    dwDamageActiveSkillId:n dwDamageActiveSkillLv:n dwDamageActiveSkillProb:n dwDamageActiveSkillTarget:n
+    dwEquipActiveSkillId:n dwEquipActiveSkillLv:n dwSmelting:n dwAttsmelting:n dwGemsmelting:n dwPierce:n
+    dwUprouse:n bAbsoluteTime:n dwItemGrade:n bCanTrade:n dwMainCategory:n dwSubCategory:n
+    bCanHaveServerTransform:n bCanSavePotion:n bCanLooksChange:n bIsLooksChangeMaterial:n`;
+  const SCHEMA = SCHEMA_SRC.trim().split(/\s+/).map(s => { const [name, k] = s.split(':'); return { name, kind: k }; });
+  const FIELD_INDEX = new Map(SCHEMA.map((f, i) => [f.name, i]));
+  const VALUES_PER_RECORD = SCHEMA.length + 3;   // + ver, dwID, szName  (= 175)
+
+  function loadSpecItem(file, ctx) {
+    const script = new Script(file.text, { file: file.name, defines: ctx.defines, strings: ctx.strings, diags: [] });
+    const items = new Map();       // id -> item (later rows overwrite, like SetAtGrow)
+    const rows = [];
+    let stopped = null, skippedVer = 0;
+    let ver = script.getNumber();
+    while (!script.eof) {
+      const rowStart = ver.start;
+      const id = script.getNumber();
+      if ((id.value >>> 0) === 0) {
+        stopped = { start: id.start, end: id.end, after: rows.length ? rows[rows.length - 1].define : null };
+        script.diag('S_ID_ZERO', 'BLOCK', `item id "${file.text.slice(id.start, id.end)}" resolves to 0: the server stops loading ${file.name} here, every later item is missing`, id.start, id.end);
+        break;
+      }
+      const nameTok = script.getToken();
+      const values = new Array(SCHEMA.length);
+      const raw = new Array(SCHEMA.length);
+      let truncated = false, end = nameTok.end;
+      for (let i = 0; i < SCHEMA.length; i++) {
+        const k = SCHEMA[i].kind;
+        if (k === 't') {
+          const t = script.getToken();
+          values[i] = t.text; raw[i] = t.stringKey || t.raw || t.text;
+          if (t.type === 'eof') truncated = true; else end = t.end;
+        } else {
+          const r = k === 'f' ? script.getFloat() : script.getNumber();
+          values[i] = r.value; raw[i] = file.text.slice(r.start, r.end);
+          if (r.eof) truncated = true; else end = r.end;
+        }
+      }
+      const item = {
+        ver: ver.value, id: id.value >>> 0, define: id.define || file.text.slice(id.start, id.end),
+        nameKey: nameTok.stringKey || nameTok.raw || nameTok.text,
+        name: nameTok.text.replace(/\s+$/, ''),
+        values, raw, start: rowStart, end,
+      };
+      rows.push(item);
+      if (truncated) script.diag('S_TRUNCATED', 'BLOCK', `${item.define}: the file ends in the middle of this record`, rowStart, end);
+      if (item.ver <= SERVER_VER) {
+        if (items.has(item.id)) {
+          script.diag('S_DUP_ID', 'BLOCK', `${item.define} (${item.id}) appears twice: the later row silently replaces the earlier one`, rowStart, end, { name: item.define });
+        }
+        items.set(item.id, item);
+      } else {
+        skippedVer++;
+        script.diag('S_VER', 'WARN', `${item.define}: version ${item.ver} > ${SERVER_VER}, the server skips this row`, rowStart, end, { name: item.define });
+      }
+      ver = script.getNumber();
+    }
+    return { file: file.name, items, rows, stopped, skippedVer, diags: script.diags };
+  }
+
+  const get = (item, field) => item.values[FIELD_INDEX.get(field)];
+  const getRaw = (item, field) => item.raw[FIELD_INDEX.get(field)];
+
+  FRE.specItem = { loadSpecItem, SCHEMA, FIELD_INDEX, VALUES_PER_RECORD, get, getRaw, SERVER_VER };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/character.js ----
+// character.inc / character-etc.inc / character-school.inc loader, ported from
+// CProject::LoadCharacter (Project.cpp:3257). All three files feed one NPC map.
+//
+// Shape:  NpcKey  <one token the server assumes is '{'>  ...statements...  '}'
+// The server reads the key, swallows ONE token without checking it is '{',
+// then counts braces until depth 0. Unknown words (e.g. "setting", ";") are
+// skipped. Each recognised command below reads a fixed token sequence, and the
+// separators ('(' ',' ')') are consumed blindly; we record what was actually
+// there so validation can flag a wrong separator (which would shift arguments).
+(function (FRE) {
+  'use strict';
+  const { Script } = FRE.lexer;
+
+  const CHARACTER_FILES = ['character.inc', 'character-etc.inc', 'character-school.inc'];
+  const SHOP_CMDS = new Set(['AddVendorItem', 'AddVenderItem', 'AddVendorItem2', 'AddVenderItem2', 'AddShopItem', 'AddVendorItemLang']);
+
+  // Reader for one statement: wraps Script and records every consumed token
+  // with the separator the server *expects* there.
+  class Stmt {
+    constructor(script, cmdTok) {
+      this.s = script;
+      this.rec = { cmd: cmdTok.text, start: cmdTok.start, end: cmdTok.end, args: {}, seps: [], line: -1 };
+    }
+    sep(expect) {                 // script.GetToken() used to skip a separator
+      const t = this.s.getToken();
+      this.rec.seps.push({ expect, got: t.text, start: t.start, end: t.end, eof: t.type === 'eof' });
+      if (t.type !== 'eof') this.rec.end = t.end;
+      return t;
+    }
+    num(name) {
+      const r = this.s.getNumber();
+      this.rec.args[name] = r;
+      if (!r.eof) this.rec.end = r.end;
+      return r;
+    }
+    flt(name) {
+      const r = this.s.getFloat();
+      this.rec.args[name] = r;
+      if (!r.eof) this.rec.end = r.end;
+      return r;
+    }
+    tok(name) {
+      const t = this.s.getToken();
+      this.rec.args[name] = t;
+      if (t.type !== 'eof') this.rec.end = t.end;
+      return t;
+    }
+    langScript(name) {            // CProject::GetLangScript: value, ')', ';'
+      const t = this.tok(name);
+      this.sep(')'); this.sep(';');
+      return t;
+    }
+  }
+
+  // Each handler mirrors the matching "else if( script.Token == ... )" branch.
+  const HANDLERS = {
+    randomItem(st) {               // InterpretRandomItem (Project.cpp): { ... ; ... }
+      st.sep('{');
+      let t = st.s.getToken();
+      while (t.text[0] !== '}') {
+        if (t.type === 'eof') { st.rec.hang = true; break; }   // the server would loop forever here
+        t = st.s.getToken();
+      }
+      st.rec.end = t.end;
+    },
+    SetEquip(st) {
+      st.sep('(');
+      let i = 0;
+      for (;;) {
+        const t = st.s.token;
+        if (t.text[0] === ')') break;
+        if (t.type === 'eof') { st.rec.hang = true; break; }   // server: infinite loop
+        st.num('equip' + i++);
+        st.sep(',');
+      }
+    },
+    m_szName(st) { st.sep('='); st.tok('name'); },
+    SetName(st) { st.sep('('); st.langScript('name'); },
+    SetFigure(st) { st.sep('('); st.num('mover'); st.sep(','); st.num('hairMesh'); st.sep(','); st.num('hairColor'); st.sep(','); st.num('headMesh'); },
+    SetMusic(st) { st.sep('('); st.num('music'); },
+    m_nStructure(st) { st.sep('='); st.num('structure'); },
+    m_szChar(st) { st.sep('='); st.langScript('image'); },
+    m_szDialog(st) { st.sep('='); st.tok('dialog'); },
+    m_szDlgQuest(st) { st.sep('='); st.tok('dlgQuest'); },
+    SetImage(st) { st.sep('('); st.langScript('image'); },
+    AddMenuLang(st) { st.sep('('); st.num('lang'); st.sep(','); st.num('menu'); st.sep(')'); },   // __NO_SUB_LANG
+    AddMenu(st) { st.sep('('); st.num('menu'); st.sep(')'); },
+    AddVenderSlot(st) { st.sep('('); st.num('slot'); st.sep(','); st.tok('title'); st.sep(')'); },
+    AddVendorSlot(st) { st.sep('('); st.num('slot'); st.sep(','); st.langScript('title'); },
+    AddVendorSlotLang(st) { st.sep('('); st.num('lang'); st.sep(','); st.num('slot'); st.sep(','); st.langScript('title'); },
+    AddVendorItemLang(st) {
+      st.sep('('); st.num('lang'); st.sep(',');
+      st.num('slot'); st.sep(','); st.num('ik3'); st.sep(','); st.num('job'); st.sep(',');
+      st.num('rareMin'); st.sep(','); st.num('rareMax'); st.sep(','); st.num('count'); st.sep(')');
+    },
+    AddVendorItem(st) {
+      st.sep('('); st.num('slot'); st.sep(','); st.num('ik3'); st.sep(','); st.num('job'); st.sep(',');
+      st.num('rareMin'); st.sep(','); st.num('rareMax'); st.sep(','); st.num('count'); st.sep(')');
+    },
+    AddVendorItem2(st) { st.sep('('); st.num('slot'); st.sep(','); st.num('item'); st.sep(')'); },
+    SetVenderType(st) { st.sep('('); st.num('type'); st.sep(')'); },
+    SetBuffSkill(st) {
+      st.sep('('); st.num('skill'); st.sep(','); st.num('level'); st.sep(','); st.num('minLv'); st.sep(',');
+      st.num('maxLv'); st.sep(','); st.num('time'); st.sep(')');
+    },
+    SetLang(st) {
+      st.sep('('); st.num('lang');
+      const t = st.s.getToken();
+      st.rec.seps.push({ expect: ', or )', got: t.text, start: t.start, end: t.end });
+      st.rec.end = t.end;
+      if (t.text === ',') st.num('subLang');
+      else st.sep(';');              // the server reads one more token after ')'
+    },
+    SetOutput(st) { st.sep('('); st.tok('value'); st.sep(')'); },
+    AddTeleport(st) { st.sep('('); st.flt('x'); st.sep(','); st.flt('z'); st.sep(')'); },
+    AddShopItem(st) {                // custom __ADDSHOPITEM: (slot, item [, cost])
+      st.sep('('); st.num('slot'); st.sep(','); st.num('item');
+      const t = st.s.getToken();
+      st.rec.seps.push({ expect: ', or )', got: t.text, start: t.start, end: t.end, eof: t.type === 'eof' });
+      if (t.type !== 'eof') st.rec.end = t.end;
+      if (t.text === ',') { st.num('cost'); st.sep(')'); }
+    },
+  };
+  HANDLERS.AddVenderItem = HANDLERS.AddVendorItem;
+  HANDLERS.AddVenderItem2 = HANDLERS.AddVendorItem2;
+
+  function loadCharacterFile(state, file, ctx) {
+    const script = new Script(file.text, { file: file.name, defines: ctx.defines, strings: ctx.strings, diags: state.diags });
+    let keyTok = script.getToken();
+    while (!script.eof) {
+      const npc = {
+        key: keyTok.text, keyRaw: keyTok.raw || keyTok.text, file: file.name,
+        start: keyTok.start, keyEnd: keyTok.end, end: keyTok.end,
+        statements: [], closed: false, missingBrace: false,
+        venderType: 0, menus: [], slotTitles: {}, name: null, nameKey: null,
+      };
+      const brace = script.getToken();           // assumed '{'
+      npc.braceTok = brace;
+      if (brace.text !== '{') npc.missingBrace = true;
+      let depth = 1;
+      while (depth && !script.eof) {
+        const t = script.getToken();
+        if (t.type === 'eof') break;
+        npc.end = t.end;
+        if (t.text === '{') depth++;
+        else if (t.text === '}') depth--;
+        else {
+          const h = HANDLERS[t.text];
+          if (!h) continue;
+          const st = new Stmt(script, t);
+          h(st);
+          const rec = st.rec;
+          rec.npc = npc;
+          npc.end = Math.max(npc.end, rec.end);
+          npc.statements.push(rec);
+          if (rec.cmd === 'SetName') { npc.name = rec.args.name.text; npc.nameKey = rec.args.name.stringKey || null; }
+          if (rec.cmd === 'SetVenderType') npc.venderType = rec.args.type.value;
+          if (rec.cmd === 'AddMenu') npc.menus.push(rec.args.menu.value);
+          if (rec.cmd === 'AddVendorSlot' || rec.cmd === 'AddVenderSlot') npc.slotTitles[rec.args.slot.value] = rec.args.title.text;
+        }
+      }
+      npc.closed = depth === 0;
+      state.npcs.push(npc);
+      const lk = npc.key.toLowerCase();
+      if (!state.byKey.has(lk)) state.byKey.set(lk, []);
+      state.byKey.get(lk).push(npc);
+      keyTok = script.getToken();
+    }
+  }
+
+  function loadCharacters(files, ctx) {
+    const state = { npcs: [], byKey: new Map(), diags: [], missing: [], files: [] };
+    for (const name of CHARACTER_FILES) {
+      const f = files.get(name.toLowerCase());
+      if (!f) { state.missing.push(name); continue; }
+      state.files.push(f.name);
+      loadCharacterFile(state, f, ctx);
+    }
+    return state;
+  }
+
+  // Normalised view of a shop statement, or null.
+  function shopEntry(rec) {
+    const a = rec.args;
+    switch (rec.cmd) {
+      case 'AddShopItem': return { kind: 'fixed', slot: a.slot && a.slot.value, item: a.item, cost: a.cost || null };
+      case 'AddVendorItem2': case 'AddVenderItem2': return { kind: 'chip', slot: a.slot && a.slot.value, item: a.item, cost: null };
+      case 'AddVendorItem': case 'AddVenderItem': case 'AddVendorItemLang':
+        return { kind: 'generated', slot: a.slot && a.slot.value, ik3: a.ik3, job: a.job, rareMin: a.rareMin, rareMax: a.rareMax, count: a.count, lang: a.lang || null };
+      default: return null;
+    }
+  }
+
+  FRE.character = { loadCharacters, CHARACTER_FILES, SHOP_CMDS, shopEntry };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- validate/character.js ----
+// Validation rules for character*.inc (docs/DESIGN.md §3.2).
+// Every diagnostic gets a stable `key` (no offsets) so the save step can tell
+// pre-existing problems from ones introduced by an edit.
+(function (FRE) {
+  'use strict';
+  const { shopEntry } = FRE.character;
+  const MAX_TAB = 4;                 // MAX_VENDOR_INVENTORY_TAB
+  const MAX_TAB_ITEMS = 100;         // MAX_VENDOR_INVENTORY
+
+  const ARG_CMDS = new Set(['AddShopItem', 'AddVendorItem', 'AddVenderItem', 'AddVendorItem2', 'AddVenderItem2',
+    'AddVendorItemLang', 'AddVendorSlot', 'AddVenderSlot', 'AddVendorSlotLang', 'SetVenderType', 'AddMenu', 'AddMenuLang', 'SetBuffSkill']);
+
+  function validateCharacters(chars, ctx) {
+    const out = [];
+    const add = (d) => out.push(d);
+    const items = ctx.items;          // Map id -> item (Spec_Item)
+    const defs = ctx.defines;
+
+    // lexer-level diagnostics (undefined names, unterminated strings, ...)
+    for (const d of chars.diags) {
+      add(Object.assign({}, d, { key: `${d.code}|${d.file}|${d.name || d.message}` }));
+    }
+
+    // duplicate NPC keys (case-insensitive, shared by the 3 files)
+    for (const [lk, list] of chars.byKey) {
+      if (list.length > 1) {
+        for (const npc of list.slice(1)) {
+          add({ code: 'C_DUP_NPC', severity: 'BLOCK', file: npc.file, start: npc.start, end: npc.keyEnd, npcKey: npc.key,
+            key: `C_DUP_NPC|${lk}`, message: `NPC "${npc.key}" is defined ${list.length} times (${list.map(n => n.file).join(', ')}): the last one replaces the others` });
+        }
+      }
+    }
+
+    const tradeMenu = defs.get('MMI_TRADE');
+    const priceByItem = new Map();    // item id -> [{npc, cost}]
+
+    for (const npc of chars.npcs) {
+      const at = { file: npc.file, npcKey: npc.key };
+      if (!npc.closed) {
+        add(Object.assign({ code: 'C_BRACES', severity: 'BLOCK', start: npc.start, end: npc.end, key: `C_BRACES|${npc.file}|${npc.key}`,
+          message: `${npc.key}: its block never closes (the server reads to the end of the file)` }, at));
+      }
+      if (npc.missingBrace) {
+        add(Object.assign({ code: 'C_NO_OPEN_BRACE', severity: 'WARN', start: npc.braceTok.start, end: npc.braceTok.end, key: `C_NO_OPEN_BRACE|${npc.file}|${npc.key}`,
+          message: `${npc.key}: no "{" after the name; the server silently uses "${npc.braceTok.text}" as the brace (works by accident)` }, at));
+      }
+      let shopCount = 0;
+      const fixedPerTab = [0, 0, 0, 0];
+      for (const rec of npc.statements) {
+        if (rec.hang) {
+          add(Object.assign({ code: 'C_HANG', severity: 'BLOCK', start: rec.start, end: rec.end, key: `C_HANG|${npc.file}|${npc.key}|${rec.cmd}`,
+            message: `${npc.key}: ${rec.cmd} is never closed, the server would hang at startup` }, at));
+        }
+        if (ARG_CMDS.has(rec.cmd)) {
+          for (const s of rec.seps) {
+            // the trailing ';' read by GetLangScript / SetLang is optional in practice
+            if (s.expect !== ';' && !s.expect.split(' or ').includes(s.got)) {
+              add(Object.assign({ code: 'C_ARGS', severity: 'BLOCK', start: rec.start, end: rec.end,
+                key: `C_ARGS|${npc.file}|${npc.key}|${rec.cmd}|${s.expect}|${s.got}`,
+                message: `${npc.key}: ${rec.cmd} expected "${s.expect}" but found "${s.got}"; the server skips it blindly and the arguments shift` }, at));
+              break;
+            }
+          }
+        }
+        const slotArg = rec.args.slot;
+        if (slotArg && (slotArg.value < 0 || slotArg.value >= MAX_TAB)) {
+          add(Object.assign({ code: 'C_SLOT', severity: 'BLOCK', start: rec.start, end: rec.end,
+            key: `C_SLOT|${npc.file}|${npc.key}|${rec.cmd}|${slotArg.value}`,
+            message: `${npc.key}: ${rec.cmd} uses tab ${slotArg.value}; only 0-3 exist and the server does not check (memory corruption)` }, at));
+        }
+        const e = shopEntry(rec);
+        if (!e) continue;
+        shopCount++;
+        if (e.kind === 'fixed' || e.kind === 'chip') {
+          const id = e.item.value >>> 0;
+          const itemName = e.item.define || e.item.tokens.map(t => t.raw || t.text).join('');
+          const prop = items.get(id);
+          if (!prop) {
+            add(Object.assign({ code: 'C_ITEM', severity: 'BLOCK', start: rec.start, end: rec.end,
+              key: `C_ITEM|${npc.file}|${npc.key}|${itemName}`,
+              message: `${npc.key}: ${itemName} is not a loaded item in Spec_Item.txt; the shop silently skips it` }, at));
+          }
+          if (slotArg && slotArg.value >= 0 && slotArg.value < MAX_TAB) fixedPerTab[slotArg.value]++;
+          if (e.kind === 'fixed' && e.cost) {
+            const c = e.cost.value;
+            if (c <= 0) add(Object.assign({ code: 'C_PRICE_ZERO', severity: 'WARN', start: rec.start, end: rec.end,
+              key: `C_PRICE_ZERO|${npc.file}|${npc.key}|${itemName}`, message: `${npc.key}: ${itemName} costs ${c}` }, at));
+            if (!priceByItem.has(id)) priceByItem.set(id, []);
+            priceByItem.get(id).push({ npc, cost: c, rec, itemName });
+          }
+          if (e.kind === 'chip' && npc.venderType !== 1 && npc.venderType !== 2) {
+            add(Object.assign({ code: 'C_CHIP_TYPE', severity: 'WARN', start: rec.start, end: rec.end,
+              key: `C_CHIP_TYPE|${npc.file}|${npc.key}|${itemName}`,
+              message: `${npc.key}: ${rec.cmd} only works in chip shops (SetVenderType(1) or (2)); the server ignores it here` }, at));
+          }
+          if (e.kind === 'chip' && prop) {
+            const chip = FRE.specItem.get(prop, 'dwReferValue1');
+            if (chip === -1 || chip < 1) add(Object.assign({ code: 'C_CHIP_COST', severity: 'WARN', start: rec.start, end: rec.end,
+              key: `C_CHIP_COST|${npc.file}|${npc.key}|${itemName}`,
+              message: `${npc.key}: ${itemName} has no chip price (dwReferValue1); the server skips it in this chip shop` }, at));
+          }
+        }
+      }
+      fixedPerTab.forEach((n, tab) => {
+        if (n > MAX_TAB_ITEMS) add(Object.assign({ code: 'C_TAB_FULL', severity: 'WARN', start: npc.start, end: npc.keyEnd,
+          key: `C_TAB_FULL|${npc.file}|${npc.key}|${tab}`,
+          message: `${npc.key}: tab ${tab} lists ${n} fixed items; a tab holds ${MAX_TAB_ITEMS}, the rest are dropped` }, at));
+      });
+      if (shopCount && tradeMenu !== undefined && !npc.menus.includes(tradeMenu)) {
+        add(Object.assign({ code: 'C_NO_TRADE', severity: 'WARN', start: npc.start, end: npc.keyEnd, key: `C_NO_TRADE|${npc.file}|${npc.key}`,
+          message: `${npc.key}: has shop items but no AddMenu(MMI_TRADE) (to verify: players may not be able to open the shop)` }, at));
+      }
+    }
+
+    // One price per item: AddShopItem's cost overwrites the item's price globally.
+    for (const [id, list] of priceByItem) {
+      const costs = new Set(list.map(x => x.cost));
+      if (costs.size > 1) {
+        const winner = list[list.length - 1];     // load order: file order, then position
+        const desc = list.map(x => `${x.npc.key}=${x.cost}`).join(', ');
+        add({ code: 'C_PRICE_CONFLICT', severity: 'WARN', file: winner.npc.file, npcKey: winner.npc.key, start: winner.rec.start, end: winner.rec.end,
+          key: `C_PRICE_CONFLICT|${winner.itemName}|${[...costs].sort().join('/')}`, itemId: id,
+          message: `${winner.itemName} has different AddShopItem prices (${desc}). The price is global: the last one loaded (${winner.npc.key}, ${winner.cost}) applies everywhere` });
+      }
+    }
+    return out;
+  }
+
+  FRE.validateCharacters = validateCharacters;
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- core/diff.js ----
+// Line diff (Myers O(ND)) for the save review dialog.
+// Lines are compared including their EOL, so a line-ending change shows up.
+(function (FRE) {
+  'use strict';
+
+  function splitKeepEol(text) {
+    return FRE.bytes.scanLines(text).map(l => text.slice(l.start, l.end));
+  }
+
+  // Returns ops: [{ type: 'eq'|'del'|'add', a: lineIdxInOld, b: lineIdxInNew }]
+  function diffLines(a, b) {
+    let pre = 0;
+    while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++;
+    let suf = 0;
+    while (suf < a.length - pre && suf < b.length - pre && a[a.length - 1 - suf] === b[b.length - 1 - suf]) suf++;
+    const A = a.slice(pre, a.length - suf), Bv = b.slice(pre, b.length - suf);
+    const N = A.length, M = Bv.length, MAX = N + M;
+    const v = new Int32Array(2 * MAX + 2);
+    const trace = [];
+    let done = false;
+    for (let d = 0; d <= MAX && !done; d++) {
+      trace.push(v.slice());
+      for (let k = -d; k <= d; k += 2) {
+        let x = (k === -d || (k !== d && v[MAX + k - 1] < v[MAX + k + 1])) ? v[MAX + k + 1] : v[MAX + k - 1] + 1;
+        let y = x - k;
+        while (x < N && y < M && A[x] === Bv[y]) { x++; y++; }
+        v[MAX + k] = x;
+        if (x >= N && y >= M) { done = true; break; }
+      }
+    }
+    // backtrack
+    const mid = [];
+    let x = N, y = M;
+    for (let d = trace.length - 1; d >= 0 && (x > 0 || y > 0); d--) {
+      const vv = trace[d];
+      const k = x - y;
+      const prevK = (k === -d || (k !== d && vv[MAX + k - 1] < vv[MAX + k + 1])) ? k + 1 : k - 1;
+      const px = vv[MAX + prevK], py = px - prevK;
+      while (x > px && y > py) { mid.push({ type: 'eq', a: pre + x - 1, b: pre + y - 1 }); x--; y--; }
+      if (d > 0) {
+        if (x === px) mid.push({ type: 'add', b: pre + y - 1 }); else mid.push({ type: 'del', a: pre + x - 1 });
+      }
+      x = px; y = py;
+    }
+    mid.reverse();
+    const ops = [];
+    for (let i = 0; i < pre; i++) ops.push({ type: 'eq', a: i, b: i });
+    ops.push(...mid);
+    for (let i = 0; i < suf; i++) ops.push({ type: 'eq', a: a.length - suf + i, b: b.length - suf + i });
+    return ops;
+  }
+
+  // Groups changes into hunks with `ctx` lines of context.
+  function hunks(ops, ctx = 2) {
+    const out = [];
+    let cur = null, lastChange = -1e9;
+    ops.forEach((op, i) => {
+      if (op.type !== 'eq') {
+        if (!cur || i - lastChange > 2 * ctx) {
+          cur = { ops: [] };
+          out.push(cur);
+          for (let k = Math.max(0, i - ctx); k < i; k++) if (ops[k].type === 'eq') cur.ops.push(ops[k]);
+        } else {
+          for (let k = lastChange + 1; k < i; k++) cur.ops.push(ops[k]);
+        }
+        cur.ops.push(op);
+        lastChange = i;
+      }
+    });
+    // trailing context
+    for (const h of out) {
+      const lastIdx = ops.indexOf(h.ops[h.ops.length - 1]);
+      for (let k = lastIdx + 1; k < Math.min(ops.length, lastIdx + 1 + ctx); k++) {
+        if (ops[k].type !== 'eq') break;
+        h.ops.push(ops[k]);
+      }
+    }
+    return out;
+  }
+
+  FRE.diff = { splitKeepEol, diffLines, hunks };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- edit/shop-ops.js ----
+// Shop edits expressed as minimal splices on a SourceFile's current text
+// (docs/DESIGN.md §1.5). Each function returns [{start, end, insert}] and
+// never touches bytes outside the statement being changed.
+(function (FRE) {
+  'use strict';
+
+  const isSpace = c => c === ' ' || c === '\t';
+
+  function lineStart(text, i) {
+    while (i > 0 && text[i - 1] !== '\n' && text[i - 1] !== '\r') i--;
+    return i;
+  }
+  function lineContentEnd(text, i) {
+    while (i < text.length && text[i] !== '\n' && text[i] !== '\r') i++;
+    return i;
+  }
+  function lineEnd(text, i) {
+    i = lineContentEnd(text, i);
+    if (text[i] === '\r') { i++; if (text[i] === '\n') i++; }
+    else if (text[i] === '\n') i++;
+    return i;
+  }
+  function eolAt(text, i) {
+    const c = lineContentEnd(text, i);
+    if (text[c] === '\r') return text[c + 1] === '\n' ? '\r\n' : '\r';
+    if (text[c] === '\n') return '\n';
+    return '';
+  }
+  function dominantEol(text) {
+    const crlf = (text.match(/\r\n/g) || []).length;
+    const lf = (text.match(/\n/g) || []).length - crlf;
+    return crlf >= lf ? '\r\n' : '\n';
+  }
+  function indentOf(text, i) {
+    const s = lineStart(text, i);
+    let e = s;
+    while (e < text.length && isSpace(text[e])) e++;
+    return text.slice(s, e);
+  }
+
+  // Statement span plus a trailing ';' on the same line (the server skips ';').
+  function stmtExtent(text, rec) {
+    let e = rec.end;
+    let k = e;
+    while (k < text.length && isSpace(text[k])) k++;
+    if (text[k] === ';') e = k + 1;
+    return { start: rec.start, end: e };
+  }
+
+  // True if only whitespace or a // comment follows `end` on its line.
+  function restOfLineIsFree(text, end) {
+    let k = end;
+    const ce = lineContentEnd(text, end);
+    while (k < ce && isSpace(text[k])) k++;
+    return k === ce || text.startsWith('//', k);
+  }
+  function prefixIsBlank(text, start) {
+    const s = lineStart(text, start);
+    for (let k = s; k < start; k++) if (!isSpace(text[k])) return false;
+    return true;
+  }
+
+  function formatStmt(cmd, args, text) {
+    // follow the file's existing spacing for this command: "Cmd( a, b );" vs "Cmd(a, b);"
+    const re = new RegExp(cmd + '\\s*\\(( ?)');
+    const m = re.exec(text);
+    const pad = m ? m[1] : ' ';
+    return `${cmd}(${pad}${args.join(', ')}${pad});`;
+  }
+
+  function checkCost(cost) {
+    if (!Number.isInteger(cost) || cost < 0 || cost > 2147483647) throw new Error('price must be a whole number between 0 and 2,147,483,647');
+  }
+  function checkDefine(name) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) throw new Error(`"${name}" is not a valid define name`);
+  }
+
+  // Add a fixed item (AddShopItem) or, for chip shops, AddVenderItem2.
+  function addItem(text, npc, slot, define, cost) {
+    checkDefine(define);
+    if (!(slot >= 0 && slot <= 3)) throw new Error('tab must be 0-3');
+    const chip = npc.venderType === 1 || npc.venderType === 2;
+    let stmt;
+    if (chip) stmt = formatStmt('AddVenderItem2', [slot, define], text);
+    else {
+      const args = [slot, define];
+      if (cost !== null && cost !== undefined) { checkCost(cost); args.push(cost); }
+      stmt = formatStmt('AddShopItem', args, text);
+    }
+
+    // anchor: last shop statement in the same tab, else any shop statement,
+    // else the last AddMenu, else the opening brace.
+    const shop = npc.statements.filter(r => FRE.character.shopEntry(r));
+    const sameTab = shop.filter(r => r.args.slot && r.args.slot.value === slot);
+    const anchor = sameTab[sameTab.length - 1] || shop[shop.length - 1]
+      || npc.statements.filter(r => r.cmd === 'AddMenu').pop() || null;
+
+    if (anchor) {
+      const ext = stmtExtent(text, anchor);
+      if (restOfLineIsFree(text, ext.end)) {
+        const at = lineEnd(text, ext.end);
+        let eol = eolAt(text, ext.end);
+        let prefix = '';
+        if (!eol) { eol = dominantEol(text); prefix = eol; }   // anchor is on the last line
+        return [{ start: at, end: at, insert: prefix + indentOf(text, anchor.start) + stmt + (prefix ? '' : eol) }];
+      }
+      return [{ start: ext.end, end: ext.end, insert: ' ' + stmt }];
+    }
+    const b = npc.braceTok;
+    const at = lineEnd(text, b.end);
+    const eol = eolAt(text, b.end) || dominantEol(text);
+    return [{ start: at, end: at, insert: indentOf(text, b.start) + '\t' + stmt + eol }];
+  }
+
+  function removeStatement(text, rec) {
+    const ext = stmtExtent(text, rec);
+    if (prefixIsBlank(text, ext.start) && restOfLineIsFree(text, ext.end)) {
+      return [{ start: lineStart(text, ext.start), end: lineEnd(text, ext.end), insert: '' }];
+    }
+    // shares its line with something else: remove only the statement (and one space before it)
+    let s = ext.start;
+    if (s > 0 && isSpace(text[s - 1]) && !prefixIsBlank(text, s)) s--;
+    return [{ start: s, end: ext.end, insert: '' }];
+  }
+
+  function setCost(text, rec, cost) {
+    if (rec.cmd !== 'AddShopItem') throw new Error('only AddShopItem entries have a price');
+    if (cost === null) {
+      if (!rec.args.cost) return [];
+      const comma = rec.seps.find(s => s.expect === ', or )');
+      return [{ start: comma.start, end: rec.args.cost.end, insert: '' }];
+    }
+    checkCost(cost);
+    if (rec.args.cost) return [{ start: rec.args.cost.start, end: rec.args.cost.end, insert: String(cost) }];
+    const it = rec.args.item;
+    return [{ start: it.end, end: it.end, insert: `, ${cost}` }];
+  }
+
+  function setSlot(text, rec, slot) {
+    if (!(slot >= 0 && slot <= 3)) throw new Error('tab must be 0-3');
+    const a = rec.args.slot;
+    return [{ start: a.start, end: a.end, insert: String(slot) }];
+  }
+
+  FRE.shopOps = { addItem, removeStatement, setCost, setSlot, stmtExtent, _internal: { lineStart, lineEnd, eolAt, indentOf } };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- core/workspace.js ----
+// Workspace: the loaded Resource folder as the editor sees it. No DOM here,
+// so it can be tested outside the browser (tests/run-tests.js under gjs).
+(function (FRE) {
+  'use strict';
+
+  // Files Build 1 needs. Only the character files are ever written.
+  const REQUIRED = [
+    'Masquerade.prj', 'Spec_Item.txt', 'propItem.txt.txt',
+    'character.inc', 'character-etc.inc', 'character-school.inc',
+    'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt',
+    ...FRE.DEFINE_FILES,
+  ];
+  const EDITABLE = new Set(FRE.character.CHARACTER_FILES.map(n => n.toLowerCase()));
+
+  class Workspace {
+    // files: Map lowercase name -> SourceFile
+    constructor(files) {
+      this.files = files;
+      this.history = [];      // lowercase file names, in edit order (for global undo)
+      this.redoStack = [];
+      this.missing = REQUIRED.filter(n => !files.has(n.toLowerCase()));
+    }
+
+    load() {
+      this.defines = FRE.loadDefines(this.files);
+      this.strings = FRE.loadStrings(this.files);
+      const spec = this.files.get('spec_item.txt');
+      this.items = spec ? FRE.specItem.loadSpecItem(spec, { defines: this.defines.defines, strings: this.strings.map })
+        : { items: new Map(), rows: [], diags: [], stopped: null };
+      this.reparse();
+      this.baseline = this.keyCounts(this.diags);
+      return this;
+    }
+
+    reparse() {
+      this.chars = FRE.character.loadCharacters(this.files, { defines: this.defines.defines, strings: this.strings.map });
+      const charDiags = FRE.validateCharacters(this.chars, { items: this.items.items, defines: this.defines.defines });
+      const itemDiags = this.items.diags.map(d => Object.assign({}, d, { key: `${d.code}|${d.file}|${d.name || d.message}` }));
+      this.diags = [...charDiags, ...itemDiags];
+    }
+
+    isEditable(lowerName) {
+      const f = this.files.get(lowerName);
+      return !!f && EDITABLE.has(lowerName) && !f.readOnly;
+    }
+
+    fileOfNpc(npc) { return this.files.get(npc.file.toLowerCase()); }
+
+    // Apply splices produced by FRE.shopOps to one file, then re-derive everything.
+    apply(lowerName, splices, label) {
+      if (!this.isEditable(lowerName)) throw new Error(`${lowerName} is not editable`);
+      if (!splices.length) return;
+      this.files.get(lowerName).applySplices(splices, label);
+      this.history.push(lowerName);
+      this.redoStack = [];
+      this.reparse();
+    }
+
+    undo() {
+      const name = this.history.pop(); if (!name) return null;
+      const label = this.files.get(name).undo();
+      this.redoStack.push(name); this.reparse(); return label;
+    }
+    redo() {
+      const name = this.redoStack.pop(); if (!name) return null;
+      const label = this.files.get(name).redo();
+      this.history.push(name); this.reparse(); return label;
+    }
+
+    dirtyFiles() { return [...this.files.values()].filter(f => f.dirty); }
+
+    keyCounts(diags) {
+      const m = new Map();
+      for (const d of diags) if (d.severity === 'BLOCK') m.set(d.key, (m.get(d.key) || 0) + 1);
+      return m;
+    }
+
+    // BLOCK diagnostics that did not exist when the folder was loaded / last saved.
+    newBlocking() {
+      const left = new Map(this.baseline);
+      const out = [];
+      for (const d of this.diags) {
+        if (d.severity !== 'BLOCK') continue;
+        const n = left.get(d.key) || 0;
+        if (n > 0) left.set(d.key, n - 1); else out.push(d);
+      }
+      return out;
+    }
+
+    isNew(d) { return d.severity === 'BLOCK' && this.newBlocking().includes(d); }
+
+    // After a verified save of `savedFiles`.
+    markSaved() {
+      this.history = []; this.redoStack = [];
+      this.baseline = this.keyCounts(this.diags);
+    }
+
+    // --- read helpers for the UI ---------------------------------------
+    itemById(id) { return this.items.items.get(id >>> 0) || null; }
+    itemInfo(item) {
+      const g = (f) => FRE.specItem.get(item, f);
+      const D = this.defines;
+      const grade = g('dwItemGrade');
+      return {
+        id: item.id, define: item.define, name: item.name || item.nameKey,
+        ik1: g('dwItemKind1'), ik2: g('dwItemKind2'), ik3: g('dwItemKind3'),
+        ik3Name: D.byValue('IK3_', g('dwItemKind3')),
+        level: g('dwLimitLevel1'), atkMin: g('dwAbilityMin'), atkMax: g('dwAbilityMax'),
+        grade, rarity: grade === 100 ? 'normal' : grade === 200 ? 'unique' : grade === 300 ? 'ultimate' : grade === 400 ? 'baruna' : 'other',
+        cost: g('dwCost'), chipCost: g('dwReferValue1'), icon: g('szIcon'), packMax: g('dwPackMax'),
+      };
+    }
+  }
+
+  Workspace.REQUIRED = REQUIRED;
+  Workspace.EDITABLE = EDITABLE;
+  FRE.Workspace = Workspace;
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- io/fsa.js ----
+// File System Access API wrapper (Chrome / Edge). See docs/DESIGN.md §2.1.
+(function (FRE) {
+  'use strict';
+
+  const supported = () => typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+
+  async function pickFolder(id) {
+    return window.showDirectoryPicker({ id, mode: 'readwrite' });
+  }
+
+  // Returns true when we may read+write; asks the user if needed (needs a click).
+  async function ensurePermission(handle, ask = true) {
+    const opts = { mode: 'readwrite' };
+    if ((await handle.queryPermission(opts)) === 'granted') return true;
+    if (!ask) return false;
+    return (await handle.requestPermission(opts)) === 'granted';
+  }
+
+  // Case-insensitive lookup of the wanted top-level files (Windows-like).
+  async function findFiles(dir, wantedNames) {
+    const wanted = new Set(wantedNames.map(n => n.toLowerCase()));
+    const found = new Map();
+    for await (const [name, handle] of dir.entries()) {
+      if (handle.kind === 'file' && wanted.has(name.toLowerCase())) found.set(name.toLowerCase(), handle);
+    }
+    return found;
+  }
+
+  async function readHandle(fileHandle) {
+    const file = await fileHandle.getFile();
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    return { bytes, stamp: { size: file.size, lastModified: file.lastModified } };
+  }
+
+  // createWritable() writes to a temporary swap file and only replaces the
+  // original when close() succeeds; abort() discards it.
+  async function writeHandle(fileHandle, bytes) {
+    const w = await fileHandle.createWritable({ keepExistingData: false });
+    try {
+      await w.write(bytes);
+      await w.close();
+    } catch (e) {
+      try { await w.abort(); } catch (_) { /* already closed */ }
+      throw e;
+    }
+  }
+
+  async function writeVerified(fileHandle, bytes) {
+    await writeHandle(fileHandle, bytes);
+    const back = await readHandle(fileHandle);
+    if (!FRE.bytes.bytesEqual(back.bytes, bytes)) throw new Error(`${fileHandle.name}: read-back after writing does not match`);
+    return back.stamp;
+  }
+
+  async function newFolder(parent, name) {
+    // never reuse an existing folder: append -2, -3 ...
+    let n = name, k = 1;
+    for (;;) {
+      try { await parent.getDirectoryHandle(n); k++; n = `${name}-${k}`; }
+      catch (e) { if (e.name === 'NotFoundError') break; else throw e; }
+    }
+    return parent.getDirectoryHandle(n, { create: true });
+  }
+
+  async function newFile(dir, name, bytes) {
+    const h = await dir.getFileHandle(name, { create: true });
+    await writeVerified(h, bytes);
+    return h;
+  }
+
+  // Remember folder handles between sessions (permission is asked again).
+  const DB = 'flyff-resource-editor', STORE = 'handles';
+  function idb() {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open(DB, 1);
+      r.onupgradeneeded = () => r.result.createObjectStore(STORE);
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+  }
+  async function remember(key, handle) {
+    try {
+      const db = await idb();
+      await new Promise((res, rej) => { const t = db.transaction(STORE, 'readwrite'); t.objectStore(STORE).put(handle, key); t.oncomplete = res; t.onerror = () => rej(t.error); });
+    } catch (e) { console.warn('could not remember folder', e); }
+  }
+  async function recall(key) {
+    try {
+      const db = await idb();
+      return await new Promise((res, rej) => { const r = db.transaction(STORE).objectStore(STORE).get(key); r.onsuccess = () => res(r.result || null); r.onerror = () => rej(r.error); });
+    } catch (e) { return null; }
+  }
+
+  FRE.fsa = { supported, pickFolder, ensurePermission, findFiles, readHandle, writeHandle, writeVerified, newFolder, newFile, remember, recall };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- io/save.js ----
+// Save pipeline (docs/DESIGN.md §2.3). Every step is logged; any failure
+// before writing aborts with nothing changed, a failure while writing
+// restores the files already written from the fresh backup.
+(function (FRE) {
+  'use strict';
+  const B = FRE.bytes;
+  const VERSION = 'build-1';
+
+  function stampName(d = new Date()) {
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+  }
+
+  function changeSummary(f) {
+    const a = FRE.diff.splitKeepEol(f.originalText), b = FRE.diff.splitKeepEol(f.text);
+    const ops = FRE.diff.diffLines(a, b);
+    const out = [];
+    for (const o of ops) {
+      if (o.type === 'del') out.push({ type: 'del', line: o.a + 1, text: f.display(a[o.a]).replace(/\r?\n$|\r$/, '') });
+      if (o.type === 'add') out.push({ type: 'add', line: o.b + 1, text: f.display(b[o.b]).replace(/\r?\n$|\r$/, '') });
+    }
+    return out;
+  }
+
+  // ws: Workspace, backupDir: directory handle, log: (msg) => void
+  async function save(ws, backupDir, log = () => {}) {
+    const report = { ok: false, steps: [], files: [], backupFolder: null };
+    const step = (m) => { report.steps.push(m); log(m); };
+    const dirty = ws.dirtyFiles();
+    if (!dirty.length) { step('Nothing to save.'); report.ok = true; return report; }
+
+    const blocking = ws.newBlocking();
+    if (blocking.length) { step(`Aborted: ${blocking.length} new blocking problem(s). Nothing was written.`); report.blocking = blocking; return report; }
+    for (const f of dirty) if (!f.handle) { step(`Aborted: ${f.name} has no file handle.`); return report; }
+
+    // 1. conflict check: the disk must still hold exactly what we loaded
+    const onDisk = new Map();
+    for (const f of dirty) {
+      const cur = await FRE.fsa.readHandle(f.handle);
+      if (!B.bytesEqual(cur.bytes, f.bytes)) {
+        step(`Aborted: ${f.name} was changed on disk since it was loaded (another program, git, or another tab). Nothing was written. Reload the folder.`);
+        report.conflict = f.name;
+        return report;
+      }
+      onDisk.set(f, cur.bytes);
+    }
+    step('Disk contents unchanged since load.');
+
+    // 2. backup the current disk bytes, verified
+    const folder = await FRE.fsa.newFolder(backupDir, stampName());
+    report.backupFolder = folder.name;
+    for (const f of dirty) await FRE.fsa.newFile(folder, f.name, onDisk.get(f));
+    step(`Backup written and verified: ${backupDir.name}/${folder.name}/ (${dirty.length} file(s))`);
+
+    // 3. write + verify each file; restore on failure
+    const written = [];
+    try {
+      for (const f of dirty) {
+        const candidate = f.serialize();
+        const stamp = await FRE.fsa.writeVerified(f.handle, candidate);
+        written.push({ f, candidate, stamp });
+        report.files.push({ name: f.name, before: f.bytes.length, after: candidate.length, changes: changeSummary(f) });
+        step(`Wrote and verified ${f.name} (${f.bytes.length} -> ${candidate.length} bytes).`);
+      }
+    } catch (e) {
+      step(`WRITE FAILED: ${e.message}. Restoring from the backup...`);
+      for (const w of written) {
+        try { await FRE.fsa.writeVerified(w.f.handle, onDisk.get(w.f)); step(`Restored ${w.f.name}.`); }
+        catch (e2) { step(`!! Could not restore ${w.f.name}: ${e2.message}. Copy it back manually from ${folder.name}.`); }
+      }
+      await writeManifest(folder, report, 'failed-restored');
+      return report;
+    }
+
+    await writeManifest(folder, report, 'ok');
+    for (const w of written) w.f.commitSaved(w.candidate, w.stamp);
+    ws.markSaved();
+    report.ok = true;
+    step('Saved.');
+    return report;
+  }
+
+  async function writeManifest(folder, report, status) {
+    const manifest = {
+      tool: 'FLYFF Resource Editor', version: VERSION, status, time: new Date().toISOString(),
+      files: report.files.map(f => ({ name: f.name, bytesBefore: f.before, bytesAfter: f.after, changes: f.changes })),
+      log: report.steps,
+    };
+    const bytes = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
+    await FRE.fsa.newFile(folder, 'manifest.json', bytes);
+  }
+
+  // Toolbar "Backup": snapshot of every loaded file as it is on disk right now.
+  async function snapshot(ws, backupDir, log = () => {}) {
+    const folder = await FRE.fsa.newFolder(backupDir, stampName() + '_snapshot');
+    const names = [];
+    for (const f of ws.files.values()) {
+      if (!f.handle) continue;
+      const cur = await FRE.fsa.readHandle(f.handle);
+      await FRE.fsa.newFile(folder, f.name, cur.bytes);
+      names.push(f.name);
+    }
+    const manifest = { tool: 'FLYFF Resource Editor', version: VERSION, status: 'snapshot', time: new Date().toISOString(), files: names };
+    await FRE.fsa.newFile(folder, 'manifest.json', new TextEncoder().encode(JSON.stringify(manifest, null, 2)));
+    log(`Snapshot of ${names.length} files written to ${backupDir.name}/${folder.name}/`);
+    return folder.name;
+  }
+
+  FRE.save = { save, snapshot, changeSummary, stampName };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- ui/dom.js ----
+// Tiny DOM helpers (no framework).
+(function (FRE) {
+  'use strict';
+
+  // h('div.cls1.cls2', { title: 'x', on: { click: fn } }, child, 'text', [more])
+  function h(sel, props, ...children) {
+    const [tag, ...classes] = sel.split('.');
+    const el = document.createElement(tag || 'div');
+    if (classes.length) el.className = classes.join(' ');
+    if (props && (typeof props !== 'object' || props instanceof Node || Array.isArray(props))) { children.unshift(props); props = null; }
+    for (const [k, v] of Object.entries(props || {})) {
+      if (v === undefined || v === null || v === false) continue;
+      if (k === 'on') for (const [ev, fn] of Object.entries(v)) el.addEventListener(ev, fn);
+      else if (k === 'class') el.className += ' ' + v;
+      else if (k === 'style') el.style.cssText = v;
+      else if (k in el && k !== 'list') el[k] = v;
+      else el.setAttribute(k, v === true ? '' : v);
+    }
+    const add = c => {
+      if (c === null || c === undefined || c === false) return;
+      if (Array.isArray(c)) c.forEach(add);
+      else el.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
+    };
+    children.forEach(add);
+    return el;
+  }
+
+  const $ = id => document.getElementById(id);
+  const fmt = n => (n === null || n === undefined || Number.isNaN(n)) ? '' : Number(n).toLocaleString('en-US');
+
+  function toast(msg, kind = '') {
+    const t = h('div.toast' + (kind ? '.' + kind : ''), msg);
+    $('toasts').appendChild(t);
+    setTimeout(() => t.remove(), kind === 'bad' ? 7000 : 3500);
+  }
+
+  // modal({ title, body: Node, buttons: [{ label, cls, onClick -> false keeps open }] })
+  function modal({ title, body, buttons = [{ label: 'Close' }], wide }) {
+    const back = h('div.modal-back');
+    const close = () => back.remove();
+    const foot = h('footer', buttons.map(b => h('button' + (b.cls ? '.' + b.cls : ''), {
+      disabled: b.disabled, id: b.id,
+      on: { click: async () => { const r = b.onClick ? await b.onClick() : undefined; if (r !== false) close(); } },
+    }, b.label)));
+    back.appendChild(h('div.modal', { style: wide ? 'width:min(1200px,95vw)' : '' }, h('header', title), h('div.body', body), foot));
+    $('modal-root').appendChild(back);
+    return { close, el: back };
+  }
+
+  FRE.dom = { h, $, fmt, toast, modal };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- ui/app.js ----
+// Build 1 UI: NPC Shop Editor. All data changes go through Workspace.apply()
+// with splices from FRE.shopOps; everything shown is re-derived from the file
+// text after each edit.
+(function (FRE) {
+  'use strict';
+  const { h, $, fmt, toast, modal } = FRE.dom;
+  const ROW_H = 40;
+
+  const S = {
+    ws: null, resDir: null, backupDir: null,
+    sel: null, tab: 0, shopsOnly: true, npcQuery: '',
+    items: [], filtered: [], rarity: new Set(), ik1: '', ik3: '', itemQuery: '',
+    edited: new Set(), diagOpen: false,
+  };
+  const npcId = npc => `${npc.file}|${npc.key}`;
+  const selNpc = () => S.ws && S.sel ? S.ws.chars.npcs.find(n => npcId(n) === S.sel) || null : null;
+  const isShopNpc = npc => npc.statements.some(r => FRE.character.shopEntry(r)) || npc.venderType > 0;
+
+  // ------------------------------------------------------------------ loading
+  async function pickResource() {
+    try {
+      const dir = await FRE.fsa.pickFolder('flyff-resource');
+      await loadFrom(dir);
+    } catch (e) { if (e.name !== 'AbortError') toast(e.message, 'bad'); }
+  }
+
+  async function loadFrom(dir) {
+    if (S.ws && S.ws.dirtyFiles().length && !confirm('Discard unsaved changes and load another folder?')) return;
+    if (!(await FRE.fsa.ensurePermission(dir))) { toast('Permission to the folder was not granted.', 'bad'); return; }
+    const found = await FRE.fsa.findFiles(dir, FRE.Workspace.REQUIRED);
+    for (const must of ['masquerade.prj', 'character.inc', 'spec_item.txt']) {
+      if (!found.has(must)) {
+        toast(`"${dir.name}" does not look like Server/Resource (no ${must}). Nothing was loaded.`, 'bad');
+        return;
+      }
+    }
+    const files = new Map();
+    for (const [lower, handle] of found) {
+      const { bytes, stamp } = await FRE.fsa.readHandle(handle);
+      files.set(lower, new FRE.SourceFile(handle.name, bytes, { handle, stamp }));
+    }
+    const t0 = performance.now();
+    S.ws = new FRE.Workspace(files).load();
+    S.resDir = dir;
+    S.edited.clear();
+    FRE.fsa.remember('resource', dir);
+    buildItems();
+    const first = S.ws.chars.npcs.find(isShopNpc);
+    S.sel = first ? npcId(first) : null; S.tab = 0;
+    renderAll();
+    toast(`Loaded ${files.size} files from "${dir.name}" in ${Math.round(performance.now() - t0)} ms`, 'ok');
+  }
+
+  async function pickBackup() {
+    try {
+      const dir = await FRE.fsa.pickFolder('flyff-backups');
+      if (S.resDir && (await dir.isSameEntry(S.resDir))) { toast('Pick a folder outside Server/Resource for backups.', 'bad'); return false; }
+      if (!(await FRE.fsa.ensurePermission(dir))) return false;
+      S.backupDir = dir;
+      FRE.fsa.remember('backup', dir);
+      renderToolbar();
+      return true;
+    } catch (e) { if (e.name !== 'AbortError') toast(e.message, 'bad'); return false; }
+  }
+
+  // ------------------------------------------------------------------ editing
+  function edit(npc, makeSplices, label) {
+    const f = S.ws.fileOfNpc(npc);
+    try {
+      const splices = makeSplices(f.text);
+      S.ws.apply(f.name.toLowerCase(), splices, label);
+      S.edited.add(npcId(npc));
+    } catch (e) { toast(e.message, 'bad'); }
+    renderAll(false);
+  }
+
+  function addItemToSelected(info) {
+    const npc = selNpc();
+    if (!npc) { toast('Select an NPC first.', 'bad'); return; }
+    const p = $('new-price').value.trim();
+    const cost = p === '' ? null : Number(p);
+    edit(npc, text => FRE.shopOps.addItem(text, npc, S.tab, info.define, cost), `add ${info.define}`);
+  }
+
+  function undo() { if (S.ws && S.ws.undo() !== null) renderAll(false); }
+  function redo() { if (S.ws && S.ws.redo() !== null) renderAll(false); }
+
+  // ------------------------------------------------------------------ rendering
+  function renderAll(withItems = true) {
+    renderToolbar(); renderBanners(); renderNpcList(); renderEditor();
+    if (withItems) renderItemFilters();
+    renderItems();
+    if (S.diagOpen) renderDiagPanel();
+  }
+
+  function renderToolbar() {
+    const ws = S.ws;
+    $('backup-name').textContent = S.backupDir ? S.backupDir.name : 'not set';
+    $('btn-undo').disabled = !ws || !ws.history.length;
+    $('btn-redo').disabled = !ws || !ws.redoStack.length;
+    const dirty = ws ? ws.dirtyFiles() : [];
+    $('btn-save').disabled = !dirty.length;
+    $('btn-save').textContent = dirty.length ? `Save (${dirty.length})` : 'Save';
+    $('btn-backup').disabled = !ws;
+    const fs = $('file-status'); fs.textContent = '';
+    if (ws) {
+      const chip = (label, lower) => {
+        const f = ws.files.get(lower);
+        const cls = !f ? 'missing' : f.readOnly ? 'ro' : f.dirty ? 'ok.dirty' : 'ok';
+        fs.appendChild(h('span.file-chip.' + cls, { title: f ? (f.readOnly ? f.readOnlyReasons.join('\n') : `${f.kind}, ${fmt(f.bytes.length)} bytes`) : 'not found' }, label + (f && f.dirty ? ' •' : '')));
+      };
+      ['character.inc', 'character-etc.inc', 'character-school.inc', 'Spec_Item.txt', 'propItem.txt.txt', 'character.txt.txt'].forEach(n => chip(n, n.toLowerCase()));
+      const nd = FRE.DEFINE_FILES.filter(n => ws.files.has(n.toLowerCase())).length;
+      fs.appendChild(h('span.file-chip.' + (nd === FRE.DEFINE_FILES.length ? 'ok' : 'missing'), { title: ws.defines.missing.join(', ') || 'all define headers found' }, `defines ${nd}/${FRE.DEFINE_FILES.length}`));
+      const nb = ws.newBlocking().length;
+      const nw = ws.diags.filter(d => d.severity === 'WARN').length;
+      const b = $('btn-diag');
+      b.textContent = nb ? `⛔ ${nb}  ⚠ ${nw}` : `⚠ ${nw}`;
+      b.className = 'diag-badge' + (nb ? ' has-block' : nw ? ' has-warn' : '');
+    }
+  }
+
+  function renderBanners() {
+    const el = $('banners'); el.textContent = '';
+    const add = (cls, ...c) => el.appendChild(h('div.banner.' + cls, ...c));
+    if (!FRE.fsa.supported()) add('bad', 'This browser cannot open folders (File System Access API). Use Chrome or Edge.');
+    if (!S.ws) return;
+    const ws = S.ws;
+    if (ws.missing.length) add('bad', `Missing files: ${ws.missing.join(', ')}`);
+    for (const f of ws.files.values()) if (f.readOnly) add('bad', `🔒 ${f.name} is READ-ONLY: ${f.readOnlyReasons.join('; ')}`);
+    if (ws.items.stopped) add('bad', `Spec_Item.txt: the server stops loading items at offset ${ws.items.stopped.start}; later items are missing.`);
+    if (S.resDir && S.resDir.name.toLowerCase() !== 'resource') add('info', `Editing folder "${S.resDir.name}" (a test copy?).`);
+    add('info', 'Only Server/Resource is edited. The game client reads its own copy: after saving, also copy the changed character*.inc files to Client/ so shop lists and prices match. Restart the WorldServer to apply.');
+  }
+
+  function renderNpcList() {
+    const el = $('npc-list'); el.textContent = '';
+    if (!S.ws) return;
+    const q = S.npcQuery.toLowerCase();
+    const diagBy = new Map();
+    for (const d of S.ws.diags) if (d.npcKey) {
+      const k = `${d.file}|${d.npcKey}`; const o = diagBy.get(k) || { w: 0, b: 0 };
+      if (d.severity === 'BLOCK') o.b++; else if (d.severity === 'WARN') o.w++;
+      diagBy.set(k, o);
+    }
+    const frag = document.createDocumentFragment();
+    let shown = 0;
+    for (const npc of S.ws.chars.npcs) {
+      if (S.shopsOnly && !isShopNpc(npc)) continue;
+      const label = npc.name || npc.key;
+      if (q && !label.toLowerCase().includes(q) && !npc.key.toLowerCase().includes(q)) continue;
+      const id = npcId(npc), dg = diagBy.get(id);
+      shown++;
+      frag.appendChild(h('div.npc' + (id === S.sel ? '.sel' : ''), { on: { click: () => { S.sel = id; S.tab = 0; renderAll(false); } } },
+        h('div.n', h('span', label),
+          h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : null,
+            S.edited.has(id) ? h('span.tag.edit', 'edited') : null,
+            dg && dg.b ? h('span.tag.bad', '⛔' + dg.b) : dg && dg.w ? h('span.tag.warn', '⚠' + dg.w) : null)),
+        h('div.k', `${npc.key} · ${npc.file}`)));
+    }
+    if (!shown) frag.appendChild(h('div.pad.muted', 'No NPCs match.'));
+    el.appendChild(frag);
+  }
+
+  function itemLabel(id) {
+    const it = S.ws.itemById(id);
+    if (!it) return { name: '(not in Spec_Item.txt)', rarity: '', info: null };
+    const info = S.ws.itemInfo(it);
+    return { name: info.name, rarity: info.rarity, info };
+  }
+
+  function diagsIn(npc, rec) {
+    return S.ws.diags.filter(d => d.file === npc.file && d.start !== undefined && (rec ? (d.start >= rec.start && d.start < Math.max(rec.end, rec.start + 1)) : d.npcKey === npc.key));
+  }
+  function diagTags(list) {
+    return list.map(d => h('span.tag.' + (d.severity === 'BLOCK' ? 'bad' : 'warn'), { title: d.message }, (d.severity === 'BLOCK' ? '⛔ ' : '⚠ ') + d.code));
+  }
+
+  function renderEditor() {
+    const el = $('editor');
+    const npc = selNpc();
+    if (!S.ws || !npc) { if (S.ws) { el.className = 'empty-state'; el.innerHTML = '<p>Select an NPC on the left.</p>'; } return; }
+    el.className = ''; el.textContent = '';
+    const f = S.ws.fileOfNpc(npc);
+    const canEdit = S.ws.isEditable(f.name.toLowerCase());
+    const chip = npc.venderType === 1 || npc.venderType === 2;
+    const entries = npc.statements.map(r => ({ r, e: FRE.character.shopEntry(r) })).filter(x => x.e);
+
+    el.appendChild(h('div.npc-title', h('h2', npc.name || npc.key), h('span.def', npc.key),
+      h('span.line', `${npc.file}:${f.lineOf(npc.start) + 1}`),
+      chip ? h('span.tag.chip', npc.venderType === 1 ? 'Red Chip shop' : 'Donate Chip shop') : h('span.tag', 'Penya shop'),
+      canEdit ? null : h('span.tag.bad', 'read-only')));
+
+    const tabs = h('div.tabs');
+    for (let t = 0; t < 4; t++) {
+      const n = entries.filter(x => x.e.slot === t).length;
+      tabs.appendChild(h('button' + (t === S.tab ? '.sel' : ''), { on: { click: () => { S.tab = t; renderEditor(); renderItems(); } } },
+        npc.slotTitles[t] || `Tab ${t}`, h('span.count', n ? `(${n})` : '')));
+    }
+    el.appendChild(tabs);
+
+    // fixed items (AddShopItem / AddVenderItem2)
+    const fixed = entries.filter(x => (x.e.kind === 'fixed' || x.e.kind === 'chip') && x.e.slot === S.tab);
+    el.appendChild(h('h3', chip ? 'Chip items (AddVenderItem2)' : 'Fixed items (AddShopItem)'));
+    if (!fixed.length) el.appendChild(h('p.muted', 'None in this tab. Use + in the item list on the right to add one.'));
+    else {
+      const tb = h('table', h('tr', h('th', 'Item'), h('th', 'Define'), h('th.num', chip ? 'Chip price' : 'Price'), h('th', 'Tab'), h('th', ''), h('th', '')));
+      for (const { r, e } of fixed) {
+        const id = e.item.value >>> 0;
+        const lab = itemLabel(id);
+        const def = e.item.define || f.text.slice(e.item.start, e.item.end);
+        let priceCell;
+        if (e.kind === 'chip') priceCell = h('td.num', lab.info ? fmt(lab.info.chipCost) : '');
+        else {
+          const inp = h('input', { type: 'number', min: 0, step: 1, value: e.cost ? e.cost.value : '', placeholder: lab.info ? fmt(lab.info.cost) + ' (item)' : '', disabled: !canEdit,
+            title: 'Empty = the item\'s own price from Spec_Item.txt. A price here changes the item\'s price everywhere (server-wide).',
+            on: { change: ev => { const v = ev.target.value.trim(); edit(npc, text => FRE.shopOps.setCost(text, r, v === '' ? null : Number(v)), 'price'); } } });
+          priceCell = h('td.num', inp);
+        }
+        const sel = h('select', { disabled: !canEdit, on: { change: ev => edit(npc, text => FRE.shopOps.setSlot(text, r, Number(ev.target.value)), 'move tab') } },
+          [0, 1, 2, 3].map(t => h('option', { value: t, selected: t === e.slot }, String(t))));
+        tb.appendChild(h('tr', h('td', h('span.r-' + lab.rarity, lab.name), ' ', diagTags(diagsIn(npc, r))),
+          h('td.def', def), priceCell, h('td', sel), h('td.line', 'L' + (f.lineOf(r.start) + 1)),
+          h('td', h('button.icon.danger', { disabled: !canEdit, title: 'Remove', on: { click: () => edit(npc, text => FRE.shopOps.removeStatement(text, r), `remove ${def}`) } }, '✕'))));
+      }
+      el.appendChild(tb);
+    }
+
+    // generated stock (read-only in Build 1)
+    const gen = entries.filter(x => x.e.kind === 'generated' && x.e.slot === S.tab);
+    if (gen.length) {
+      el.appendChild(h('h3', 'Generated stock (AddVendorItem) · read-only'));
+      const D = S.ws.defines;
+      const tb = h('table', h('tr', h('th', 'Item kind'), h('th', 'Job'), h('th.num', 'Rarity'), h('th.num', 'Count'), h('th', '')));
+      for (const { r, e } of gen) {
+        const ik3 = e.ik3.define || D.byValue('IK3_', e.ik3.value) || e.ik3.value;
+        const job = e.job.value === -1 ? 'any' : (e.job.define || D.byValue('JOB_', e.job.value) || e.job.value);
+        tb.appendChild(h('tr', h('td.def', ik3, e.lang ? ` (lang ${e.lang.value})` : ''), h('td.def', job),
+          h('td.num', `${e.rareMin.value}–${e.rareMax.value}`), h('td.num', e.count.value), h('td.line', 'L' + (f.lineOf(r.start) + 1))));
+      }
+      el.appendChild(tb);
+    }
+
+    const nd = diagsIn(npc, null);
+    if (nd.length) {
+      el.appendChild(h('h3', 'Problems for this NPC'));
+      nd.forEach(d => el.appendChild(h('div.diag', h('span.sev.' + d.severity, d.severity), h('span', d.message))));
+    }
+  }
+
+  // ------------------------------------------------------------------ item database
+  function buildItems() {
+    S.items = [...S.ws.items.items.values()].map(it => S.ws.itemInfo(it)).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  function renderItemFilters() {
+    if (!S.ws) return;
+    const D = S.ws.defines;
+    const ik1 = $('item-ik1'), ik3 = $('item-ik3');
+    const k1 = [...new Set(S.items.map(i => i.ik1))].sort((a, b) => a - b);
+    ik1.textContent = '';
+    ik1.appendChild(h('option', { value: '' }, 'All categories'));
+    k1.forEach(v => ik1.appendChild(h('option', { value: v, selected: String(v) === S.ik1 }, (D.byValue('IK1_', v) || String(v)).replace(/^IK1_/, ''))));
+    const k3 = [...new Set(S.items.filter(i => S.ik1 === '' || String(i.ik1) === S.ik1).map(i => i.ik3))].sort((a, b) => a - b);
+    ik3.textContent = '';
+    ik3.appendChild(h('option', { value: '' }, 'All types'));
+    k3.forEach(v => ik3.appendChild(h('option', { value: v, selected: String(v) === S.ik3 }, (D.byValue('IK3_', v) || String(v)).replace(/^IK3_/, ''))));
+  }
+
+  function applyItemFilter() {
+    const q = S.itemQuery.toLowerCase();
+    S.filtered = S.items.filter(i =>
+      (!q || i.name.toLowerCase().includes(q) || i.define.toLowerCase().includes(q)) &&
+      (S.ik1 === '' || String(i.ik1) === S.ik1) &&
+      (S.ik3 === '' || String(i.ik3) === S.ik3) &&
+      (!S.rarity.size || S.rarity.has(i.rarity)));
+  }
+
+  function renderItems() {
+    const list = $('item-list');
+    if (!S.ws) return;
+    applyItemFilter();
+    $('item-spacer').style.height = S.filtered.length * ROW_H + 'px';
+    $('item-count').textContent = `${fmt(S.filtered.length)} of ${fmt(S.items.length)} items`;
+    paintItems();
+  }
+
+  function paintItems() {
+    const list = $('item-list');
+    [...list.querySelectorAll('.item')].forEach(n => n.remove());
+    const npc = selNpc();
+    const canAdd = npc && S.ws.isEditable(npc.file.toLowerCase());
+    const from = Math.max(0, Math.floor(list.scrollTop / ROW_H) - 5);
+    const to = Math.min(S.filtered.length, from + Math.ceil(list.clientHeight / ROW_H) + 10);
+    const frag = document.createDocumentFragment();
+    for (let i = from; i < to; i++) {
+      const it = S.filtered[i];
+      const atk = it.atkMax > 0 ? `${it.atkMin}–${it.atkMax}` : '';
+      frag.appendChild(h('div.item', { style: `top:${i * ROW_H}px` },
+        h('div.nm', { title: `${it.name}\n${it.define} (${it.id})\nprice ${fmt(it.cost)}` }, h('span.r-' + it.rarity, it.name), h('span.def', it.define)),
+        h('div.ty', { title: it.ik3Name || '' }, (it.ik3Name || '').replace(/^IK3_/, '')),
+        h('div.num', it.level > 0 ? it.level : ''),
+        h('div.num', atk),
+        h('button', { disabled: !canAdd, title: npc ? `Add to ${npc.name || npc.key}, tab ${S.tab}` : 'Select an NPC first', on: { click: () => addItemToSelected(it) } }, '+')));
+    }
+    list.appendChild(frag);
+  }
+
+  // ------------------------------------------------------------------ problems panel
+  function renderDiagPanel() {
+    const el = $('diag-panel');
+    el.hidden = !S.diagOpen;
+    if (!S.diagOpen || !S.ws) return;
+    el.textContent = '';
+    const fresh = new Set(S.ws.newBlocking());
+    const rank = d => fresh.has(d) ? 0 : d.severity === 'BLOCK' ? 1 : d.severity === 'WARN' ? 2 : 3;
+    const list = [...S.ws.diags].sort((a, b) => rank(a) - rank(b));
+    el.appendChild(h('div.pad.muted.small', `${list.length} problem(s). Blocking problems introduced by your edits (⛔ new) prevent saving; problems that were already in the files are shown for information.`));
+    for (const d of list) {
+      const f = S.ws.files.get((d.file || '').toLowerCase());
+      el.appendChild(h('div.diag', { on: { click: () => {
+        const npc = d.npcKey && S.ws.chars.npcs.find(n => n.key === d.npcKey && n.file === d.file);
+        if (npc) { S.sel = npcId(npc); renderAll(false); }
+      } } },
+        h('span.sev.' + d.severity, d.severity), fresh.has(d) ? h('span.new', 'new') : null,
+        h('span', d.message), h('span.line', f && d.start !== undefined ? `${d.file}:${f.lineOf(d.start) + 1}` : d.file || '')));
+    }
+  }
+
+  // ------------------------------------------------------------------ save
+  function renderDiff(f) {
+    const a = FRE.diff.splitKeepEol(f.originalText), b = FRE.diff.splitKeepEol(f.text);
+    const hs = FRE.diff.hunks(FRE.diff.diffLines(a, b), 2);
+    const box = h('div.diff');
+    const strip = s => f.display(s).replace(/\r\n$|\r$|\n$/, '');
+    hs.forEach((hk, i) => {
+      if (i > 0) box.appendChild(h('div.gap', '⋯'));
+      for (const op of hk.ops) {
+        if (op.type === 'eq') box.appendChild(h('div.ctx', `${String(op.b + 1).padStart(6)}   ${strip(b[op.b])}`));
+        else if (op.type === 'del') box.appendChild(h('div.del', `${String(op.a + 1).padStart(6)} - ${strip(a[op.a])}`));
+        else box.appendChild(h('div.add', `${String(op.b + 1).padStart(6)} + ${strip(b[op.b])}`));
+      }
+    });
+    return box;
+  }
+
+  async function onSave() {
+    const ws = S.ws;
+    if (!ws || !ws.dirtyFiles().length) return;
+    const nb = ws.newBlocking();
+    if (nb.length) {
+      modal({ title: '⛔ Cannot save: your edits introduced blocking problems',
+        body: h('div', nb.map(d => h('div.diag', h('span.sev.BLOCK', 'BLOCK'), h('span', d.message)))) });
+      return;
+    }
+    if (!S.backupDir) {
+      const ok = await new Promise(res => modal({ title: 'Choose a backup folder first',
+        body: h('p', 'Every save first copies the current files into a timestamped folder. Pick a folder outside Server/Resource, e.g. FLYFF-RESOURCE-EDITOR/backups.'),
+        buttons: [{ label: 'Cancel', onClick: () => res(false) }, { label: 'Choose folder…', cls: 'primary', onClick: async () => res(await pickBackup()) }] }));
+      if (!ok) return;
+    }
+    if (!(await FRE.fsa.ensurePermission(S.resDir)) || !(await FRE.fsa.ensurePermission(S.backupDir))) { toast('Write permission was not granted.', 'bad'); return; }
+
+    const dirty = ws.dirtyFiles();
+    const warns = ws.diags.filter(d => d.severity === 'WARN');
+    const body = h('div',
+      h('p', `These lines will change. Everything else in the file${dirty.length > 1 ? 's' : ''} stays byte-for-byte identical.`),
+      dirty.map(f => [h('h3', `${f.name}`), renderDiff(f)]),
+      warns.length ? h('p.muted', `${warns.length} warning(s) (not blocking) — see the problems panel.`) : null,
+      h('p.muted.small', `Backup folder: ${S.backupDir.name}/<timestamp>/ · Remember to copy changed character*.inc files to Client/.`));
+    modal({ title: `Review changes (${dirty.length} file${dirty.length > 1 ? 's' : ''})`, body, wide: true, buttons: [
+      { label: 'Cancel' },
+      { label: `Back up and write ${dirty.length} file${dirty.length > 1 ? 's' : ''}`, cls: 'primary', onClick: runSave },
+    ] });
+  }
+
+  async function runSave() {
+    const log = h('div.log');
+    const m = modal({ title: 'Saving…', body: log, buttons: [{ label: 'Close' }] });
+    const report = await FRE.save.save(S.ws, S.backupDir, msg => log.appendChild(document.createTextNode(msg + '\n')))
+      .catch(e => ({ ok: false, steps: [String(e && e.message || e)] }));
+    if (!report.ok) log.appendChild(h('div', { style: 'color:var(--bad)' }, '\nNot saved: ' + (report.steps[report.steps.length - 1] || '')));
+    else { S.edited.clear(); toast('Saved. Copy changed files to Client/ and restart the WorldServer.', 'ok'); }
+    m.el.querySelector('header').textContent = report.ok ? 'Saved' : 'Save failed';
+    renderAll(false);
+  }
+
+  async function onBackup() {
+    if (!S.ws) return;
+    if (!S.backupDir && !(await pickBackup())) return;
+    if (!(await FRE.fsa.ensurePermission(S.backupDir))) return;
+    try { const name = await FRE.save.snapshot(S.ws, S.backupDir); toast(`Snapshot written: ${S.backupDir.name}/${name}`, 'ok'); }
+    catch (e) { toast('Backup failed: ' + e.message, 'bad'); }
+  }
+
+  // ------------------------------------------------------------------ init
+  async function init() {
+    $('version').textContent = FRE.BUILD_INFO || 'dev';
+    $('btn-load').onclick = pickResource;
+    $('btn-backup-dir').onclick = pickBackup;
+    $('btn-save').onclick = onSave;
+    $('btn-backup').onclick = onBackup;
+    $('btn-undo').onclick = undo;
+    $('btn-redo').onclick = redo;
+    $('btn-diag').onclick = () => { S.diagOpen = !S.diagOpen; renderDiagPanel(); };
+    $('npc-search').oninput = e => { S.npcQuery = e.target.value; renderNpcList(); };
+    $('npc-shops-only').onchange = e => { S.shopsOnly = e.target.checked; renderNpcList(); };
+    $('item-search').oninput = e => { S.itemQuery = e.target.value; $('item-list').scrollTop = 0; renderItems(); };
+    $('item-ik1').onchange = e => { S.ik1 = e.target.value; S.ik3 = ''; renderItemFilters(); renderItems(); };
+    $('item-ik3').onchange = e => { S.ik3 = e.target.value; renderItems(); };
+    $('item-list').addEventListener('scroll', () => requestAnimationFrame(paintItems));
+    window.addEventListener('resize', () => S.ws && paintItems());
+    for (const b of document.querySelectorAll('#rarity-chips .chip')) {
+      b.onclick = () => { const r = b.dataset.r; S.rarity.has(r) ? S.rarity.delete(r) : S.rarity.add(r); b.classList.toggle('on'); renderItems(); };
+    }
+    document.addEventListener('keydown', e => {
+      if (!(e.ctrlKey || e.metaKey) || e.target.tagName === 'INPUT') return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+      else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); }
+      else if (k === 's') { e.preventDefault(); onSave(); }
+    });
+    window.addEventListener('beforeunload', e => { if (S.ws && S.ws.dirtyFiles().length) { e.preventDefault(); e.returnValue = ''; } });
+    renderBanners();
+    if (!FRE.fsa.supported()) { $('btn-load').disabled = true; return; }
+    const last = await FRE.fsa.recall('resource');
+    if (last) {
+      const btn = $('btn-reopen');
+      btn.hidden = false; btn.textContent = `Reopen "${last.name}"`;
+      btn.onclick = async () => { try { await loadFrom(last); btn.hidden = true; } catch (e) { toast(e.message, 'bad'); } };
+    }
+    const bk = await FRE.fsa.recall('backup');
+    if (bk && (await FRE.fsa.ensurePermission(bk, false))) { S.backupDir = bk; renderToolbar(); }
+    else if (bk) { $('backup-name').textContent = `${bk.name} (click to re-allow)`; $('btn-backup-dir').onclick = async () => { if (await FRE.fsa.ensurePermission(bk)) { S.backupDir = bk; $('btn-backup-dir').onclick = pickBackup; renderToolbar(); } else pickBackup(); }; }
+  }
+
+  FRE.app = { init, state: S };
+  if (typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', init);
+})(globalThis.FRE = globalThis.FRE || {});
+
+</script>
+</body>
+</html>

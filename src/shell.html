@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FLYFF Resource Editor</title>
+<style>
+/*STYLES*/
+</style>
+</head>
+<body>
+<header id="toolbar">
+  <div class="brand">FLYFF Resource Editor <span class="muted" id="version"></span></div>
+  <div class="tb-group">
+    <button id="btn-load" class="primary">Load Folder</button>
+    <button id="btn-reopen" hidden>Reopen last folder</button>
+    <button id="btn-backup-dir" title="Folder where backups are written before every save">Backup folder: <b id="backup-name">not set</b></button>
+  </div>
+  <div class="tb-group">
+    <button id="btn-undo" title="Undo (Ctrl+Z)" disabled>Undo</button>
+    <button id="btn-redo" title="Redo (Ctrl+Y)" disabled>Redo</button>
+    <button id="btn-save" class="primary" title="Save (Ctrl+S)" disabled>Save</button>
+    <button id="btn-backup" title="Snapshot all loaded files into the backup folder" disabled>Backup</button>
+  </div>
+  <div id="file-status" class="tb-files"></div>
+  <button id="btn-diag" class="diag-badge" title="Problems">0</button>
+</header>
+<div id="banners"></div>
+<main id="layout">
+  <aside id="left">
+    <div class="panel-head">
+      <input id="npc-search" type="search" placeholder="Search NPCs" autocomplete="off">
+      <label class="check"><input id="npc-shops-only" type="checkbox" checked> shops only</label>
+    </div>
+    <div id="npc-list" class="list"></div>
+  </aside>
+  <section id="center">
+    <div id="editor" class="empty-state">
+      <h2>NPC Shop Editor</h2>
+      <p>Click <b>Load Folder</b> and pick <code>FLYFF-V19-SOURCE/Server/Resource</code><br>(or a test copy such as <code>test-data/Resource</code>).</p>
+      <p class="muted">Works in Chrome and Edge. Nothing is written until you press Save and confirm the changes.</p>
+    </div>
+    <div id="diag-panel" hidden></div>
+  </section>
+  <aside id="right">
+    <div class="panel-head col">
+      <input id="item-search" type="search" placeholder="Search items (name or II_)" autocomplete="off">
+      <div class="row">
+        <select id="item-ik1"><option value="">All categories</option></select>
+        <select id="item-ik3"><option value="">All types</option></select>
+      </div>
+      <div class="row chips" id="rarity-chips">
+        <button class="chip" data-r="normal">Normal</button>
+        <button class="chip" data-r="unique">Unique</button>
+        <button class="chip" data-r="ultimate">Ultimate</button>
+        <button class="chip" data-r="baruna">Baruna</button>
+      </div>
+      <label class="row small">Price for new items
+        <input id="new-price" type="number" min="0" step="1" placeholder="item's own price">
+      </label>
+    </div>
+    <div class="item-head"><span>Name</span><span>Type</span><span>Lv</span><span>ATK</span><span></span></div>
+    <div id="item-list" class="list virtual"><div id="item-spacer"></div></div>
+    <div id="item-count" class="muted small pad"></div>
+  </aside>
+</main>
+<div id="modal-root"></div>
+<div id="toasts"></div>
+<script>
+/*SCRIPTS*/
+</script>
+</body>
+</html>

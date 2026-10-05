@@ -1,0 +1,4 @@
+test-data/
+backups/
+__pycache__/
+*.crswap

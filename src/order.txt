@@ -1,0 +1,16 @@
+# Build/load order of the source files (classic scripts sharing globalThis.FRE)
+core/bytes.js
+core/sourcefile.js
+core/lexer.js
+loaders/defines.js
+loaders/strings.js
+loaders/specitem.js
+loaders/character.js
+validate/character.js
+core/diff.js
+edit/shop-ops.js
+core/workspace.js
+io/fsa.js
+io/save.js
+ui/dom.js
+ui/app.js
