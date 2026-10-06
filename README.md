@@ -53,7 +53,8 @@ Then choose `test-data` as the source folder: it uses `test-data/Resource`, `tes
 ## Docs
 - [docs/INVESTIGATION.md](docs/INVESTIGATION.md): how the server actually parses each file, and the encoding forensics.
 - [docs/DESIGN.md](docs/DESIGN.md): file model, save/backup pipeline, validation rules, architecture.
-- [docs/ROADMAP.md](docs/ROADMAP.md): what's done, what's next (Battle Pass, Exchanges, drops).
+- [docs/ROADMAP.md](docs/ROADMAP.md): what's done, what's next.
+- [docs/COMMANDS.md](docs/COMMANDS.md): every command and keyboard shortcut.
 
 ## Roadmap
 1. ~~Build 1: NPC shops~~
