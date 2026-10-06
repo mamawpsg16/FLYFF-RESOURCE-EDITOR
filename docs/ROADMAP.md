@@ -2,14 +2,7 @@
 
 _Last updated 2026-10-05._
 
-> **Handoff (2026-10-06, end of session):** NOT committed yet: Step E (Exchanges), one folder / one task (start screen), Version label, "In game" Exchanges list (only the 9 menus players can use; hidden / unplaced menus not shown or checked), "You get" recipe cards, Bound-off removes the flag. The user ran the first Brave checklist on `test-data` (all 4 saves verified byte-exact). **Next session:** (1) the user runs the short checklist below; (2) on OK, commit (message: Exchanges editor + start screen + in-game list); (3) build the **exchange simulator** (port `CExchange::CheckCondition` / `IsFull` / `GetPayItemList` / `ResultExchange`; press "exchange" N times, show how often each reward drops); (4) **F. Monster drops**. Tests: `gjs -m tests/run-tests.js` (375 pass, reads `test-data/fixtures`), `tests/run-ui.sh` (124 pass). Reset the manual copy with `tools/refresh-fixtures.sh test-data`.
->
-> **Short checklist (Brave, `dist/flyff-resource-editor.html`, folder `test-data`):**
-> 1. Top right shows `Version 6+ · …`; start screen shows TEST COPY.
-> 2. Exchanges: left list has exactly 9 entries (Collins; Pet Tamer, Cheirang; Card Master, Epie ×2; Rambo ×4; Nerupha), no dropdown, ⚠0.
-> 3. Each recipe card starts with a big "You get …" line, then Rewards, then Costs.
-> 4. Collins recipe 1: tick Bound on the 2nd reward, untick it, Save → the review shows the line ends in `500000` (no trailing `0`).
-> 5. Rambo (MMI_COLOSSEUM_REWARD_MIX) recipe 1: Move down → a notice about Korean comments → OK → Undo restores it.
+> **Handoff (2026-10-06, end of session):** Committed `11966b4` (Exchanges editor, one-folder start screen, in-game NPC detection; user-tested in Brave, all checks OK). **Next session:** (1) the **exchange simulator** (port `CExchange::CheckCondition` / `IsFull` / `GetPayItemList` / `ResultExchange`; press "exchange" N times, show how often each reward drops, ingredients taken, full-bag refusals); (2) **F. Monster drops**. Tests: `gjs -m tests/run-tests.js` (375 pass, reads `test-data/fixtures`), `tests/run-ui.sh` (124 pass). Reset the manual copy with `tools/refresh-fixtures.sh test-data` (it still holds test edits: Collins recipe 1 Golden Axe, BP season 2, Lui Blessedness, AMPESS price 25).
 
 ## Done
 - **Build 1** (`1c785ce`): NPC shop editor (`character*.inc`). Add, remove, price and tab edits; byte-exact save with verified backup. Tested by the user in Brave on `test-data`.
