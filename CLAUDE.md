@@ -17,6 +17,20 @@ The user is a web developer learning C++. When server behaviour matters, explain
   - `SourceFile` keeps the original bytes. Edits are splices on the current text, and bytes outside a splice are never rewritten.
   - Byte-oriented files accept ASCII-only inserts. Never normalise line endings, encodings, or whitespace. New lines copy the anchor line's indent and EOL.
   - Many custom files are LF; most legacy files are CRLF.
+- **Every task has a simulator.** For each editor, port the server (and client, where it decides what players see) code that USES the data, not only the loader, so a test can replay what happens in game: a player opens the window, buys, exchanges, kills, logs in.
+  - The simulator is a port of the named C++ functions (cite file:line and commits), with no guessing; anything not modelled is listed at the top of the file.
+  - It runs headless (gjs) on `test-data/fixtures`. The core tests use it to prove each edit does in game what the user asked; a `tools/<name>-sim.js` lets the user (and you) replay it by hand.
+  - Where it helps, the editor shows the result too ("what players see", "You get …").
+  - A new task is not done until its simulator and its tests exist.
+  - Status:
+
+    | Task | Simulator | Status |
+    |---|---|---|
+    | NPC Shops | `loaders/vendor-sim.js` (ProcessRegenItem / shop contents) | done, matches the Python oracle for all 594 NPCs |
+    | Battle Pass | `tests/bp-server.js`, `tools/bp-sim.js` (OnJoin, OnDied, AddBPUpdate, GiveBattlePassReward, OnDoBP) | done |
+    | Exchanges | load-time PAY math only (`effectivePay`, `rewardsGiven`) | **missing:** CheckCondition / IsFull / GetPayItemList / ResultExchange (next) |
+    | Donation Shop | none | **missing:** the buy flow (price = dwReferValue1, chip check, the crash items) |
+    | Monster drops (F) | — | build with the editor |
 - **Commas are for display only** (`FRE.num`). The server tokenizer splits on `,`, so files always get plain digits.
 
 ## Key facts about this server (details in docs/INVESTIGATION.md)

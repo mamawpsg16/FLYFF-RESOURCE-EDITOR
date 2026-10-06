@@ -2,7 +2,7 @@
 
 _Last updated 2026-10-05._
 
-> **Handoff (2026-10-06, end of session):** Committed `11966b4` (Exchanges editor, one-folder start screen, in-game NPC detection; user-tested in Brave, all checks OK). **Next session:** (1) the **exchange simulator** (port `CExchange::CheckCondition` / `IsFull` / `GetPayItemList` / `ResultExchange`; press "exchange" N times, show how often each reward drops, ingredients taken, full-bag refusals); (2) **F. Monster drops**. Tests: `gjs -m tests/run-tests.js` (375 pass, reads `test-data/fixtures`), `tests/run-ui.sh` (124 pass). Reset the manual copy with `tools/refresh-fixtures.sh test-data` (it still holds test edits: Collins recipe 1 Golden Axe, BP season 2, Lui Blessedness, AMPESS price 25).
+> **Handoff (2026-10-06, end of session):** Committed `11966b4` (Exchanges editor, one-folder start screen, in-game NPC detection; user-tested in Brave, all checks OK). **Next session:** (1) the **exchange simulator** (port `CExchange::CheckCondition` / `IsFull` / `GetPayItemList` / `ResultExchange`; press "exchange" N times, show how often each reward drops, ingredients taken, full-bag refusals); (2) a **Donation Shop simulator** (the buy flow); (3) **F. Monster drops**, with its drop simulator. Rule (CLAUDE.md): every task has a simulator of the in-game behaviour. Tests: `gjs -m tests/run-tests.js` (375 pass, reads `test-data/fixtures`), `tests/run-ui.sh` (124 pass). Reset the manual copy with `tools/refresh-fixtures.sh test-data` (it still holds test edits: Collins recipe 1 Golden Axe, BP season 2, Lui Blessedness, AMPESS price 25).
 
 ## Done
 - **Build 1** (`1c785ce`): NPC shop editor (`character*.inc`). Add, remove, price and tab edits; byte-exact save with verified backup. Tested by the user in Brave on `test-data`.
