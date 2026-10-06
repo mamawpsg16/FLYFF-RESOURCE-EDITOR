@@ -159,7 +159,7 @@ _Last updated 2026-10-06._
 1. Add New NPC step 1: committed (`7cbb9c9`), **not tested in game yet**. Do the in-game test (handoff §8) before calling it done; fix what it finds before starting S.
 2. **S. Shops: everything editable** (asked 2026-10-06: "the idea is we're able to edit everything in a shop").
 3. **V. Save History** (asked 2026-10-06: undo saved work per task without git).
-4. **H. "Where is this item used?"**
+4. **H. "Where is this item from / used?"** (every way to get an item: shops, exchanges, monster drops, boxes, rewards, quests).
 5. Add New NPC step 2 (exchange NPCs + new menus, Jeff's Weapon Pieces).
 6. Add New NPC step 3 (edit NPC menus + info boards, Guild Siege rules).
 7. **I. Rates & Buffs** (server rates, level-up gifts, rebirth tiers, guild buff, server buff, couple; buff descriptions written from the stats).
@@ -273,14 +273,50 @@ The user may move tasks (e.g. L earlier if the badge TODOs become urgent). Secti
    - histories: undo an old save while keeping later ones; two tasks on `Spec_Item.txt`; a same-line collision; an outside edit; an NPC added then undone; undo of an undo;
    - planted bugs in the Python copy must be caught.
 
-### H. "Where is this item used?" (asked 2026-10-06)
-- Pick any item (item DB panel or a new search box): list every place it appears, each with a jump link.
-  - NPC shops (`AddShopItem`, `AddVenderItem2`, and `AddVendorItem` rules that match it, via `vendor-sim.js`);
-  - Donation Shop, Exchanges (ingredient / reward), Battle Pass rewards;
-  - later, as their tasks land: monster drops (F), random boxes (J), level-up / rebirth / couple gifts (I), Monster Hunt (L).
-- Mostly reuses the existing loaders. It is read-only, so it needs no edit ops.
-- Useful checks shown with it: the item is sold cheaper than an exchange or box gives it; it is in a shop but `dwShopAble = -1`; an `AddShopItem` price overrides it server-wide (name the NPC).
-- Simulator: none of its own; it reports what the other tasks' simulators produce (e.g. the real shop contents). Its Python copy: an independent cross-reference of the same files in `tools/oracle_sim.py`.
+### H. "Where is this item from / used?" (asked 2026-10-06; widened the same day: "where can it be dropped or obtained")
+**For players' words:** pick any item and see every way a player can GET it, and where it is USED. Example:
+```
+Scroll of Awakening
+  🛒 Bought from:   Peach (Flaris) — 100,000 Penya · Raia (Darkon) — 100,000 Penya
+  🔁 Exchanged at:  Collins — 5 × Red Chip
+  ⚔️ Dropped by:    Mushpang (lv 15) — 0.5% · Giant Mushpang (lv 20) — 2%
+  🎁 Found in box:  Lucky Scroll Box — 10% chance
+  🏆 Rewards:       Battle Pass level 12 · Level-up gift at lv 60 · Quest "…"
+  🔧 Used in:       Collins exchange 3 (ingredient)
+```
+- Each line names the NPC with its town (`loaders/area.js`), the monster with its level (`loaders/propmover.js`), prices with commas, and chances as the server really rolls them. Each line is a link that jumps to it in its editor.
+- Show "Can't be obtained in game" when nothing gives it (e.g. only GM-created). Also show "only in a shop that is not placed on any map" / "hidden by SetOutput( false )" (`loaders/world.js`).
+
+**Sources (get):**
+
+| Source | File | How |
+|---|---|---|
+| NPC shops | `character*.inc` | `AddShopItem` / `AddVenderItem2`, plus `AddVendorItem` rules through `vendor-sim.js` |
+| Donation Shop | `DonationShop.inc` | |
+| Exchange rewards | `Exchange_Script.txt` | PAY, with the server's chance (`exchange-sim.js`) |
+| Monster drops | `propMoverEx.inc` | `LoadPropMoverEx`, `Project.cpp:2978`: DropItem (chance out of 3,000,000,000; values > INT_MAX are capped by `atoi`) and DropKind (rarity = monster level −5 … −2) |
+| Event drops | `propDropEvent.inc` | `LoadDropEvent`, `Project.cpp:4013` |
+| Boxes | `propGiftbox.inc` / `propPackItem.inc` | `LoadGiftbox` / `LoadPackItem` |
+| Battle Pass rewards | `BattlePass.inc` | |
+| Level-up gifts | `Event.lua` | `SetLevelUpGift` |
+| Couple gifts | `couple.inc` | Item section |
+| Monster Hunt rewards | `MonsterHunt.inc` | `AddReward` |
+| Quest rewards | `propQuest*.inc` | `LoadPropQuest`, `Project.cpp:1704`, the reward-item statements |
+
+**Uses (spend):** exchange ingredients and other recipes as later tasks add them.
+
+**Build note:**
+- H needs only READ-ONLY loaders for drops, boxes, quests, Event.lua gifts and Monster Hunt. Build those minimal readers here (port the named C++ for the item / chance parts only).
+- F, J, I and L later grow them into full editors; don't wait for them.
+- Each new reader cites its C++ and gets the Python cross-check, as usual.
+
+**Checks shown with it:**
+- sold in a shop cheaper than an exchange or box gives it;
+- in a shop but `dwShopAble = -1`;
+- an `AddShopItem` price that overrides the item server-wide (name the NPC);
+- an item that is a reward somewhere but can't be bought or dropped anywhere (fine, just shown).
+
+**Simulator:** none of its own. It reports what the other loaders / simulators produce (real shop contents, server drop chances). Python copy: an independent cross-reference of the same files in `tools/oracle_sim.py`.
 
 ### I. Rates & Buffs (asked 2026-10-06)
 **Files, and the C++ that reads each one:**
