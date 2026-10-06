@@ -11,7 +11,7 @@ _Last updated 2026-10-06._
 >
 > **User's test:** `python3 build.py`, `tools/refresh-fixtures.sh test-data` (new: Client defineNeuz.h / etc.* and the texture lists), reload, NPC Shops → + NPC: switch the Model list, type a tag in Building, Create (6 files), Save (backup has defineNeuz.h, etc.inc, etc.txt.txt + Client/), Undo. In game later (Windows): handoff §8 plus the `[tag]` above the name and its minimap icon.
 >
-> **After the user's OK:** commit step 1 (repo identity, Co-Authored-By trailer), then **Step 2: exchange NPCs + new exchange menus, Jeff's Weapon Pieces first** (plan §Step 2; reuse `FRE.ui.itemPicker`), then **Step 3: edit an NPC's menus + info-board texts (Guild Siege rules, `GuildCombatTEXT_<n>_<lang>.inc`)**, then Donation Shop simulator, F. drops, G. set effects. No 3D model viewer (the user chose pictures only).
+> **Next (the numbered order under "## Next" is the single source of truth, updated 2026-10-06):** in-game test of step 1 → S. Shops: everything editable → V. Save History → H. Where is this item from / used → D-sim. Donation Shop simulator → C. GM Commands list → Add NPC step 2 (exchange NPCs, Jeff's Weapon Pieces; reuse `FRE.ui.itemPicker`) → step 3 (NPC menus + info boards, Guild Siege rules) → I → F → J → K → L → G → M. No 3D model viewer (the user chose pictures only).
 
 ## Done
 - **Build 1** (`1c785ce`): NPC shop editor (`character*.inc`). Add, remove, price and tab edits; byte-exact save with verified backup. Tested by the user in Brave on `test-data`.
@@ -155,23 +155,24 @@ _Last updated 2026-10-06._
 
 ## Next (in this order, agreed with the user)
 
-**Order (agreed 2026-10-06; tasks S, V, C and H–M added that day):**
+**Order (agreed 2026-10-06; tasks S, V, D-sim, C and H–M added that day):**
 1. Add New NPC step 1: committed (`7cbb9c9`), **not tested in game yet**. Do the in-game test (handoff §8) before calling it done; fix what it finds before starting S.
 2. **S. Shops: everything editable** (asked 2026-10-06: "the idea is we're able to edit everything in a shop").
 3. **V. Save History** (asked 2026-10-06: undo saved work per task without git).
 4. **H. "Where is this item from / used?"** (every way to get an item: shops, exchanges, monster drops, boxes, rewards, quests).
-5. **C. GM Commands list** (every GM command, searchable, by category, with plain-English descriptions).
-6. Add New NPC step 2 (exchange NPCs + new menus, Jeff's Weapon Pieces).
-7. Add New NPC step 3 (edit NPC menus + info boards, Guild Siege rules).
-8. **I. Rates & Buffs** (server rates, level-up gifts, rebirth tiers, guild buff, server buff, couple; buff descriptions written from the stats).
-9. F. Monster drops: add / remove / change what each monster drops (the Rates calculator then shows real drop chances).
-10. **J. Random boxes.**
-11. **K. Upgrade rates.**
-12. **L. Monster Hunt + Badges + Collecting.**
-13. G. Item set effects and weapon effects.
-14. **M. Teleporter.**
+5. **D-sim. Donation Shop simulator** (the only finished editor without a "what happens in game" test).
+6. **C. GM Commands list** (every GM command, searchable, by category, with plain-English descriptions).
+7. Add New NPC step 2 (exchange NPCs + new menus, Jeff's Weapon Pieces).
+8. Add New NPC step 3 (edit NPC menus + info boards, Guild Siege rules).
+9. **I. Rates & Buffs** (server rates, level-up gifts, rebirth tiers, guild buff, server buff, couple; buff descriptions written from the stats).
+10. F. Monster drops: add / remove / change what each monster drops (the Rates calculator then shows real drop chances).
+11. **J. Random boxes.**
+12. **K. Upgrade rates.**
+13. **L. Monster Hunt + Badges + Collecting.**
+14. G. Item set effects and weapon effects.
+15. **M. Teleporter.**
 
-The user may move tasks (e.g. L earlier if the badge TODOs become urgent). Sections H–M below are leads from a first look, not finished investigations: read the C++ named there before designing anything.
+**Every task gets a simulator + its independent Python copy (CLAUDE.md rule), so the user can see what would happen in game before testing in game.** The user may move tasks (e.g. L earlier if the badge TODOs become urgent). Sections H–M below are leads from a first look, not finished investigations: read the C++ named there before designing anything.
 
 ### Add New NPC (handoff written 2026-10-05, branch `ccr-25b694d1-jie3e1`, merged)
 - Spec: **`docs/HANDOFF-ADD-NPC.md`** (read it whole first). In the web app the user creates an NPC, places it on a map (a new 200-byte record in `World/<map>/<map>.dyo`), ticks its right-click menus, and gives it up to 4 shop tabs with items. The app validates (§6, with self-tests §6.5), shows the exact text and bytes, backs up, writes the 6 files (Server + Client), reads them back and validates again (§7). In-game checklist: §8; out of scope: §9; build order: §10.
@@ -310,8 +311,21 @@ Python copy, as for every task.
    - histories: undo an old save while keeping later ones; two tasks on `Spec_Item.txt`; a same-line collision; an outside edit; an NPC added then undone; undo of an undo;
    - planted bugs in the Python copy must be caught.
 
+### D-sim. Donation Shop simulator (agreed 2026-10-06)
+**For players' words:** "Try it" in the Donation Shop editor. Pick an item, a quantity and a bag (Donate Chips owned, free slots) and see exactly what the player gets: bought, "not enough chips", "bag full", or refused.
+
+**Port:**
+- the server's `CDPSrvr::OnBuyDonationItem` (`WORLDSERVER/DPSrvr.cpp:3636`, packet `PACKETTYPE_BUYDONATIONITEM`):
+  - the allow-list built by `CProject::LoadDonationShop` (`_Common/ProjectCmn.cpp:1845`);
+  - price = the item's `dwReferValue1` (shared chip price, `7bedef15`) × quantity, paid in `II_CHP_DONATE`;
+  - the chip check, the bag check (`IsFull` / `GetEmptyCount`, as in `exchange-sim.js`), and item creation;
+- the client's confirm dialog `CWndConfirmBuyDonation` (`_Interface/WndDonationShop.h`), for what the player sees.
+- Keep the crash items (Nexus Shield, Icecrown Purple Shield, `ae345504`) as a BLOCK and show why.
+
+**Tests:** cases for exact chips, one chip short, a full bag, a stack that fits, max quantity, an item not in the list. Python copy in `tools/oracle_sim.py donation`; planted bugs must be caught. Then update CLAUDE.md's simulator status table (Donation Shop: done).
+
 ### C. GM Commands list (asked 2026-10-06)
-**For players' words:** every GM command in one searchable page, grouped by category (Item & Inventory, Guild Siege, Monster / NPC, Teleport, Server, Moderation, Events, Custom…). Each command shows:
+**For players' words:** every GM command in one searchable page (and whether it really works on this server), grouped by category (Item & Inventory, Guild Siege, Monster / NPC, Teleport, Server, Moderation, Events, Custom…). Each command shows:
 - the name and short alias, e.g. `/createitem` (`/ci`);
 - who can use it: Player / GM 1 / GM 2 / GM 3 / Admin (`AUTH_GENERAL`, `AUTH_GAMEMASTER`, `AUTH_GAMEMASTER2`, `AUTH_GAMEMASTER3`, `AUTH_ADMINISTRATOR`);
 - what it does, in plain English;
@@ -337,7 +351,20 @@ Guild Siege
 - in Add New NPC / "Where each NPC stands", show `/te` to go there;
 - in item views, show `/createitem <id>` to get the item for an in-game test.
 
-**Simulator:** not applicable (reference page). Tests: the parse of the table (count, the `#ifdef` handling) checked by an independent Python reader of the same file.
+**Big finding: about 108 commands can never be used on this server.**
+- `ParsingCommand` (`FuncTextCmd.cpp:6103`) walks the table in source order and, on any non-Korean build, does `if( command starts with "open" ) break;`. IDS_LANG is 1 (USA), so every entry after `open` is unreachable.
+- Your own comments above `ResetBattlePass` / `GWPrizePayout` say so: `/rrbp` "silently did nothing" until it was moved above `open`.
+- Today about 108 entries sit after it (e.g. `/close`, `/music`, `/sound`, `/SetPlayerName`, `/SetGuildName`, `/DeclWar`, `/gmitem`). The common ones (`/createitem`, `/createnpc`, `/teleport`, `/level`, `/getgold`, `/GCOpen`, `/weather`) are before it and work.
+- The page marks each dead one "❌ Can't be used on this server (listed after /open)". This is also a tip for the C++ side: move a needed command above `open`, the way `/rrbp` was moved.
+
+**Simulator (port of `ParsingCommand`):** "type a command as Player / GM 1 / GM 2 / GM 3 / Admin" →
+- **which entry matches:** name, alias or Korean name/alias, first match in source order, and the `open` break;
+- **is the level high enough:** `m_dwAuthorization` compare;
+- **where it runs:** client, server or both (`TCM_*`). On the client, a TCM_SERVER command is just sent as chat to the server.
+
+Result: "works", "your level is too low", "can't be used on this server", or "unknown command".
+
+Tests: the table parse (count, the `#ifdef` handling, the `open` cut-off) and the simulator cases, checked by an independent Python copy of the same file. Planted bugs (e.g. `continue` instead of `break`) must be caught.
 
 ### H. "Where is this item from / used?" (asked 2026-10-06; widened the same day: "where can it be dropped or obtained")
 **For players' words:** pick any item and see every way a player can GET it, and where it is USED. Example:
