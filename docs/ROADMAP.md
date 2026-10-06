@@ -155,19 +155,20 @@ _Last updated 2026-10-06._
 
 ## Next (in this order, agreed with the user)
 
-**Order (agreed 2026-10-06; tasks S and H–M added that day):**
+**Order (agreed 2026-10-06; tasks S, V and H–M added that day):**
 1. Add New NPC step 1: committed (`7cbb9c9`), **not tested in game yet**. Do the in-game test (handoff §8) before calling it done; fix what it finds before starting S.
 2. **S. Shops: everything editable** (asked 2026-10-06: "the idea is we're able to edit everything in a shop").
-3. **H. "Where is this item used?"**
-4. Add New NPC step 2 (exchange NPCs + new menus, Jeff's Weapon Pieces).
-5. Add New NPC step 3 (edit NPC menus + info boards, Guild Siege rules).
-6. **I. Rates & Buffs** (server rates, level-up gifts, rebirth tiers, guild buff, server buff, couple; buff descriptions written from the stats).
-7. F. Monster drops (the Rates calculator then shows real drop chances).
-8. **J. Random boxes.**
-9. **K. Upgrade rates.**
-10. **L. Monster Hunt + Badges + Collecting.**
-11. G. Item set effects and weapon effects.
-12. **M. Teleporter.**
+3. **V. Save History** (asked 2026-10-06: undo saved work per task without git).
+4. **H. "Where is this item used?"**
+5. Add New NPC step 2 (exchange NPCs + new menus, Jeff's Weapon Pieces).
+6. Add New NPC step 3 (edit NPC menus + info boards, Guild Siege rules).
+7. **I. Rates & Buffs** (server rates, level-up gifts, rebirth tiers, guild buff, server buff, couple; buff descriptions written from the stats).
+8. F. Monster drops (the Rates calculator then shows real drop chances).
+9. **J. Random boxes.**
+10. **K. Upgrade rates.**
+11. **L. Monster Hunt + Badges + Collecting.**
+12. G. Item set effects and weapon effects.
+13. **M. Teleporter.**
 
 The user may move tasks (e.g. L earlier if the badge TODOs become urgent). Sections H–M below are leads from a first look, not finished investigations: read the C++ named there before designing anything.
 
@@ -216,6 +217,61 @@ The user may move tasks (e.g. L earlier if the badge TODOs become urgent). Secti
 4. **Same-price check:** when two shops sell the same item at different prices (e.g. Peach converted, Raia still on the rule), warn. Only one `dwCost` exists, so the last NPC loaded wins.
 
 **Simulator:** `vendor-sim.js` already ports ProcessRegenItem. Add the buy price the player pays (find where the shop price is computed for a normal Penya shop) and the sell-back price, so the preview shows "players pay / get back". Python copy in `tools/oracle.py`.
+
+### V. Save History (asked 2026-10-06)
+**In plain words (how the user described it, keep the UI this simple):**
+- Every Save is a save point. A **History** screen lists them, newest first, per task, so saved work can be undone without git.
+- Each row says what was done, in game words, never file names or line numbers:
+  ```
+  Today 2:32 PM — NPC Shops
+    ✏️ Peach: changed the price of Scroll of Awakening from 100,000 to 500,000 Penya
+    ➕ Peach: added Scroll of Holy for 300,000 Penya
+    ➖ Raia: removed Blessing of the Goddess
+  ```
+- Buttons on each save:
+  - **👁 View:** the shop / Battle Pass / exchange as it was then, read-only.
+  - **↩ Undo this save:** takes back only that save and keeps everything done after it.
+  - **⏪ Go back to this point:** everything exactly as it was, after listing what would be lost.
+  - **📌 Keep** + a note (e.g. "tested in game, works"): never pruned.
+- Undoing is itself a save, so the replaced version stays in the history. Nothing is lost.
+- A file edited outside the editor shows a ⚠ row. After an undo: "restart the server and client".
+
+**Wording standard** (in-game names, comma numbers; a save with many changes shows a summary that opens, e.g. `Peach: 12 changes (3 prices, 5 added, 4 removed) ▸`):
+- NPC Shops:
+  - `Peach (tab 1): changed the price of X from 100,000 to 500,000 Penya` / `… chip price of X from 5 to 8 Red Chips`;
+  - `added X for N Penya` / `removed X` / `moved X from tab 1 to tab 2`;
+  - `renamed tab 2 from "A" to "B"` / `changed the shop currency from Penya to Donate Chips`.
+- Donation Shop: `added X to "Fashion" for N Donate Chips` / `changed the price of X from n to n Donate Chips` / `moved X from "A" to "B"` / `removed X`.
+- Battle Pass:
+  - `level 12: changed the reward from X ×1 to Y ×2` / `level 12: changed the cost from 3,000 to 3,500 points`;
+  - `changed the season end from <date> to <date>` / `changed Mushpang's points from 2–4 to 3–6`.
+- Exchanges: `Collins, exchange 3: changed the ingredient from 10 to 15 × Red Chip` / `… changed the chance of X from 40% to 25%` / `added exchange 7 (A → B)` / `removed exchange 2 (X)`.
+- Add New NPC: `Created NPC "Lumi" on Madrigal, Flaris (x 6970, z 3337), menus: Trade, Bank, 2 shop tabs`.
+- Restore: `Restored the 10:00 save: changed the chip price of X from 8 back to 5`.
+
+**The shared-file risk (must be solved, not just warned about):**
+- Files written by more than one task: today `Spec_Item.txt` (NPC Shops + Donation Shop chip prices, `workspace.js` `editsSpec`) and `character.inc` (shop edits + Add New NPC); later also task S, I (`Spec_Item.txt`, `propItem.txt.txt`) and Add NPC step 2.
+- Putting back a whole old file would silently undo other tasks' later saves. The default undo therefore reverses ONLY that save's lines.
+- Example:
+  - 10:00 NPC Shops: Scroll of Awakening chip 5 → 8;
+  - 12:10 Donation Shop: Nexus Shield 50 → 80;
+  - Undo the 10:00 save → Scroll back to 5, Nexus Shield stays 80.
+- If a later save changed the same line, stop and ask: "changed again later (8 → 10): keep 10, go back to 5, or cancel?". Never guess.
+
+**What to build, in order:**
+1. **Richer saves** (`io/save.js`): the manifest also stores the undo labels of the save (with NPC / menu / item names) and a fingerprint (hash) of each file before and after. Backups already hold the before-bytes. "After" = the next save's backup of that file, or the disk when no later save exists; a fingerprint mismatch = "changed outside the editor".
+2. **Plain-words comparer** (new `history/describe.js`):
+   - load two versions with the existing loaders and describe the difference in the wording above, one part per task;
+   - it also covers old backups (no labels) and outside edits.
+3. **History screen** (new `ui/history.js`): list from the backups folder (`fsa.backupCopies` / the `<stamp>_<task>` folders, like Battle Pass "Past seasons"), View (read-only), Keep + note (stored in the save's folder), search by item / NPC. Read-only: build and ship this first.
+4. **Undo this save** (new `history/restore.js`):
+   - **3-way, line level:** A = before the save, B = after it, C = now. Apply only the A↔B changes onto C (`core/diff.js` Myers is already here). Overlap with a later change → stop and ask.
+   - **Map files (`.dyo`):** remove or restore that NPC's 200-byte record by key + position, not by offset.
+   - Then a normal save: verified backup, write, verify, Client sync, the task's validators and simulator.
+5. **Go back to this point:** whole files from that backup, only after listing every later change (any task, and outside edits) it would undo.
+6. **Tests + Python copy** (the project rule):
+   - histories: undo an old save while keeping later ones; two tasks on `Spec_Item.txt`; a same-line collision; an outside edit; an NPC added then undone; undo of an undo;
+   - planted bugs in the Python copy must be caught.
 
 ### H. "Where is this item used?" (asked 2026-10-06)
 - Pick any item (item DB panel or a new search box): list every place it appears, each with a jump link.
