@@ -2,7 +2,7 @@
 
 _Last updated 2026-10-06._
 
-> **Handoff (2026-10-06, end of session):** Committed after the user's test in Brave: the exchange simulator ("Try it"), the independent Python copies of the simulators (`tools/oracle_sim.py`), Battle Pass Past seasons (+ pop-up, "Use this whole ladder", ↑ / ↓, ✕ on any level, total on top), the Exchanges wording, and the Undo (n) / scroll / badge fixes. **Next session:** (1) **where each NPC stands**: area names players know (Flaris, Saint Morning, Darkon 1/2/3, Elliun, Valley of the Risen, Shaduwar …) in every task, from the C++ that names the area at a position, plus the NPC positions in the `.dyo` files; (2) **Add New NPC** (`docs/HANDOFF-ADD-NPC.md`); (3) a **Donation Shop simulator** (the buy flow) + its Python copy; (4) **F. Monster drops**, with both copies. Rule (CLAUDE.md): every task has a JS simulator AND an independent Python copy, and the tests require them to agree. Tests: `gjs -m tests/run-tests.js` (457 pass, about 90 s, reads `test-data/fixtures`), `tests/run-ui.sh` (147 pass). Reset the manual copy with `tools/refresh-fixtures.sh test-data` (leave `test-data/backups`: Past seasons reads it).
+> **Handoff (2026-10-06, end of session):** Committed after the user's test in Brave: the exchange simulator ("Try it"), the independent Python copies of the simulators (`tools/oracle_sim.py`), Battle Pass Past seasons (+ pop-up, "Use this whole ladder", ↑ / ↓, ✕ on any level, total on top), the Exchanges wording, and the Undo (n) / scroll / badge fixes. **Next session:** (1) **where each NPC stands**: area names players know (Flaris, Saint Morning, Darkon 1/2/3, Elliun, Valley of the Risen, Shaduwar …) in every task, from the C++ that names the area at a position, plus the NPC positions in the `.dyo` files; (2) **Add New NPC** (`docs/HANDOFF-ADD-NPC.md`); (3) a **Donation Shop simulator** (the buy flow) + its Python copy; (4) **F. Monster drops**, with both copies; (5) **G. Item set effects and weapon effects**, with both copies. Rule (CLAUDE.md): every task has a JS simulator AND an independent Python copy, and the tests require them to agree. Tests: `gjs -m tests/run-tests.js` (457 pass, about 90 s, reads `test-data/fixtures`), `tests/run-ui.sh` (147 pass). Reset the manual copy with `tools/refresh-fixtures.sh test-data` (leave `test-data/backups`: Past seasons reads it).
 
 ## Done
 - **Build 1** (`1c785ce`): NPC shop editor (`character*.inc`). Add, remove, price and tab edits; byte-exact save with verified backup. Tested by the user in Brave on `test-data`.
@@ -132,6 +132,11 @@ _Last updated 2026-10-06._
   - an `MI_` id out of range → the server hangs at startup (BLOCK);
   - `DropItem` chance is out of 3,000,000,000; 518 lines exceed INT_MAX (warn, show the effective %);
   - `DropKind` rarity = monster level −5 … −2.
+
+### G. Item set effects and weapon effects (asked 2026-10-06)
+- What the bonuses of an item set (wearing N pieces) and a weapon's effects give a character, edited in the app.
+- First find in the C++ and the commits which files and loaders hold them. Leads: the `SetItem` blocks of `propItemEtc.inc` (`_Common/Project.cpp:4567`, the same file as `LoadPiercingAvail`), the item's own stat values in `Spec_Item.txt`, and `randomoption.inc` / `ItemMergeRandomOption.txt`.
+- Simulator: a character wears / wields the items, and the simulator applies the bonuses the way the server does, giving the stats the game would show. Plus the independent Python copy, as for every task.
 
 ## Deferred (needs in-game testing on the user's Windows PC)
 - Editing `AddVendorItem` rules (the simulator in `loaders/vendor-sim.js` is ready for a live preview).
