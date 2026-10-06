@@ -146,6 +146,15 @@
       st.sel = first ? npcId(first) : null; st.tab = 0;
     },
 
+    isListed: npc => showTest()(npc),
+
+    listAction(ctx) {
+      const canAdd = ctx.ws && ctx.ws.isEditable('character.inc') && ctx.ws.isEditable('character.txt.txt') && ctx.ws.mapFiles.size;
+      return h('button.primary', { disabled: !canAdd,
+        title: canAdd ? 'Create a new NPC: place it on a map, pick its menus and shop' : 'Needs character.inc, character.txt.txt and the World/ map files (editable)',
+        on: { click: () => FRE.ui.newNpc.open(ctx) } }, '+ NPC');
+    },
+
     listExtra(ctx) {
       const npcs = ctx.ws ? ctx.ws.chars.npcs : [];
       return h('select.npc-filter', { title: 'Which NPCs to list', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
@@ -200,6 +209,12 @@
         const status = FRE.world.npcStatus(npc, ws.placed);
         el.appendChild(h('div', FRE.ui.whereLine(ws.whereOf(npc.key)),
           status.inGame === false && status.maps.length ? h('span.tag.warn', { title: 'CWorld::IsUsableDYO2: the WorldServer does not load this NPC' }, status.why) : null));
+      }
+      // a NPC made with "+ New NPC": what the game will load (loaders/newnpc-sim.js)
+      if (FRE.ui.newNpc && FRE.ui.newNpc.created.has(npc.key.toLowerCase())) {
+        const g = FRE.newNpcSim.inGame(ws, npc.key);
+        const name = id => { const it = ws.itemById(id); return it ? (it.name || it.define) : String(id); };
+        el.appendChild(h('div.nn-ingame', h('b', 'In game after Save + restart: '), FRE.newNpcSim.describe(g, name).map(l => h('div', l))));
       }
       const menus = npc.menus.map(v => D.byValue('MMI_', v) || String(v));
       if (menus.length) el.appendChild(h('div.menus', 'Menus: ', menus.map(m => ws.exchangeMenus.has(m)

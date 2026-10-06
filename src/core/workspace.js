@@ -15,7 +15,9 @@
   const CORE_CLIENT = ['Spec_Item.txt'];
   // Read when present, never required (context only).
   // World.inc, world.txt.txt and propMapComboBoxData.*: where NPCs stand (loaders/area.js)
-  const OPTIONAL = ['textClient.inc', 'textClient.txt.txt', 'World.inc', 'world.txt.txt', 'propMapComboBoxData.inc', 'propMapComboBoxData.txt.txt'];
+  // mdlDyna.inc: which MI_ models have a model (Add New NPC); etc.inc + etc.txt.txt: building tag names (SRT_)
+  const OPTIONAL = ['textClient.inc', 'textClient.txt.txt', 'World.inc', 'world.txt.txt', 'propMapComboBoxData.inc', 'propMapComboBoxData.txt.txt',
+    'mdlDyna.inc', 'etc.inc', 'etc.txt.txt'];
 
   // id, files it needs, files it may write, files the game client also reads,
   // parse(ws) -> model, validate(ws, model) -> diagnostics
@@ -23,11 +25,16 @@
     {
       id: 'npc', label: 'NPC Shops', editsSpec: true,
       required: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt'],
-      editable: ['character.inc', 'character-etc.inc', 'character-school.inc'],
-      client: ['character.inc', 'character-etc.inc', 'character-school.inc'],
+      // character.txt.txt: a new NPC's name and tab names (appended IDS_CHARACTER_INC_ lines, like f58e56ba)
+      // defineNeuz.h + etc.inc + etc.txt.txt: a new building tag (SRT_), the way b4b9a465 added four
+      editable: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'defineNeuz.h', 'etc.inc', 'etc.txt.txt'],
+      client: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'defineNeuz.h', 'etc.inc', 'etc.txt.txt'],
       maps: true,            // reads World/*/ to show where each NPC stands
+      editsMaps: true,       // a new NPC is a new record in World/<map>/<map>.dyo (Server + Client copies)
       parse(ws) {
         ws._sim = new Map();
+        // model names and the "has a propMover row" check of a new NPC (validate/newnpc.js)
+        if (!ws.movers && ws.files.get('propmover.txt')) ws.movers = FRE.propMover.loadPropMover(ws.files.get('propmover.txt'), { defines: ws.defines.defines, strings: ws.strings.map });
         return (ws.chars = FRE.character.loadCharacters(ws.files, { defines: ws.defines.defines, strings: ws.strings.map }));
       },
       validate(ws, model) {
@@ -93,8 +100,13 @@
       this.available = {};
       this.editable = new Set();
       this.donationTree = null;
+      this.clientModels = null;     // lowercase file names in Client/Model (setClientModels), when the Client folder is chosen
+      this.clientTextures = null;   // lowercase file names in Client/Model/Texture (setClientTextures)
+      this.modelTextures = new Map(); // lowercase Mvr_X.o3d -> [texture names it uses] (addModelTextures; newNpcSim.o3dTextures)
       this.clientTheme = null;      // lowercase file names in Client/Theme (Battle Pass textures), when the Client folder is chosen
       this.placed = null;           // lowercase NPC key -> [map names] from World/*/*.dyo (null: not read)
+      this.mapFiles = new Map();    // map name -> lowercase key in this.files of its .dyo (setMapFiles)
+      this.worldFiles = new Map();
       this.area = null;             // FRE.area.build: where each NPC stands, named as the client names it (null: not read)
       const task = this.only ? MODULES.find(m => m.id === this.only) : null;
       if (this.only && !task) throw new Error(`unknown task ${this.only}`);
@@ -133,6 +145,8 @@
     // Re-parse the modules that own `lowerName` (all modules when omitted).
     reparse(lowerName) {
       if (lowerName === 'spec_item.txt') { this.loadItems(); lowerName = undefined; }   // every module reads items
+      // a string table (character.txt.txt: a new NPC's name): every module reads names through it
+      if (lowerName && /\.txt\.txt$/.test(lowerName)) { this.strings = FRE.loadStrings(this.files); lowerName = undefined; }
       for (const m of MODULES) {
         if (!this.available[m.id].ok) continue;
         if (lowerName && ![...m.required, ...(m.deps || [])].some(n => n.toLowerCase() === lowerName)) continue;
@@ -148,6 +162,22 @@
     setDonationTree(tree) {
       this.donationTree = tree || null;
       if (this.available.donation && this.available.donation.ok) this.reparse('donationshop.inc');
+    }
+
+    // lowercase file names in Client/Model (Add New NPC: does a model have all its files?)
+    setClientModels(names) {
+      this.clientModels = names ? new Set([...names].map(n => n.toLowerCase())) : null;
+      if (this.available.npc && this.available.npc.ok) this.reparse('character.inc');
+    }
+
+    // Client/Model/Texture file names, and the textures of .o3d files already read (Map lowercase o3d -> [names])
+    setClientTextures(names, index) {
+      this.clientTextures = names ? new Set([...names].map(n => n.toLowerCase())) : null;
+      if (index) for (const [k, v] of index) this.modelTextures.set(k.toLowerCase(), v);
+      if (this.available.npc && this.available.npc.ok) this.reparse('character.inc');
+    }
+    addModelTextures(o3d, names) {
+      this.modelTextures.set(o3d.toLowerCase(), names);
     }
 
     // file names in the client's Theme folder (BattlePass.inc rarity / icon textures)
@@ -194,6 +224,24 @@
       this.area = FRE.area.build({ defines: this.defines.defines, get, dyo });
       for (const m of MODULES) if (m.maps && this.available[m.id].ok) this.reparse(m.required[0].toLowerCase());
     }
+    // The .dyo files as SourceFiles (binary, with handles), so a task may edit them. They are kept
+    // in this.files under 'world/<map>/<file>.dyo'; the NPC task may write them.
+    setMapFiles(dyoFiles, worldFiles = new Map()) {
+      this.worldFiles = worldFiles;
+      const maps = MODULES.some(m => m.editsMaps && this.shown.has(m.id) && this.available[m.id].ok);
+      for (const [name, f] of dyoFiles) {
+        const lower = `${f.dir}/${f.name}`.toLowerCase();
+        this.files.set(lower, f);
+        this.mapFiles.set(name, lower);
+        if (maps) this.editable.add(lower);
+      }
+      this.refreshMaps();
+    }
+    refreshMaps() {
+      const dyo = new Map([...this.mapFiles].map(([name, lower]) => [name, this.files.get(lower).serialize()]));
+      this.setMapObjects(dyo, this.worldFiles);
+    }
+    mapFile(name) { const l = this.mapFiles.get(name); return l ? this.files.get(l) : null; }
     // [{ place, caption, te, world, x, z, … }] where the NPC with this key stands (FRE.area.whereIs); null: maps not read
     whereOf(key) { return this.area ? FRE.area.whereIs(this.area, key) : null; }
     needsMaps() { return MODULES.some(m => m.maps && this.shown.has(m.id) && this.available[m.id].ok); }
@@ -229,6 +277,14 @@
     }
 
     _reparseAll(names) {
+      // a #define file (defineNeuz.h: a new SRT_ tag): everything that reads names is loaded again
+      if (names.some(n => FRE.DEFINE_FILES.some(d => d.toLowerCase() === n))) {
+        this.defines = FRE.loadDefines(this.files);
+        this.strings = FRE.loadStrings(this.files);
+        this.texts = FRE.textClient.load(this.files, this.strings.map, this.defines.defines);
+        names = ['spec_item.txt', ...names];
+      }
+      if (names.some(n => /\.dyo$/.test(n))) this.refreshMaps();
       if (names.includes('spec_item.txt')) this.reparse('spec_item.txt');   // reparses every module
       else names.forEach(n => this.reparse(n));
     }
@@ -258,7 +314,8 @@
     clientFileNames() {
       const own = MODULES.filter(m => this.available[m.id].ok && this.shown.has(m.id));
       const spec = !this.only || own.some(m => m.editsSpec) ? CORE_CLIENT : [];
-      return [...new Set([...spec, ...own.flatMap(m => m.client)])];
+      const maps = own.some(m => m.editsMaps) ? [...this.mapFiles.values()].map(l => this.files.get(l).name) : [];
+      return [...new Set([...spec, ...own.flatMap(m => m.client), ...maps])];
     }
 
     // Changed files that the game client also reads (must be copied to Client/).

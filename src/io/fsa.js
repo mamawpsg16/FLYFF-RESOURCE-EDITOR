@@ -68,6 +68,18 @@
     return h;
   }
 
+  // A sub-folder by relative path ('World/WdMadrigal'), names matched without case; created when asked.
+  async function dirAt(base, path, create = false) {
+    let d = base;
+    for (const part of String(path || '').split('/').filter(Boolean)) {
+      let next = null;
+      for await (const [n, h] of d.entries()) if (h.kind === 'directory' && n.toLowerCase() === part.toLowerCase()) { next = h; break; }
+      if (!next) { if (!create) return null; next = await d.getDirectoryHandle(part, { create: true }); }
+      d = next;
+    }
+    return d;
+  }
+
   // Remember folder handles between sessions (permission is asked again).
   const DB = 'flyff-resource-editor', STORE = 'handles';
   function idb() {
@@ -104,5 +116,5 @@
     return out.sort((a, b) => (a.stamp < b.stamp ? -1 : a.stamp > b.stamp ? 1 : 0));
   }
 
-  FRE.fsa = { supported, pickFolder, ensurePermission, findFiles, readHandle, writeHandle, writeVerified, newFolder, newFile, remember, recall, backupCopies };
+  FRE.fsa = { supported, pickFolder, ensurePermission, findFiles, readHandle, writeHandle, writeVerified, newFolder, newFile, dirAt, remember, recall, backupCopies };
 })(globalThis.FRE = globalThis.FRE || {});

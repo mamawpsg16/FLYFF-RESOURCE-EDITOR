@@ -12,6 +12,7 @@
   }
 
   function changeSummary(f) {
+    if (f.kind === FRE.SourceFile.KIND_BINARY) return binarySummary(f);
     const a = FRE.diff.splitKeepEol(f.originalText), b = FRE.diff.splitKeepEol(f.text);
     const ops = FRE.diff.diffLines(a, b);
     const out = [];
@@ -21,6 +22,18 @@
     }
     return out;
   }
+
+  // A binary file (.dyo): the byte ranges that differ, as one line each
+  function binarySummary(f) {
+    const a = f.originalText, b = f.text;
+    let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
+    let j = 0; while (j < a.length - i && j < b.length - i && a[a.length - 1 - j] === b[b.length - 1 - j]) j++;
+    const out = [];
+    if (a.length - i - j > 0) out.push({ type: 'del', line: i, text: `${a.length - i - j} bytes at offset ${i}` });
+    if (b.length - i - j > 0) out.push({ type: 'add', line: i, text: `${b.length - i - j} bytes at offset ${i}` });
+    return out;
+  }
+  const label = f => (f.dir ? f.dir + '/' : '') + f.name;
 
   // ws: Workspace, backupDir: directory handle, log: (msg) => void
   // client (optional): { dir, files: Map lower -> SourceFile, create: Set of lower names }
@@ -52,6 +65,7 @@
     if (client) {
       for (const p of FRE.clientSync.plan(ws, client)) {
         if (p.mode === 'different') { step(`Client/${p.name}: ${p.text}.`); continue; }
+        if (p.mode === 'missing' && p.server.dir) { step(`Client/${p.server.dir}/${p.name}: no copy, not created.`); continue; }
         if (p.mode === 'missing' && !client.create.has(p.lower)) { step(`Client/${p.name}: no loose copy, not created (the client keeps reading data.res).`); continue; }
         if (p.client) {
           const cur = await FRE.fsa.readHandle(p.client.handle);
@@ -73,11 +87,12 @@
     // 2. backup the current disk bytes, verified
     const folder = await FRE.fsa.newFolder(backupDir, stampName() + (ws.only ? '_' + ws.only : ''));   // e.g. 2026-10-06_08-10-00_exchange
     report.backupFolder = folder.name;
-    for (const f of dirty) await FRE.fsa.newFile(folder, f.name, onDisk.get(f));
+    // files in a sub-folder (World/<map>/<map>.dyo) keep their path in the backup
+    for (const f of dirty) await FRE.fsa.newFile(await FRE.fsa.dirAt(folder, f.dir, true), f.name, onDisk.get(f));
     const existing = targets.filter(t => t.client);
     if (existing.length) {
       const cf = await folder.getDirectoryHandle('Client', { create: true });
-      for (const t of existing) await FRE.fsa.newFile(cf, t.client.name, t.client.bytes);
+      for (const t of existing) await FRE.fsa.newFile(await FRE.fsa.dirAt(cf, t.client.dir, true), t.client.name, t.client.bytes);
     }
     step(`Backup written and verified: ${backupDir.name}/${folder.name}/ (${dirty.length} file(s)${existing.length ? ` + ${existing.length} in Client/` : ''})`);
 
@@ -88,15 +103,15 @@
         const candidate = f.serialize();
         const stamp = await FRE.fsa.writeVerified(f.handle, candidate);
         written.push({ f, candidate, stamp });
-        report.files.push({ name: f.name, before: f.bytes.length, after: candidate.length, changes: changeSummary(f) });
-        step(`Wrote and verified ${f.name} (${f.bytes.length} -> ${candidate.length} bytes).`);
+        report.files.push({ name: label(f), before: f.bytes.length, after: candidate.length, changes: changeSummary(f) });
+        step(`Wrote and verified ${label(f)} (${f.bytes.length} -> ${candidate.length} bytes).`);
       }
       for (const t of targets) {
         let handle;
         if (t.client) { handle = t.client.handle; await FRE.fsa.writeVerified(handle, t.bytes); }
         else handle = await FRE.fsa.newFile(client.dir, t.name, t.bytes);
-        report.client.push({ name: t.name, lower: t.lower, mode: t.mode, handle, bytes: t.bytes, before: t.client ? t.client.bytes : null });
-        step(`Client/${t.name}: ${t.mode === 'missing' ? 'created as a copy of the server file' : t.mode === 'eol' ? 'same change written, LF kept' : 'same change written'} and verified (${t.bytes.length} bytes).`);
+        report.client.push({ name: t.client ? label(t.client) : t.name, lower: t.lower, dir: t.client ? t.client.dir : '', file: t.client ? t.client.name : t.name, mode: t.mode, handle, bytes: t.bytes, before: t.client ? t.client.bytes : null });
+        step(`Client/${t.client ? label(t.client) : t.name}: ${t.mode === 'missing' ? 'created as a copy of the server file' : t.mode === 'eol' ? 'same change written, LF kept' : 'same change written'} and verified (${t.bytes.length} bytes).`);
       }
     } catch (e) {
       step(`WRITE FAILED: ${e.message}. Restoring from the backup...`);

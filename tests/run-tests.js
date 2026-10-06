@@ -373,6 +373,7 @@ section('client sync');
     eq(M('DonationShop.inc'), 'identical', 'DonationShop.inc: Client copy identical');
     eq(M('Spec_Item.txt'), 'eol', 'Spec_Item.txt: same content, Client is LF');
     eq(M('character-etc.inc'), 'missing', 'character-etc.inc: no loose Client copy (client reads data.res)');
+    eq([M('defineNeuz.h'), M('etc.inc'), M('etc.txt.txt')].join(), 'eol,identical,identical', 'a new tag\'s files: defineNeuz.h LF in Client, etc.inc + etc.txt.txt identical (b4b9a465)');
     // an edit made on the server copy, carried to the LF client copy
     const sf = open(REALRES, 'Spec_Item.txt'), cf = open(CLIENT, 'Spec_Item.txt');
     const wsLike = freshWorkspace();
@@ -1355,6 +1356,175 @@ section('where NPCs stand: JS and Python copies agree');
     const n = o => J([o.entered, o.nav, o.caps, o.msgs]);
     eq(r.stands.filter(s => n(AR.stand(r.regions, s.x, s.z)) !== n(s)).length, 0, `${r.stands.length} spots on it agree`);
   }
+}
+
+section('add new NPC: bytes, rules, simulator (JS and Python copies agree)');
+{
+  const w = new FRE.Workspace(fixtureFiles(), { only: 'npc' }).load();
+  const { dyoFiles, worldFiles } = loadWorldFiles(FIXTURES, w);
+  w.setMapFiles(dyoFiles, worldFiles);
+  const fxLines = n => new TextDecoder('latin1').decode(readBytes(ROOT + '/test-data/fixtures/Client/' + n)).split('\n').map(l => l.trim()).filter(Boolean);
+  w.setClientModels(fxLines('Model.list'));
+  w.setClientTextures(fxLines('ModelTexture.list'), new Map(fxLines('Model.textures').map(l => { const [o, ...t] = l.split('\t'); return [o, t]; })));
+  const before = { inc: w.files.get('character.inc').serialize(), txt: w.files.get('character.txt.txt').serialize(), dyo: w.mapFile('WdMadrigal').serialize(), npcs: w.chars.npcs.length };
+  ok(w.isEditable('character.txt.txt') && w.isEditable(w.mapFiles.get('WdMadrigal')), 'NPC task may write character.txt.txt and the .dyo files');
+  ok(w.clientFileNames().includes('character.txt.txt') && w.clientFileNames().includes('WdMadrigal.dyo'), 'character.txt.txt and the .dyo are client-synced');
+
+  // handoff §6.5.1: the live data loads; 46 maps end at the 0xFFFFFFFF marker, the 2 junk maps do not
+  const ends = [...w.mapFiles.keys()].map(m => [m, FRE.npcOps.insertPoint(w.mapFile(m).serialize())]);
+  eq(ends.filter(([, a]) => a !== null).length, 46, '46 maps take a new NPC record');
+  eq(ends.filter(([, a]) => a === null).map(([m]) => m).sort().join(','), 'WdGuildWar1To1,WdVolcaneYellow', 'only the 2 junk maps cannot');
+  const mad = FRE.world.readDyo(before.dyo);
+  eq(mad.movers.length, 364, 'WdMadrigal.dyo: 364 NPC records');
+  const jur = mad.placements.find(p => p.key === 'MaFl_Juria');
+  ok(jur && jur.model === 212 && Math.abs(jur.angle - 182.38) < 0.01 && Math.abs(jur.x - 1739.61 * 4) < 0.1 && jur.y === 100 && Math.abs(jur.z - 802.95 * 4) < 0.1,
+    "Juria's record: model 212, angle 182.38, file x 1739.61 = 6958.4 in game (x4, Obj.cpp:525)");
+  eq(FRE.npcOps.lastStringId(w), 1188, 'highest IDS_CHARACTER_INC_ is 001188');
+
+  // the §5 example: golden output (handoff §6.5.4) and re-read through the loaders (§6.5.5)
+  const form = { key: 'MaFl_Lumi', name: 'Lumi', model: 'MI_MAFL_JURIA', image: 'IDS_CHARACTER_INC_000056', structure: 'SRT_GENERAL',
+    map: 'WdMadrigal', x: 6966, y: 100, z: 3220, angle: 180, menus: ['MMI_TRADE', 'MMI_BANKING'],
+    tabs: [{ slot: 0, title: 'General Goods', rules: [], items: [{ define: 'II_SYS_SYS_SCR_BLESSEDNESS' }] },
+      { slot: 1, title: 'Scrolls', rules: [{ ik3: 'IK3_SCROLL', job: -1, min: 1, max: 150 }], items: [] }] };
+  eq(FRE.validateNewNpc(w, form).length, 0, 'the §5 example has no problem');
+  const plan = FRE.npcOps.newNpcPlan(w, form);
+  w.applyGroup(plan.parts, 'new NPC');
+  const inc = w.files.get('character.inc').serialize(), txt = w.files.get('character.txt.txt').serialize(), dyo = w.mapFile('WdMadrigal').serialize();
+  const tail = (a, b) => B.bytesEqual(b.subarray(0, a.length), a) ? FRE.bytes.utf16leToString(b.subarray(a.length), 0) : null;
+  eq(tail(before.inc, inc), '\r\nMaFl_Lumi\r\n{\r\n\tsetting\r\n\t{\r\n\t\tAddMenu( MMI_TRADE );\r\n\t\tAddMenu( MMI_BANKING );\r\n\t\tAddShopItem( 0, II_SYS_SYS_SCR_BLESSEDNESS );\r\n' +
+    '\t\tAddVendorItem( 1, IK3_SCROLL, -1, 1, 150, 100 );\r\n\t\tm_nStructure= SRT_GENERAL;\r\n\t\tSetImage\r\n\t\t(\r\n\t\tIDS_CHARACTER_INC_000056\r\n\t\t);\r\n\t}\r\n' +
+    '\tSetName\r\n\t(\r\n\tIDS_CHARACTER_INC_001189\r\n\t);\r\n\tAddVendorSlot( 0, IDS_CHARACTER_INC_001190 );\r\n\tAddVendorSlot( 1, IDS_CHARACTER_INC_001191 );\r\n}\r\n',
+    'character.inc: only the §5.2 block is appended (UTF-16LE, CRLF, BOM kept)');
+  eq(tail(before.txt, txt), 'IDS_CHARACTER_INC_001189\tLumi\r\nIDS_CHARACTER_INC_001190\tGeneral Goods\r\nIDS_CHARACTER_INC_001191\tScrolls\r\n', 'character.txt.txt: 3 lines appended');
+  eq(dyo.length, before.dyo.length + 200, '.dyo is 200 bytes longer');
+  ok(B.bytesEqual(dyo.subarray(0, plan.insertAt), before.dyo.subarray(0, plan.insertAt)) && B.bytesEqual(dyo.subarray(plan.insertAt + 200), before.dyo.subarray(plan.insertAt)),
+    '.dyo: bytes before and after the new record are unchanged');
+  eq(plan.insertAt, before.dyo.length - 4, 'WdMadrigal: inserted before the final 0xFFFFFFFF (after the control record)');
+  eq(w.chars.npcs.length, before.npcs + 1, 'NPC count +1');
+  const g = FRE.newNpcSim.inGame(w, 'MaFl_Lumi');
+  ok(g && g.name === 'Lumi' && g.shown && g.placed.length === 1 && g.placed[0].map === 'WdMadrigal' && g.placed[0].x === 6966 && g.placed[0].z === 3220 && g.placed[0].model === 212,
+    'in game: Lumi stands on WdMadrigal at /position 6966, 100, 3220 with model 212');
+  eq(g.menus.map(m => m.label).join(','), 'Trade,Deposit', 'right-click: Trade, Deposit');
+  eq(g.tabs.map(t => `${t.slot}:${t.title}:${t.items.length}`).join(' '), '0:General Goods:1 1:Scrolls:2', 'tabs: General Goods (1 item), Scrolls (2 items)');
+  ok((g.where || []).some(x => /Flaris/.test(x.place) && x.te === '/te 1 6966 3220'), 'where: Flaris, /te 1 6966 3220');
+  ok(FRE.validateNewNpc(w, form).some(d => d.code === 'NN_KEY_DUP'), 'the same key again -> NN_KEY_DUP');
+  w.undo();
+  ok(B.bytesEqual(w.files.get('character.inc').serialize(), before.inc) && B.bytesEqual(w.files.get('character.txt.txt').serialize(), before.txt) && B.bytesEqual(w.mapFile('WdMadrigal').serialize(), before.dyo),
+    'one Undo restores all three files');
+  eq(w.chars.npcs.length, before.npcs, 'NPC count back after Undo');
+
+  // a new building tag (b4b9a465 way): 3 more files in the same undo step, the NPC reads it back
+  {
+    const names = ['defineneuz.h', 'etc.inc', 'etc.txt.txt'];
+    ok(names.every(n => w.isEditable(n)) && ['defineNeuz.h', 'etc.inc', 'etc.txt.txt'].every(n => w.clientFileNames().includes(n)), 'NPC task may write (and client-sync) defineNeuz.h, etc.inc, etc.txt.txt');
+    eq(FRE.newNpcSim.freeStructureIds(w).join(), '18,19', 'free building tag rows: 18, 19 (MAX_STRUCTURE 20; 11 is SRT_DUNGEON)');
+    eq(FRE.newNpcSim.structures(w).names.get(17), 'Red Chip Merchant', 'structure row 17 = Red Chip Merchant (b4b9a465)');
+    const tagged = Object.assign({}, form, { key: 'MaFl_Lumi2', structure: null, newTag: '[Dungeon Pieces]' });
+    eq(FRE.validateNewNpc(w, tagged).map(d => d.code).join(), 'NN_TAG_ICON', 'new tag: only the minimap-icon note');
+    const old = names.map(n => w.files.get(n).serialize());
+    const p2 = FRE.npcOps.newNpcPlan(w, tagged);
+    w.applyGroup(p2.parts, 'new NPC with tag');
+    const txtOf = n => w.files.get(n).text;
+    ok(txtOf('defineneuz.h').includes('#define SRT_REDCHIPMERCHANT      17\r\n#define SRT_DUNGEON_PIECES       18\r\n#define MAX_STRUCTURE'), 'defineNeuz.h: #define SRT_DUNGEON_PIECES 18 after the last SRT_ line');
+    ok(txtOf('etc.inc').includes('\tSRT_REDCHIPMERCHANT\t\tIDS_ETC_INC_000045\r\n\tSRT_DUNGEON_PIECES\t\tIDS_ETC_INC_000046\r\n}'), 'etc.inc: SRT_DUNGEON_PIECES IDS_ETC_INC_000046 before the structure block\'s }');
+    ok(txtOf('etc.txt.txt').endsWith('IDS_ETC_INC_000046\tDungeon Pieces\r\n'), 'etc.txt.txt: IDS_ETC_INC_000046 Dungeon Pieces appended');
+    eq(w.defines.defines.get('SRT_DUNGEON_PIECES'), 18, 'defines reloaded after the edit');
+    const g2 = FRE.newNpcSim.inGame(w, 'MaFl_Lumi2');
+    ok(g2 && g2.tag && g2.tag.text === '[Dungeon Pieces]' && !g2.tag.overflow, 'in game: [Dungeon Pieces] above Lumi');
+    ok(FRE.validateNewNpc(w, Object.assign({}, tagged, { key: 'MaFl_Lumi3' })).some(d => d.code === 'NN_TAG_DUP'), 'the same tag again -> NN_TAG_DUP (pick it instead)');
+    w.undo();
+    ok(names.every((n, i) => B.bytesEqual(w.files.get(n).serialize(), old[i])) && !w.defines.defines.has('SRT_DUNGEON_PIECES'), 'one Undo restores defineNeuz.h, etc.inc, etc.txt.txt and the defines');
+  }
+
+  // portrait pictures (ui/tga.js decode): Juria's char_Juria.tga, 200x240 RGBA
+  {
+    globalThis.FRE.dom = globalThis.FRE.dom || { h: () => null };
+    if (!FRE.tga) (0, eval)(new TextDecoder().decode(readBytes(ROOT + '/src/ui/tga.js')));
+    const img = FRE.tga.decode(readBytes(ROOT + '/test-data/fixtures/Client/Char/char_Juria.tga'));
+    ok(img && img.w === 200 && img.h === 240 && img.rgba.length === 200 * 240 * 4 && img.rgba.some((v, i) => i % 4 !== 3 && v), 'TGA portrait decodes (200x240, not blank)');
+  }
+  // the model files check (Client/Model names): Julia complete; an unused model missing an .ani is caught
+  eq((FRE.newNpcSim.missingModelFiles(w, 'MI_MAFL_JURIA') || ['?']).length, 0, 'MI_MAFL_JURIA: .o3d and every .ani in Client/Model');
+  // textures: the .o3d reader (the model loader is not in the source tree) agrees with the Python copy on sample files,
+  // one with a 47-character name whose length byte (0x30) is printable
+  {
+    const files = ['Mvr_MaFlJuria.o3d', 'item_Mount051.o3d'].map(n => ROOT + '/test-data/fixtures/o3d/' + n);
+    const [, o] = GLib.spawn_command_line_sync(`python3 ${ROOT}/tools/oracle_sim.py o3d ${files.join(' ')}`);
+    const pyTex = JSON.parse(new TextDecoder().decode(o));
+    const jsTex = Object.fromEntries(files.map(f => [f.split('/').pop(), FRE.newNpcSim.o3dTextures(readBytes(f))]));
+    eq(JSON.stringify(jsTex), JSON.stringify(pyTex), '.o3d texture names: JS and Python agree on the samples');
+    ok(jsTex['item_Mount051.o3d'].includes('pvpridingdirewolfskinfrostwolfalphaspectral.dds'), 'a 47-character texture name is found (its length byte is printable)');
+    eq(jsTex['Mvr_MaFlJuria.o3d'].join(), 'mvr_mafljuria-01.dds,mvr_mafljuria-02.dds', "Julia's 2 textures");
+    const lines = fxLines('Model.textures'), tex = new Set(fxLines('ModelTexture.list').map(n => n.toLowerCase()));
+    eq(lines.filter(l => l.split('\t').slice(1).some(t => !tex.has(t))).length, 0, `every texture of the ${lines.length} Mvr_*.o3d models is in Client/Model/Texture`);
+    eq((FRE.newNpcSim.missingModelFiles(w, 'MI_MAFL_JURIA') || ['?']).join(), '', 'Julia: no file missing, textures included');
+    w.clientTextures.delete('mvr_mafljuria-01.dds');
+    eq(FRE.newNpcSim.missingModelFiles(w, 'MI_MAFL_JURIA').join(), 'Texture/mvr_mafljuria-01.dds', 'a missing texture is named');
+    w.clientTextures.add('mvr_mafljuria-01.dds');
+  }
+  // models of the NPCs b6abf414 hid were seen in game: proven, not offered as "not used yet"
+  {
+    const sb = FRE.newNpcSim.seenBefore(w);
+    eq([...sb.values()].flat().map(b => b.key).sort().join(), 'MaFl_ANGEL2011,MaFl_COUPONPANG,MaFl_Shain', 'seen before b6abf414: Shain, Coupon Pang, Angel 2011');
+    ok([...sb.keys()].every(id => FRE.newNpcSim.provenModels(w).has(id) && !FRE.newNpcSim.unusedCompleteModels(w).some(m => m.id === id)), 'their models count as proven');
+  }
+  ok(FRE.newNpcSim.unusedCompleteModels(w).length > 50, 'unused models with every file: offered behind the toggle', String(FRE.newNpcSim.unusedCompleteModels(w).length));
+
+  // every rule code has help text
+  const codes = ['NN_KEY', 'NN_KEY_DUP', 'NN_KEY_NAME', 'NN_TEXT', 'NN_IDS_TAKEN', 'NN_MENU', 'NN_MENU_NEW', 'NN_MENU_TWICE', 'NN_DIALOG', 'NN_MODEL', 'NN_MODEL_FILES', 'NN_MODEL_UNPROVEN', 'NN_NO_MENU', 'NN_IMAGE', 'NN_STRUCTURE',
+    'NN_TAG_FILES', 'NN_TAG_FULL', 'NN_TAG_CHARS', 'NN_TAG_LONG', 'NN_TAG_DUP', 'NN_TAG_ICON',
+    'NN_SHOP_NO_TRADE', 'NN_SHOP_EMPTY', 'NN_TAB', 'NN_RULE', 'NN_RULE_EMPTY', 'NN_ITEM', 'NN_ITEM_TWICE', 'NN_PRICE', 'NN_PRICE_GLOBAL', 'NN_PRICE_CONFLICT', 'NN_TAB_FULL',
+    'NN_MAP', 'NN_POS', 'NN_OVERLAP', 'NN_HEIGHT'];
+  ok(codes.every(c => FRE.diagHelp[c]), 'every NN_ code has help text', codes.filter(c => !FRE.diagHelp[c]).join(', '));
+
+  // the independent Python copy: same rules, same bytes, same game state for every case
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ROOT}/tools/oracle_sim.py newnpc ${FIXTURES}`);
+  const py = JSON.parse(new TextDecoder().decode(out));
+  eq(py.lastId, 1188, 'Python: highest IDS_CHARACTER_INC_ 1188');
+  let agree = 0, built = 0, games = 0;
+  const hex = b => Array.from(b, x => x.toString(16).padStart(2, '0')).join('');
+  for (const c of py.cases) {
+    const realDefs = new Map(Object.keys(c.defs || {}).map(k => [k, w.defines.defines.get(k)]));
+    for (const [k, v] of Object.entries(c.defs || {})) w.defines.defines.set(k, v);       // made-up #defines of a case (until it is built)
+    for (const t of c.hideTex || []) w.clientTextures.delete(t);                          // a texture missing from Client/Model/Texture
+    const diags = FRE.validateNewNpc(w, c.form);
+    const mine = { codes: [...new Set(diags.map(d => `${d.code}|${d.field}`))].sort(), build: null, inGame: null };
+    if (!diags.some(d => d.severity === 'BLOCK')) {
+      const p = FRE.npcOps.newNpcPlan(w, c.form);
+      const dyoFile = w.mapFile(c.form.map);
+      const part = n => p.parts.find(x => x.file === n).splices[0];
+      const t = p.tag;
+      mine.build = { incTail: part('character.inc').insert, txtTail: part('character.txt.txt').insert, insertAt: p.insertAt, record: hex(p.record), dyoLen: dyoFile.serialize().length + 200,
+        tag: t && { id: t.id, define: t.define, defLine: part('defineneuz.h').insert, defAt: part('defineneuz.h').start, incLine: part('etc.inc').insert, incAt: part('etc.inc').start, txtTail: part('etc.txt.txt').insert } };
+      built++;
+      if (c.game) {
+        w.applyGroup(p.parts, 'case');
+        const x = FRE.newNpcSim.inGame(w, c.form.key);
+        mine.inGame = x && { name: x.name, tag: x.tag, menus: x.menus.map(m => m.id), labels: x.menus.map(m => m.label), when: x.menus.map(m => m.when), tabs: x.tabs,
+          placed: x.placed.map(q => ({ map: q.map, x: q.x, y: q.y, z: q.z, angle: q.angle, model: q.model })) };
+        w.undo();
+        games++;
+      }
+    }
+    for (const [k, v] of realDefs) if (v === undefined) w.defines.defines.delete(k); else w.defines.defines.set(k, v);
+    for (const t of c.hideTex || []) w.clientTextures.add(t);
+    const same = JSON.stringify(mine.codes) === JSON.stringify(c.codes) && JSON.stringify(mine.build) === JSON.stringify(c.build) && JSON.stringify(mine.inGame) === JSON.stringify(c.inGame);
+    if (same) agree++;
+    else ok(false, `new NPC case "${c.name}"`, `JS ${JSON.stringify(mine).slice(0, 400)}\n      PY ${JSON.stringify({ codes: c.codes, build: c.build, inGame: c.inGame }).slice(0, 400)}`);
+  }
+  eq(agree, py.cases.length, `JS and Python agree on all ${py.cases.length} new-NPC cases (${built} built, ${games} loaded in game)`);
+  ok(py.cases.some(c => c.codes.length === 0 && c.build) && new Set(py.cases.flatMap(c => c.codes.map(x => x.split('|')[0]))).size >= 24, 'the cases trip (nearly) every rule and include clean ones');
+  ok(B.bytesEqual(w.files.get('character.inc').serialize(), before.inc) && B.bytesEqual(w.mapFile('WdMadrigal').serialize(), before.dyo), 'files unchanged after the cases');
+  // small etc.inc files through the structure loop (rows outside MAX_STRUCTURE, 31/32 characters, last wins, blocks after it)
+  let sbad = 0;
+  for (const c of py.structs) {
+    const fake = { files: new Map([['etc.inc', { text: c.text }]]), defines: { defines: new Map(Object.entries(Object.assign({ MAX_STRUCTURE: c.max }, c.defines))) }, strings: { map: new Map(Object.entries(c.strings)) } };
+    const r = FRE.newNpcSim.structures(fake);
+    const mine = { names: Object.fromEntries([...r.names].sort((x, y) => x[0] - y[0]).map(([k, v]) => [String(k), v])), bad: r.bad };
+    if (JSON.stringify(mine) !== JSON.stringify({ names: Object.fromEntries(Object.entries(c.names).sort((x, y) => x[0] - y[0])), bad: c.bad })) { sbad++; ok(false, 'structure file', `${JSON.stringify(c.text)}\n      JS ${JSON.stringify(mine)}\n      PY ${JSON.stringify({ names: c.names, bad: c.bad })}`); }
+  }
+  eq(sbad, 0, `${py.structs.length} small structure files read the same (names, rows outside the table, long names)`);
+  ok(py.cases.filter(c => c.build && c.build.tag).length >= 5 && py.cases.some(c => c.inGame && c.inGame.tag && c.inGame.tag.text === '[Dungeon Pieces]'), 'new-tag cases were built and loaded');
 }
 
 section('mutations');

@@ -57,6 +57,23 @@
   const lfOnly = b => { const o = []; for (let i = 0; i < b.length; i++) if (!(b[i] === 13 && b[i + 1] === 10)) o.push(b[i]); return new Uint8Array(o); };
   for (const n of ['character.inc', 'DonationShop.inc', 'BattlePass.inc']) clientDir.children.set(n, new FakeFile(n, original.get(n).slice()));
   clientDir.children.set('Spec_Item.txt', new FakeFile('Spec_Item.txt', lfOnly(original.get('Spec_Item.txt'))));
+  // a new building tag's files (b4b9a465): defineNeuz.h is LF in Client, etc.inc / etc.txt.txt identical
+  clientDir.children.set('defineNeuz.h', new FakeFile('defineNeuz.h', lfOnly(original.get('defineNeuz.h'))));
+  for (const n of ['etc.inc', 'etc.txt.txt']) clientDir.children.set(n, new FakeFile(n, original.get(n).slice()));
+  // a test copy has no Client/Model folder, only its file names (tools/refresh-fixtures.sh writes Client/Model.list)
+  if (FRE.HARNESS_MODEL_LIST) clientDir.children.set('Model.list', new FakeFile('Model.list', new TextEncoder().encode(FRE.HARNESS_MODEL_LIST)));
+  if (FRE.HARNESS_TEX_LIST) clientDir.children.set('ModelTexture.list', new FakeFile('ModelTexture.list', new TextEncoder().encode(FRE.HARNESS_TEX_LIST)));
+  if (FRE.HARNESS_TEX_INDEX) clientDir.children.set('Model.textures', new FakeFile('Model.textures', new TextEncoder().encode(FRE.HARNESS_TEX_INDEX)));
+  clientDir.children.set('character.txt.txt', new FakeFile('character.txt.txt', original.get('character.txt.txt').slice()));
+  {                                       // Client/World/<map>/<map>.dyo: the same bytes as the server's (Add New NPC writes both)
+    const cw = new FakeDir('World');
+    for (const [n, d] of res.children.get('World').children) {
+      const dyo = [...d.children.values()].find(f => f.kind === 'file' && /\.dyo$/i.test(f.name));
+      if (!dyo) continue;
+      const cd = new FakeDir(n); cd.children.set(dyo.name, new FakeFile(dyo.name, dyo.bytes.slice())); cw.children.set(n, cd);
+    }
+    clientDir.children.set('World', cw);
+  }
   clientDir.children.set('Exchange_Script.txt', new FakeFile('Exchange_Script.txt', lfOnly(original.get('Exchange_Script.txt'))));
   {                                       // Client/Theme: Battle Pass textures (names only)
     const th = new FakeDir('Theme');
@@ -267,6 +284,111 @@
     ok(tip && !tip.hidden && /Required Level/.test(tip.textContent) && /Editor info/.test(tip.textContent), 'hover shows the item tooltip');
     cell.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: 5, clientY: 5 }));
     document.body.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+
+    // ---- + New NPC (ui/new-npc.js): the §5 example, created, saved to Server + Client
+    {
+      const madSrv = res.children.get('World').children.get('WdMadrigal').children.get('WdMadrigal.dyo');
+      const madCli = clientDir.children.get('World').children.get('WdMadrigal').children.get('WdMadrigal.dyo');
+      const before = { dyo: madSrv.bytes, txt: res.children.get('character.txt.txt').bytes, inc: res.children.get('character.inc').bytes };
+      click(btnByText(document.getElementById('list-action'), '+ NPC'));
+      await waitFor(() => document.querySelector('.newnpc'), 'new NPC form');
+      const form = document.querySelector('.newnpc');
+      const type = (sel, v) => { const el = form.querySelector(sel); el.value = v; el.dispatchEvent(new Event('input')); };
+      type('input[placeholder="MaFl_Lumi"]', 'MaFl_Lumi'); type('input[placeholder="Lumi"]', 'Lumi');
+      type('input[placeholder="x"]', '6966'); type('input[placeholder="y (height)"]', '100'); type('input[placeholder="z"]', '3220');
+      type('input[placeholder="Tab title, e.g. Scrolls"]', 'General Goods');
+      const combos = [...form.querySelectorAll('.combo')];
+      const regionBox = combos.find(c => /Flaris/.test(c.querySelector('input').value));
+      ok(regionBox && /Flaris · \d+ NPCs/.test(regionBox.querySelector('input').value), 'region: Flaris with its NPC count');
+      const rin = regionBox.querySelector('input');
+      rin.dispatchEvent(new Event('focus')); rin.value = 'christiana'; rin.dispatchEvent(new Event('input'));
+      ok(/La Christiana A \(DuSanpres\)/.test(regionBox.querySelector('.combo-list').textContent) && regionBox.querySelectorAll('.combo-opt').length === 1,
+        'region search: typing "christiana" finds La Christiana A (DuSanpres) only');
+      rin.dispatchEvent(new Event('blur')); await tick();
+      ok(/Flaris/.test(rin.value), 'leaving the search box keeps the chosen region');
+      const modelBox = combos[0], min = modelBox.querySelector('input');
+      min.dispatchEvent(new Event('focus')); min.value = 'juria'; min.dispatchEvent(new Event('input'));
+      ok([...modelBox.querySelectorAll('.combo-opt')].some(o => /Julia/.test(o.textContent)), 'model search finds a model by the NPC that uses it (Juria)');
+      min.dispatchEvent(new Event('blur')); await tick();
+      ok(/Fill in the fields above/.test(form.querySelector('.nn-problems').textContent) || /BLOCK|No problem/.test(form.querySelector('.nn-problems').textContent), 'checks section present');
+      ok(/Players will read here:\s*Flaris — Flarine \/ Central Flarine/.test(form.querySelector('.nn-where').textContent), 'live: what players read at the typed spot');
+      // Model list: Used by NPCs / Not used yet / Both
+      const view = v => { const sel = form.querySelector('select.nn-modelview'); sel.value = v; sel.dispatchEvent(new Event('change')); };
+      const modelOpts = () => { const i = form.querySelector('.combo input'); i.dispatchEvent(new Event('focus')); const o = [...form.querySelector('.combo').querySelectorAll('.combo-opt')].map(x => x.textContent); i.dispatchEvent(new Event('blur')); return o; };
+      const usedN = modelOpts().length;
+      const unusedOpt = form.querySelector('select.nn-modelview option[value=unused]');
+      ok(unusedOpt && !unusedOpt.disabled && Number((/\((\d+)\)/.exec(unusedOpt.textContent) || [])[1]) > 50, 'Client/Model.list read: "Not used yet" can be picked (' + (unusedOpt ? unusedOpt.textContent : '?') + ')');
+      view('unused');
+      const un = modelOpts();
+      ok(un.length > 50 && un.every(t => /\(MI_/.test(t)) && !un.some(t => /— like/.test(t)), `"Not used yet" lists only unused models (${un.length})`);
+      view('all');
+      ok(modelOpts().length === usedN + un.length && /Not used yet/.test(form.querySelector('.combo .combo-list').textContent + [...form.querySelectorAll('.combo-group')].map(g => g.textContent).join()), '"Both" lists used + unused, in two groups');
+      view('used');
+      ok(modelOpts().length === usedN && !form.querySelector('.combo input').value, '"Used by NPCs" again: Julia was not in the other list, so the model is cleared');
+      const mb = form.querySelector('.combo'); mb.pick('MI_MAFL_JURIA'); await tick();
+      ok(/Files: Mvr_MaFlJuria\.o3d, \d+ animations, 2 textures — all in Client\/Model/.test(form.textContent), 'Julia: .o3d, animations and 2 textures all in Client/Model');
+      ok(form.querySelectorAll('.nn-req.req').length >= 7 && /\(optional\)/.test(form.textContent), 'required fields have a red *, optional ones say (optional)');
+      // + Add items: the bulk item picker
+      click(btnByText(form, '+ Add items'));
+      await waitFor(() => document.querySelector('.ip'), 'item picker');
+      const ip = document.querySelector('.ip');
+      const q = ip.querySelector('input[type=search]'); q.value = 'Blessing of the Goddess'; q.dispatchEvent(new Event('input'));
+      click(btnByText(ip, 'Select all shown'));
+      ok(/1 selected/.test(ip.textContent), 'picker: Select all shown ticks the filtered item');
+      click(btnByText(ip.closest('.modal'), 'Add 1 item'));
+      await waitFor(() => !document.querySelector('.ip'), 'picker closed');
+      ok(/II_SYS_SYS_SCR_BLESSEDNESS/.test(form.querySelector('.nn-items').textContent) && /1 \/ 100/.test(form.textContent), 'the picked item is in the tab table');
+      ok(/No problem found/.test(form.querySelector('.nn-problems').textContent), 'new NPC form: no problem for the §5 example');
+      ok(/AddVendorSlot\( 0, IDS_CHARACTER_INC_001189 \)|IDS_CHARACTER_INC_001190/.test(form.querySelector('.nn-preview').textContent) && /200 bytes inserted at offset 73300/.test(form.querySelector('.nn-preview').textContent),
+        'preview: the exact block, the new text keys and the .dyo insert point');
+      type('input[placeholder="MaFl_Lumi"]', 'MaFl_Juria');
+      ok(/already exists/.test(form.querySelector('.nn-problems').textContent) && document.getElementById('nn-create').disabled, 'a taken key blocks Create');
+      type('input[placeholder="MaFl_Lumi"]', 'MaFl_Lumi');
+      ok(!document.getElementById('nn-create').disabled, 'Create enabled again');
+      // Building: a new tag (b4b9a465 way)
+      const tagBox = [...form.querySelectorAll('.combo')].find(c => /no tag/.test(c.querySelector('input').value));
+      ok(tagBox, 'building: (none) by default');
+      tagBox.pick('+new');
+      await tick();
+      type('input[placeholder="Dungeon Pieces"]', '[Dungeon Pieces]');
+      ok(/SRT_DUNGEON_PIECES/.test(form.textContent) && /Takes row 18; only 2 new tags fit/.test(form.textContent), 'new tag box: define name and the 2 free rows');
+      const pv = form.querySelector('.nn-preview').textContent;
+      ok(/New tag \[Dungeon Pieces\] = row 18/.test(pv) && /#define SRT_DUNGEON_PIECES\s+18/.test(pv) && /IDS_ETC_INC_000046\tDungeon Pieces/.test(pv) && /m_nStructure= SRT_DUNGEON_PIECES;/.test(pv),
+        'preview: defineNeuz.h, etc.inc, etc.txt.txt lines and m_nStructure');
+      ok(/minimap icon/.test(form.querySelector('.nn-problems').textContent) && !document.getElementById('nn-create').disabled, 'NN_TAG_ICON note; Create allowed');
+      if (STOP === 'newnpcform') return;
+      click(document.getElementById('nn-create'));
+      await waitFor(() => !document.querySelector('.newnpc'), 'form closed');
+      ok(/In game after Save/.test($('editor').textContent) && /Stands on WdMadrigal at \/position 6966\.0, 100\.0, 3220\.0/.test($('editor').textContent) && /Tab 0 "General Goods": 1 item/.test($('editor').textContent),
+        'the new NPC is selected and shows what the game will load');
+      ok(S.ws.dirtyFiles().length === 6, '6 files changed (character.inc, character.txt.txt, WdMadrigal.dyo, defineNeuz.h, etc.inc, etc.txt.txt)');
+      ok(/Above the name: \[Dungeon Pieces\]/.test($('editor').textContent), 'in game: [Dungeon Pieces] above the name');
+      const tagBefore = Object.fromEntries(['defineNeuz.h', 'etc.inc', 'etc.txt.txt'].map(n => [n, res.children.get(n).bytes]));
+      if (STOP === 'newnpc') return;
+      click($('btn-save'));
+      await waitFor(() => btnByText(document, 'Back up and write'), 'review dialog (new NPC)');
+      ok(/World\/WdMadrigal\/WdMadrigal\.dyo/.test(document.querySelector('.modal').textContent) && /\+ NPC MaFl_Lumi/.test(document.querySelector('.modal').textContent), 'review shows the map file and the new record');
+      click(btnByText(document, 'Back up and write'));
+      await waitFor(() => [...document.querySelectorAll('.modal header')].some(h => /^Saved|failed/.test(h.textContent)), 'save finished (new NPC)');
+      ok(madSrv.bytes.length === before.dyo.length + 200 && FRE.bytes.bytesEqual(madCli.bytes, madSrv.bytes), 'WdMadrigal.dyo +200 bytes, Client copy identical');
+      ok(FRE.bytes.bytesEqual(clientDir.children.get('character.txt.txt').bytes, res.children.get('character.txt.txt').bytes) && res.children.get('character.txt.txt').bytes.length > before.txt.length,
+        'character.txt.txt saved, Client copy identical');
+      ok(FRE.bytes.bytesEqual(clientDir.children.get('character.inc').bytes, res.children.get('character.inc').bytes), 'character.inc saved, Client copy identical');
+      ok(/SRT_DUNGEON_PIECES +18\r\n/.test(new TextDecoder('latin1').decode(res.children.get('defineNeuz.h').bytes)) && FRE.bytes.bytesEqual(clientDir.children.get('defineNeuz.h').bytes, lfOnly(res.children.get('defineNeuz.h').bytes)),
+        'defineNeuz.h saved (CRLF), Client copy gets the same line with LF');
+      ok(['etc.inc', 'etc.txt.txt'].every(n => res.children.get(n).bytes.length > tagBefore[n].length && FRE.bytes.bytesEqual(clientDir.children.get(n).bytes, res.children.get(n).bytes)), 'etc.inc + etc.txt.txt saved, Client copies identical');
+      const bk2 = [...backups.children.values()].pop();
+      const bw = bk2.children.get('World');
+      ok(bw && FRE.bytes.bytesEqual(bw.children.get('WdMadrigal').children.get('WdMadrigal.dyo').bytes, before.dyo) && bk2.children.get('Client').children.get('World'),
+        'backup keeps World/WdMadrigal/WdMadrigal.dyo (Server and Client) with the original bytes');
+      ok(S.ws.dirtyFiles().length === 0 && S.ws.chars.byKey.has('mafl_lumi'), 'clean after save; Lumi loaded');
+      document.querySelectorAll('.modal-back').forEach(m => m.remove());
+      // put the original files back so the later stages see the fixtures
+      madSrv.bytes = before.dyo; madCli.bytes = before.dyo.slice();
+      res.children.get('character.txt.txt').bytes = before.txt; clientDir.children.get('character.txt.txt').bytes = before.txt.slice();
+      res.children.get('character.inc').bytes = before.inc; clientDir.children.get('character.inc').bytes = before.inc.slice();
+      for (const n of ['defineNeuz.h', 'etc.inc', 'etc.txt.txt']) { res.children.get(n).bytes = tagBefore[n]; clientDir.children.get(n).bytes = n === 'defineNeuz.h' ? lfOnly(tagBefore[n]) : tagBefore[n].slice(); }
+    }
 
     // ---- Donation Shop
     await openTask('donation');

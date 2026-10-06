@@ -2,6 +2,13 @@
 
 **Read this whole file before writing any code.**
 
+> **Corrections found while building it (2026-10-06, see INVESTIGATION.md §1.9):**
+> 1. §3.1 / §3.3: the `.dyo` stores **x / 4 and z / 4** (`CObj::Read` multiplies by `OLD_MPU`, Obj.cpp:525). `/position` prints world units, so the app divides x and z by 4; y is written as it is.
+> 2. §3.2: insert at the **final `FFFFFFFF`** (typed walk), not after the leading type-5 run: `DuDaDk` and `Wdguildhousemiddle` start with control records.
+> 3. §6 P3: "within 1 unit" is 1 file unit = 4 world units.
+> Built as "+ New NPC" in the NPC Shops task; rules are the `NN_*` codes (`src/validate/newnpc.js`).
+
+
 ## How this works (read first)
 
 **Nobody edits the FlyFF V19 files by hand.** Not the user, and not you (Claude).

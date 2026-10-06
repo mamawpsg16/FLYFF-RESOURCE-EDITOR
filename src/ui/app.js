@@ -29,6 +29,15 @@
     backupsOf: name => (S.backupDir ? FRE.fsa.backupCopies(S.backupDir, name) : Promise.resolve(null)),
     get backupKey() { return S.backupDir ? S.backupDir.name : null; },
     renderList: () => renderList(),
+    // bytes of a file in the Client folder by relative path ('Char/char_NpcHende.tga', names matched without case), or null
+    async clientFile(rel) {
+      if (!S.client) return null;
+      const parts = rel.split('/'), name = parts.pop();
+      const dir = await FRE.fsa.dirAt(S.client.dir, parts.join('/'));
+      if (!dir) return null;
+      const fh = (await FRE.fsa.findFiles(dir, [name])).get(name.toLowerCase());
+      return fh ? (await FRE.fsa.readHandle(fh)).bytes : null;
+    },
     // Apply an edit op: make(text) -> splices. `key` marks what was edited (list badges).
     edit(lowerFile, make, label, key) {
       const f = S.ws.files.get(lowerFile);
@@ -106,6 +115,7 @@
     const world = await FRE.layout.child(res, 'World');
     if (!world) return;
     const dyo = new Map(), worldFiles = new Map(), seen = new Set();
+    const cworld = S.client ? await FRE.layout.child(S.client.dir, 'World') : null;
     for (const w of S.ws.worldList()) {
       if (seen.has(w.name)) continue;
       seen.add(w.name);
@@ -116,12 +126,20 @@
       for (const n of names) {
         const fh = found.get(n.toLowerCase());
         if (!fh) continue;
-        const { bytes } = await FRE.fsa.readHandle(fh);
-        if (n.endsWith('.dyo')) dyo.set(w.name, bytes);
+        const { bytes, stamp } = await FRE.fsa.readHandle(fh);
+        // the .dyo with its handle: the NPC task can add an NPC record to it (Server + Client copies)
+        if (n.endsWith('.dyo')) dyo.set(w.name, new FRE.SourceFile(fh.name, bytes, { handle: fh, stamp, binary: true, dir: `World/${dir.name}` }));
         else worldFiles.set(`world/${w.name}/${n}`.toLowerCase(), new FRE.SourceFile(fh.name, bytes));
       }
+      // the client's copy (Client/World/<map>/<map>.dyo), for the client sync
+      const cdir = cworld && dyo.has(w.name) ? await FRE.layout.child(cworld, w.name) : null;
+      const ch = cdir && (await FRE.fsa.findFiles(cdir, [w.name + '.dyo'])).get((w.name + '.dyo').toLowerCase());
+      if (ch) {
+        const { bytes, stamp } = await FRE.fsa.readHandle(ch);
+        S.client.files.set(ch.name.toLowerCase(), new FRE.SourceFile(ch.name, bytes, { handle: ch, stamp, binary: true, dir: `World/${cdir.name}` }));
+      }
     }
-    S.ws.setMapObjects(dyo, worldFiles);
+    S.ws.setMapFiles(dyo, worldFiles);
   }
 
   // back to the start screen; unsaved edits are only dropped after asking
@@ -174,8 +192,30 @@
       theme = [];
       for await (const [name, handle] of th.entries()) if (handle.kind === 'file') theme.push(name);
     } catch (e) { if (e.name !== 'NotFoundError' && e.name !== 'TypeMismatchError') toast('Client/Theme: ' + e.message, 'bad'); }
-    S.client = { dir, files, tree, theme };
-    if (S.ws) { S.ws.setDonationTree(tree); S.ws.setClientTheme(theme); }
+    // Client/Model file names (Add New NPC checks a model's .o3d and .ani files); names only, nothing is read
+    // Client/Model/Texture names; a model's .o3d is read when it is picked (S.readModel) to check its textures
+    let models = null, textures = null, texIndex = null, modelDir = null;
+    if (S.ws && S.ws.available.npc && S.ws.available.npc.ok) {
+      try {
+        modelDir = await FRE.layout.child(dir, 'Model');
+        if (modelDir) {
+          models = []; for await (const [name, handle] of modelDir.entries()) if (handle.kind === 'file') models.push(name);
+          const td = await FRE.layout.child(modelDir, 'Texture');
+          if (td) { textures = []; for await (const [name, handle] of td.entries()) if (handle.kind === 'file') textures.push(name); }
+        } else {
+          // a test copy has no Model folder (the 3D files are large): tools/refresh-fixtures.sh writes Client/Model.list (names),
+          // Client/ModelTexture.list (Model/Texture names) and Client/Model.textures (each Mvr_*.o3d's textures, tab-separated)
+          const found = await FRE.fsa.findFiles(dir, ['Model.list', 'ModelTexture.list', 'Model.textures']);
+          const lines = async n => found.get(n) ? new TextDecoder('latin1').decode((await FRE.fsa.readHandle(found.get(n))).bytes).split(/\r?\n/).map(l => l.trim()).filter(Boolean) : null;
+          models = await lines('model.list');
+          textures = await lines('modeltexture.list');
+          const idx = await lines('model.textures');
+          if (idx) texIndex = new Map(idx.map(l => { const [o, ...t] = l.split('\t'); return [o, t.filter(Boolean)]; }));
+        }
+      } catch (e) { toast('Client/Model: ' + e.message, 'bad'); }
+    }
+    S.client = { dir, files, tree, theme, models, modelDir };
+    if (S.ws) { S.ws.setDonationTree(tree); S.ws.setClientTheme(theme); S.ws.setClientModels(models); S.ws.setClientTextures(textures, texIndex); }
     S.createMissing = new Set(clientNames().map(n => n.toLowerCase()).filter(n => !files.has(n)));   // offered, can be unticked
   }
 
@@ -321,9 +361,11 @@
   function renderList() {
     const el = $('list'); el.textContent = '';
     const extra = $('list-extra'); extra.textContent = '';
+    const action = $('list-action'); action.textContent = '';
     if (!S.ws || !S.ws.available[S.mode].ok) return;
     const m = active();
     $('list-search').placeholder = m.searchPlaceholder || 'Search';
+    if (m.listAction) { const x = m.listAction(ctx); if (x) action.appendChild(x); }   // a button right of the search box
     if (m.listExtra) { const x = m.listExtra(ctx); if (x) extra.appendChild(x); }
     m.renderList(el, ctx);
   }
@@ -458,6 +500,16 @@
   }
   FRE.ui.renderDiff = renderDiff;
 
+  // A binary file (.dyo): the inserted / removed bytes, and the NPC records that changed
+  function binaryDiff(f) {
+    const box = h('div.diff');
+    for (const c of FRE.save.changeSummary(f)) box.appendChild(h(c.type === 'add' ? 'div.add' : 'div.del', `${c.type === 'add' ? '+' : '-'} ${c.text}`));
+    const before = FRE.world.readDyo(FRE.bytes.binaryStringToBytes(f.originalText)).placements.map(p => p.key);
+    for (const p of FRE.world.readDyo(f.serialize()).placements.filter(p => !before.includes(p.key)))
+      box.appendChild(h('div.add', `+ NPC ${p.key} at /position ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}, facing ${p.angle.toFixed(1)}, model ${p.model}`));
+    return box;
+  }
+
   async function onSave() {
     const ws = S.ws;
     if (!ws || !ws.dirtyFiles().length) return;
@@ -487,7 +539,7 @@
     }
     const body = h('div',
       h('p', `These lines will change. Everything else in the file${dirty.length > 1 ? 's' : ''} stays byte-for-byte identical.`),
-      dirty.map(f => [h('h3', `${f.name}`), renderDiff(f)]),
+      dirty.map(f => [h('h3', `${f.dir ? f.dir + '/' : ''}${f.name}`), f.kind === FRE.SourceFile.KIND_BINARY ? binaryDiff(f) : renderDiff(f)]),
       clientBox,
       warns.length ? h('p.muted', `${warns.length} warning(s) (not blocking) — see the problems panel.`) : null,
       h('p.muted.small', `Backup folder: ${S.backupDir.name}/<timestamp>/` + (!S.client && client.length ? ` · After saving, also copy to Client/: ${client.join(', ')}` : '')));
@@ -506,7 +558,7 @@
       .catch(e => ({ ok: false, steps: [String(e && e.message || e)] }));
     if (!report.ok) log.appendChild(h('div', { style: 'color:var(--bad)' }, '\nNot saved: ' + (report.steps[report.steps.length - 1] || '')));
     else {
-      for (const c of report.client || []) S.client.files.set(c.lower, new FRE.SourceFile(c.name, c.bytes, { handle: c.handle }));
+      for (const c of report.client || []) S.client.files.set(c.lower, new FRE.SourceFile(c.file, c.bytes, { handle: c.handle, dir: c.dir, binary: /\.dyo$/i.test(c.file) }));
       const synced = new Set((report.client || []).map(c => c.lower));
       const left = client.filter(n => !synced.has(n.toLowerCase()));
       if (left.length) log.appendChild(h('div', { style: 'color:var(--warn)' }, `\nNot in Client/ yet (copy by hand): ${left.join(', ')}`));

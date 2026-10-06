@@ -1,0 +1,59 @@
+// A dropdown you can type in (searchable select). The text box filters the list; every word typed must
+// appear in the option's label or its extra search text. Keys: ↑ ↓ to move, Enter to pick, Esc to close.
+//   FRE.ui.combo({ options: [{ v, label, group?, find? }], value, placeholder, onPick(v), onNew? }) -> element
+//   onNew: { label: text => 'row text', pick(text) }: a first row that takes the typed text as a new value
+(function (FRE) {
+  'use strict';
+  const { h } = FRE.dom;
+  const MAX = 300;
+
+  function combo({ options, value, placeholder = 'Type to search…', onPick, onNew = null }) {
+    const cur = () => options.find(o => String(o.v) === String(value));
+    const input = h('input.combo-input', { type: 'text', placeholder, value: cur() ? cur().label : '', autocomplete: 'off' });
+    const list = h('div.combo-list');
+    const el = h('div.combo', input, list);
+    let shown = [], hi = -1;
+    list.hidden = true;
+
+    function paint(q) {
+      const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+      shown = options.filter(o => words.every(w => (o.label + ' ' + (o.find || '') + ' ' + (o.group || '')).toLowerCase().includes(w)));
+      if (onNew && q.trim()) shown.unshift({ v: null, label: onNew.label(q.trim()), typed: q.trim() });
+      list.textContent = '';
+      let group = null;
+      shown.slice(0, MAX).forEach((o, i) => {
+        if (o.group && o.group !== group) { group = o.group; list.appendChild(h('div.combo-group', group)); }
+        list.appendChild(h('div.combo-opt' + (i === hi ? '.hi' : '') + (String(o.v) === String(value) ? '.sel' : ''),
+          { 'data-i': i, on: { mousedown: e => { e.preventDefault(); pick(o); } } }, o.label));
+      });
+      if (shown.length > MAX) list.appendChild(h('div.combo-more', `${shown.length - MAX} more: type more letters`));
+      if (!shown.length) list.appendChild(h('div.combo-more', 'Nothing matches.'));
+    }
+    function open() { hi = -1; paint(''); list.hidden = false; input.select(); }
+    function close() { list.hidden = true; input.value = cur() ? cur().label : ''; }
+    function pick(o) {
+      if (o.typed !== undefined) { list.hidden = true; onNew.pick(o.typed); return; }
+      value = o.v; close(); onPick(o.v);
+    }
+    function move(d) {
+      if (!shown.length) return;
+      hi = Math.max(0, Math.min(Math.min(shown.length, MAX) - 1, hi + d));
+      paint(input.value === (cur() && cur().label) ? '' : input.value);
+      const node = list.querySelector('.combo-opt.hi');
+      if (node) node.scrollIntoView({ block: 'nearest' });
+    }
+    input.addEventListener('focus', open);
+    input.addEventListener('blur', close);              // a click in the list never blurs: its mousedown is cancelled
+    input.addEventListener('input', () => { hi = 0; paint(input.value); list.hidden = false; });
+    input.addEventListener('keydown', e => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); if (list.hidden) open(); move(1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+      else if (e.key === 'Enter') { e.preventDefault(); if (shown[hi]) pick(shown[hi]); }
+      else if (e.key === 'Escape') { e.preventDefault(); input.blur(); }
+    });
+    el.pick = v => { const o = options.find(x => String(x.v) === String(v)); if (o) pick(o); };    // for tests
+    return el;
+  }
+
+  FRE.ui.combo = combo;
+})(globalThis.FRE = globalThis.FRE || {});

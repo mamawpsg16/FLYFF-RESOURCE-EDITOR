@@ -7,10 +7,13 @@
 
   const KIND_UTF16 = 'utf16le-bom';
   const KIND_BYTES = 'bytes';
+  const KIND_BINARY = 'binary';    // a binary file (World/<map>/<map>.dyo): any byte may be inserted
 
   class SourceFile {
     constructor(name, bytes, opts = {}) {
+      this._binaryOpt = !!opts.binary;
       this.name = name;
+      this.dir = opts.dir || '';                // folder relative to Resource (or Client), e.g. 'World/WdMadrigal'
       this.handle = opts.handle || null;
       this.stamp = opts.stamp || null;          // { size, lastModified } at load
       this.bytes = bytes;                       // original bytes (replaced only after a successful save)
@@ -28,7 +31,12 @@
     _load() {
       const b = this.bytes;
       const has = (...sig) => sig.every((v, i) => b[i] === v);
-      if (b.length >= 2 && has(0xff, 0xfe)) {
+      if (this._binaryOpt) {
+        this.kind = KIND_BINARY;
+        this.bom = new Uint8Array(0);
+        this.text = B.bytesToBinaryString(b);
+        this.displayCodec = 'binary';
+      } else if (b.length >= 2 && has(0xff, 0xfe)) {
         this.kind = KIND_UTF16;
         this.bom = b.subarray(0, 2);
         if ((b.length & 1) !== 0) {
@@ -59,6 +67,7 @@
       if (!B.bytesEqual(this.encode(this.text), b)) {
         this.readOnlyReasons.push('round-trip check failed: re-encoding the file does not reproduce its bytes');
       }
+      if (this.kind === KIND_BINARY) return;
       const lines = this.lines;
       let joined = 0;
       for (const l of lines) joined += l.end - l.start;
@@ -172,5 +181,6 @@
 
   SourceFile.KIND_UTF16 = KIND_UTF16;
   SourceFile.KIND_BYTES = KIND_BYTES;
+  SourceFile.KIND_BINARY = KIND_BINARY;
   FRE.SourceFile = SourceFile;
 })(globalThis.FRE = globalThis.FRE || {});

@@ -2,7 +2,16 @@
 
 _Last updated 2026-10-06._
 
-> **Handoff (2026-10-06, later):** **Where each NPC stands** is committed after the user's test in Brave (in-game check deferred to the Windows PC). The NPC Shops, Exchanges and Donation Shop tasks show "Where: Flaris — Flarine / Central Flarine" with a `/te 1 x z` copy button for each spot. The simulator is `loaders/area.js` + `tools/area-sim.js`, the independent copy is `tools/oracle_sim.py area`, and they agree on every case. **Next:** (1) **Add New NPC** (`docs/HANDOFF-ADD-NPC.md`; the area names help pick a spot); (2) a **Donation Shop simulator** (the buy flow) + its Python copy; (3) **F. Monster drops**, with both copies; (4) **G. Item set effects and weapon effects**, with both copies. Rule (CLAUDE.md): every task has a JS simulator AND an independent Python copy, and the tests require them to agree. Tests: `gjs -m tests/run-tests.js` (492 pass, about 90 s, reads `test-data/fixtures`), `tests/run-ui.sh` (150 pass). `tools/refresh-fixtures.sh` now also copies each map's `.rgn` / `.txt.txt`, `WdMadrigal.wld.cnt`, `world.txt.txt` and `propMapComboBoxData.*`; run `tools/refresh-fixtures.sh test-data` once so the manual copy has them (leave `test-data/backups`: Past seasons reads it).
+> **Handoff (2026-10-06, late night) — START HERE:** **Add New NPC step 1 (shop NPC, reworks 1b + 1c + 1d) is built, NOT committed.** The user tested 1c in Brave: OK except the Model list and the Building tag, both reworked in 1d (below). Waiting for the user's test of 1d, then commit. Plans: `/home/kevin/.claude/plans/magical-spinning-knuth.md`, `/home/kevin/.claude/plans/flickering-shimmying-dahl.md`. Tests: `gjs -m tests/run-tests.js` 543 pass, `tests/run-ui.sh` 183 pass, `python3 tools/oracle_sim.py newnpc` (152 cases + 12 small structure files, JS = Python).
+>
+> **1d (user test feedback):**
+> - Model: a **Used by NPCs / Not used yet / Both** dropdown replaces the checkbox; a model not in the chosen list is cleared (no stale picture). A line under it lists the files: `.o3d`, animations, textures — all in Client/Model, or what is missing. Textures are read from the `.o3d` (`newNpcSim.o3dTextures`; a test copy uses `Client/ModelTexture.list` + `Client/Model.textures` from `tools/refresh-fixtures.sh`). Models of NPCs hidden in `b6abf414` are proven ("Soraya (until b6abf414)").
+> - Building: pick an existing tag, or **type a new one** (`+ New tag [Dungeon Pieces]`): adds `#define SRT_<NAME> <row>` (defineNeuz.h), `SRT_<NAME> IDS_ETC_INC_n` (etc.inc structure block) and the text (etc.txt.txt), Server + Client, in the same undo step as the NPC, the `b4b9a465` way. Only rows 18 and 19 are free (`MAX_STRUCTURE` 20 is compiled). Rules `NN_TAG_FILES`, `NN_TAG_FULL`, `NN_TAG_CHARS`, `NN_TAG_LONG` (31 max, `szName[32]`), `NN_TAG_DUP` (BLOCK), `NN_TAG_ICON` (INFO).
+> - Simulator: port of LoadEtc's structure loop + the `[tag]` line (`newNpcSim.structures`, `tagOf`), Python copy `nn_structs`; 11 planted bugs (tags, structure loop, textures, b6abf414 models), all caught after adding cases.
+>
+> **User's test:** `python3 build.py`, `tools/refresh-fixtures.sh test-data` (new: Client defineNeuz.h / etc.* and the texture lists), reload, NPC Shops → + NPC: switch the Model list, type a tag in Building, Create (6 files), Save (backup has defineNeuz.h, etc.inc, etc.txt.txt + Client/), Undo. In game later (Windows): handoff §8 plus the `[tag]` above the name and its minimap icon.
+>
+> **After the user's OK:** commit step 1 (repo identity, Co-Authored-By trailer), then **Step 2: exchange NPCs + new exchange menus, Jeff's Weapon Pieces first** (plan §Step 2; reuse `FRE.ui.itemPicker`), then **Step 3: edit an NPC's menus + info-board texts (Guild Siege rules, `GuildCombatTEXT_<n>_<lang>.inc`)**, then Donation Shop simulator, F. drops, G. set effects. No 3D model viewer (the user chose pictures only).
 
 ## Done
 - **Build 1** (`1c785ce`): NPC shop editor (`character*.inc`). Add, remove, price and tab edits; byte-exact save with verified backup. Tested by the user in Brave on `test-data`.
@@ -137,6 +146,13 @@ _Last updated 2026-10-06._
   - Not modelled: `RA_INN` regions (need the land height), caption timers, regions the server adds at run time, and the map window in other worlds (the world title names those).
   - `tools/refresh-fixtures.sh` and the UI harness also carry the region, string and continent files.
 
+- **Add New NPC, step 1** (2026-10-06, built, waiting for the user's test): plan `/home/kevin/.claude/plans/magical-spinning-knuth.md`.
+  - `edit/npc-ops.js` (`newNpcPlan`, `buildRecord`, `insertPoint`), `validate/newnpc.js` (27 `NN_*` codes, handoff §6), `ui/new-npc.js`, `loaders/newnpc-sim.js`.
+  - Core: `SourceFile` binary kind; the workspace keeps each map's `.dyo` as an editable file (`setMapFiles`, `refreshMaps`); string tables reload when a `.txt.txt` changes; save/backup/client sync handle files in sub-folders.
+  - Findings: x/z ÷ 4 (`OLD_MPU`); insert at the final `FFFFFFFF`; the right-click popup lists menus by id (not AddMenu order) with a few special labels; V19 always opens it.
+  - Python copy: 125 forms (the §5 example, every World.inc map, both sides of every rule, menu order); 16 one-line bugs planted, all caught (3 needed new cases: a job rule; a made-up `MMI_` 349/350 define).
+  - 1d (after the user's test): Model list dropdown + file/texture line; new building tag (defineNeuz.h + etc.inc + etc.txt.txt, `b4b9a465` way, rows 18/19); `etc.txt.txt` added to the string tables; models of NPCs hidden in `b6abf414` count as proven. Python copy: 152 forms + 12 small etc.inc structure files; 11 more planted bugs caught (5 needed new cases: rows at MAX_STRUCTURE, a 32-character existing name, `[ x` spacing, blocks after the structure block, a tag whose text but not define exists).
+
 ## Next (in this order, agreed with the user)
 
 ### Add New NPC (handoff written 2026-10-05, branch `ccr-25b694d1-jie3e1`, merged)
@@ -144,6 +160,15 @@ _Last updated 2026-10-06._
 - `docs/resource-forensics.csv`: encoding, BOM and line ending of every Resource file (byte-exact saves).
 - Reuses `loaders/world.js` (.dyo reading, IsUsableDYO2), `loaders/character.js`, `loaders/vendor-sim.js`. The area names (task above) help choose where to place the NPC.
 - Simulator rule: port what the server does with the new NPC (LoadCharacter + .dyo read + shop fill), plus an independent Python copy, as for every task.
+
+### Add New NPC: Step 2 and Step 3 (agreed 2026-10-06)
+- **Step 2:** exchange NPCs and new exchange menus (`MMI_` 282-349, label `TID_MMI_*` = 7000 + id, empty menu in `Exchange_Script.txt`); the menus can also be added to existing NPCs. First real use: Jeff's Weapon Pieces exchange (`7b1210d4`; Weapon Pieces handoff Step 3).
+- **Step 3:** edit an existing NPC's menus (add / remove `AddMenu`) and the info-board texts its menus show.
+  - Example: the Guild Siege manager `MaFl_GuildWar`. `MMI_GUILDCOMBAT_INFO_BOARD1/2/3` and `MMI_GUILDCOMBAT_INFO_TEX` load the client-only `Client/Client/GuildCombatTEXT_<n>_<lang>.inc` (`WndWorld.cpp:4464-4620`, `CScript::Load` + `SetString`). Each file is ASCII, CRLF, with `#c` colour codes.
+  - Goal: put the siege rules (TODO `13364001`) on a board.
+  - Check which `<lang>` the client uses (`GetLangFileName`).
+  - A brand-new info menu needs C++: a menu id without a `case` opens the exchange window.
+  - Simulator + Python copy, as for every task.
 
 ### F. Monster drops (`propMoverEx.inc`)
 - **Loader:** port `LoadPropMoverEx`, including the `AI{}` sub-parser.

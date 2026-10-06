@@ -44,6 +44,12 @@ def main():
         parts.append('FRE.HARNESS_FILES = ' + json.dumps(data) + ';')
         tree = ROOT / 'test-data' / 'fixtures' / 'Client' / 'Client' / 'DonationShopTree.inc'
         parts.append('FRE.HARNESS_TREE = ' + json.dumps(base64.b64encode(tree.read_bytes()).decode() if tree.exists() else None) + ';')
+        ml = ROOT / 'test-data' / 'fixtures' / 'Client' / 'Model.list'          # Client/Model file names (new-NPC model check)
+        parts.append('FRE.HARNESS_MODEL_LIST = ' + json.dumps(ml.read_text(encoding='latin-1') if ml.exists() else None) + ';')
+        # Client/Model/Texture names and each Mvr_*.o3d's textures (new-NPC texture check)
+        for var, name in (('HARNESS_TEX_LIST', 'ModelTexture.list'), ('HARNESS_TEX_INDEX', 'Model.textures')):
+            f = ROOT / 'test-data' / 'fixtures' / 'Client' / name
+            parts.append(f'FRE.{var} = ' + json.dumps(f.read_text(encoding='latin-1') if f.exists() else None) + ';')
         parts.append((ROOT / 'tests' / 'ui-harness.js').read_text(encoding='utf-8'))
     js = '\n'.join(parts)
     js = re.sub(r'</(script)', r'<\\/\1', js, flags=re.I)   # never close the inline <script> early

@@ -166,6 +166,8 @@ ul.plan { margin: 4px 0 10px; padding-left: 20px; } ul.plan li { margin: 2px 0; 
 #list-extra { flex: 1 1 100%; display: flex; }
 select.npc-filter { width: 100%; padding: 6px 8px; font-size: 13px; }
 #list-extra:empty { display: none; }
+#list-action { flex: 0 0 auto; display: flex; } #list-action:empty { display: none; }
+#list-action button { white-space: nowrap; }
 .item-tooltip { position: fixed; z-index: 30; max-width: 380px; padding: 8px 10px; background: rgba(10, 14, 22, .96); border: 1px solid #4a5a73; border-radius: 6px; font-size: 12px; line-height: 1.45; pointer-events: none; box-shadow: 0 6px 20px rgba(0,0,0,.5); }
 .item-tooltip .tt-line { white-space: pre-wrap; }
 .item-tooltip .tt-editor { margin-top: 6px; padding-top: 6px; border-top: 1px dashed #3a465a; }
@@ -273,6 +275,43 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
 .ex-npc .where { margin-top: 0; }
 .ex-npc { flex-basis: 100%; }
 
+/* + New NPC (ui/new-npc.js) */
+.newnpc h3 { margin: 14px 0 6px; }
+.nn-row { display: flex; gap: 8px; align-items: center; margin: 4px 0; flex-wrap: wrap; }
+.nn-label { width: 90px; color: var(--muted); font-size: 12px; }
+.nn-row input:not([type=checkbox]):not([type=radio]) { min-width: 120px; }
+.nn-row textarea { flex: 1; min-width: 320px; font-family: monospace; font-size: 12px; }
+.nn-menus { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px 12px; }
+.nn-menu { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.nn-menu input { flex: 0 0 auto; margin: 0; }
+.nn-menu-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.nn-radio { display: inline-flex; align-items: center; gap: 6px; margin-right: 18px; font-size: 12px; }
+.nn-req { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; }
+.nn-req.req { color: var(--bad); font-size: 14px; font-weight: 700; } .nn-req.opt { color: var(--muted); }
+.nn-where { margin: 2px 0 6px 98px; font-size: 13px; }
+.nn-items { margin: 4px 0 6px; }
+.ip-list { max-height: 55vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; }
+.ip-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) 140px 60px 150px; gap: 8px; align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.ip-row.had { opacity: .55; cursor: default; }
+.ip-name { display: flex; flex-direction: column; min-width: 0; } .ip-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ip-type, .ip-lv, .ip-cost { font-size: 12px; color: var(--muted); }
+.newnpc p.ok { color: var(--ok); } .newnpc p.bad { color: var(--bad); }
+.nn-tab { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; margin: 6px 0; }
+.nn-pre { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px; white-space: pre-wrap; max-height: 260px; overflow: auto; }
+.nn-ingame { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 8px 0; font-size: 13px; }
+
+/* searchable dropdown (ui/combo.js) + portrait pictures (ui/tga.js) */
+.combo { position: relative; min-width: 320px; }
+.combo-input { width: 100%; }
+.combo-list { position: absolute; z-index: 20; left: 0; right: 0; top: 100%; max-height: 320px; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+.combo-opt { padding: 4px 10px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.combo-opt.hi, .combo-opt:hover { background: var(--line); } .combo-opt.sel { font-weight: 600; }
+.combo-group { padding: 4px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.combo-more { padding: 4px 10px; font-size: 12px; color: var(--muted); }
+.nn-col { display: flex; flex-direction: column; gap: 4px; }
+.tga-pic canvas { width: 100px; height: 120px; border: 1px solid var(--line); border-radius: 6px; background: #000; }
+.tga-pic.small canvas { width: 60px; height: 72px; }
+
 </style>
 </head>
 <body class="start">
@@ -292,6 +331,7 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
   <aside id="left">
     <div class="panel-head">
       <input id="list-search" type="search" placeholder="Search" autocomplete="off">
+      <span id="list-action"></span>
       <span id="list-extra"></span>
     </div>
     <div id="list" class="list"></div>
@@ -325,7 +365,7 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when": "Tue 6 Oct 2026, 13:28", "rev": "6d5c4c3", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when": "Tue 6 Oct 2026, 18:28", "rev": "35ac48a", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -520,10 +560,13 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
 
   const KIND_UTF16 = 'utf16le-bom';
   const KIND_BYTES = 'bytes';
+  const KIND_BINARY = 'binary';    // a binary file (World/<map>/<map>.dyo): any byte may be inserted
 
   class SourceFile {
     constructor(name, bytes, opts = {}) {
+      this._binaryOpt = !!opts.binary;
       this.name = name;
+      this.dir = opts.dir || '';                // folder relative to Resource (or Client), e.g. 'World/WdMadrigal'
       this.handle = opts.handle || null;
       this.stamp = opts.stamp || null;          // { size, lastModified } at load
       this.bytes = bytes;                       // original bytes (replaced only after a successful save)
@@ -541,7 +584,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
     _load() {
       const b = this.bytes;
       const has = (...sig) => sig.every((v, i) => b[i] === v);
-      if (b.length >= 2 && has(0xff, 0xfe)) {
+      if (this._binaryOpt) {
+        this.kind = KIND_BINARY;
+        this.bom = new Uint8Array(0);
+        this.text = B.bytesToBinaryString(b);
+        this.displayCodec = 'binary';
+      } else if (b.length >= 2 && has(0xff, 0xfe)) {
         this.kind = KIND_UTF16;
         this.bom = b.subarray(0, 2);
         if ((b.length & 1) !== 0) {
@@ -572,6 +620,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
       if (!B.bytesEqual(this.encode(this.text), b)) {
         this.readOnlyReasons.push('round-trip check failed: re-encoding the file does not reproduce its bytes');
       }
+      if (this.kind === KIND_BINARY) return;
       const lines = this.lines;
       let joined = 0;
       for (const l of lines) joined += l.end - l.start;
@@ -685,6 +734,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
 
   SourceFile.KIND_UTF16 = KIND_UTF16;
   SourceFile.KIND_BYTES = KIND_BYTES;
+  SourceFile.KIND_BINARY = KIND_BINARY;
   FRE.SourceFile = SourceFile;
 })(globalThis.FRE = globalThis.FRE || {});
 
@@ -1058,7 +1108,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
 
   // Subset of the server's list that the editor needs, in the server's order.
   const STRING_FILES = [
-    'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt',
+    'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt', 'etc.txt.txt',
     'propItem.txt.txt', 'propMover.txt.txt', 'textClient.txt.txt',
   ];
 
@@ -1590,8 +1640,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
     return out;
   }
 
-  // One .dyo file (bytes) -> { movers: [key], placements: [{ key, x, y, z }] (keyed movers only),
-  // end: 'eof' | 'stop' | 'short', stopType }
+  // One .dyo file (bytes) -> { movers: [key], placements: [{ key, x, y, z, angle, model, at }] (keyed movers only),
+  // end: 'eof' | 'stop' | 'short', stopType, endAt }
+  // endAt: offset of the type the server stopped at (the final 0xFFFFFFFF when end is 'eof' and a
+  // marker is there). A new record inserted there is read like the others (Add New NPC).
   // A record type the WorldServer cannot create (OT_ANI, OT_SFX on the server, junk) makes ReadObj
   // return NULL and the server stops reading the rest of the file. OT_SHIP is a CShip, whose Read is
   // CCtrl::Read = CObj::Read (Ctrl.cpp:85). No map file holds one.
@@ -1608,16 +1660,17 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
         if (i + OBJ_BYTES + 136 > bytes.length) return { movers, placements, end: 'short' };
         const key = str(i + OBJ_BYTES + 96, 32);
         movers.push(key);
-        if (key) placements.push({ key, x: dv.getFloat32(i + 16, true) * OLD_MPU, y: dv.getFloat32(i + 20, true), z: dv.getFloat32(i + 24, true) * OLD_MPU });
+        if (key) placements.push({ key, x: dv.getFloat32(i + 16, true) * OLD_MPU, y: dv.getFloat32(i + 20, true), z: dv.getFloat32(i + 24, true) * OLD_MPU,
+          angle: dv.getFloat32(i, true), model: dv.getUint32(i + 44, true), at: i - 4 });
         i += OBJ_BYTES + 136;
       } else if (type === OT.CTRL) {
         // CCommonCtrl::Read (CommonCtrl.cpp:84): a version DWORD, then the CCtrlElem
         i += OBJ_BYTES;
         const v = dv.getUint32(i, true); i += 4;
         i += v === 0x80000000 ? CTRL_ELEM : v === 0x90000000 ? 88 + CTRL_ELEM - 152 : CTRL_ELEM - 40;
-      } else return { movers, placements, end: type === 0xFFFFFFFF && i === bytes.length ? 'eof' : 'stop', stopType: type };
+      } else return { movers, placements, end: type === 0xFFFFFFFF && i === bytes.length ? 'eof' : 'stop', stopType: type, endAt: i - 4 };
     }
-    return { movers, placements, end: i === bytes.length ? 'eof' : 'short' };
+    return { movers, placements, end: i === bytes.length ? 'eof' : 'short', endAt: i };
   }
 
   // CWorld::IsUsableDYO2: no SetLang list -> SetOutput decides; the server's language in the
@@ -1636,7 +1689,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
     return { inGame: maps ? true : null, maps, why: maps ? `on ${maps.join(', ')}` : 'map files not read' };
   }
 
-  FRE.world = { readWorldList, readDyo, npcShown, npcStatus, SERVER_LANG, SERVER_SUBLANG };
+  FRE.world = { readWorldList, readDyo, OLD_MPU, npcShown, npcStatus, SERVER_LANG, SERVER_SUBLANG };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- loaders/area.js ----
@@ -3481,6 +3534,44 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
     EX_NO_NPC: ['No NPC has AddMenu with this menu, so players cannot open it. Many are old events.', 'Nothing to do, unless you want an NPC to offer it (AddMenu in character.inc).'],
     EX_REMOVE_IGNORED: ['This server takes the CONDITION items when the exchange succeeds (__NEW_EXCHANGE_V19) and ignores the REMOVE block. Here the two lists differ, so REMOVE has no effect.',
       'Nothing to do. Ingredient edits here keep REMOVE equal to CONDITION when they already match.'],
+
+    // Add New NPC (validate/newnpc.js, docs/HANDOFF-ADD-NPC.md §6)
+    NN_KEY: ['The NPC key must be 1-31 letters, digits or _ and not start with a digit. The map file keeps it in a 32-byte field (Mover.h).', 'Type a key like MaFl_Lumi.'],
+    NN_KEY_DUP: ['Another NPC already has this key (upper/lower case does not matter, across the 3 character files). The server would silently replace one with the other.', 'Choose another key.'],
+    NN_KEY_NAME: ['The key is also a #define name or a text key. The server reads every word through those tables, so the key would turn into a number or a text.', 'Choose another key.'],
+    NN_TEXT: ['A name or tab title is empty, too long (63 characters at most), has a " or a line break, starts/ends with a space, or has a character outside Windows-1252 (shown as ? in game).', 'Use plain letters, digits and common punctuation.'],
+    NN_IDS_TAKEN: ['The next free IDS_CHARACTER_INC_ text key is already used in another .txt.txt file. All text files share one table, and the first key wins.', 'Report it: the editor picks the number after the highest one it finds.'],
+    NN_MENU: ['The menu is not in defineNeuz.h (the server would turn it into the Dialog menu, id 0) or its number is 350 or more (outside the NPC menu array, no bounds check).', 'Pick a menu from the list.'],
+    NN_MENU_NEW: ['No other NPC uses this menu, so nobody has tried it on an NPC in this game.', 'Fine if you know what the menu does; test it in game.'],
+    NN_MENU_TWICE: ['The same menu is ticked twice. It shows once.', 'Untick one.'],
+    NN_DIALOG: ['The Dialog menu needs a conversation script written in C++ (WorldDialog.dll). The editor cannot make one, so the menu does nothing for a new NPC.', 'Untick Dialog unless a script for this key exists.'],
+    NN_MODEL: ['The model is not an MI_ name from defineObj.h, or it has no row in propMover.txt. The server cannot create the NPC.', 'Pick a model from the list (models other NPCs already use).'],
+    NN_MODEL_UNPROVEN: ['No NPC that players can see uses this model, so nobody has seen it work in this game (it may be a monster, a door, or a model with missing files).', 'Fine if you test it on the test server first; models used by a visible NPC are proven.'],
+    NN_MODEL_FILES: ['The model has an entry in mdlDyna.inc, but its 3D file (Mvr_<name>.o3d) or one of its animations (.ani) is not in Client/Model.', 'Pick another model, or add the missing files to Client/Model first.'],
+    NN_NO_MENU: ['The NPC has no right-click menu, so clicking it does nothing.', 'Tick at least one menu (for example Trade).'],
+    NN_IMAGE: ['The portrait text key is not known, so the dialog shows no picture.', 'Pick the portrait of an existing NPC, or none.'],
+    NN_STRUCTURE: ['The building type (SRT_) is not defined. The server would use 0.', 'Pick one from the list, or none.'],
+    NN_TAG_FILES: ['A new building tag is written to defineNeuz.h, etc.inc and etc.txt.txt, and one of them was not found.', 'Pick a folder that has all three, or pick an existing tag.'],
+    NN_TAG_FULL: ['The game keeps building tags in a table of MAX_STRUCTURE rows (20). This number is compiled into the game, and every free row is taken.', 'Pick an existing tag. A new row needs MAX_STRUCTURE raised in the C++ and a rebuild.'],
+    NN_TAG_CHARS: ['The tag text is empty, starts or ends with a space, or has a character the game cannot show.', 'Type the tag with plain letters, without the [ ] (the game adds them).'],
+    NN_TAG_LONG: ['The game copies the tag into a 32-byte field (szName[32]) without a length check. A tag of 32 characters or more overwrites the memory after it.', 'Shorten the tag to 31 characters at most.'],
+    NN_TAG_DUP: ['A tag with this text, or a #define with this SRT_ name, already exists.', 'Pick the existing tag from the list.'],
+    NN_TAG_ICON: ['The new tag takes a free row of the building table. The minimap draws icon (row + 6) for it. Rows 14-17 were added in b4b9a465 and work in game; the icon of a newer row has not been checked.', 'After the in-game test, check the NPC\'s minimap icon.'],
+    NN_SHOP_NO_TRADE: ['The shop has items but the NPC has no Trade menu, so players can never open it.', 'Tick Trade, or remove the items.'],
+    NN_SHOP_EMPTY: ['Trade is ticked but no tab has an item or a rule. Trade would open an empty shop.', 'Add items, or untick Trade.'],
+    NN_TAB: ['Only tabs 0-3 exist (MAX_VENDOR_INVENTORY_TAB). The server does not check the number, so tab 4 or more writes into memory that is not the shop. A tab may be listed only once.', 'Use tabs 0, 1, 2 and 3, each once.'],
+    NN_RULE: ['An auto-fill rule needs an IK3_ kind from defineItemkind.h, a job of -1 (any) or a JOB_ number, and a rarity range with 0 <= min <= max.', 'Fix the rule.'],
+    NN_RULE_EMPTY: ['No item matches this rule (kind, job, rarity, sold in shops). The server adds nothing and logs VENDORITEM.', 'Widen the rarity range or pick another kind.'],
+    NN_ITEM: ['The item is not in defineItem.h, or not in Spec_Item.txt. The shop would leave it out.', 'Pick an item from the item list.'],
+    NN_ITEM_TWICE: ['The item is in this tab twice (once by a rule, or twice by hand). Players see it twice.', 'Remove one.'],
+    NN_PRICE: ['A price must be a whole number from 1 to 2,147,483,647 (the server reads it with atoi into an int).', 'Fix the price, or leave it empty to use the item\'s own price.'],
+    NN_PRICE_GLOBAL: ['AddShopItem\'s price changes the item\'s price in EVERY shop, not only this one.', 'Leave the price empty unless you want that.'],
+    NN_PRICE_CONFLICT: ['Another NPC already sets a different price for this item. The last NPC loaded wins everywhere, so the price players see is hard to predict.', 'Use the same price as the other NPC, or leave the price empty.'],
+    NN_TAB_FULL: ['A tab shows at most 100 items (MAX_VENDOR_INVENTORY); the rest are silently left out (rule items first, then the hand-picked ones in order).', 'Narrow the rules or move items to another tab.'],
+    NN_MAP: ['The server cannot read a new NPC on this map: the map has no .dyo file, or its file does not end with the 0xFFFFFFFF marker the editor inserts before (WdGuildWar1To1 and WdVolcaneYellow start with junk, so the server reads nothing there).', 'Pick another map.'],
+    NN_POS: ['x, y, z and the angle must be numbers, and the angle 0 or more and under 360.', 'In game, stand on the spot and type /position, then copy the three numbers.'],
+    NN_OVERLAP: ['Another NPC stands less than 4 units away (1 unit in the map file). The two would overlap.', 'Move a few steps away and take /position again.'],
+    NN_HEIGHT: ['The height (y) is more than 30 away from the nearest NPC on the map. The NPC may float or be inside the ground.', 'Check y with /position on the exact spot.'],
   };
 })(globalThis.FRE = globalThis.FRE || {});
 
@@ -4443,6 +4534,617 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
   };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- edit/npc-ops.js ----
+// Add New NPC (docs/HANDOFF-ADD-NPC.md): the exact bytes a new NPC adds to
+//   character.inc      a new block at the end (CProject::LoadCharacter, Project.cpp:3257)
+//   character.txt.txt  new IDS_CHARACTER_INC_ lines at the end (name, tab names; like f58e56ba, d09949ac, d11123ac)
+//   World/<map>/<map>.dyo  one 200-byte OT_MOVER record (ReadObj, CreateObj.cpp:761; CObj::Read, Obj.cpp:474;
+//                      CMover::Read, Mover.cpp:3365), inserted where the server stops reading (the final 0xFFFFFFFF)
+// A new building tag (form.newTag = its text) adds, the way b4b9a465 added SRT_FASHIONSHOP .. SRT_REDCHIPMERCHANT
+// (verified in game):
+//   defineNeuz.h  #define SRT_<NAME> <id>   after the last SRT_ line (id: newNpcSim.freeStructureIds, under MAX_STRUCTURE)
+//   etc.inc       SRT_<NAME> IDS_ETC_INC_n  before the structure block's }   (CProject::LoadEtc, Project.cpp:1262)
+//   etc.txt.txt   IDS_ETC_INC_n <text>      appended
+// b4b9a465 also changed Source/Resource/defineNeuz.h (the build's copy); the editor writes only Server + Client.
+// No V19 commit has added an NPC yet; the record's name/dialog fields are zero, as in every record of
+// WdMadrigal.dyo since b6abf414 (verified in game).
+//
+// form: { key, name, model: 'MI_X', image: 'IDS_..' | null, structure: 'SRT_X' | null, map, x, y, z, angle,
+//         newTag: 'Dungeon Pieces' | null (a new building tag instead of structure),
+//         menus: ['MMI_X', ...], tabs: [{ slot, title, rules: [{ ik3, job, min, max }], items: [{ define, cost }] }] }
+// x / z are what /position prints in game (world units); the file stores them / OLD_MPU (4).
+(function (FRE) {
+  'use strict';
+  const RECORD = 200;
+  const ID_PREFIX = 'IDS_CHARACTER_INC_';
+
+  // The highest IDS_CHARACTER_INC_ number in the three NPC files and in every loaded string table.
+  function lastStringId(ws) {
+    let max = 0;
+    const scan = t => { for (const m of t.matchAll(/IDS_CHARACTER_INC_(\d+)/g)) max = Math.max(max, Number(m[1])); };
+    for (const n of [...FRE.character.CHARACTER_FILES, 'character.txt.txt']) { const f = ws.files.get(n); if (f) scan(f.text); }
+    for (const k of ws.strings.map.keys()) if (k.startsWith(ID_PREFIX)) max = Math.max(max, Number(k.slice(ID_PREFIX.length)) || 0);
+    return max;
+  }
+  const idsKey = n => ID_PREFIX + String(n).padStart(6, '0');
+
+  // The texts this NPC needs, each with its new IDS key: the name first, then each tab title in tab order.
+  function newStrings(ws, form) {
+    let n = lastStringId(ws);
+    const out = [{ what: 'name', text: form.name, key: idsKey(++n) }];
+    for (const t of tabsOf(form)) out.push({ what: 'tab', slot: t.slot, text: t.title, key: idsKey(++n) });
+    return out;
+  }
+  const tabsOf = form => (form.menus || []).includes('MMI_TRADE') ? [...(form.tabs || [])].sort((a, b) => a.slot - b.slot) : [];
+
+  // The character.inc block (handoff §5.2: TAB indent, the file's EOL).
+  function blockText(form, strings, eol) {
+    const L = [];
+    const S = strings.find(s => s.what === 'name').key;
+    L.push(form.key, '{', '\tsetting', '\t{');
+    for (const m of form.menus || []) L.push(`\t\tAddMenu( ${m} );`);
+    for (const t of tabsOf(form)) {
+      for (const r of t.rules || []) L.push(`\t\tAddVendorItem( ${t.slot}, ${r.ik3}, ${r.job}, ${r.min}, ${r.max}, 100 );`);
+      for (const it of t.items || []) L.push(`\t\tAddShopItem( ${t.slot}, ${it.define}${it.cost ? ', ' + it.cost : ''} );`);
+    }
+    if (form.structure) L.push(`\t\tm_nStructure= ${form.structure};`);
+    if (form.image) L.push('\t\tSetImage', '\t\t(', `\t\t${form.image}`, '\t\t);');
+    L.push('\t}', '\tSetName', '\t(', `\t${S}`, '\t);');
+    for (const s of strings) if (s.what === 'tab') L.push(`\tAddVendorSlot( ${s.slot}, ${s.key} );`);
+    L.push('}');
+    return L.join(eol) + eol;
+  }
+
+  // Splice that appends `body` at the end of a text file, after a line break if the file lacks one.
+  function appendSplice(text, body, lead = '') {
+    const eol = FRE.textOps.dominantEol(text);
+    const needs = text.length && !/[\r\n]$/.test(text);
+    return { start: text.length, end: text.length, insert: (needs ? eol : '') + lead + body };
+  }
+
+  // The 200-byte record (handoff §3.1). Defaults are those of 398 of the 447 placed NPCs:
+  // axis 0, scale 1, motion 0xFFFFFFFF, AI 0 / 2, belligerence 1, extra flag 0.
+  function buildRecord({ angle, x, y, z, model, key }) {
+    const b = new Uint8Array(RECORD), dv = new DataView(b.buffer);
+    dv.setUint32(0, 5, true);                                   // OT_MOVER
+    dv.setFloat32(4, angle, true);
+    dv.setFloat32(20, x / FRE.world.OLD_MPU, true);             // CObj::Read multiplies x and z by OLD_MPU
+    dv.setFloat32(24, y, true);
+    dv.setFloat32(28, z / FRE.world.OLD_MPU, true);
+    for (const o of [32, 36, 40]) dv.setFloat32(o, 1, true);    // scale
+    dv.setUint32(44, 5, true);                                  // m_dwType
+    dv.setUint32(48, model >>> 0, true);                        // m_dwIndex = MI_ id
+    dv.setUint32(52, 0xFFFFFFFF, true);                         // motion
+    dv.setUint32(56, 0, true);                                  // AI interface
+    dv.setUint32(60, 2, true);                                  // AI 2
+    for (let i = 0; i < key.length; i++) b[160 + i] = key.charCodeAt(i);   // m_szCharacterKey[32], zero padded
+    dv.setUint32(192, 1, true);                                 // belligerence
+    return b;
+  }
+
+  // Where the record goes: the offset of the final 0xFFFFFFFF, or null when the map cannot take one.
+  function insertPoint(bytes) {
+    const r = FRE.world.readDyo(bytes);
+    return r.end === 'eof' && r.stopType === 0xFFFFFFFF ? r.endAt : null;
+  }
+
+  // A typed tag as the game shows it: brackets are the client's ("[%s]"), so typed ones are dropped.
+  const tagText = raw => String(raw || '').trim().replace(/^\[\s*/, '').replace(/\s*\]$/, '');
+  const tagDefine = (text, id) => {
+    const n = text.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    return 'SRT_' + (n || 'TAG_' + id);
+  };
+  // The highest IDS_ETC_INC_ number in etc.inc, etc.txt.txt and the loaded string tables.
+  function lastEtcId(ws) {
+    let max = 0;
+    for (const n of ['etc.inc', 'etc.txt.txt']) { const f = ws.files.get(n); if (f) for (const m of f.text.matchAll(/IDS_ETC_INC_(\d+)/g)) max = Math.max(max, Number(m[1])); }
+    for (const k of ws.strings.map.keys()) if (k.startsWith('IDS_ETC_INC_')) max = Math.max(max, Number(k.slice(12)) || 0);
+    return max;
+  }
+  // -> { id, define, text, key, parts: [{ file, splices }], lines: { define, inc, txt } } ; throws when it cannot be built
+  function newTagPlan(ws, raw) {
+    const def = ws.files.get('defineneuz.h'), inc = ws.files.get('etc.inc'), txt = ws.files.get('etc.txt.txt');
+    if (!def || !inc || !txt) throw new Error('defineNeuz.h, etc.inc and etc.txt.txt are needed for a new tag');
+    const id = FRE.newNpcSim.freeStructureIds(ws)[0];
+    if (id === undefined) throw new Error('no free building tag row under MAX_STRUCTURE');
+    const text = tagText(raw), define = tagDefine(text, id);
+    const key = 'IDS_ETC_INC_' + String(lastEtcId(ws) + 1).padStart(6, '0');
+    // defineNeuz.h: after the last "#define SRT_" line, same EOL, the value at column 25 like its neighbours
+    const lastSrt = [...def.text.matchAll(/^#define[ \t]+SRT_\w+[^\r\n]*(\r?\n)/gm)].pop();
+    if (!lastSrt) throw new Error('defineNeuz.h has no SRT_ line');
+    const defLine = `#define ${define.padEnd(24)} ${id}${lastSrt[1]}`;
+    const defAt = lastSrt.index + lastSrt[0].length;
+    // etc.inc: a line before the structure block's closing brace
+    const blk = /\bstructure\s*\{/.exec(inc.text);
+    const close = blk ? inc.text.indexOf('}', blk.index + blk[0].length) : -1;
+    if (close < 0) throw new Error('etc.inc has no structure { } block');
+    const incAt = inc.text.lastIndexOf('\n', close) + 1;
+    const incLine = `\t${define}\t\t${key}${FRE.textOps.dominantEol(inc.text)}`;
+    const txtLine = `${key}\t${text}${FRE.textOps.dominantEol(txt.text)}`;
+    return {
+      id, define, text, key, lines: { define: defLine, inc: incLine, txt: txtLine },
+      parts: [
+        { file: def.name.toLowerCase(), splices: [{ start: defAt, end: defAt, insert: defLine }] },
+        { file: inc.name.toLowerCase(), splices: [{ start: incAt, end: incAt, insert: incLine }] },
+        { file: txt.name.toLowerCase(), splices: [appendSplice(txt.text, txtLine)] },
+      ],
+    };
+  }
+
+  // -> { parts: [{ file, splices }], strings, block, record, insertAt, dyo, tag } ; throws on what cannot be built
+  function newNpcPlan(ws, form) {
+    const inc = ws.files.get('character.inc'), txt = ws.files.get('character.txt.txt');
+    const dyo = ws.mapFile(form.map);
+    if (!inc || !txt) throw new Error('character.inc and character.txt.txt are needed');
+    if (!dyo) throw new Error(`no World/${form.map}/${form.map}.dyo`);
+    const model = ws.defines.defines.get(form.model);
+    if (model === undefined) throw new Error(`${form.model} is not defined`);
+    const strings = newStrings(ws, form);
+    const tag = form.newTag !== null && form.newTag !== undefined ? newTagPlan(ws, form.newTag) : null;
+    const eol = FRE.textOps.dominantEol(inc.text);
+    const block = blockText(tag ? Object.assign({}, form, { structure: tag.define }) : form, strings, eol);
+    const teol = FRE.textOps.dominantEol(txt.text);
+    const lines = strings.map(s => `${s.key}\t${s.text}${teol}`).join('');
+    const bytes = dyo.serialize();
+    const at = insertPoint(bytes);
+    if (at === null) throw new Error(`${form.map}: the server does not read this map's NPC list to its end marker`);
+    const record = buildRecord({ angle: form.angle, x: form.x, y: form.y, z: form.z, model, key: form.key });
+    const lower = n => n.toLowerCase();
+    return {
+      strings, block, record, insertAt: at, dyo, tag,
+      parts: [
+        ...(tag ? tag.parts : []),          // defineNeuz.h first: the NPC block names the new SRT_
+        { file: lower(inc.name), splices: [appendSplice(inc.text, block, eol)] },
+        { file: lower(txt.name), splices: [appendSplice(txt.text, lines)] },
+        { file: ws.mapFiles.get(form.map), splices: [{ start: at, end: at, insert: FRE.bytes.bytesToBinaryString(record) }] },
+      ],
+    };
+  }
+
+  FRE.npcOps = { newNpcPlan, newTagPlan, tagText, tagDefine, lastEtcId, buildRecord, insertPoint, blockText, newStrings, lastStringId, RECORD };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- validate/newnpc.js ----
+// Rules for a new NPC (docs/HANDOFF-ADD-NPC.md §6). They judge only the new NPC against the
+// loaded data; old quirks in the files never block it. BLOCK = the form cannot be saved.
+// Every message names the field and how to fix it.
+(function (FRE) {
+  'use strict';
+  const MAX_MOVER_MENU = 350;            // Mover.h: m_abMoverMenu[MAX_MOVER_MENU], no bounds check in AddMenu
+  const INT_MAX = 2147483647;
+  const BLOCKED_MAPS = new Set(['wdguildwar1to1', 'wdvolcaneyellow']);   // start with junk: the server reads no object
+  // Windows-1252 characters above 0x7F that UTF-16 -> code page conversion keeps (0x80-0x9F block + 0xA0-0xFF)
+  const CP1252_EXTRA = new Set([...'€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ']);
+  const isCp1252 = ch => { const c = ch.codePointAt(0); return (c >= 0x20 && c < 0x7f) || (c >= 0xa0 && c <= 0xff) || CP1252_EXTRA.has(ch); };
+
+  function textProblem(s) {
+    if (typeof s !== 'string' || !s.length) return 'is empty';
+    if (s !== s.trim()) return 'starts or ends with a space (the server trims it)';
+    if (s.length > 63) return `is ${s.length} characters long (63 at most)`;
+    if (/["\r\n]/.test(s)) return 'contains a " or a line break';
+    const bad = [...s].find(ch => !isCp1252(ch));
+    if (bad) return `contains "${bad}", which the game cannot show (only Windows-1252 characters work; it would show as ?)`;
+    return null;
+  }
+
+  // -> [{ code, severity, field, message }]
+  function checkNewNpc(ws, form) {
+    const out = [];
+    const add = (code, severity, field, message) => out.push({ code, severity, field, message, key: `${code}|${field}`, module: 'npc' });
+    const D = ws.defines.defines;
+    const key = String(form.key || '');
+
+    // --- the NPC
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,30}$/.test(key))
+      add('NN_KEY', 'BLOCK', 'key', `Key "${key}" must be 1-31 letters, digits or _, not starting with a digit (it is stored in a 32-byte field of the map file).`);
+    const dup = ws.chars && ws.chars.byKey.get(key.toLowerCase());
+    if (dup && dup.length) add('NN_KEY_DUP', 'BLOCK', 'key', `Key "${key}" already exists in ${dup[0].file} (upper/lower case does not matter) — choose another name.`);
+    if (D.has(key) || ws.strings.map.has(key))
+      add('NN_KEY_NAME', 'BLOCK', 'key', `Key "${key}" is a ${D.has(key) ? '#define name' : 'text key'}: the server would replace it with ${D.has(key) ? 'a number' : 'its text'} — choose another name.`);
+    const np = textProblem(form.name);
+    if (np) add('NN_TEXT', 'BLOCK', 'name', `Name ${np}.`);
+    let strings = [];
+    try { strings = FRE.npcOps.newStrings(ws, form); } catch (e) { /* reported below */ }
+    for (const s of strings) if (ws.strings.map.has(s.key)) add('NN_IDS_TAKEN', 'BLOCK', 'name', `Text key ${s.key} is already used in a .txt.txt file.`);
+
+    const menus = form.menus || [];
+    const used = new Set(ws.chars ? ws.chars.npcs.flatMap(n => n.menus) : []);
+    for (const m of menus) {
+      const v = D.get(m);
+      if (v === undefined || !/^MMI_/.test(m)) add('NN_MENU', 'BLOCK', 'menus', `Menu ${m} is not in defineNeuz.h: the server would turn it into the Dialog menu.`);
+      else if (v < 0 || v >= MAX_MOVER_MENU) add('NN_MENU', 'BLOCK', 'menus', `Menu ${m} = ${v} is outside 0-${MAX_MOVER_MENU - 1}: the server writes past the menu array.`);
+      else if (!used.has(v)) add('NN_MENU_NEW', 'WARN', 'menus', `Menu ${m} is used by no other NPC: untested in this game.`);
+    }
+    if (new Set(menus).size !== menus.length) add('NN_MENU_TWICE', 'WARN', 'menus', 'A menu is ticked twice: it is listed once in game.');
+    if (!menus.length) add('NN_NO_MENU', 'WARN', 'menus', 'No menu is ticked: right-clicking the NPC does nothing.');
+    if (menus.includes('MMI_DIALOG')) add('NN_DIALOG', 'WARN', 'menus', 'Dialog needs a C++ dialog script (WorldDialog.dll); without one the menu does nothing.');
+
+    const model = D.get(form.model);
+    if (!form.model) add('NN_MODEL', 'BLOCK', 'model', 'Pick a model.');
+    else if (model === undefined || !/^MI_/.test(String(form.model))) add('NN_MODEL', 'BLOCK', 'model', `Model ${form.model} is not in defineObj.h.`);
+    else if (ws.movers && !ws.movers.movers.has(model)) add('NN_MODEL', 'BLOCK', 'model', `Model ${form.model} (${model}) has no row in propMover.txt: the server cannot create it.`);
+    else if (FRE.newNpcSim.modelNames(ws) && !FRE.newNpcSim.modelNames(ws).has(form.model)) add('NN_MODEL', 'BLOCK', 'model', `Model ${form.model} has no entry in mdlDyna.inc: the game has no 3D model for it.`);
+    else if ((FRE.newNpcSim.missingModelFiles(ws, form.model) || []).length)
+      add('NN_MODEL_FILES', 'BLOCK', 'model', `Model ${form.model} is missing ${FRE.newNpcSim.missingModelFiles(ws, form.model).join(', ')} in Client/Model: the game cannot draw, colour or animate it.`);
+    else if (ws.mapFiles.size && !FRE.newNpcSim.provenModels(ws).has(model)) add('NN_MODEL_UNPROVEN', 'WARN', 'model', `No NPC players can see uses ${form.model}: not seen in game yet, check it on the test server first.`);
+    if (form.image && !ws.strings.map.has(form.image)) add('NN_IMAGE', 'WARN', 'image', `Portrait ${form.image} is not a known text key: the dialog shows no picture.`);
+    if (form.structure && !D.has(form.structure)) add('NN_STRUCTURE', 'BLOCK', 'structure', `${form.structure} is not defined: the server uses 0.`);
+    if (form.newTag !== null && form.newTag !== undefined) {
+      // a new building tag (b4b9a465): one m_aStructure row (szName[32], MAX_STRUCTURE rows, Project.h:334)
+      const text = FRE.npcOps.tagText(form.newTag);
+      const free = FRE.newNpcSim.freeStructureIds(ws);
+      const tp = textProblem(text);
+      const names = [...FRE.newNpcSim.buildingNames(ws).values()].map(t => t.toLowerCase());
+      if (!['defineneuz.h', 'etc.inc', 'etc.txt.txt'].every(n => ws.files.get(n)))
+        add('NN_TAG_FILES', 'BLOCK', 'structure', 'A new tag needs defineNeuz.h, etc.inc and etc.txt.txt in the Resource folder.');
+      else if (!free.length) add('NN_TAG_FULL', 'BLOCK', 'structure', `Every building tag row under MAX_STRUCTURE (${FRE.newNpcSim.structures(ws).max}) is taken: pick an existing tag (a new row needs a C++ rebuild).`);
+      if (tp && !/63/.test(tp)) add('NN_TAG_CHARS', 'BLOCK', 'structure', `Tag ${tp}.`);
+      else if (text.length > 31) add('NN_TAG_LONG', 'BLOCK', 'structure', `Tag is ${text.length} characters long (31 at most: the game copies it into a 32-byte field and would overwrite memory).`);
+      else if (D.has(FRE.npcOps.tagDefine(text, free[0])) || names.includes(text.toLowerCase()))
+        add('NN_TAG_DUP', 'BLOCK', 'structure', `[${text}] or ${FRE.npcOps.tagDefine(text, free[0])} already exists: pick it from the list instead.`);
+      else if (free.length) add('NN_TAG_ICON', 'INFO', 'structure', `The new tag takes row ${free[0]} (${free.length - 1} left after it). Its minimap icon (row + 6 in the client's icon sheet) has not been seen in game; rows 14-17 work (b4b9a465).`);
+    }
+
+    // --- the shop
+    const trade = menus.includes('MMI_TRADE');
+    const tabs = form.tabs || [];
+    if (!trade && tabs.some(t => (t.items || []).length || (t.rules || []).length))
+      add('NN_SHOP_NO_TRADE', 'BLOCK', 'tabs', 'The shop has items but the Trade menu is not ticked: tick Trade or remove the items.');
+    if (trade && !tabs.some(t => (t.items || []).length || (t.rules || []).length))
+      add('NN_SHOP_EMPTY', 'BLOCK', 'tabs', 'Trade is ticked but no tab has an item: Trade would open an empty shop.');
+    const slots = new Set();
+    const index = ws.vendorIndex;
+    const fixedPrices = new Map();       // item id -> [{ npc, cost }] from the other NPCs' AddShopItem lines
+    if (ws.chars) for (const n of ws.chars.npcs) for (const r of n.statements) {
+      if (r.cmd !== 'AddShopItem' || !r.args.cost || !r.args.item) continue;
+      const id = r.args.item.value >>> 0;
+      if (!fixedPrices.has(id)) fixedPrices.set(id, []);
+      fixedPrices.get(id).push({ npc: n.key, cost: r.args.cost.value });
+    }
+    for (const t of trade ? tabs : []) {
+      const f = `tab ${t.slot}`;
+      if (!(Number.isInteger(t.slot) && t.slot >= 0 && t.slot <= 3)) add('NN_TAB', 'BLOCK', f, `Tab ${t.slot + 1}: only tabs 1-4 exist (0-3 in the file); a higher one writes past the shop's memory.`);
+      else if (slots.has(t.slot)) add('NN_TAB', 'BLOCK', f, `Tab ${t.slot + 1} is listed twice.`);
+      slots.add(t.slot);
+      const tp = textProblem(t.title);
+      if (tp) add('NN_TEXT', 'BLOCK', f, `Tab ${t.slot + 1} title ${tp}.`);
+      const seen = new Set();
+      let count = 0;
+      for (const r of t.rules || []) {
+        const ik3 = D.get(r.ik3);
+        if (ik3 === undefined || !/^IK3_/.test(String(r.ik3))) { add('NN_RULE', 'BLOCK', f, `Rule kind ${r.ik3} is not in defineItemkind.h.`); continue; }
+        if (!(Number.isInteger(r.min) && Number.isInteger(r.max) && r.min >= 0 && r.max >= r.min))
+          { add('NN_RULE', 'BLOCK', f, `Rule ${r.ik3}: rarity ${r.min}-${r.max} must be whole numbers, 0 or more, min not above max.`); continue; }
+        if (!(Number.isInteger(r.job) && r.job >= -1)) { add('NN_RULE', 'BLOCK', f, `Rule ${r.ik3}: job ${r.job} must be -1 (any job) or a JOB_ number.`); continue; }
+        const list = [];
+        const res = FRE.vendorSim.expandRule(index, { ik3, job: r.job, rareMin: r.min, rareMax: r.max }, list);
+        if (!res.matched) add('NN_RULE_EMPTY', 'WARN', f, `Rule ${r.ik3} rarity ${r.min}-${r.max} matches no item: the server adds nothing${res.empty ? ' (it logs VENDORITEM)' : ''}.`);
+        for (const e of list) seen.add(e.prop.id);
+        count += res.matched;
+      }
+      for (const it of t.items || []) {
+        const id = D.get(it.define);
+        const item = id === undefined ? null : ws.itemById(id);
+        if (!item) { add('NN_ITEM', 'BLOCK', f, `Item ${it.define} is not in defineItem.h and Spec_Item.txt: the shop would leave it out.`); continue; }
+        if (seen.has(item.id)) add('NN_ITEM_TWICE', 'WARN', f, `${item.name || it.define} is in tab ${t.slot + 1} twice: it shows twice.`);
+        seen.add(item.id);
+        count++;
+        if (it.cost !== undefined && it.cost !== null && it.cost !== '') {
+          if (!(Number.isInteger(it.cost) && it.cost >= 1 && it.cost <= INT_MAX)) add('NN_PRICE', 'BLOCK', f, `Price of ${it.define} must be a whole number 1-2,147,483,647.`);
+          else {
+            add('NN_PRICE_GLOBAL', 'WARN', f, `A price on ${it.define} changes its price in every shop, not only here.`);
+            const other = (fixedPrices.get(item.id) || []).find(p => p.cost !== it.cost);
+            if (other) add('NN_PRICE_CONFLICT', 'BLOCK', f, `${other.npc} already sets ${it.define} to ${other.cost}; a different price makes the last NPC loaded win. Use ${other.cost} or leave the price out.`);
+          }
+        }
+      }
+      if (count > 100) add('NN_TAB_FULL', 'WARN', f, `Tab ${t.slot + 1} would hold ${count} items: only the first 100 show.`);
+    }
+
+    // --- the place
+    const lowerMap = String(form.map || '').toLowerCase();
+    const file = ws.mapFile(form.map);
+    if (!file) add('NN_MAP', 'BLOCK', 'map', `Map ${form.map} has no .dyo file in World/.`);
+    else if (BLOCKED_MAPS.has(lowerMap) || FRE.npcOps.insertPoint(file.serialize()) === null)
+      add('NN_MAP', 'BLOCK', 'map', `Map ${form.map}: the server does not read this map's objects to the end marker, so a new NPC there would not appear. Pick another map.`);
+    const nums = ['x', 'y', 'z', 'angle'];
+    const bad = nums.filter(k => typeof form[k] !== 'number' || !Number.isFinite(form[k]));
+    if (bad.length) add('NN_POS', 'BLOCK', 'position', `${bad.join(', ')} must be numbers (copy them from /position in game).`);
+    else if (form.angle < 0 || form.angle >= 360) add('NN_POS', 'BLOCK', 'position', `Angle ${form.angle} must be 0 or more and under 360.`);
+    if (file && !bad.length) {
+      const near = FRE.world.readDyo(file.serialize()).placements;
+      const close = near.find(p => Math.hypot(p.x - form.x, p.z - form.z) < FRE.world.OLD_MPU);
+      if (close) add('NN_OVERLAP', 'WARN', 'position', `${close.key} stands less than 4 units away: the two NPCs overlap.`);
+      let best = null;
+      for (const p of near) { const d = Math.hypot(p.x - form.x, p.z - form.z); if (!best || d < best.d) best = { p, d }; }
+      if (best && Math.abs(best.p.y - form.y) > 30)
+        add('NN_HEIGHT', 'WARN', 'position', `Height ${form.y} is ${Math.round(Math.abs(best.p.y - form.y))} away from the nearest NPC (${best.p.key}, ${best.p.y.toFixed(1)}): it may float or be under the ground. Check y with /position.`);
+    }
+    return out;
+  }
+
+  FRE.validateNewNpc = checkNewNpc;
+  FRE.newNpcText = textProblem;
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/newnpc-sim.js ----
+// What the game does with an NPC after the files are written (Add New NPC simulator).
+// Runs on the workspace's CURRENT text/bytes, so after FRE.npcOps' splices it shows the new NPC
+// exactly as the servers and the client would load it:
+//   CProject::LoadCharacter (Project.cpp:3257)      key (last block wins), AddMenu, SetName, AddVendorSlot
+//   CScript::LoadString (*.txt.txt)                 name and tab titles (first key wins)
+//   CWorld::LoadObject / ReadObj / CMover::Read     every map record with this key, x and z * OLD_MPU
+//   CWorld::IsUsableDYO2                            SetOutput / SetLang
+//   CMover::ProcessRegenItem                        the 4 shop tabs (loaders/vendor-sim.js)
+//   CProject::LoadEtc structure, MoverRender  the [tag] above the name (Project.cpp:1262, MoverRender.cpp:1717)
+//   right-click menu labels                         TID_MMI_DIALOG (7000) + menu id (WndWorld.cpp, textClient.inc)
+//   loaders/area.js                                 where it stands, /te
+// Not modelled: IsUsableDYO's event-state keys (Npc_Reward, MaFl_GuildWar, … — a new key is never one of
+// them), the client's model loading, dialog scripts (WorldDialog.dll).
+(function (FRE) {
+  'use strict';
+  const TID_MMI_DIALOG = 7000;
+
+  // -> null (no NPC with this key) or { key, file, name, nameKey, shown, tag: { id, text: '[General]', overflow } | null, menus: [{ id, define, label }],
+  //    tabs: [{ slot, title, items: [id] , dropped }], placed: [{ map, x, y, z, angle, model, modelName }], where }
+  function inGame(ws, key) {
+    const list = ws.chars && ws.chars.byKey.get(String(key).toLowerCase());
+    if (!list || !list.length) return null;
+    const npc = list[list.length - 1];                     // a duplicate key replaces the earlier NPC
+    const D = ws.defines;
+    const menus = rightClick(ws, npc.menus);
+    const sim = FRE.vendorSim.simulateNpc(ws.vendorIndex, npc);
+    const tabs = sim.tabs.map((t, slot) => ({ slot, title: npc.slotTitles[slot] !== undefined ? npc.slotTitles[slot] : null,
+      items: t.entries.map(e => e.prop.id), dropped: t.dropped.length }))
+      .filter(t => t.title !== null || t.items.length);
+    const placed = [];
+    for (const [map, lower] of ws.mapFiles) {
+      for (const p of FRE.world.readDyo(ws.files.get(lower).serialize()).placements) {
+        if (p.key.toLowerCase() !== String(key).toLowerCase()) continue;
+        const mv = ws.movers && ws.movers.movers.get(p.model);
+        placed.push({ map, x: p.x, y: p.y, z: p.z, angle: p.angle, model: p.model, modelName: mv ? mv.name : null });
+      }
+    }
+    return { key: npc.key, file: npc.file, name: npc.name, nameKey: npc.nameKey, shown: FRE.world.npcShown(npc),
+      tag: tagOf(ws, npc), menus, tabs, placed, where: ws.whereOf(npc.key) };
+  }
+
+  // The client's right-click menu (CWndWorld, WndWorld.cpp:7229): m_abMoverMenu is a flag per id, so
+  // each menu shows once, in id order 0..MAX_MOVER_MENU-1, whatever the order of the AddMenu lines.
+  // V19 always opens the popup (0 < nCount), even for one menu. Labels: TID_MMI_DIALOG + id, except
+  //   MMI_GUILDCOMBAT_RANKING  "Overall Rankings", followed by "Weekly Rankings" when the NPC has that one too
+  //   MMI_GUILDCOMBAT_RANKING_WEEKLY  never listed on its own
+  //   MMI_COLLECTOR_DETAILS    "Collection Details" (__COLLECTOR_DETAILS)
+  //   MMI_GUILDBANKING         only for a guild member, when the guild warehouse is on
+  //   MMI_ARENA_ENTER          only after the first job change (__JEFF_11_4)
+  function rightClick(ws, ids) {
+    const D = ws.defines, id = n => D.defines.get(n);
+    const on = new Set(ids.filter(i => i >= 0 && i < 350));
+    const out = [];
+    const tid = i => { const t = ws.texts && ws.texts.byId.get(TID_MMI_DIALOG + i); return t ? t.text : null; };
+    for (const i of [...on].sort((a, b) => a - b)) {
+      const m = { id: i, define: D.byValue('MMI_', i), label: tid(i), when: null };
+      if (i === id('MMI_GUILDCOMBAT_RANKING_WEEKLY')) continue;
+      if (i === id('MMI_GUILDCOMBAT_RANKING')) {
+        out.push(Object.assign(m, { label: 'Overall Rankings' }));
+        const w = id('MMI_GUILDCOMBAT_RANKING_WEEKLY');
+        if (on.has(w)) out.push({ id: w, define: 'MMI_GUILDCOMBAT_RANKING_WEEKLY', label: 'Weekly Rankings', when: null });
+        continue;
+      }
+      if (i === id('MMI_COLLECTOR_DETAILS')) m.label = 'Collection Details';
+      if (i === id('MMI_GUILDBANKING')) m.when = 'guild member, guild warehouse on';
+      if (i === id('MMI_ARENA_ENTER')) m.when = 'after the first job change';
+      out.push(m);
+    }
+    return out;
+  }
+
+  // One line per fact, for tools/newnpc-sim.js and the editor's "In game" box.
+  function describe(g, itemName = id => String(id)) {
+    if (!g) return ['Not in the game: no NPC with this key in character.inc.'];
+    const out = [];
+    out.push(`${g.name || g.key} (${g.key}, ${g.file})${g.shown ? '' : ' — HIDDEN by SetOutput / SetLang'}`);
+    if (g.tag) out.push(`Above the name: ${g.tag.text}${g.tag.overflow ? ' — OUTSIDE m_aStructure (memory overwrite)' : ''}`);
+    if (!g.placed.length) out.push('Not placed on any map: nobody can see it.');
+    for (const p of g.placed) out.push(`Stands on ${p.map} at /position ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}, facing ${p.angle.toFixed(1)}°, model ${p.modelName || p.model}`);
+    for (const w of g.where || []) out.push(`Where: ${FRE.area.label ? FRE.area.label(w) : w.caption} · GM: ${w.te}`);
+    out.push('Right-click: ' + (g.menus.length ? g.menus.map(m => (m.label || m.define || m.id) + (m.when ? ` (${m.when})` : '')).join(', ') : '(no menu)'));
+    for (const t of g.tabs) out.push(`Tab ${t.slot} "${t.title === null ? '(no title)' : t.title}": ${t.items.length} item(s)` +
+      (t.items.length ? ' — ' + t.items.slice(0, 6).map(itemName).join(', ') + (t.items.length > 6 ? ', …' : '') : '') + (t.dropped ? ` (${t.dropped} left out)` : ''));
+    return out;
+  }
+
+  // mdlDyna.inc ("model" line of Masquerade.prj, read by the server and the client): MI_ name -> model file name
+  // ("MaFlJuria" -> Model/Mvr_MaFlJuria.o3d). The model loader (CModelMng) is not in this source tree, so a
+  // model is trusted only when it has an entry here AND an NPC players can see already uses it.
+  function modelNames(ws) {
+    if (ws._mdl !== undefined) return ws._mdl;
+    const f = ws.files.get('mdldyna.inc');
+    const out = f ? new Map() : null;
+    if (f) for (const m of f.text.matchAll(/"([^"\r\n]*)"[ \t]+(MI_\w+)[ \t]+MODELTYPE_/g)) if (!out.has(m[2])) out.set(m[2], m[1]);
+    return (ws._mdl = out);
+  }
+  // mdlDyna.inc entries with their motion block: MI_ name -> { name, anis: [motion file stems] }
+  //   "MaFlJuria" MI_MAFL_JURIA MODELTYPE_ANIMATED_MESH ... { "idle1" MTI_IDLE1 "stand" MTI_STAND ... }
+  // Files the client needs: Model/Mvr_<name>.o3d and Model/Mvr_<name>_<motion>.ani (names are not case-sensitive on Windows).
+  function modelEntries(ws) {
+    if (ws._mdlEnt !== undefined) return ws._mdlEnt;
+    const f = ws.files.get('mdldyna.inc');
+    if (!f) return (ws._mdlEnt = null);
+    const out = new Map();
+    const re = /"([^"\r\n]*)"[ \t]+(MI_\w+)[ \t]+MODELTYPE_\w+[^\r\n]*(?:\s*\{([^}]*)\})?/g;
+    for (const m of f.text.matchAll(re)) {
+      if (out.has(m[2])) continue;
+      const anis = m[3] ? [...new Set([...m[3].matchAll(/"([^"\r\n]+)"\s+MTI_\w+/g)].map(x => x[1]))] : [];
+      out.set(m[2], { name: m[1], anis });
+    }
+    return (ws._mdlEnt = out);
+  }
+  // The model files missing from Client/Model for this MI_ name: [] = complete; null = the folder's names are not known.
+  // Textures count too once the .o3d has been read (ws.modelTextures) and Client/Model/Texture listed (ws.clientTextures).
+  function missingModelFiles(ws, define) {
+    if (!ws.clientModels) return null;
+    const e = modelEntries(ws) && modelEntries(ws).get(define);
+    if (!e) return null;
+    const o3d = `Mvr_${e.name}.o3d`;
+    const need = [o3d, ...e.anis.map(a => `Mvr_${e.name}_${a}.ani`)];
+    const miss = need.filter(n => !ws.clientModels.has(n.toLowerCase()));
+    const tex = ws.modelTextures && ws.modelTextures.get(o3d.toLowerCase());
+    if (tex && ws.clientTextures) for (const t of tex) if (!ws.clientTextures.has(t)) miss.push('Texture/' + t);
+    return miss;
+  }
+  // The texture files an .o3d names (lowercase, sorted). The model loader (CModelMng / CObject3D) is not in this
+  // source tree; in every Mvr_*.o3d of the client (457 files, 15,871 names) a texture name is stored as a 4-byte
+  // length (name + NUL), the name, and a NUL. bytes: Uint8Array
+  function o3dTextures(bytes) {
+    const s = FRE.bytes.bytesToBinaryString(bytes);
+    const out = new Set();
+    const u32 = i => (s.charCodeAt(i) | s.charCodeAt(i + 1) << 8 | s.charCodeAt(i + 2) << 16 | s.charCodeAt(i + 3) << 24) >>> 0;
+    for (const m of s.matchAll(/\.(?:dds|tga|bmp)\x00/gi)) {
+      const end = m.index + m[0].length - 1;                 // the NUL
+      // walk back over printable bytes; the name starts where the 4 bytes before it hold (name length + 1)
+      for (let st = m.index - 1; st >= 4 && /[\x20-\x7e]/.test(s[st]); st--) {
+        if (u32(st - 4) === end - st + 1) { out.add(s.slice(st, end).toLowerCase()); break; }
+      }
+    }
+    return [...out].sort();
+  }
+  // Models no visible NPC uses that have an mdlDyna entry, a propMover row and every file: [{ id, define, name }]
+  function unusedCompleteModels(ws) {
+    if (!ws.clientModels || !modelEntries(ws)) return [];
+    const proven = provenModels(ws);
+    const out = [];
+    for (const define of modelEntries(ws).keys()) {
+      const id = ws.defines.defines.get(define);
+      if (id === undefined || proven.has(id) || !(ws.movers && ws.movers.movers.has(id))) continue;
+      if ((missingModelFiles(ws, define) || ['?']).length) continue;
+      if (ws.defines.byValue('MI_', id) !== define) continue;       // first #define of that id only
+      out.push({ id, define, name: ws.movers.movers.get(id).name });
+    }
+    return out.sort((a, b) => (a.name || a.define).localeCompare(b.name || b.define));
+  }
+
+  // NPCs players can see now: placed on a map the server loads AND shown by IsUsableDYO2.
+  // -> [{ key, npc, map, x, y, z, angle, model }]
+  function visibleNpcs(ws) {
+    const out = [];
+    for (const [map, lower] of ws.mapFiles) for (const p of FRE.world.readDyo(ws.files.get(lower).serialize()).placements) {
+      const list = ws.chars && ws.chars.byKey.get(p.key.toLowerCase());
+      const npc = list && list[list.length - 1];
+      if (npc && FRE.world.npcShown(npc)) out.push(Object.assign({ npc, map }, p));
+    }
+    return out;
+  }
+  // NPCs players saw until a proven commit hid them (b6abf414: MaFl_Shain and MaFl_COUPONPANG got SetOutput(false);
+  // MaFl_ANGEL2011's SetLang(LANG_KOR) had made it visible to every non-Korean client). Their .dyo records are unchanged,
+  // so their models were seen in game.
+  const SEEN_BEFORE = [['MaFl_Shain', 'b6abf414'], ['MaFl_COUPONPANG', 'b6abf414'], ['MaFl_ANGEL2011', 'b6abf414']];
+  // -> Map model id -> [{ key, name, commit }]
+  function seenBefore(ws) {
+    const out = new Map();
+    for (const [map, lower] of ws.mapFiles) for (const p of FRE.world.readDyo(ws.files.get(lower).serialize()).placements) {
+      const hit = SEEN_BEFORE.find(([k]) => k.toLowerCase() === p.key.toLowerCase());
+      if (!hit) continue;
+      const list = ws.chars && ws.chars.byKey.get(p.key.toLowerCase());
+      if (!out.has(p.model)) out.set(p.model, []);
+      out.get(p.model).push({ key: hit[0], name: list ? list[list.length - 1].name || hit[0] : hit[0], commit: hit[1] });
+    }
+    return out;
+  }
+  // Models proven to load in game: an NPC players can see uses it, or one did until a proven commit hid it
+  const provenModels = ws => new Set([...visibleNpcs(ws).map(p => p.model), ...seenBefore(ws).keys()]);
+
+  // CProject::LoadEtc's "structure" block (Project.cpp:1262), read with the server's CScript:
+  //   GetToken (skip {); id = GetNumber(); while( *token != '}' ) { GetToken(); _tcscpy( m_aStructure[ id ].szName, token ); id = GetNumber(); }
+  // GetToken swaps an IDS_ key for its etc.txt.txt text. m_aStructure has MAX_STRUCTURE (20, compiled from
+  // defineNeuz.h) rows of szName[32] (Project.h:334): an id outside 0..19 or a text of 32+ characters writes
+  // past it. Tags 14-17 were added this way in b4b9a465 (verified in game).
+  // -> { names: Map id -> text (last one wins, like the copy), max: MAX_STRUCTURE, bad: [{ id, text, why }] }
+  function structures(ws) {
+    const inc = ws.files.get('etc.inc');
+    const max = ws.defines.defines.get('MAX_STRUCTURE') || 20;
+    const out = { names: new Map(), max, bad: [] };
+    if (!inc) return out;
+    const sc = new FRE.lexer.Script(inc.text, { defines: ws.defines.defines, strings: ws.strings.map, diags: [] });
+    for (let t = sc.getToken(); t.type !== 'eof'; t = sc.getToken()) {
+      if (t.text !== 'structure') continue;
+      sc.getToken();                                        // {
+      let id = sc.getNumber().value;
+      while (sc.token.text !== '}' && sc.token.type !== 'eof') {
+        const name = sc.getToken().text;
+        if (id < 0 || id >= max) out.bad.push({ id, text: name, why: 'id' });
+        else { out.names.set(id, name); if (name.length >= 32) out.bad.push({ id, text: name, why: 'long' }); }
+        id = sc.getNumber().value;
+      }
+      break;
+    }
+    return out;
+  }
+  // building tag texts: id -> text (the ones etc.inc names)
+  function buildingNames(ws) {
+    return structures(ws).names;
+  }
+  // The row a new tag takes: the lowest id under MAX_STRUCTURE with no SRT_ #define and no etc.inc entry
+  // (18, 19 today). -> [ids]
+  function freeStructureIds(ws) {
+    const st = structures(ws);
+    const defined = new Set(ws.defines.withPrefix('SRT_').map(([, v]) => v));
+    const out = [];
+    for (let id = 1; id < st.max; id++) if (!defined.has(id) && !st.names.has(id)) out.push(id);
+    return out;
+  }
+  // What the client draws above an NPC's name (MoverRender.cpp:1717): "[%s]" of m_aStructure[ m_nStructure ].szName
+  // when m_nStructure != -1 (CHARACTER::Clear sets -1), else nothing. -> { id, text, overflow } or null
+  function tagOf(ws, npc) {
+    const r = [...npc.statements].reverse().find(x => x.cmd === 'm_nStructure' && x.args.structure);
+    const id = r ? r.args.structure.value : -1;
+    if (id === -1) return null;
+    const st = structures(ws);
+    const text = st.names.get(id) || '';
+    return { id, text: `[${text}]`, overflow: id < 0 || id >= st.max || text.length >= 32 };
+  }
+
+  // What a player reads standing at (x, z) on a map (file name): the same naming as FRE.area.whereIs
+  // (map window region in Madrigal, else the world title; area caption from the .rgn; GM /te).
+  function whereAt(ws, map, x, z) {
+    const A = ws.area;
+    if (!A || !A.firstId.has(map)) return null;
+    const r = FRE.area.standAt(A, map, x, z);
+    const id = A.firstId.get(map), w = A.worlds.get(id);
+    const worldTitle = w && w.title.trim() ? w.title : map;
+    const caption = r.caps.map(c => c[0]).join(' / ');
+    const place = map === A.madrigal ? (r.mapWindow || worldTitle) : worldTitle;
+    const xi = Math.trunc(x), zi = Math.trunc(z);
+    return { map, place, caption, label: caption ? `${place} — ${caption}` : place, te: xi > 0 && zi > 0 ? `/te ${id} ${xi} ${zi}` : null };
+  }
+
+  // The places a new NPC can go, named as players read them:
+  // Madrigal's map-window regions (WdMadrigal.wld.cnt continents titled by propMapComboBoxData), then every
+  // other map by its world title. Only maps whose .dyo takes a record (npcOps.insertPoint).
+  // -> [{ value, map, place, label, group, npcs: visible NPC count }]
+  function regions(ws) {
+    const A = ws.area;
+    const vis = visibleNpcs(ws).map(p => ({ p, w: whereAt(ws, p.map, p.x, p.z) }));
+    const count = (map, place) => vis.filter(v => v.p.map === map && (!place || (v.w && v.w.place === place))).length;
+    const out = [];
+    for (const map of ws.mapFiles.keys()) {
+      if (FRE.npcOps.insertPoint(ws.mapFile(map).serialize()) === null) continue;
+      const id = A && A.firstId.get(map), w = id !== undefined && A.worlds.get(id);
+      const title = w && w.title.trim() ? w.title : map;
+      if (A && map === A.madrigal) {
+        const names = [...new Set([...A.cont.keys()].map(k => (A.maps.find(m => m.loc === k) || {}).title).filter(Boolean))];
+        for (const place of names.sort()) out.push({ value: `${map}|${place}`, map, place, label: place, group: title, npcs: count(map, place) });
+        out.push({ value: `${map}|${title}`, map, place: title, label: `${title} (outside every region)`, group: title, npcs: count(map, title) });
+      } else {
+        out.push({ value: `${map}|${title}`, map, place: title, label: `${title} (${map})`, group: /^Du/i.test(map) ? 'Dungeons' : 'Other places', npcs: count(map, null) });
+      }
+    }
+    return out;
+  }
+
+  FRE.newNpcSim = { inGame, describe, rightClick, modelNames, modelEntries, missingModelFiles, unusedCompleteModels, visibleNpcs, provenModels, seenBefore, o3dTextures, SEEN_BEFORE, buildingNames, structures, freeStructureIds, tagOf, whereAt, regions, TID_MMI_DIALOG };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- core/workspace.js ----
 // Workspace: the loaded Resource folder as the editor sees it. No DOM here,
 // so it can be tested outside the browser (tests/run-tests.js under gjs).
@@ -4461,7 +5163,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
   const CORE_CLIENT = ['Spec_Item.txt'];
   // Read when present, never required (context only).
   // World.inc, world.txt.txt and propMapComboBoxData.*: where NPCs stand (loaders/area.js)
-  const OPTIONAL = ['textClient.inc', 'textClient.txt.txt', 'World.inc', 'world.txt.txt', 'propMapComboBoxData.inc', 'propMapComboBoxData.txt.txt'];
+  // mdlDyna.inc: which MI_ models have a model (Add New NPC); etc.inc + etc.txt.txt: building tag names (SRT_)
+  const OPTIONAL = ['textClient.inc', 'textClient.txt.txt', 'World.inc', 'world.txt.txt', 'propMapComboBoxData.inc', 'propMapComboBoxData.txt.txt',
+    'mdlDyna.inc', 'etc.inc', 'etc.txt.txt'];
 
   // id, files it needs, files it may write, files the game client also reads,
   // parse(ws) -> model, validate(ws, model) -> diagnostics
@@ -4469,11 +5173,16 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
     {
       id: 'npc', label: 'NPC Shops', editsSpec: true,
       required: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt'],
-      editable: ['character.inc', 'character-etc.inc', 'character-school.inc'],
-      client: ['character.inc', 'character-etc.inc', 'character-school.inc'],
+      // character.txt.txt: a new NPC's name and tab names (appended IDS_CHARACTER_INC_ lines, like f58e56ba)
+      // defineNeuz.h + etc.inc + etc.txt.txt: a new building tag (SRT_), the way b4b9a465 added four
+      editable: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'defineNeuz.h', 'etc.inc', 'etc.txt.txt'],
+      client: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'defineNeuz.h', 'etc.inc', 'etc.txt.txt'],
       maps: true,            // reads World/*/ to show where each NPC stands
+      editsMaps: true,       // a new NPC is a new record in World/<map>/<map>.dyo (Server + Client copies)
       parse(ws) {
         ws._sim = new Map();
+        // model names and the "has a propMover row" check of a new NPC (validate/newnpc.js)
+        if (!ws.movers && ws.files.get('propmover.txt')) ws.movers = FRE.propMover.loadPropMover(ws.files.get('propmover.txt'), { defines: ws.defines.defines, strings: ws.strings.map });
         return (ws.chars = FRE.character.loadCharacters(ws.files, { defines: ws.defines.defines, strings: ws.strings.map }));
       },
       validate(ws, model) {
@@ -4539,8 +5248,13 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
       this.available = {};
       this.editable = new Set();
       this.donationTree = null;
+      this.clientModels = null;     // lowercase file names in Client/Model (setClientModels), when the Client folder is chosen
+      this.clientTextures = null;   // lowercase file names in Client/Model/Texture (setClientTextures)
+      this.modelTextures = new Map(); // lowercase Mvr_X.o3d -> [texture names it uses] (addModelTextures; newNpcSim.o3dTextures)
       this.clientTheme = null;      // lowercase file names in Client/Theme (Battle Pass textures), when the Client folder is chosen
       this.placed = null;           // lowercase NPC key -> [map names] from World/*/*.dyo (null: not read)
+      this.mapFiles = new Map();    // map name -> lowercase key in this.files of its .dyo (setMapFiles)
+      this.worldFiles = new Map();
       this.area = null;             // FRE.area.build: where each NPC stands, named as the client names it (null: not read)
       const task = this.only ? MODULES.find(m => m.id === this.only) : null;
       if (this.only && !task) throw new Error(`unknown task ${this.only}`);
@@ -4579,6 +5293,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
     // Re-parse the modules that own `lowerName` (all modules when omitted).
     reparse(lowerName) {
       if (lowerName === 'spec_item.txt') { this.loadItems(); lowerName = undefined; }   // every module reads items
+      // a string table (character.txt.txt: a new NPC's name): every module reads names through it
+      if (lowerName && /\.txt\.txt$/.test(lowerName)) { this.strings = FRE.loadStrings(this.files); lowerName = undefined; }
       for (const m of MODULES) {
         if (!this.available[m.id].ok) continue;
         if (lowerName && ![...m.required, ...(m.deps || [])].some(n => n.toLowerCase() === lowerName)) continue;
@@ -4594,6 +5310,22 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
     setDonationTree(tree) {
       this.donationTree = tree || null;
       if (this.available.donation && this.available.donation.ok) this.reparse('donationshop.inc');
+    }
+
+    // lowercase file names in Client/Model (Add New NPC: does a model have all its files?)
+    setClientModels(names) {
+      this.clientModels = names ? new Set([...names].map(n => n.toLowerCase())) : null;
+      if (this.available.npc && this.available.npc.ok) this.reparse('character.inc');
+    }
+
+    // Client/Model/Texture file names, and the textures of .o3d files already read (Map lowercase o3d -> [names])
+    setClientTextures(names, index) {
+      this.clientTextures = names ? new Set([...names].map(n => n.toLowerCase())) : null;
+      if (index) for (const [k, v] of index) this.modelTextures.set(k.toLowerCase(), v);
+      if (this.available.npc && this.available.npc.ok) this.reparse('character.inc');
+    }
+    addModelTextures(o3d, names) {
+      this.modelTextures.set(o3d.toLowerCase(), names);
     }
 
     // file names in the client's Theme folder (BattlePass.inc rarity / icon textures)
@@ -4640,6 +5372,24 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
       this.area = FRE.area.build({ defines: this.defines.defines, get, dyo });
       for (const m of MODULES) if (m.maps && this.available[m.id].ok) this.reparse(m.required[0].toLowerCase());
     }
+    // The .dyo files as SourceFiles (binary, with handles), so a task may edit them. They are kept
+    // in this.files under 'world/<map>/<file>.dyo'; the NPC task may write them.
+    setMapFiles(dyoFiles, worldFiles = new Map()) {
+      this.worldFiles = worldFiles;
+      const maps = MODULES.some(m => m.editsMaps && this.shown.has(m.id) && this.available[m.id].ok);
+      for (const [name, f] of dyoFiles) {
+        const lower = `${f.dir}/${f.name}`.toLowerCase();
+        this.files.set(lower, f);
+        this.mapFiles.set(name, lower);
+        if (maps) this.editable.add(lower);
+      }
+      this.refreshMaps();
+    }
+    refreshMaps() {
+      const dyo = new Map([...this.mapFiles].map(([name, lower]) => [name, this.files.get(lower).serialize()]));
+      this.setMapObjects(dyo, this.worldFiles);
+    }
+    mapFile(name) { const l = this.mapFiles.get(name); return l ? this.files.get(l) : null; }
     // [{ place, caption, te, world, x, z, … }] where the NPC with this key stands (FRE.area.whereIs); null: maps not read
     whereOf(key) { return this.area ? FRE.area.whereIs(this.area, key) : null; }
     needsMaps() { return MODULES.some(m => m.maps && this.shown.has(m.id) && this.available[m.id].ok); }
@@ -4675,6 +5425,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
     }
 
     _reparseAll(names) {
+      // a #define file (defineNeuz.h: a new SRT_ tag): everything that reads names is loaded again
+      if (names.some(n => FRE.DEFINE_FILES.some(d => d.toLowerCase() === n))) {
+        this.defines = FRE.loadDefines(this.files);
+        this.strings = FRE.loadStrings(this.files);
+        this.texts = FRE.textClient.load(this.files, this.strings.map, this.defines.defines);
+        names = ['spec_item.txt', ...names];
+      }
+      if (names.some(n => /\.dyo$/.test(n))) this.refreshMaps();
       if (names.includes('spec_item.txt')) this.reparse('spec_item.txt');   // reparses every module
       else names.forEach(n => this.reparse(n));
     }
@@ -4704,7 +5462,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
     clientFileNames() {
       const own = MODULES.filter(m => this.available[m.id].ok && this.shown.has(m.id));
       const spec = !this.only || own.some(m => m.editsSpec) ? CORE_CLIENT : [];
-      return [...new Set([...spec, ...own.flatMap(m => m.client)])];
+      const maps = own.some(m => m.editsMaps) ? [...this.mapFiles.values()].map(l => this.files.get(l).name) : [];
+      return [...new Set([...spec, ...own.flatMap(m => m.client), ...maps])];
     }
 
     // Changed files that the game client also reads (must be copied to Client/).
@@ -4785,6 +5544,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
   function modeOf(serverFile, clientFile) {
     if (!clientFile) return 'missing';
     if (FRE.bytes.bytesEqual(clientFile.bytes, serverFile.bytes)) return 'identical';
+    if (serverFile.kind === FRE.SourceFile.KIND_BINARY) return 'different';   // a .dyo: only identical copies are synced
     if (clientFile.kind === serverFile.kind && serverFile.originalText.includes('\r\n')
       && clientFile.originalText === toLf(serverFile.originalText)) return 'eol';
     return 'different';
@@ -4889,6 +5649,18 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
     return h;
   }
 
+  // A sub-folder by relative path ('World/WdMadrigal'), names matched without case; created when asked.
+  async function dirAt(base, path, create = false) {
+    let d = base;
+    for (const part of String(path || '').split('/').filter(Boolean)) {
+      let next = null;
+      for await (const [n, h] of d.entries()) if (h.kind === 'directory' && n.toLowerCase() === part.toLowerCase()) { next = h; break; }
+      if (!next) { if (!create) return null; next = await d.getDirectoryHandle(part, { create: true }); }
+      d = next;
+    }
+    return d;
+  }
+
   // Remember folder handles between sessions (permission is asked again).
   const DB = 'flyff-resource-editor', STORE = 'handles';
   function idb() {
@@ -4925,7 +5697,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
     return out.sort((a, b) => (a.stamp < b.stamp ? -1 : a.stamp > b.stamp ? 1 : 0));
   }
 
-  FRE.fsa = { supported, pickFolder, ensurePermission, findFiles, readHandle, writeHandle, writeVerified, newFolder, newFile, remember, recall, backupCopies };
+  FRE.fsa = { supported, pickFolder, ensurePermission, findFiles, readHandle, writeHandle, writeVerified, newFolder, newFile, dirAt, remember, recall, backupCopies };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- io/layout.js ----
@@ -4989,6 +5761,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
   }
 
   function changeSummary(f) {
+    if (f.kind === FRE.SourceFile.KIND_BINARY) return binarySummary(f);
     const a = FRE.diff.splitKeepEol(f.originalText), b = FRE.diff.splitKeepEol(f.text);
     const ops = FRE.diff.diffLines(a, b);
     const out = [];
@@ -4998,6 +5771,18 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
     }
     return out;
   }
+
+  // A binary file (.dyo): the byte ranges that differ, as one line each
+  function binarySummary(f) {
+    const a = f.originalText, b = f.text;
+    let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
+    let j = 0; while (j < a.length - i && j < b.length - i && a[a.length - 1 - j] === b[b.length - 1 - j]) j++;
+    const out = [];
+    if (a.length - i - j > 0) out.push({ type: 'del', line: i, text: `${a.length - i - j} bytes at offset ${i}` });
+    if (b.length - i - j > 0) out.push({ type: 'add', line: i, text: `${b.length - i - j} bytes at offset ${i}` });
+    return out;
+  }
+  const label = f => (f.dir ? f.dir + '/' : '') + f.name;
 
   // ws: Workspace, backupDir: directory handle, log: (msg) => void
   // client (optional): { dir, files: Map lower -> SourceFile, create: Set of lower names }
@@ -5029,6 +5814,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
     if (client) {
       for (const p of FRE.clientSync.plan(ws, client)) {
         if (p.mode === 'different') { step(`Client/${p.name}: ${p.text}.`); continue; }
+        if (p.mode === 'missing' && p.server.dir) { step(`Client/${p.server.dir}/${p.name}: no copy, not created.`); continue; }
         if (p.mode === 'missing' && !client.create.has(p.lower)) { step(`Client/${p.name}: no loose copy, not created (the client keeps reading data.res).`); continue; }
         if (p.client) {
           const cur = await FRE.fsa.readHandle(p.client.handle);
@@ -5050,11 +5836,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
     // 2. backup the current disk bytes, verified
     const folder = await FRE.fsa.newFolder(backupDir, stampName() + (ws.only ? '_' + ws.only : ''));   // e.g. 2026-10-06_08-10-00_exchange
     report.backupFolder = folder.name;
-    for (const f of dirty) await FRE.fsa.newFile(folder, f.name, onDisk.get(f));
+    // files in a sub-folder (World/<map>/<map>.dyo) keep their path in the backup
+    for (const f of dirty) await FRE.fsa.newFile(await FRE.fsa.dirAt(folder, f.dir, true), f.name, onDisk.get(f));
     const existing = targets.filter(t => t.client);
     if (existing.length) {
       const cf = await folder.getDirectoryHandle('Client', { create: true });
-      for (const t of existing) await FRE.fsa.newFile(cf, t.client.name, t.client.bytes);
+      for (const t of existing) await FRE.fsa.newFile(await FRE.fsa.dirAt(cf, t.client.dir, true), t.client.name, t.client.bytes);
     }
     step(`Backup written and verified: ${backupDir.name}/${folder.name}/ (${dirty.length} file(s)${existing.length ? ` + ${existing.length} in Client/` : ''})`);
 
@@ -5065,15 +5852,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
         const candidate = f.serialize();
         const stamp = await FRE.fsa.writeVerified(f.handle, candidate);
         written.push({ f, candidate, stamp });
-        report.files.push({ name: f.name, before: f.bytes.length, after: candidate.length, changes: changeSummary(f) });
-        step(`Wrote and verified ${f.name} (${f.bytes.length} -> ${candidate.length} bytes).`);
+        report.files.push({ name: label(f), before: f.bytes.length, after: candidate.length, changes: changeSummary(f) });
+        step(`Wrote and verified ${label(f)} (${f.bytes.length} -> ${candidate.length} bytes).`);
       }
       for (const t of targets) {
         let handle;
         if (t.client) { handle = t.client.handle; await FRE.fsa.writeVerified(handle, t.bytes); }
         else handle = await FRE.fsa.newFile(client.dir, t.name, t.bytes);
-        report.client.push({ name: t.name, lower: t.lower, mode: t.mode, handle, bytes: t.bytes, before: t.client ? t.client.bytes : null });
-        step(`Client/${t.name}: ${t.mode === 'missing' ? 'created as a copy of the server file' : t.mode === 'eol' ? 'same change written, LF kept' : 'same change written'} and verified (${t.bytes.length} bytes).`);
+        report.client.push({ name: t.client ? label(t.client) : t.name, lower: t.lower, dir: t.client ? t.client.dir : '', file: t.client ? t.client.name : t.name, mode: t.mode, handle, bytes: t.bytes, before: t.client ? t.client.bytes : null });
+        step(`Client/${t.client ? label(t.client) : t.name}: ${t.mode === 'missing' ? 'created as a copy of the server file' : t.mode === 'eol' ? 'same change written, LF kept' : 'same change written'} and verified (${t.bytes.length} bytes).`);
       }
     } catch (e) {
       step(`WRITE FAILED: ${e.message}. Restoring from the backup...`);
@@ -5531,6 +6318,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
       st.sel = first ? npcId(first) : null; st.tab = 0;
     },
 
+    isListed: npc => showTest()(npc),
+
+    listAction(ctx) {
+      const canAdd = ctx.ws && ctx.ws.isEditable('character.inc') && ctx.ws.isEditable('character.txt.txt') && ctx.ws.mapFiles.size;
+      return h('button.primary', { disabled: !canAdd,
+        title: canAdd ? 'Create a new NPC: place it on a map, pick its menus and shop' : 'Needs character.inc, character.txt.txt and the World/ map files (editable)',
+        on: { click: () => FRE.ui.newNpc.open(ctx) } }, '+ NPC');
+    },
+
     listExtra(ctx) {
       const npcs = ctx.ws ? ctx.ws.chars.npcs : [];
       return h('select.npc-filter', { title: 'Which NPCs to list', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
@@ -5585,6 +6381,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
         const status = FRE.world.npcStatus(npc, ws.placed);
         el.appendChild(h('div', FRE.ui.whereLine(ws.whereOf(npc.key)),
           status.inGame === false && status.maps.length ? h('span.tag.warn', { title: 'CWorld::IsUsableDYO2: the WorldServer does not load this NPC' }, status.why) : null));
+      }
+      // a NPC made with "+ New NPC": what the game will load (loaders/newnpc-sim.js)
+      if (FRE.ui.newNpc && FRE.ui.newNpc.created.has(npc.key.toLowerCase())) {
+        const g = FRE.newNpcSim.inGame(ws, npc.key);
+        const name = id => { const it = ws.itemById(id); return it ? (it.name || it.define) : String(id); };
+        el.appendChild(h('div.nn-ingame', h('b', 'In game after Save + restart: '), FRE.newNpcSim.describe(g, name).map(l => h('div', l))));
       }
       const menus = npc.menus.map(v => D.byValue('MMI_', v) || String(v));
       if (menus.length) el.appendChild(h('div.menus', 'Menus: ', menus.map(m => ws.exchangeMenus.has(m)
@@ -5682,6 +6484,519 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
   };
 
   FRE.ui.modules.push(mod);
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- ui/combo.js ----
+// A dropdown you can type in (searchable select). The text box filters the list; every word typed must
+// appear in the option's label or its extra search text. Keys: ↑ ↓ to move, Enter to pick, Esc to close.
+//   FRE.ui.combo({ options: [{ v, label, group?, find? }], value, placeholder, onPick(v), onNew? }) -> element
+//   onNew: { label: text => 'row text', pick(text) }: a first row that takes the typed text as a new value
+(function (FRE) {
+  'use strict';
+  const { h } = FRE.dom;
+  const MAX = 300;
+
+  function combo({ options, value, placeholder = 'Type to search…', onPick, onNew = null }) {
+    const cur = () => options.find(o => String(o.v) === String(value));
+    const input = h('input.combo-input', { type: 'text', placeholder, value: cur() ? cur().label : '', autocomplete: 'off' });
+    const list = h('div.combo-list');
+    const el = h('div.combo', input, list);
+    let shown = [], hi = -1;
+    list.hidden = true;
+
+    function paint(q) {
+      const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+      shown = options.filter(o => words.every(w => (o.label + ' ' + (o.find || '') + ' ' + (o.group || '')).toLowerCase().includes(w)));
+      if (onNew && q.trim()) shown.unshift({ v: null, label: onNew.label(q.trim()), typed: q.trim() });
+      list.textContent = '';
+      let group = null;
+      shown.slice(0, MAX).forEach((o, i) => {
+        if (o.group && o.group !== group) { group = o.group; list.appendChild(h('div.combo-group', group)); }
+        list.appendChild(h('div.combo-opt' + (i === hi ? '.hi' : '') + (String(o.v) === String(value) ? '.sel' : ''),
+          { 'data-i': i, on: { mousedown: e => { e.preventDefault(); pick(o); } } }, o.label));
+      });
+      if (shown.length > MAX) list.appendChild(h('div.combo-more', `${shown.length - MAX} more: type more letters`));
+      if (!shown.length) list.appendChild(h('div.combo-more', 'Nothing matches.'));
+    }
+    function open() { hi = -1; paint(''); list.hidden = false; input.select(); }
+    function close() { list.hidden = true; input.value = cur() ? cur().label : ''; }
+    function pick(o) {
+      if (o.typed !== undefined) { list.hidden = true; onNew.pick(o.typed); return; }
+      value = o.v; close(); onPick(o.v);
+    }
+    function move(d) {
+      if (!shown.length) return;
+      hi = Math.max(0, Math.min(Math.min(shown.length, MAX) - 1, hi + d));
+      paint(input.value === (cur() && cur().label) ? '' : input.value);
+      const node = list.querySelector('.combo-opt.hi');
+      if (node) node.scrollIntoView({ block: 'nearest' });
+    }
+    input.addEventListener('focus', open);
+    input.addEventListener('blur', close);              // a click in the list never blurs: its mousedown is cancelled
+    input.addEventListener('input', () => { hi = 0; paint(input.value); list.hidden = false; });
+    input.addEventListener('keydown', e => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); if (list.hidden) open(); move(1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+      else if (e.key === 'Enter') { e.preventDefault(); if (shown[hi]) pick(shown[hi]); }
+      else if (e.key === 'Escape') { e.preventDefault(); input.blur(); }
+    });
+    el.pick = v => { const o = options.find(x => String(x.v) === String(v)); if (o) pick(o); };    // for tests
+    return el;
+  }
+
+  FRE.ui.combo = combo;
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- ui/tga.js ----
+// TGA pictures (Client/Char/char_*.tga: the NPC portraits, 200x240 RGBA) for the new-NPC form.
+// Reads image types 2 (raw true-colour) and 10 (RLE true-colour), 24 or 32 bits, either row order.
+(function (FRE) {
+  'use strict';
+  const { h } = FRE.dom;
+
+  // bytes -> { w, h, rgba: Uint8ClampedArray } or null
+  function decode(b) {
+    if (!b || b.length < 18) return null;
+    const idLen = b[0], cmapType = b[1], type = b[2];
+    const cmapLen = b[5] | (b[6] << 8), cmapBits = b[7];
+    const w = b[12] | (b[13] << 8), hgt = b[14] | (b[15] << 8), bpp = b[16], desc = b[17];
+    if ((type !== 2 && type !== 10) || (bpp !== 24 && bpp !== 32) || !w || !hgt) return null;
+    const px = bpp / 8, top = (desc & 0x20) !== 0;
+    let i = 18 + idLen + (cmapType ? cmapLen * Math.ceil(cmapBits / 8) : 0);
+    const rgba = new Uint8ClampedArray(w * hgt * 4);
+    let n = 0, anyAlpha = false;
+    const put = j => {
+      const x = n % w, y = Math.floor(n / w), row = top ? y : hgt - 1 - y, o = (row * w + x) * 4;
+      rgba[o] = b[j + 2]; rgba[o + 1] = b[j + 1]; rgba[o + 2] = b[j];
+      rgba[o + 3] = px === 4 ? b[j + 3] : 255;
+      if (px === 4 && b[j + 3]) anyAlpha = true;
+      n++;
+    };
+    const total = w * hgt;
+    if (type === 2) { while (n < total && i + px <= b.length) { put(i); i += px; } }
+    else while (n < total && i < b.length) {
+      const c = b[i++], count = (c & 0x7f) + 1;
+      if (c & 0x80) { for (let k = 0; k < count && n < total; k++) put(i); i += px; }
+      else for (let k = 0; k < count && n < total; k++) { put(i); i += px; }
+    }
+    if (px === 4 && !anyAlpha) for (let k = 3; k < rgba.length; k += 4) rgba[k] = 255;   // alpha left empty: show it opaque
+    return { w, h: hgt, rgba };
+  }
+
+  // A <div> that shows Client/Char/<file> once loaded (ctx.clientFile), or nothing when there is no such picture.
+  const cache = new Map();
+  function picture(ctx, file, cls = '') {
+    const box = h('div.tga-pic' + cls);
+    if (!file || !ctx.clientFile) return box;
+    const key = file.toLowerCase();
+    if (!cache.has(key)) cache.set(key, ctx.clientFile('Char/' + file).then(decode).catch(() => null));
+    cache.get(key).then(img => {
+      if (!img) return;
+      const c = h('canvas', { width: img.w, height: img.h, title: file });
+      c.getContext('2d').putImageData(new ImageData(img.rgba, img.w, img.h), 0, 0);
+      box.appendChild(c);
+    });
+    return box;
+  }
+
+  FRE.tga = { decode, picture };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- ui/new-npc.js ----
+// "+ New NPC" in the NPC Shops task (docs/HANDOFF-ADD-NPC.md). One form: who, where, menus, shop.
+// Every change re-runs the rules (validate/newnpc.js) and the preview of the exact text and bytes
+// (edit/npc-ops.js). Create applies the three files as ONE undo step; Save writes them (Server + Client).
+// Names are the ones players read: regions (Flaris, La Christiana A …), building tags ([General]), menu labels.
+(function (FRE) {
+  'use strict';
+  const { h, modal, toast } = FRE.dom;
+  const { pretty, diagRow } = FRE.ui;
+  const SIM = () => FRE.newNpcSim;
+  // guild-house door / notice menus: their TID_MMI text is a bid message, and only door objects use them
+  const NOT_FOR_NPCS = ['MMI_GUILDHOUSE_ENTER_DOOR', 'MMI_GUILDHOUSE_NOTICE'];
+
+  // the form, kept while the task is open (reopening the dialog keeps what was typed)
+  let form = null;
+  const blankTab = slot => ({ slot, title: '', rules: [], items: [] });
+  function defaults(ws) {
+    const madrigal = ws.area ? ws.area.madrigal : 'WdMadrigal';
+    return { key: '', name: '', model: 'MI_MAFL_JURIA', image: null, structure: null, newTag: null, region: `${madrigal}|Flaris`,
+      map: ws.mapFiles.has(madrigal) ? madrigal : [...ws.mapFiles.keys()][0],
+      x: null, y: null, z: null, angle: 0, menus: ['MMI_TRADE'], tabs: [blankTab(0)] };
+  }
+
+  // Proven models: an NPC players can see uses it, and mdlDyna.inc has it. "Julia — like Juria, Is"
+  function provenModels(ws) {
+    const mdl = SIM().modelNames(ws);
+    const by = new Map();
+    for (const p of SIM().visibleNpcs(ws)) {
+      if (!by.has(p.model)) by.set(p.model, []);
+      const n = p.npc.name || p.key;
+      if (!by.get(p.model).includes(n)) by.get(p.model).push(n);
+    }
+    // NPCs players saw until a proven commit hid them: "Soraya (until b6abf414)"
+    for (const [id, list] of SIM().seenBefore(ws)) {
+      if (!by.has(id)) by.set(id, []);
+      for (const b of list) by.get(id).push(`${b.name} (until ${b.commit})`);
+    }
+    return [...by].map(([id, npcs]) => ({ id, define: ws.defines.byValue('MI_', id), npcs,
+      name: ws.movers && ws.movers.movers.get(id) ? ws.movers.movers.get(id).name : '' }))
+      .filter(m => m.define && (!mdl || mdl.has(m.define)))
+      .sort((a, b) => (a.name || a.define).localeCompare(b.name || b.define));
+  }
+  // Menus: { define, id, label, count of visible NPCs using it }
+  function menuList(ws, all) {
+    const count = new Map();
+    const seen = new Set();
+    for (const p of SIM().visibleNpcs(ws)) {
+      if (seen.has(p.npc)) continue;
+      seen.add(p.npc);
+      for (const id of new Set(p.npc.menus)) count.set(id, (count.get(id) || 0) + 1);
+    }
+    return ws.defines.withPrefix('MMI_').filter(([, v]) => v >= 0 && v < 350 && (all || count.has(v)))
+      .map(([define, v]) => { const t = ws.texts.byId.get(SIM().TID_MMI_DIALOG + v); return { define, id: v, label: t ? t.text : pretty(define), count: count.get(v) || 0 }; })
+      .filter((m, i, a) => a.findIndex(x => x.id === m.id) === i)      // one name per id (the first #define)
+      .sort((a, b) => b.count - a.count || a.id - b.id);
+  }
+
+  // ---------------------------------------------------------------- item picker (bulk)
+  // opts: { ws, title, have: Set of item ids already there, room: how many more fit (or Infinity), onAdd(infos) }
+  function itemPicker(opts) {
+    const ws = opts.ws;
+    if (!ws._pickItems) ws._pickItems = [...ws.items.items.values()].map(it => ws.itemInfo(it)).sort((a, b) => a.name.localeCompare(b.name));
+    const all = ws._pickItems;
+    const D = ws.defines;
+    const st = { q: '', ik1: '', ik3: '', rarity: new Set(), picked: new Set() };
+    const LIMIT = 400;
+    const list = h('div.ip-list'), count = h('span.muted.small'), addBtn = h('button.primary');
+    const shown = () => all.filter(i => (!st.q || i.name.toLowerCase().includes(st.q) || i.define.toLowerCase().includes(st.q)) &&
+      (st.ik1 === '' || String(i.ik1) === st.ik1) && (st.ik3 === '' || String(i.ik3) === st.ik3) && (!st.rarity.size || st.rarity.has(i.rarity)));
+    const ik1s = [...new Set(all.map(i => i.ik1))].sort((a, b) => a - b);
+    const ik3sel = h('select', { on: { change: e => { st.ik3 = e.target.value; paint(); } } });
+    function fillIk3() {
+      const k3 = [...new Set(all.filter(i => st.ik1 === '' || String(i.ik1) === st.ik1).map(i => i.ik3))].sort((a, b) => a - b);
+      ik3sel.textContent = '';
+      ik3sel.appendChild(h('option', { value: '' }, 'All types'));
+      k3.forEach(v => ik3sel.appendChild(h('option', { value: v, selected: String(v) === st.ik3 }, pretty(D.byValue('IK3_', v) || String(v)))));
+    }
+    function paint() {
+      const rows = shown();
+      list.textContent = '';
+      for (const i of rows.slice(0, LIMIT)) {
+        const had = opts.have.has(i.id);
+        const cb = h('input', { type: 'checkbox', checked: had || st.picked.has(i.id), disabled: had,
+          on: { change: e => { e.target.checked ? st.picked.add(i.id) : st.picked.delete(i.id); status(); } } });
+        list.appendChild(h('label.ip-row' + (had ? '.had' : ''), { 'data-item-id': i.id }, cb,
+          h('span.ip-name', h('span.r-' + i.rarity, i.name), h('span.def', i.define)),
+          h('span.ip-type', pretty(i.ik3Name || '')), h('span.ip-lv', i.level > 0 ? `Lv ${i.level}` : ''),
+          h('span.ip-cost', had ? 'already in the tab' : i.cost > 0 ? `${FRE.dom.fmt(i.cost)} Penya` : '')));
+      }
+      if (rows.length > LIMIT) list.appendChild(h('p.muted.small', `Showing the first ${LIMIT} of ${FRE.dom.fmt(rows.length)}. Narrow the search; "Select all shown" still takes all ${FRE.dom.fmt(rows.length)}.`));
+      if (!rows.length) list.appendChild(h('p.muted', 'No item matches.'));
+      status();
+    }
+    function status() {
+      const n = st.picked.size;
+      const fit = Math.min(n, opts.room);
+      count.textContent = `${n} selected · ${opts.room === Infinity ? '' : `room for ${opts.room} more in this tab (100 max)`}`;
+      addBtn.textContent = n > fit ? `Add the first ${fit} (tab full after that)` : `Add ${n} item${n === 1 ? '' : 's'}`;
+      addBtn.disabled = !fit;
+    }
+    const body = h('div.ip',
+      h('div.nn-row', h('input', { type: 'search', placeholder: 'Search items (name or II_)', style: 'flex:1', on: { input: e => { st.q = e.target.value.trim().toLowerCase(); paint(); } } })),
+      h('div.nn-row',
+        h('select', { on: { change: e => { st.ik1 = e.target.value; st.ik3 = ''; fillIk3(); paint(); } } },
+          [h('option', { value: '' }, 'All categories'), ...ik1s.map(v => h('option', { value: v }, pretty(D.byValue('IK1_', v) || String(v))))]),
+        ik3sel,
+        ['normal', 'unique', 'ultimate', 'baruna'].map(r => h('button.chip', { 'data-r': r, on: { click: e => { st.rarity.has(r) ? st.rarity.delete(r) : st.rarity.add(r); e.target.classList.toggle('on'); paint(); } } }, pretty('X_' + r)))),
+      h('div.nn-row',
+        h('button.small', { on: { click: () => { for (const i of shown()) if (!opts.have.has(i.id)) st.picked.add(i.id); paint(); } } }, 'Select all shown'),
+        h('button.small', { on: { click: () => { st.picked.clear(); paint(); } } }, 'Clear'), count),
+      list);
+    fillIk3();
+    const m = modal({ title: opts.title, body, wide: true, buttons: [{ label: 'Cancel' }] });
+    addBtn.addEventListener('click', () => {
+      const ids = [...st.picked].filter(id => !opts.have.has(id)).slice(0, opts.room);
+      const by = new Map(all.map(i => [i.id, i]));
+      opts.onAdd(ids.map(id => by.get(id)));
+      m.close();
+    });
+    m.el.querySelector('footer').appendChild(addBtn);
+    paint();
+    return m;
+  }
+
+  // ---------------------------------------------------------------- the form
+  function open(ctx) {
+    const ws = ctx.ws;
+    if (!ws.mapFiles.size || !ws.area) { toast('The map files (World/) were not read, so an NPC cannot be placed.', 'bad'); return; }
+    if (!form) form = defaults(ws);
+    let modelView = 'used';          // 'used': models a visible NPC uses; 'unused': models no NPC uses yet (every file in Client/Model); 'all'
+    let touched = false;             // the checks show once the user has typed something
+    let menuView = 'top';            // 'top': ticked + the 16 most used; 'used': every menu a visible NPC uses; 'all': also unused ones
+    const models = provenModels(ws);
+    const unused = SIM().unusedCompleteModels(ws);
+    // a portrait picture per model: the SetImage file of a visible NPC with that model
+    const modelPic = new Map();
+    for (const p of SIM().visibleNpcs(ws)) {
+      const img = p.npc.statements.find(r => r.cmd === 'SetImage' && r.args.image);
+      if (img && !modelPic.has(p.model)) modelPic.set(p.model, img.args.image.text);
+    }
+    const images = [];
+    for (const n of ws.chars.npcs) for (const r of n.statements) if (r.cmd === 'SetImage' && r.args.image && r.args.image.stringKey)
+      if (!images.some(i => i.key === r.args.image.stringKey)) images.push({ key: r.args.image.stringKey, file: r.args.image.text, npc: n.name || n.key });
+    images.sort((a, b) => a.npc.localeCompare(b.npc));
+    const buildings = SIM().buildingNames(ws);
+    const srts = ws.defines.withPrefix('SRT_').filter(([, v]) => buildings.get(v)).map(([d, v]) => ({ d, v, tag: buildings.get(v) }))
+      .filter((s, i, a) => a.findIndex(x => x.v === s.v) === i);
+    const freeTags = SIM().freeStructureIds(ws);
+    const tagFiles = ['defineneuz.h', 'etc.inc', 'etc.txt.txt'].every(n => ws.isEditable(n));
+    const regions = SIM().regions(ws);
+    const visible = SIM().visibleNpcs(ws).map(p => ({ p, w: SIM().whereAt(ws, p.map, p.x, p.z) }));
+
+    const body = h('div.newnpc');
+    const problems = h('div.nn-problems'), preview = h('div.nn-preview'), whereNow = h('div.nn-where');
+    let createBtn = null;
+
+    const num = v => (v === '' || v === null || v === undefined ? null : Number(v));
+    const input = (field, attrs = {}) => h('input', Object.assign({ value: form[field] === null || form[field] === undefined ? '' : form[field],
+      on: { input: e => { form[field] = attrs.number ? num(e.target.value) : e.target.value; touched = true;
+        if (['x', 'y', 'z'].includes(field)) form.nextTo = null;          // a typed spot is no longer "next to" that NPC
+        refresh(); } } }, attrs.el || {}));
+    const combo = (value, options, onPick, placeholder, onNew) => FRE.ui.combo({ options, value, placeholder, onNew, onPick: v => { touched = true; onPick(v); refresh(); } });
+    const select = (value, options, onChange) => h('select', { on: { change: e => { onChange(e.target.value); refresh(); } } },
+      options.map(o => o.group ? h('optgroup', { label: o.group }, o.options.map(x => h('option', { value: x.v, selected: String(x.v) === String(value) }, x.label)))
+        : h('option', { value: o.v, selected: String(o.v) === String(value) }, o.label)));
+    // required: a red * after the label; optional: "(optional)" under it
+    const label = (text, req) => h('span.nn-label', text, req ? h('span.nn-req.req', { title: 'Required' }, ' *') : [h('br'), h('span.nn-req.opt', '(optional)')]);
+    const row = (text, req, ...el) => h('div.nn-row', label(text, req), ...el);
+    const note = t => h('span.muted.small', t);
+    const region = () => regions.find(r => r.value === form.region) || regions[0];
+
+    // "Files: Mvr_MaFlJuria.o3d, 9 animations, 2 textures — all in Client/Model"; the .o3d is read once to list its textures
+    const reading = new Set();
+    function modelFiles() {
+      const e = form.model && SIM().modelEntries(ws) && SIM().modelEntries(ws).get(form.model);
+      if (!e || !ws.clientModels) return null;
+      const o3d = `Mvr_${e.name}.o3d`, lo = o3d.toLowerCase();
+      const tex = ws.modelTextures.get(lo);
+      if (!tex && ws.clientTextures && ws.clientModels.has(lo) && !reading.has(lo)) {
+        reading.add(lo);
+        ctx.clientFile('Model/' + o3d).then(b => { if (b) { ws.addModelTextures(o3d, SIM().o3dTextures(b)); ws.reparse('character.inc'); render(); } }).catch(() => {});
+      }
+      const miss = SIM().missingModelFiles(ws, form.model) || [];
+      // every Mvr_*.o3d of the client names at least one texture: none listed means a stale or broken Model.textures index
+      const texText = !ws.clientTextures ? 'textures not checked (no Model/Texture list)' : !tex ? 'textures: reading…'
+        : tex.length ? `${tex.length} texture${tex.length === 1 ? '' : 's'}` : 'no textures listed (re-run tools/refresh-fixtures.sh)';
+      return h('span.small' + (miss.length ? '.bad' : '.muted'), `Files: ${o3d}, ${e.anis.length} animation${e.anis.length === 1 ? '' : 's'}, ${texText} — ` +
+        (miss.length ? `missing: ${miss.join(', ')}` : 'all in Client/Model'));
+    }
+
+    function render() {
+      body.textContent = '';
+      // --- who
+      body.appendChild(h('h3', 'NPC'));
+      body.appendChild(row('Key', true, input('key', { el: { placeholder: 'MaFl_Lumi', maxLength: 31 } }), note('Internal name, unique, never shown. Letters, digits, _ (31 max). Style: MaFl_ = Madrigal Flaris, MaSa_ = Saint Morning, MaDa_ = Darkon.')));
+      body.appendChild(row('Name', true, input('name', { el: { placeholder: 'Lumi', maxLength: 63 } }), note('Shown above the NPC\'s head.')));
+      const used = models.map(m => ({ v: m.define, label: `${m.name || m.define} — like ${m.npcs.slice(0, 3).join(', ')}${m.npcs.length > 3 ? ', …' : ''}`,
+        find: m.define + ' ' + m.npcs.join(' '), group: modelView === 'all' ? 'Used by NPCs in the game' : null }));
+      const fresh = unused.map(m => ({ v: m.define, label: `${m.name || m.define} (${m.define})`, find: m.define, group: modelView === 'all' ? 'Not used yet — files complete, test it first' : null }));
+      const modelOpts = modelView === 'used' ? used : modelView === 'unused' ? fresh : [...used, ...fresh];
+      const curModel = ws.defines.defines.get(form.model);
+      const noClient = 'Needs the Client folder (its Model files or Model.list are checked)';
+      body.appendChild(row('Model', true, h('div.nn-col',
+        h('div.nn-row', combo(form.model, modelOpts, v => { form.model = v; render(); }, modelView === 'unused' ? 'Search a model no NPC uses yet' : 'Search a model or an NPC that uses it'),
+          h('select.nn-modelview', { title: 'Which models the list shows', on: { change: e => {
+            modelView = e.target.value;
+            // the picked model stays only if the new list has it (else its picture would stay with nothing shown)
+            const now = modelView === 'used' ? used : modelView === 'unused' ? fresh : [...used, ...fresh];
+            if (!now.some(o => o.v === form.model)) form.model = '';
+            render();
+          } } },
+            h('option', { value: 'used', selected: modelView === 'used' }, `Used by NPCs (${used.length})`),
+            h('option', { value: 'unused', selected: modelView === 'unused', disabled: !ws.clientModels, title: ws.clientModels ? '' : noClient },
+              ws.clientModels ? `Not used yet (${fresh.length})` : 'Not used yet (needs the Client folder)'),
+            h('option', { value: 'all', selected: modelView === 'all', disabled: !ws.clientModels, title: ws.clientModels ? '' : noClient }, 'Both'))),
+        modelView !== 'used' ? h('span.muted.small', 'Not used yet: no NPC players see has this body; every .o3d, .ani and texture file is in Client/Model. Check it on the test server first.') : null,
+        modelFiles()),
+        FRE.tga.picture(ctx, modelPic.get(curModel)),
+        note('What the NPC looks like. The picture is the portrait of an NPC with this body, when there is one.')));
+      const imgFile = form.image ? (images.find(i => i.key === form.image) || {}).file : null;
+      body.appendChild(row('Portrait', false, combo(form.image || '', [{ v: '', label: '(none)' }, ...images.map(i => ({ v: i.key, label: `${i.npc} — ${i.file}` }))], v => { form.image = v || null; render(); }, 'Search an NPC'),
+        FRE.tga.picture(ctx, imgFile, '.small'),
+        note('SetImage: this client never shows it (nothing reads it). Leave (none).')));
+      // Building = m_nStructure: the client draws "[tag]" above the name (MoverRender.cpp:1717) and an icon on the minimap
+      const NEW = '+new';
+      const tagOpts = [{ v: '', label: '(none) — no tag' }, ...srts.map(s => ({ v: s.d, label: `[${s.tag}]`, find: s.d }))];
+      if (tagFiles && freeTags.length) tagOpts.splice(1, 0, { v: NEW, label: `+ New tag… (${freeTags.length} free) — or type it here`, find: 'new type' });
+      const tagNow = form.newTag !== null && form.newTag !== undefined;
+      body.appendChild(row('Building', false, combo(tagNow ? NEW : form.structure || '', tagOpts, v => {
+        if (v === NEW) { form.structure = null; form.newTag = form.newTag || ''; } else { form.structure = v || null; form.newTag = null; }
+        render();
+      }, 'Search a tag, or type a new one', tagFiles && freeTags.length ? {
+        label: t => `+ New tag [${FRE.npcOps.tagText(t)}]`,
+        pick: t => { form.structure = null; form.newTag = t; touched = true; render(); refresh(); },
+      } : null),
+        note(`The tag in brackets above the name, e.g. [General], and the NPC's icon on the minimap.${tagFiles && !freeTags.length ? ' No free row for a new tag (MAX_STRUCTURE 20 is compiled into the game).' : ''}`)));
+      if (tagNow) {
+        const tt = FRE.npcOps.tagText(form.newTag);
+        const showDef = h('span.def', tt ? FRE.npcOps.tagDefine(tt, freeTags[0]) : '');
+        body.appendChild(row('New tag', true, h('div.nn-col',
+          h('div.nn-row', h('input', { value: form.newTag, placeholder: 'Dungeon Pieces', maxLength: 40, on: { input: e => {
+            form.newTag = e.target.value; touched = true;
+            const t = FRE.npcOps.tagText(form.newTag);
+            showDef.textContent = t ? FRE.npcOps.tagDefine(t, freeTags[0]) : '';
+            refresh();
+          } } }), showDef),
+          note(`Shown as [text] (the game adds the brackets), 31 characters at most. Written to defineNeuz.h, etc.inc and etc.txt.txt (Server + Client), like the four tags of b4b9a465. Takes row ${freeTags[0]}; only ${freeTags.length} new tag${freeTags.length === 1 ? '' : 's'} fit without a C++ rebuild. Other NPCs can pick it afterwards.`))));
+      }
+
+      // --- where
+      body.appendChild(h('h3', 'Where'));
+      const groups = [...new Set(regions.map(r => r.group))];
+      const regionOpts = groups.flatMap(g => regions.filter(r => r.group === g).sort((a, b) => g === groups[0] ? 0 : a.label.localeCompare(b.label))
+        .map(r => ({ v: r.value, group: g, find: r.map, label: `${r.label} · ${r.npcs ? `${r.npcs} NPC${r.npcs === 1 ? '' : 's'}` : '0 NPCs yet — type /position'}` })));
+      body.appendChild(row('Region', true, combo(form.region, regionOpts, v => { form.region = v; form.map = region().map; form.nextTo = null; render(); }, 'Search a town, region or dungeon'),
+        note('Places as players read them on the map window; dungeons by their in-game name.')));
+      const r = region();
+      const near = visible.filter(v => v.p.map === r.map && (!v.w || v.w.place === r.place || r.group !== groups[0]))
+        .sort((a, b) => (a.p.npc.name || a.p.key).localeCompare(b.p.npc.name || b.p.key));
+      // the chosen neighbour stays shown until a different x / y / z is typed (form.nextTo = its key)
+      body.appendChild(row('Next to', false, near.length ? combo(form.nextTo || '', near.map(o => ({ v: o.p.key, label: `${o.p.npc.name || o.p.key}${o.w && o.w.caption ? ' — ' + o.w.caption : ''}`, find: o.p.key })), v => {
+        const p = near.find(o => o.p.key === v).p;
+        Object.assign(form, { nextTo: v, map: p.map, x: Math.round((p.x + 6) * 10) / 10, y: Math.round(p.y * 10) / 10, z: Math.round(p.z * 10) / 10, angle: Math.round(p.angle * 10) / 10 });
+        render();
+      }, `Search the ${near.length} NPCs players see here`) : h('span.muted', 'No NPC stands here yet: type the spot in /position.'),
+        note('Fills the spot: 6 steps to that NPC\'s side, same height and facing.')));
+      body.appendChild(row('/position', true, input('x', { number: true, el: { placeholder: 'x', type: 'number', step: 'any' } }), input('y', { number: true, el: { placeholder: 'y (height)', type: 'number', step: 'any' } }),
+        input('z', { number: true, el: { placeholder: 'z', type: 'number', step: 'any' } }), note('In game: stand on the spot, type /position, copy x y z.')));
+      body.appendChild(whereNow);
+      body.appendChild(row('Facing', true, input('angle', { number: true, el: { type: 'number', step: 'any', min: 0, max: 359.9 } }), note('Degrees, 0-359.9. "Next to" copies the neighbour\'s.')));
+
+      // --- menus
+      body.appendChild(h('h3', 'Right-click menus'));
+      const every = menuList(ws, menuView === 'all').filter(m => menuView !== 'top' || !NOT_FOR_NPCS.includes(m.define));
+      const list = menuView === 'top' ? every.filter((m, i) => i < 16 || form.menus.includes(m.define)) : every;
+      body.appendChild(h('div.nn-menus', list.map(m => h('label.nn-menu', { title: `${m.label}\n${m.define} = ${m.id}; used by ${m.count} NPC(s) players see` },
+        h('input', { type: 'checkbox', checked: form.menus.includes(m.define), on: { change: e => {
+          form.menus = e.target.checked ? [...form.menus, m.define] : form.menus.filter(x => x !== m.define);
+          if (m.define === 'MMI_TRADE' && e.target.checked && !form.tabs.length) form.tabs = [blankTab(0)];
+          render();
+        } } }), h('span.nn-menu-text', m.label), m.count ? null : h('span.tag.warn', 'unused')))));
+      body.appendChild(h('div.nn-row', ['top', 'used', 'all'].map(v => h('label.nn-radio', h('input', { type: 'radio', name: 'nn-menuview', checked: menuView === v,
+        on: { change: () => { menuView = v; render(); } } }), v === 'top' ? 'most used' : v === 'used' ? `every menu an NPC uses (${menuList(ws, false).length})` : 'also menus no NPC uses (untested)'))));
+
+      // --- shop
+      if (form.menus.includes('MMI_TRADE')) {
+        body.appendChild(h('h3', 'Shop tabs (Penya)'));
+        form.tabs.forEach((t, k) => {
+          const box = h('div.nn-tab');
+          box.appendChild(h('div.nn-row', label(`Tab ${t.slot + 1}`, true),
+            h('input', { value: t.title, placeholder: 'Tab title, e.g. Scrolls', maxLength: 63, on: { input: e => { t.title = e.target.value; touched = true; refresh(); } } }),
+            h('button.small', { on: { click: () => pick(t) } }, '+ Add items'),
+            h('span.muted.small', `${t.items.length} / 100`),
+            h('button.icon.danger', { title: 'Remove this tab', on: { click: () => { form.tabs.splice(k, 1); render(); } } }, '✕')));
+          if (t.items.length) {
+            const tb = h('table.items.nn-items', h('tr', h('th', 'Item'), h('th.num', 'Price (Penya)'), h('th', '')));
+            t.items.forEach((it, j) => {
+              const info = ws.items && ws.defines.defines.has(it.define) ? ws.itemById(ws.defines.defines.get(it.define)) : null;
+              const ii = info ? ws.itemInfo(info) : null;
+              tb.appendChild(h('tr', FRE.ui.itemCell(ii, it.define),
+                h('td.num', FRE.dom.numInput({ value: it.cost || null, placeholder: ii ? `${FRE.dom.fmt(ii.cost)} (item)` : '',
+                  title: 'Empty = the item\'s own price. A price here changes the item\'s price in EVERY shop.',
+                  onCommit: v => { if (v === null) delete it.cost; else it.cost = v; refresh(); } })),
+                h('td', h('button.icon.danger', { title: 'Remove', on: { click: () => { t.items.splice(j, 1); render(); } } }, '✕'))));
+            });
+            box.appendChild(tb);
+          } else box.appendChild(h('p.muted.small', 'No item yet: + Add items.'));
+          for (const ru of t.rules) box.appendChild(h('p.muted.small', `Also every ${pretty(ru.ik3)} item, rarity ${ru.min}-${ru.max} (rule).`));
+          body.appendChild(box);
+        });
+        const free = [0, 1, 2, 3].find(s => !form.tabs.some(t => t.slot === s));
+        if (free !== undefined) body.appendChild(h('button.small', { on: { click: () => { form.tabs.push(blankTab(free)); render(); } } }, `+ Tab ${free + 1}`));
+      }
+      body.append(h('p.muted.small', h('span.nn-req.req', '*'), ' = required'), h('h3', 'Checks'), h('p.muted.small', '⛔ must be fixed before Create · ⚠ only a warning'), problems, h('h3', 'What will be written'), preview);
+      refresh();
+    }
+
+    function pick(t) {
+      const have = new Set(t.items.map(it => ws.defines.defines.get(it.define)).filter(v => v !== undefined).map(v => v >>> 0));
+      itemPicker({ ws, title: `Add items to tab ${t.slot + 1}${t.title ? ' "' + t.title + '"' : ''}`, have, room: Math.max(0, 100 - t.items.length),
+        onAdd: infos => { t.items.push(...infos.map(i => ({ define: i.define }))); render(); toast(`${infos.length} item(s) added to tab ${t.slot + 1}.`, 'ok'); } });
+    }
+
+    function refresh() {
+      // where a player reads this spot
+      whereNow.textContent = '';
+      const ok = [form.x, form.z].every(v => typeof v === 'number' && Number.isFinite(v));
+      if (ok) {
+        const w = SIM().whereAt(ws, form.map, form.x, form.z);
+        const r = region();
+        if (w) whereNow.append(...[h('span.muted', 'Players will read here: '), h('b', w.label), w.te ? h('span.def', ' · ' + w.te) : null,
+          r && w.place !== r.place ? h('span.tag.warn', ` not in ${r.label}`) : null].filter(Boolean));
+      }
+      const diags = FRE.validateNewNpc(ws, form);
+      problems.textContent = '';
+      const blocks = diags.filter(d => d.severity === 'BLOCK');
+      if (!touched) problems.appendChild(h('p.muted', 'Fill in the fields above; the checks show here as you type.'));
+      else if (!diags.length) problems.appendChild(h('p.ok', '✓ No problem found.'));
+      else diags.forEach(d => problems.appendChild(diagRow(d)));
+      const blocked = blocks.length > 0;
+      if (createBtn) { createBtn.disabled = blocked; createBtn.title = blocked ? 'Still to fix:\n' + blocks.map(d => '• ' + d.message).join('\n') : ''; }
+      preview.textContent = '';
+      if (blocked) { preview.appendChild(h('p.muted', 'Fix the ⛔ problems to see the exact text.')); return; }
+      try {
+        const plan = FRE.npcOps.newNpcPlan(ws, form);
+        const dv = new DataView(plan.record.buffer);
+        if (plan.tag) {
+          preview.appendChild(h('div.muted.small', `New tag [${plan.tag.text}] = row ${plan.tag.id} (Server + Client): defineNeuz.h, etc.inc, etc.txt.txt get one line each:`));
+          preview.appendChild(h('pre.nn-pre', [plan.tag.lines.define, plan.tag.lines.inc, plan.tag.lines.txt].map(l => l.replace(/\r?\n$/, '')).join('\n')));
+        }
+        preview.appendChild(h('div.muted.small', 'character.inc (Server + Client), appended:'));
+        preview.appendChild(h('pre.nn-pre', plan.block.replace(/\r/g, '')));
+        preview.appendChild(h('div.muted.small', 'character.txt.txt (Server + Client), appended:'));
+        preview.appendChild(h('pre.nn-pre', plan.strings.map(s => `${s.key}\t${s.text}`).join('\n')));
+        preview.appendChild(h('div.muted.small', `World/${form.map}/${plan.dyo.name} (Server + Client): 200 bytes inserted at offset ${plan.insertAt}, before the end marker:`));
+        preview.appendChild(h('pre.nn-pre', `x ${dv.getFloat32(20, true)} (= ${form.x} / 4), y ${dv.getFloat32(24, true)}, z ${dv.getFloat32(28, true)} (= ${form.z} / 4), angle ${dv.getFloat32(4, true)}, model ${dv.getUint32(48, true)}, key ${form.key}\n` +
+          Array.from(plan.record, b => b.toString(16).padStart(2, '0')).join(' ').replace(/((?:\S+ ){16})/g, '$1\n')));
+      } catch (e) { preview.appendChild(h('p.bad', e.message)); }
+    }
+
+    render();
+    const m = modal({ title: 'New NPC', body, wide: true, buttons: [
+      { label: 'Close' },
+      { label: 'Reset form', onClick: () => { form = defaults(ws); render(); return false; } },
+      { label: 'Create NPC', cls: 'primary', id: 'nn-create', onClick: () => create(ctx) },
+    ] });
+    createBtn = m.el.querySelector('#nn-create');
+    refresh();
+  }
+
+  function create(ctx) {
+    const ws = ctx.ws;
+    if (FRE.validateNewNpc(ws, form).some(d => d.severity === 'BLOCK')) return false;
+    const key = form.key;
+    const tagMade = form.newTag !== null && form.newTag !== undefined;
+    ctx.editGroup(() => FRE.npcOps.newNpcPlan(ws, form).parts, `new NPC ${key}`, [`npc|character.inc|${key}`]);
+    const npc = ws.chars.byKey.get(key.toLowerCase());
+    if (!npc) return false;
+    FRE.ui.newNpc.created.add(key.toLowerCase());
+    select(ctx, npc[npc.length - 1]);
+    form = null;
+    toast(`${key} created (not saved yet). Save writes character.inc, character.txt.txt${tagMade ? ', defineNeuz.h, etc.inc, etc.txt.txt' : ''} and the map file, Server and Client.`, 'ok');
+    return true;
+  }
+
+  // select the new NPC in the NPC Shops list (and show every NPC if the list filter hides it)
+  function select(ctx, npc) {
+    const mod = FRE.ui.modules.find(m => m.id === 'npc');
+    mod.st.sel = mod.npcId(npc); mod.st.tab = 0;
+    if (!mod.isListed(npc)) mod.st.show = 'all';
+    ctx.renderAll(false);
+  }
+
+  FRE.ui.itemPicker = itemPicker;
+  FRE.ui.newNpc = { open, created: new Set(), select, provenModels, menuList, reset: () => { form = null; } };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/donation.js ----
@@ -6689,6 +8004,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
     backupsOf: name => (S.backupDir ? FRE.fsa.backupCopies(S.backupDir, name) : Promise.resolve(null)),
     get backupKey() { return S.backupDir ? S.backupDir.name : null; },
     renderList: () => renderList(),
+    // bytes of a file in the Client folder by relative path ('Char/char_NpcHende.tga', names matched without case), or null
+    async clientFile(rel) {
+      if (!S.client) return null;
+      const parts = rel.split('/'), name = parts.pop();
+      const dir = await FRE.fsa.dirAt(S.client.dir, parts.join('/'));
+      if (!dir) return null;
+      const fh = (await FRE.fsa.findFiles(dir, [name])).get(name.toLowerCase());
+      return fh ? (await FRE.fsa.readHandle(fh)).bytes : null;
+    },
     // Apply an edit op: make(text) -> splices. `key` marks what was edited (list badges).
     edit(lowerFile, make, label, key) {
       const f = S.ws.files.get(lowerFile);
@@ -6766,6 +8090,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
     const world = await FRE.layout.child(res, 'World');
     if (!world) return;
     const dyo = new Map(), worldFiles = new Map(), seen = new Set();
+    const cworld = S.client ? await FRE.layout.child(S.client.dir, 'World') : null;
     for (const w of S.ws.worldList()) {
       if (seen.has(w.name)) continue;
       seen.add(w.name);
@@ -6776,12 +8101,20 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
       for (const n of names) {
         const fh = found.get(n.toLowerCase());
         if (!fh) continue;
-        const { bytes } = await FRE.fsa.readHandle(fh);
-        if (n.endsWith('.dyo')) dyo.set(w.name, bytes);
+        const { bytes, stamp } = await FRE.fsa.readHandle(fh);
+        // the .dyo with its handle: the NPC task can add an NPC record to it (Server + Client copies)
+        if (n.endsWith('.dyo')) dyo.set(w.name, new FRE.SourceFile(fh.name, bytes, { handle: fh, stamp, binary: true, dir: `World/${dir.name}` }));
         else worldFiles.set(`world/${w.name}/${n}`.toLowerCase(), new FRE.SourceFile(fh.name, bytes));
       }
+      // the client's copy (Client/World/<map>/<map>.dyo), for the client sync
+      const cdir = cworld && dyo.has(w.name) ? await FRE.layout.child(cworld, w.name) : null;
+      const ch = cdir && (await FRE.fsa.findFiles(cdir, [w.name + '.dyo'])).get((w.name + '.dyo').toLowerCase());
+      if (ch) {
+        const { bytes, stamp } = await FRE.fsa.readHandle(ch);
+        S.client.files.set(ch.name.toLowerCase(), new FRE.SourceFile(ch.name, bytes, { handle: ch, stamp, binary: true, dir: `World/${cdir.name}` }));
+      }
     }
-    S.ws.setMapObjects(dyo, worldFiles);
+    S.ws.setMapFiles(dyo, worldFiles);
   }
 
   // back to the start screen; unsaved edits are only dropped after asking
@@ -6834,8 +8167,30 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
       theme = [];
       for await (const [name, handle] of th.entries()) if (handle.kind === 'file') theme.push(name);
     } catch (e) { if (e.name !== 'NotFoundError' && e.name !== 'TypeMismatchError') toast('Client/Theme: ' + e.message, 'bad'); }
-    S.client = { dir, files, tree, theme };
-    if (S.ws) { S.ws.setDonationTree(tree); S.ws.setClientTheme(theme); }
+    // Client/Model file names (Add New NPC checks a model's .o3d and .ani files); names only, nothing is read
+    // Client/Model/Texture names; a model's .o3d is read when it is picked (S.readModel) to check its textures
+    let models = null, textures = null, texIndex = null, modelDir = null;
+    if (S.ws && S.ws.available.npc && S.ws.available.npc.ok) {
+      try {
+        modelDir = await FRE.layout.child(dir, 'Model');
+        if (modelDir) {
+          models = []; for await (const [name, handle] of modelDir.entries()) if (handle.kind === 'file') models.push(name);
+          const td = await FRE.layout.child(modelDir, 'Texture');
+          if (td) { textures = []; for await (const [name, handle] of td.entries()) if (handle.kind === 'file') textures.push(name); }
+        } else {
+          // a test copy has no Model folder (the 3D files are large): tools/refresh-fixtures.sh writes Client/Model.list (names),
+          // Client/ModelTexture.list (Model/Texture names) and Client/Model.textures (each Mvr_*.o3d's textures, tab-separated)
+          const found = await FRE.fsa.findFiles(dir, ['Model.list', 'ModelTexture.list', 'Model.textures']);
+          const lines = async n => found.get(n) ? new TextDecoder('latin1').decode((await FRE.fsa.readHandle(found.get(n))).bytes).split(/\r?\n/).map(l => l.trim()).filter(Boolean) : null;
+          models = await lines('model.list');
+          textures = await lines('modeltexture.list');
+          const idx = await lines('model.textures');
+          if (idx) texIndex = new Map(idx.map(l => { const [o, ...t] = l.split('\t'); return [o, t.filter(Boolean)]; }));
+        }
+      } catch (e) { toast('Client/Model: ' + e.message, 'bad'); }
+    }
+    S.client = { dir, files, tree, theme, models, modelDir };
+    if (S.ws) { S.ws.setDonationTree(tree); S.ws.setClientTheme(theme); S.ws.setClientModels(models); S.ws.setClientTextures(textures, texIndex); }
     S.createMissing = new Set(clientNames().map(n => n.toLowerCase()).filter(n => !files.has(n)));   // offered, can be unticked
   }
 
@@ -6981,9 +8336,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
   function renderList() {
     const el = $('list'); el.textContent = '';
     const extra = $('list-extra'); extra.textContent = '';
+    const action = $('list-action'); action.textContent = '';
     if (!S.ws || !S.ws.available[S.mode].ok) return;
     const m = active();
     $('list-search').placeholder = m.searchPlaceholder || 'Search';
+    if (m.listAction) { const x = m.listAction(ctx); if (x) action.appendChild(x); }   // a button right of the search box
     if (m.listExtra) { const x = m.listExtra(ctx); if (x) extra.appendChild(x); }
     m.renderList(el, ctx);
   }
@@ -7118,6 +8475,16 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
   }
   FRE.ui.renderDiff = renderDiff;
 
+  // A binary file (.dyo): the inserted / removed bytes, and the NPC records that changed
+  function binaryDiff(f) {
+    const box = h('div.diff');
+    for (const c of FRE.save.changeSummary(f)) box.appendChild(h(c.type === 'add' ? 'div.add' : 'div.del', `${c.type === 'add' ? '+' : '-'} ${c.text}`));
+    const before = FRE.world.readDyo(FRE.bytes.binaryStringToBytes(f.originalText)).placements.map(p => p.key);
+    for (const p of FRE.world.readDyo(f.serialize()).placements.filter(p => !before.includes(p.key)))
+      box.appendChild(h('div.add', `+ NPC ${p.key} at /position ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}, facing ${p.angle.toFixed(1)}, model ${p.model}`));
+    return box;
+  }
+
   async function onSave() {
     const ws = S.ws;
     if (!ws || !ws.dirtyFiles().length) return;
@@ -7147,7 +8514,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
     }
     const body = h('div',
       h('p', `These lines will change. Everything else in the file${dirty.length > 1 ? 's' : ''} stays byte-for-byte identical.`),
-      dirty.map(f => [h('h3', `${f.name}`), renderDiff(f)]),
+      dirty.map(f => [h('h3', `${f.dir ? f.dir + '/' : ''}${f.name}`), f.kind === FRE.SourceFile.KIND_BINARY ? binaryDiff(f) : renderDiff(f)]),
       clientBox,
       warns.length ? h('p.muted', `${warns.length} warning(s) (not blocking) — see the problems panel.`) : null,
       h('p.muted.small', `Backup folder: ${S.backupDir.name}/<timestamp>/` + (!S.client && client.length ? ` · After saving, also copy to Client/: ${client.join(', ')}` : '')));
@@ -7166,7 +8533,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when
       .catch(e => ({ ok: false, steps: [String(e && e.message || e)] }));
     if (!report.ok) log.appendChild(h('div', { style: 'color:var(--bad)' }, '\nNot saved: ' + (report.steps[report.steps.length - 1] || '')));
     else {
-      for (const c of report.client || []) S.client.files.set(c.lower, new FRE.SourceFile(c.name, c.bytes, { handle: c.handle }));
+      for (const c of report.client || []) S.client.files.set(c.lower, new FRE.SourceFile(c.file, c.bytes, { handle: c.handle, dir: c.dir, binary: /\.dyo$/i.test(c.file) }));
       const synced = new Set((report.client || []).map(c => c.lower));
       const left = client.filter(n => !synced.has(n.toLowerCase()));
       if (left.length) log.appendChild(h('div', { style: 'color:var(--warn)' }, `\nNot in Client/ yet (copy by hand): ${left.join(', ')}`));

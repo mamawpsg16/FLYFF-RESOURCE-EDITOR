@@ -34,6 +34,7 @@ The user is a web developer learning C++. When server behaviour matters, explain
     | Battle Pass | `tests/bp-server.js`, `tools/bp-sim.js` (OnJoin, OnDied, AddBPUpdate, GiveBattlePassReward, OnDoBP) | `tools/oracle_sim.py battlepass` (a 2-season timeline, 7 players) | done, every step agrees |
     | Exchanges | `loaders/exchange-sim.js`, `tools/exchange-sim.js`, "Try it" on each recipe (ResultExchange, CheckCondition, GetPayItemList, IsFull, RemoveItemA, CreateItem, ReceiveResult) | `tools/oracle_sim.py exchange` (1,436 cases) | done, every case agrees |
     | Where NPCs stand | `loaders/area.js`, `tools/area-sim.js` (CContinent, GetMapArea, ReadRegion, the client's region loop) | `tools/oracle_sim.py area` (427 NPC spots, 300 walks, small files) | done, every case agrees |
+    | Add New NPC (step 1: shop NPC) | `loaders/newnpc-sim.js`, `tools/newnpc-sim.js` (LoadCharacter, LoadString, ReadObj/CMover::Read, IsUsableDYO2, ProcessRegenItem, the client's right-click popup, LoadEtc structure + the `[tag]` line) | `tools/oracle_sim.py newnpc` (152 forms: every map, every rule's edge, model files and textures, new tags; 12 small structure files) | done, every case agrees; 27 planted bugs caught |
     | Donation Shop | none | none | **missing:** the buy flow (price = dwReferValue1, chip check, the crash items) |
     | Monster drops (F) | — | — | build both with the editor |
 - **Commas are for display only** (`FRE.num`). The server tokenizer splits on `,`, so files always get plain digits.
@@ -54,6 +55,7 @@ The user is a web developer learning C++. When server behaviour matters, explain
   - `DonationShop.inc`: prices are each item's `dwReferValue1`. It is LF (its header comment says CRLF). Categories must be leaves of the client-only `Client/Client/DonationShopTree.inc`. Never list Nexus Shield / Icecrown Purple Shield: buying them crashed the server (`ae345504`).
   - `BattlePass.inc`: on a duplicate level or monster the first wins; values are clamped to 1–10000. LF (its header says CRLF). A season = end date + nType on the pass AND every reward row; the pass item is reused (`2f783090`). Monster prices follow level bands × rank (`c0a828d7`, `3b8e8410`).
   - **Which NPCs are in the game:** placed in a map `.dyo` file (`World/<map>/<map>.dyo`, maps from `World.inc`) AND shown by `CWorld::IsUsableDYO2` (`SetOutput` / `SetLang` in `character.inc`). The WorldServer's language is compiled in: `WorldServer.rc:137` `IDS_LANG "1"` = LANG_USA. Ported in `loaders/world.js`; skip commented lines (the real loader does).
+  - **Adding an NPC** (`edit/npc-ops.js`, "+ New NPC" in NPC Shops): a block appended to character.inc, IDS lines appended to character.txt.txt, a 200-byte record inserted at the map `.dyo`'s final `FFFFFFFF`, x and z stored ÷ 4. All three in Server + Client. A new building tag adds `SRT_` lines to defineNeuz.h + etc.inc + etc.txt.txt (`b4b9a465`); only rows 18/19 are free (`MAX_STRUCTURE` 20 is compiled). No commit has added an NPC yet (first in-game test pending). Details: INVESTIGATION.md §1.9.
   - **Where an NPC stands** (`loaders/area.js`): `.dyo` x/z × 4 (`OLD_MPU`). The map-window name comes from the `WdMadrigal.wld.cnt` polygons and `propMapComboBoxData.inc`. The on-screen area name comes from the map's `.rgn` titles. Town blocks in `.wld.cnt` have `C_useRealData 0`, so the map window never picks a town. A GM jumps there with `/te <world id> <x> <z>`.
   - `Exchange_Script.txt`: a bare `CScanner`, so an unknown name becomes -1 silently (`GetDefineNum`). `__NEW_EXCHANGE_V19` is ON (`LodeConfig.h`): CONDITION is checked and taken, REMOVE is ignored, at most 30 SETs per menu. PAY chances are out of 1,000,000. The client sends only the recipe's position, so the Client copy (LF) must match. `SET_SMELT` / `SET_ENCHANT_MOVE` put the loader out of step (see ROADMAP).
     - In game (`exchange-sim.js`): the roll happens before the bag check; the bag check wants at least one EMPTY slot even when the reward would stack, and counts a reward smaller than a full stack as 0 slots, so a recipe giving several rewards can lose some (the server only logs it). Penya means gold only (not Perin). Any item in a trade / private shop or a locked bag slot makes every ingredient count 0. Ingredient quantity -1 takes every one the player has.
@@ -61,23 +63,25 @@ The user is a web developer learning C++. When server behaviour matters, explain
 ## Layout
 ```
 src/order.txt       load/build order (classic scripts sharing globalThis.FRE)
-src/core/           bytes, num, xrandom (the server's xRand / xRandom), sourcefile (byte model + round-trip gate), lexer (CScanner/CScript port),
+src/core/           bytes, num, xrandom (the server's xRand / xRandom), sourcefile (byte model + round-trip gate; binary kind for .dyo), lexer (CScanner/CScript port),
                     diff (Myers), workspace (data-module registry, apply/applyGroup/undo, newBlocking),
                     client-sync (Client/ copy modes: identical / eol / missing / different)
 src/loaders/        defines, strings (*.txt.txt), textclient (TID_ texts), item-tooltip (MakeToolTipText port),
                     specitem, propmover (monster name/level/rank), world (maps, .dyo NPC placement, SetOutput/SetLang),
                     area (where an NPC stands: map window name, area caption, /te), character, vendor-sim (shop contents), donation,
-                    donation-tree (client category tree), battlepass, exchange, exchange-sim (pressing OK in the exchange window)
-src/validate/       help.js (text for every diagnostic code), character.js
-src/edit/           text-ops (shared row/statement splices), shop-ops, donation-ops, item-ops (Spec_Item chip price), battlepass-ops, exchange-ops
+                    donation-tree (client category tree), battlepass, exchange, exchange-sim (pressing OK in the exchange window),
+                    newnpc-sim (a new NPC as the game loads it)
+src/validate/       help.js (text for every diagnostic code), character.js, newnpc.js (Add New NPC rules)
+src/edit/           text-ops (shared row/statement splices), shop-ops, donation-ops, item-ops (Spec_Item chip price), battlepass-ops, exchange-ops,
+                    npc-ops (a new NPC: block, IDS lines, .dyo record)
 src/io/             fsa (File System Access), layout (finds Server/Resource + Client + backups in the ONE picked folder), save (conflict check -> verified backup -> write+verify -> restore on failure;
                     Server files, then the same change in the Client/ copies)
 src/ui/             dom, common (FRE.ui registry + helpers), tooltip (item hover), chip-price (shared price input),
-                    npc-shops, donation, battlepass, exchange, app (shell: modes, item DB, problems, save)
+                    npc-shops, new-npc (the "+ New NPC" form), donation, battlepass, exchange, app (shell: modes, item DB, problems, save)
 tests/              run-tests.js (gjs core suite), ui-harness.js + run-ui.sh (headless Firefox, fake FS), gjs-env.js
 tools/oracle.py     independent Python reference (differential tests)
 tools/refresh-fixtures.sh  copies the real files into test-data/fixtures (tests) or test-data (manual)
-tools/bp-sim.js, tools/exchange-sim.js, tools/area-sim.js  replay the in-game behaviour by hand (gjs -m tools/<name>-sim.js)
+tools/bp-sim.js, tools/exchange-sim.js, tools/area-sim.js, tools/newnpc-sim.js  replay the in-game behaviour by hand (gjs -m tools/<name>-sim.js)
 tools/oracle_sim.py independent Python copies of the simulators (differential tests)
 docs/               INVESTIGATION.md, DESIGN.md, ROADMAP.md (what's next)
 ```

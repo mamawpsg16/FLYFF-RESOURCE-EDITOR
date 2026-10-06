@@ -6,7 +6,7 @@ one copy shows up as a disagreement in tests/run-tests.js. It makes its own test
 cases (bags, seeds, small scripts), runs them, and prints both as JSON; the JS
 test runs the same cases through src/loaders/exchange-sim.js and compares.
 
-Usage: python3 tools/oracle_sim.py exchange|battlepass|area <Resource folder>   -> JSON
+Usage: python3 tools/oracle_sim.py exchange|battlepass|area|newnpc <Resource folder>   -> JSON
 
 exchange: CExchange::Load_Script / CheckCondition / GetPayItemList / IsFull /
 ResultExchange (_Common/Exchange.cpp), CMover::GetItemNum / RemoveItemA /
@@ -1384,6 +1384,749 @@ def area_run(root):
             'grid': grid, 'mapnames': mapnames_case}
 
 
+# ---------------------------------------------------------------------------------------------- newnpc
+# Add New NPC (docs/HANDOFF-ADD-NPC.md), written from the C++ and the handoff:
+#   CProject::LoadCharacter (Project.cpp:3257), CScript::LoadString, CProject::LoadText (textClient),
+#   ReadObj (CreateObj.cpp:761) + CObj::Read (Obj.cpp:474, x and z * OLD_MPU) + CMover::Read (Mover.cpp:3365),
+#   CMover::ProcessRegenItem / GenerateVendorItem (Mover.cpp:1630, 5414), the client's menu label TID 7000 + id,
+#   CProject::LoadEtc "structure" (Project.cpp:1262) + CMover::RenderName's "[%s]" tag (MoverRender.cpp:1717);
+#   a new tag is written the way b4b9a465 did it (defineNeuz.h + etc.inc + etc.txt.txt).
+# It builds its own bytes for each form (handoff §5.1-§5.3), checks its own rules (§6) and loads the result.
+NN_STRING_FILES = ['character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt', 'etc.txt.txt',
+                   'propItem.txt.txt', 'propMover.txt.txt', 'textClient.txt.txt']
+NN_TAG_FILES = ['defineNeuz.h', 'etc.inc']
+NN_CHAR_FILES = ['character.inc', 'character-etc.inc', 'character-school.inc']
+NN_CP1252_EXTRA = set('€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ')
+NN_BLOCKED = {'wdguildwar1to1', 'wdvolcaneyellow'}
+U32 = lambda v: v & 0xFFFFFFFF
+
+
+def nn_text16(b):
+    return b[2:].decode('utf-16-le', 'surrogatepass') if b[:2] == b'\xff\xfe' else b.decode('latin-1')
+
+
+def nn_strings_add(S, text):
+    """CScript::LoadString on one file's text: IDS key, then the rest of the line up to CR, trimmed; first wins"""
+    for line in re.split(r'\r\n|\r|\n', text):
+        m = re.match(r'[\x01- ]*(IDS\S*)[ \t]*(.*?)[\x01- ]*$', line)
+        if m and m.group(1) not in S:
+            S[m.group(1)] = m.group(2)
+
+
+def nn_npcs(text, D, S):
+    """LoadCharacter over the CScanner tokens: [ {key, menus, name, slots, shop:[(kind, slot, a...)], output} ]"""
+    ts = [t.decode('utf-8', 'replace') for t in tokens(text.encode('utf-8', 'replace'))]
+    def val(i):                                   # GetNumber at token i -> (value, tokens used)
+        t = ts[i] if i < len(ts) else ''
+        if t in ('-', '+'):
+            v, n = val(i + 1)
+            return (-v if t == '-' else v), n + 1
+        if t == '=':
+            return -1, 1
+        if t in D:
+            return D[t], 1
+        if t.lower().startswith('0x'):
+            return s32(int(t[2:] or '0', 16)), 1
+        return atoi(t), 1
+    out, i = [], 0
+    while i < len(ts):
+        npc = dict(key=ts[i], menus=[], name=None, slots={}, shop=[], vtype=0, output=True, langs=[], structure=-1)
+        i += 2
+        depth = 1
+        while depth and i < len(ts):
+            t = ts[i]; i += 1
+            if t == '{': depth += 1; continue
+            if t == '}': depth -= 1; continue
+            if t == 'AddMenu':
+                v, n = val(i + 1); npc['menus'].append(v); i += 1 + n + 1
+            elif t == 'AddMenuLang':
+                lang, n1 = val(i + 1); v, n2 = val(i + 2 + n1)
+                if lang == 1: npc['menus'].append(v)
+                i += 1 + n1 + 1 + n2 + 1
+            elif t == 'SetName':
+                k = ts[i + 1]; npc['name'] = S.get(k, k); i += 4
+            elif t in ('AddVendorSlot',):
+                slot, n = val(i + 1); k = ts[i + 2 + n]; npc['slots'][slot] = S.get(k, k); i += 1 + n + 1 + 1 + 2
+            elif t in ('AddVendorItem', 'AddVenderItem'):
+                a, j = [], i + 1
+                for _ in range(6):
+                    v, n = val(j); a.append(v); j += n + 1
+                npc['shop'].append(('gen',) + tuple(a)); i = j
+            elif t == 'AddShopItem':
+                slot, n1 = val(i + 1); it, n2 = val(i + 2 + n1); j = i + 2 + n1 + n2
+                cost = None
+                if ts[j] == ',':
+                    cost, n3 = val(j + 1); j += 1 + n3
+                npc['shop'].append(('fixed', slot, it, cost)); i = j + 1
+            elif t in ('AddVendorItem2', 'AddVenderItem2'):
+                slot, n1 = val(i + 1); it, n2 = val(i + 2 + n1)
+                npc['shop'].append(('chip', slot, it)); i += 1 + n1 + 1 + n2 + 1
+            elif t == 'SetOutput':                     # only FALSE (any case) hides the NPC
+                if ts[i + 1].upper() == 'FALSE': npc['output'] = False
+                i += 3
+            elif t == 'SetLang':                       # __NO_SUB_LANG: the sub language is always 0
+                lang, n = val(i + 1); npc['langs'].append(lang); i += 1 + n
+                i += 2 if ts[i] == ',' else 2
+            elif t == 'SetVenderType':
+                v, n = val(i + 1); npc['vtype'] = v; i += 1 + n + 1
+            elif t == 'm_nStructure':                  # m_nStructure = <number> ;
+                v, n = val(i + 1); npc['structure'] = v; i += 1 + n + 1
+        out.append(npc)
+    return out
+
+
+def nn_structs(text, D, S, mx):
+    """LoadEtc: after the token "structure": skip {, id = GetNumber, until a token starting with } : name = GetToken (an IDS key
+    becomes its text), id = GetNumber. szName[32] in a table of MAX_STRUCTURE rows -> (names {id: text}, bad [(id, text, why)])"""
+    ts = [t.decode('utf-8', 'replace') for t in tokens(text.encode('utf-8', 'replace'))]
+    def num(i):
+        t = ts[i] if i < len(ts) else ''
+        if t in ('-', '+'):
+            v = num(i + 1)[0]
+            return (-v if t == '-' else v), 2
+        if t == '=': return -1, 1
+        if t in D: return D[t], 1
+        return atoi(t), 1
+    names, bad = {}, []
+    if 'structure' not in ts:
+        return names, bad
+    i = ts.index('structure') + 2
+    sid, n = num(i); i += n
+    while i < len(ts) and not ts[i - 1].startswith('}'):
+        name = S.get(ts[i], ts[i]); i += 1
+        if 0 <= sid < mx:
+            names[sid] = name
+            if len(name) > 31: bad.append(dict(id=sid, text=name, why='long'))
+        else:
+            bad.append(dict(id=sid, text=name, why='id'))
+        sid, n = num(i); i += n
+    return names, bad
+
+
+def nn_tag_text(raw):
+    t = (raw or '').strip()
+    if t.startswith('['): t = t[1:].lstrip()
+    if t.endswith(']'): t = t[:-1].rstrip()
+    return t
+
+
+def nn_tag_define(text, sid):
+    n = re.sub(r'[^A-Z0-9]+', '_', text.upper()).strip('_')
+    return 'SRT_' + (n or 'TAG_%d' % sid)
+
+
+def nn_free_rows(A):
+    mx = A.D.get('MAX_STRUCTURE', 20)
+    names = nn_structs(A.etc, A.D, A.S, mx)[0]
+    taken = {v for k, v in A.D.items() if k.startswith('SRT_')} | set(names)
+    return [r for r in range(1, mx) if r not in taken]
+
+
+def nn_o3d_textures(d):
+    """texture names in an .o3d (the loader is not in the source tree): a uint32 L, then L bytes = printable name + NUL,
+    the name ending in .dds / .tga / .bmp. Checked forward from every candidate length position."""
+    out = set()
+    for m in re.finditer(rb'\.(?:dds|tga|bmp)\x00', d, re.I):
+        nul = m.end() - 1
+        best = None
+        k = m.start() - 1
+        while k >= 4 and 0x20 <= d[k] <= 0x7e:
+            if struct.unpack_from('<I', d, k - 4)[0] == nul - k + 1:
+                best = k
+                break
+            k -= 1
+        if best is not None:
+            out.add(d[best:nul].decode('latin-1').lower())
+    return sorted(out)
+
+
+def nn_items(root, D):
+    """Spec_Item.txt by its header columns (rows of version <= 19): id -> prop"""
+    lines = open(os.path.join(root, 'Spec_Item.txt'), 'rb').read().decode('latin-1').split('\r\n')
+    col = {h.lstrip('/'): i for i, h in enumerate(lines[1].split('\t'))}
+    def v(x):
+        x = x.strip().strip('"')
+        if x == '=': return -1
+        if x in D: return D[x]
+        return atoi(x)
+    props, amp = {}, 60000
+    for l in lines:
+        if not l.strip() or l.lstrip().startswith('//'):
+            continue
+        c = l.split('\t')
+        if v(c[0]) > 19:
+            continue
+        p = dict(id=U32(v(c[col['dwID']])), ik1=U32(v(c[col['dwItemKind1']])), ik3=U32(v(c[col['dwItemKind3']])),
+                 job=U32(v(c[col['dwItemJob']])), rare=U32(v(c[col['dwItemRare']])), shop=U32(v(c[col['dwShopAble']])),
+                 chip=v(c[col['dwReferValue1']]))
+        props[p['id']] = p
+        if p['ik3'] == D.get('IK3_EXP_RATE'):          # the server clones these (nMaxDuplication)
+            for _ in range(v(c[col['nMaxDuplication']]) - 1):
+                props[amp] = dict(p, id=amp); amp += 1
+    kinds = {}
+    for i in sorted(props):
+        p = props[i]
+        if p['ik3'] != 0xFFFFFFFF and p['ik3'] < 300:
+            kinds.setdefault(p['ik3'], []).append(p)
+    mm = {}
+    for k, a in kinds.items():
+        for j in range(len(a) - 1):                    # the server's swap sort by rarity
+            for m in range(j + 1, len(a)):
+                if a[m]['rare'] < a[j]['rare']:
+                    a[j], a[m] = a[m], a[j]
+        for j, p in enumerate(a):
+            if p['rare'] != 0xFFFFFFFF:
+                mm.setdefault((k, p['rare']), [j, j])[1] = j
+    return props, kinds, mm
+
+
+def nn_rule_items(I, ik3, job, lo, hi):
+    """GenerateVendorItem: every item of kind ik3 between the first and last index of rarity lo..hi"""
+    props, kinds, mm = I
+    idx = lambda r, w: -1 if U32(r) >= 400 else mm.get((U32(ik3), U32(r)), [-1, -1])[w]
+    mn = next((x for x in (idx(j, 0) for j in range(lo, hi + 1)) if x != -1), -1)
+    mx = next((x for x in (idx(j, 1) for j in range(hi, lo - 1, -1)) if x != -1), -1)
+    if mn < 0:
+        return []
+    return [p for p in kinds.get(U32(ik3), [])[mn:mx + 1] if p['shop'] != 0xFFFFFFFF and (job == -1 or p['job'] == U32(job))]
+
+
+def nn_fill(I, npc):
+    """ProcessRegenItem: per tab, generated items (<= 100, sorted by ik1 then rarity), then AddShopItem ones"""
+    props = I[0]
+    tabs = []
+    for tab in range(4):
+        ent, dropped = [], 0
+        if npc['vtype'] in (1, 2):
+            for s in npc['shop']:
+                if s[0] == 'chip' and s[1] == tab:
+                    p = props.get(U32(s[2]))
+                    if p and p['chip'] >= 1 and len(ent) < 100: ent.append(p)
+                    else: dropped += 1
+        else:
+            gen = []
+            for s in npc['shop']:
+                if s[0] != 'gen' or s[1] != tab or len(gen) >= 100:
+                    continue
+                for p in nn_rule_items(I, s[2], s[3], s[4], s[5]):
+                    if len(gen) < 100:
+                        gen.append(p)
+            for j in range(len(gen) - 1):
+                for m in range(j + 1, len(gen)):
+                    a, b = gen[j], gen[m]
+                    if b['ik1'] < a['ik1'] or (b['ik1'] == a['ik1'] and b['rare'] < a['rare']):
+                        gen[j], gen[m] = gen[m], gen[j]
+            ent += gen
+        full = len(ent) >= 100
+        for s in npc['shop']:
+            if s[0] == 'fixed' and s[1] == tab:
+                p = props.get(U32(s[2]))
+                if not p: dropped += 1; continue
+                if full or len(ent) >= 100: full = True; dropped += 1; continue
+                ent.append(p)
+        tabs.append(([p['id'] for p in ent], dropped))
+    return tabs
+
+
+def nn_dyo(b):
+    """ReadObj loop: (movers [(key, x, y, z, angle, model)], end offset of the 0xFFFFFFFF marker or None)"""
+    out, i, n = [], 0, len(b)
+    while i + 4 <= n:
+        t = struct.unpack_from('<I', b, i)[0]
+        if t in (OT_OBJ, OT_ITEM, OT_SHIP):
+            i += 64
+        elif t == OT_MOVER:
+            if i + 200 > n:
+                return out, None
+            angle = struct.unpack_from('<f', b, i + 4)[0]
+            x, y, z = struct.unpack_from('<3f', b, i + 20)
+            model = struct.unpack_from('<I', b, i + 48)[0]
+            key = b[i + 160:i + 192].split(b'\0')[0].decode('latin-1')
+            if key:
+                out.append((key, x * OLD_MPU, y, z * OLD_MPU, angle, model))
+            i += 200
+        elif t == OT_CTRL:
+            v = struct.unpack_from('<I', b, i + 64)[0]
+            i += 68 + (CTRL_ELEM if v == 0x80000000 else (88 + CTRL_ELEM - 152 if v == 0x90000000 else CTRL_ELEM - 40))
+        else:
+            return out, (i if t == 0xFFFFFFFF and i + 4 == n else None)
+    return out, None
+
+
+def nn_record(form, model):
+    """handoff §3.1: one OT_MOVER record, 200 bytes; x and z are stored / OLD_MPU"""
+    r = bytearray(200)
+    struct.pack_into('<If', r, 0, 5, form['angle'])
+    struct.pack_into('<3f', r, 20, form['x'] / OLD_MPU, form['y'], form['z'] / OLD_MPU)
+    struct.pack_into('<3f', r, 32, 1.0, 1.0, 1.0)
+    struct.pack_into('<5I', r, 44, 5, U32(model), 0xFFFFFFFF, 0, 2)
+    r[160:160 + len(form['key'])] = form['key'].encode('latin-1')
+    struct.pack_into('<2I', r, 192, 1, 0)
+    return bytes(r)
+
+
+def nn_text_problem(s):
+    if not isinstance(s, str) or not s: return 'empty'
+    if s != s.strip(): return 'space'
+    if len(s) > 63: return 'long'
+    if any(c in s for c in '"\r\n'): return 'quote'
+    for c in s:
+        o = ord(c)
+        if not ((0x20 <= o < 0x7f) or (0xa0 <= o <= 0xff) or c in NN_CP1252_EXTRA): return 'charset'
+    return None
+
+
+class NNData:
+    def __init__(self, root):
+        self.root = root
+        self.idx = area_files(root)
+        self.D = defines(root)
+        self.raw = {n: open(self.idx[n.lower()], 'rb').read() for n in NN_CHAR_FILES + NN_STRING_FILES + NN_TAG_FILES if n.lower() in self.idx}
+        self.etc = nn_text16(self.raw['etc.inc']) if 'etc.inc' in self.raw else ''
+        self.S = {}
+        for n in NN_STRING_FILES:
+            if n in self.raw: nn_strings_add(self.S, nn_text16(self.raw[n]))
+        self.npcs = []
+        for n in NN_CHAR_FILES:
+            if n in self.raw: self.npcs += nn_npcs(nn_text16(self.raw[n]), self.D, self.S)
+        self.keys = {x['key'].lower() for x in self.npcs}
+        self.used = {m for x in self.npcs for m in x['menus']}
+        self.prices = {}
+        for x in self.npcs:
+            for s in x['shop']:
+                if s[0] == 'fixed' and s[3] is not None:
+                    self.prices.setdefault(U32(s[2]), []).append((x['key'], s[3]))
+        self.I = nn_items(root, self.D)
+        # CWorld::IsUsableDYO2: no SetLang -> SetOutput decides; the server language (LANG_USA = 1) listed ->
+        # SetOutput decides; otherwise the opposite. Last block with a key wins.
+        last = {}
+        for x in self.npcs: last[x['key'].lower()] = x
+        shown = lambda x: x['output'] if not x['langs'] or 1 in x['langs'] else not x['output']
+        # mdlDyna.inc: "file" MI_X MODELTYPE_... (first one wins)
+        self.mdl = None
+        self.mdl_files = {}           # MI_ name -> the files the client needs (Model/Mvr_<name>.o3d + one .ani per motion)
+        if 'mdldyna.inc' in self.idx:
+            self.mdl = set()
+            text = nn_text16(open(self.idx['mdldyna.inc'], 'rb').read())
+            for m in re.finditer(r'"([^"\r\n]*)"[ \t]+(MI_\w+)[ \t]+MODELTYPE_\w+[^\r\n]*', text):
+                if m.group(2) in self.mdl:
+                    continue
+                self.mdl.add(m.group(2))
+                body = re.match(r'\s*\{([^}]*)\}', text[m.end():])
+                motions = []
+                for a in re.findall(r'"([^"\r\n]+)"\s+MTI_\w+', body.group(1) if body else ''):
+                    if a not in motions: motions.append(a)
+                self.mdl_files[m.group(2)] = ['Mvr_%s.o3d' % m.group(1)] + ['Mvr_%s_%s.ani' % (m.group(1), a) for a in motions]
+        # Client/Model file names (fixtures: Client/Model.list next to Resource); None = unknown
+        lst = os.path.join(os.path.dirname(os.path.abspath(root)), 'Client', 'Model.list')
+        self.client_models = {l.strip().lower() for l in open(lst, encoding='latin-1') if l.strip()} if os.path.exists(lst) else None
+        cdir = os.path.join(os.path.dirname(os.path.abspath(root)), 'Client')
+        tl, ti = os.path.join(cdir, 'ModelTexture.list'), os.path.join(cdir, 'Model.textures')
+        self.client_tex = {l.strip().lower() for l in open(tl, encoding='latin-1') if l.strip()} if os.path.exists(tl) else None
+        self.model_tex = {}
+        if os.path.exists(ti):
+            for l in open(ti, encoding='latin-1'):
+                f = [x for x in l.rstrip('\r\n').split('\t') if x]
+                if f: self.model_tex[f[0].lower()] = [x.lower() for x in f[1:]]
+        self.movers = set()
+        for l in open(self.idx['propmover.txt'], 'rb').read().decode('latin-1').splitlines():
+            f = l.split('\t')[0].strip() if not l.lstrip().startswith('//') else ''
+            if f and self.D.get(f, atoi(f)): self.movers.add(self.D.get(f, atoi(f)))
+        self.labels = {}
+        ts = [t.decode('latin-1') for t in tokens(nn_text16(open(self.idx['textclient.inc'], 'rb').read()).encode('utf-8', 'replace'))]
+        for k in range(len(ts) - 4):
+            if ts[k + 2] == '{' and ts[k] in self.D:
+                self.labels.setdefault(U32(self.D[ts[k]]), None)
+                self.labels[U32(self.D[ts[k]])] = self.S.get(ts[k + 3], ts[k + 3]).replace('"', '')
+        self.maps = []
+        wi = nn_text16(open(self.idx['world.inc'], 'rb').read())
+        for m in re.finditer(r'^\s*WI_\w+\s+"([^"]*)"', wi, re.M):
+            if m.group(1) not in self.maps: self.maps.append(m.group(1))
+        self.dyo = {}
+        for m in self.maps:
+            p = self.idx.get(f'world/{m}/{m}.dyo'.lower())
+            if p: self.dyo[m] = open(p, 'rb').read()
+        # models used by an NPC players can see (placed on a World.inc map and shown)
+        self.proven = {mv[5] for b in self.dyo.values() for mv in nn_dyo(b)[0] if mv[0].lower() in last and shown(last[mv[0].lower()])}
+        # b6abf414 hid MaFl_Shain and MaFl_COUPONPANG (SetOutput false) and MaFl_ANGEL2011 (its SetLang(LANG_KOR) had shown it
+        # everywhere but Korea): players saw them before, so their models are proven too
+        self.seen_before = {mv[5] for b in self.dyo.values() for mv in nn_dyo(b)[0] if mv[0].lower() in ('mafl_shain', 'mafl_couponpang', 'mafl_angel2011')}
+        self.proven |= self.seen_before
+
+    def last_id(self):
+        n = 0
+        for f in NN_CHAR_FILES + ['character.txt.txt']:
+            if f in self.raw:
+                for m in re.finditer(r'IDS_CHARACTER_INC_(\d+)', nn_text16(self.raw[f])): n = max(n, int(m.group(1)))
+        for k in self.S:
+            if k.startswith('IDS_CHARACTER_INC_'):
+                n = max(n, atoi(k[len('IDS_CHARACTER_INC_'):]))
+        return n
+
+
+def nn_tabs(form):
+    return sorted(form.get('tabs') or [], key=lambda t: t['slot']) if 'MMI_TRADE' in (form.get('menus') or []) else []
+
+
+def nn_check(A, form):
+    """handoff §6 -> sorted ['CODE|field', ...]"""
+    out = set()
+    add = lambda c, f: out.add(f'{c}|{f}')
+    D, key = A.D, str(form.get('key') or '')
+    if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,30}', key): add('NN_KEY', 'key')
+    if key.lower() in A.keys: add('NN_KEY_DUP', 'key')
+    if key in D or key in A.S: add('NN_KEY_NAME', 'key')
+    if nn_text_problem(form.get('name')): add('NN_TEXT', 'name')
+    n = A.last_id()
+    for k in range(1 + len(nn_tabs(form))):
+        if 'IDS_CHARACTER_INC_%06d' % (n + 1 + k) in A.S: add('NN_IDS_TAKEN', 'name')
+    menus = form.get('menus') or []
+    for m in menus:
+        v = D.get(m)
+        if v is None or not m.startswith('MMI_'): add('NN_MENU', 'menus')
+        elif v < 0 or v >= 350: add('NN_MENU', 'menus')
+        elif v not in A.used: add('NN_MENU_NEW', 'menus')
+    if len(set(menus)) != len(menus): add('NN_MENU_TWICE', 'menus')
+    if not menus: add('NN_NO_MENU', 'menus')
+    if 'MMI_DIALOG' in menus: add('NN_DIALOG', 'menus')
+    model = D.get(form.get('model'))
+    if model is None or not str(form.get('model')).startswith('MI_') or model not in A.movers or (A.mdl is not None and form['model'] not in A.mdl):
+        add('NN_MODEL', 'model')
+    elif A.client_models is not None and form['model'] in A.mdl_files and (any(f.lower() not in A.client_models for f in A.mdl_files[form['model']]) or
+            (A.client_tex is not None and any(t not in A.client_tex for t in A.model_tex.get(A.mdl_files[form['model']][0].lower(), [])))):
+        add('NN_MODEL_FILES', 'model')
+    elif model not in A.proven: add('NN_MODEL_UNPROVEN', 'model')
+    if form.get('image') and form['image'] not in A.S: add('NN_IMAGE', 'image')
+    if form.get('structure') and form['structure'] not in D: add('NN_STRUCTURE', 'structure')
+    if form.get('newTag') is not None:
+        text, free = nn_tag_text(form['newTag']), nn_free_rows(A)
+        if not all(f in A.raw for f in ('defineNeuz.h', 'etc.inc', 'etc.txt.txt')): add('NN_TAG_FILES', 'structure')
+        elif not free: add('NN_TAG_FULL', 'structure')
+        prob = nn_text_problem(text)
+        known = {v.lower() for v in nn_structs(A.etc, D, A.S, D.get('MAX_STRUCTURE', 20))[0].values()}
+        if prob and prob != 'long': add('NN_TAG_CHARS', 'structure')
+        elif len(text) >= 32: add('NN_TAG_LONG', 'structure')
+        elif nn_tag_define(text, free[0] if free else 0) in D or text.lower() in known: add('NN_TAG_DUP', 'structure')
+        elif free: add('NN_TAG_ICON', 'structure')
+    trade = 'MMI_TRADE' in menus
+    tabs = form.get('tabs') or []
+    has = lambda t: bool(t.get('items') or t.get('rules'))
+    if not trade and any(has(t) for t in tabs): add('NN_SHOP_NO_TRADE', 'tabs')
+    if trade and not any(has(t) for t in tabs): add('NN_SHOP_EMPTY', 'tabs')
+    slots = set()
+    for t in (tabs if trade else []):
+        f = f"tab {t['slot']}"
+        if not (isinstance(t['slot'], int) and 0 <= t['slot'] <= 3) or t['slot'] in slots: add('NN_TAB', f)
+        slots.add(t['slot'])
+        if nn_text_problem(t.get('title')): add('NN_TEXT', f)
+        seen, count = set(), 0
+        for r in t.get('rules') or []:
+            ik3 = D.get(r['ik3'])
+            ints = all(isinstance(r[k], int) and not isinstance(r[k], bool) for k in ('min', 'max', 'job'))
+            if ik3 is None or not r['ik3'].startswith('IK3_') or not ints or r['min'] < 0 or r['max'] < r['min'] or r['job'] < -1:
+                add('NN_RULE', f); continue
+            got = nn_rule_items(A.I, ik3, r['job'], r['min'], r['max'])
+            if not got: add('NN_RULE_EMPTY', f)
+            seen.update(p['id'] for p in got[:100])
+            count += len(got)
+        for it in t.get('items') or []:
+            iid = D.get(it['define'])
+            if iid is None or U32(iid) not in A.I[0]: add('NN_ITEM', f); continue
+            iid = U32(iid)
+            if iid in seen: add('NN_ITEM_TWICE', f)
+            seen.add(iid); count += 1
+            c = it.get('cost')
+            if c is not None and c != '':
+                if not (isinstance(c, int) and 1 <= c <= 2147483647): add('NN_PRICE', f)
+                else:
+                    add('NN_PRICE_GLOBAL', f)
+                    if any(pc != c for _, pc in A.prices.get(iid, [])): add('NN_PRICE_CONFLICT', f)
+        if count > 100: add('NN_TAB_FULL', f)
+    m = form.get('map')
+    b = A.dyo.get(m)
+    if b is None or str(m).lower() in NN_BLOCKED or nn_dyo(b)[1] is None: add('NN_MAP', 'map')
+    num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float('inf')
+    bad = [k for k in ('x', 'y', 'z', 'angle') if not num(form.get(k))]
+    if bad: add('NN_POS', 'position')
+    elif not (0 <= form['angle'] < 360): add('NN_POS', 'position')
+    if b is not None and not bad:
+        ms = nn_dyo(b)[0]
+        if any(((p[1] - form['x']) ** 2 + (p[3] - form['z']) ** 2) ** 0.5 < OLD_MPU for p in ms): add('NN_OVERLAP', 'position')
+        best = None
+        for p in ms:
+            d = ((p[1] - form['x']) ** 2 + (p[3] - form['z']) ** 2) ** 0.5
+            if best is None or d < best[0]: best = (d, p)
+        if best and abs(best[1][2] - form['y']) > 30: add('NN_HEIGHT', 'position')
+    return sorted(out)
+
+
+def nn_build(A, form):
+    """handoff §5: the appended character.inc block, the character.txt.txt lines and the .dyo insert"""
+    n = A.last_id()
+    ids = ['IDS_CHARACTER_INC_%06d' % (n + 1 + k) for k in range(1 + len(nn_tabs(form)))]
+    tag, files = None, {}
+    if form.get('newTag') is not None:
+        sid = nn_free_rows(A)[0]
+        text = nn_tag_text(form['newTag'])
+        define = nn_tag_define(text, sid)
+        hi = 0
+        for f in ('etc.inc', 'etc.txt.txt'):
+            hi = max([hi] + [int(x) for x in re.findall(r'IDS_ETC_INC_(\d+)', nn_text16(A.raw[f]))])
+        hi = max([hi] + [atoi(k[12:]) for k in A.S if k.startswith('IDS_ETC_INC_')])
+        key = 'IDS_ETC_INC_%06d' % (hi + 1)
+        h = A.raw['defineNeuz.h'].decode('latin-1')
+        last = list(re.finditer(r'^#define[ \t]+SRT_\w+[^\r\n]*(\r?\n)', h, re.M))[-1]
+        def_line = '#define %-24s %d%s' % (define, sid, last.group(1))
+        etc = nn_text16(A.raw['etc.inc'])
+        close = etc.index('}', re.search(r'\bstructure\s*\{', etc).end())
+        inc_at = etc.rindex('\n', 0, close) + 1
+        inc_line = '\t%s\t\t%s\r\n' % (define, key)
+        et = nn_text16(A.raw['etc.txt.txt'])
+        txt_tail = ('' if et.endswith(('\r', '\n')) else '\r\n') + '%s\t%s\r\n' % (key, text)
+        tag = dict(id=sid, define=define, defLine=def_line, defAt=last.end(), incLine=inc_line, incAt=inc_at, txtTail=txt_tail)
+        files = dict(defLine=def_line, header=h[:last.end()] + def_line + h[last.end():], etc=etc[:inc_at] + inc_line + etc[inc_at:], etctxt=et + txt_tail)
+        form = dict(form, structure=define)
+    L = [form['key'], '{', '\tsetting', '\t{'] + [f'\t\tAddMenu( {m} );' for m in form.get('menus') or []]
+    for t in nn_tabs(form):
+        L += [f"\t\tAddVendorItem( {t['slot']}, {r['ik3']}, {r['job']}, {r['min']}, {r['max']}, 100 );" for r in t.get('rules') or []]
+        L += [f"\t\tAddShopItem( {t['slot']}, {it['define']}{', ' + str(it['cost']) if it.get('cost') else ''} );" for it in t.get('items') or []]
+    if form.get('structure'): L.append(f"\t\tm_nStructure= {form['structure']};")
+    if form.get('image'): L += ['\t\tSetImage', '\t\t(', '\t\t' + form['image'], '\t\t);']
+    L += ['\t}', '\tSetName', '\t(', '\t' + ids[0], '\t);']
+    L += [f"\tAddVendorSlot( {t['slot']}, {ids[1 + k]} );" for k, t in enumerate(nn_tabs(form))]
+    L.append('}')
+    inc_old = nn_text16(A.raw['character.inc'])
+    inc_tail = ('' if inc_old.endswith(('\r', '\n')) else '\r\n') + '\r\n' + '\r\n'.join(L) + '\r\n'
+    txt_old = nn_text16(A.raw['character.txt.txt'])
+    texts = [form['name']] + [t['title'] for t in nn_tabs(form)]
+    txt_tail = ('' if txt_old.endswith(('\r', '\n')) else '\r\n') + ''.join(f'{k}\t{v}\r\n' for k, v in zip(ids, texts))
+    b = A.dyo[form['map']]
+    at = nn_dyo(b)[1]
+    rec = nn_record(form, A.D[form['model']])
+    return dict(incTail=inc_tail, txtTail=txt_tail, insertAt=at, record=rec.hex(), dyoLen=len(b) + 200, tag=tag), \
+        inc_old + inc_tail, txt_old + txt_tail, b[:at] + rec + b[at:], files
+
+
+def nn_game(A, form, inc, txt, dyo, files=None):
+    """Load the written files like the game: the NPC (last block with the key wins), its texts, tabs, map spots, tag"""
+    files = files or {}
+    S = {}
+    for n in NN_STRING_FILES:
+        if n == 'character.txt.txt': nn_strings_add(S, txt)
+        elif n == 'etc.txt.txt' and 'etctxt' in files: nn_strings_add(S, files['etctxt'])
+        elif n in A.raw: nn_strings_add(S, nn_text16(A.raw[n]))
+    D = dict(A.D)
+    m = re.match(r'#define[ \t]+(\w+)[ \t]+(\d+)', files.get('defLine', ''))
+    if m: D[m.group(1)] = int(m.group(2))               # the new #define (the rules made sure the name is new)
+    npcs = nn_npcs(inc, D, S)
+    for n in NN_CHAR_FILES[1:]:
+        if n in A.raw: npcs += nn_npcs(nn_text16(A.raw[n]), D, S)
+    mine = [x for x in npcs if x['key'].lower() == form['key'].lower()]
+    if not mine:
+        return None
+    npc = mine[-1]
+    tabs = []
+    for slot, (ids, dropped) in enumerate(nn_fill(A.I, npc)):
+        title = npc['slots'].get(slot)
+        if title is not None or ids:
+            tabs.append(dict(slot=slot, title=title, items=ids, dropped=dropped))
+    placed = []
+    for m in A.maps:
+        b = dyo if m == form['map'] else A.dyo.get(m)
+        if b is None: continue
+        for k, x, y, z, ang, model in nn_dyo(b)[0]:
+            if k.lower() == form['key'].lower():
+                placed.append(dict(map=m, x=x, y=y, z=z, angle=ang, model=model))
+    # the client's popup (WndWorld.cpp:7229): one entry per flagged id, ids ascending, a few special labels
+    mx = D.get('MAX_STRUCTURE', 20)
+    tag = None
+    if npc['structure'] != -1:
+        names, bad = nn_structs(files.get('etc', A.etc), D, S, mx)
+        sid = npc['structure']
+        tag = dict(id=sid, text='[%s]' % names.get(sid, ''), overflow=not (0 <= sid < mx) or any(b['id'] == sid and b['why'] == 'long' for b in bad))
+    flags = sorted({m for m in npc['menus'] if 0 <= m < 350})
+    menus, labels, when = [], [], []
+    for m in flags:
+        if m == D['MMI_GUILDCOMBAT_RANKING_WEEKLY']:
+            continue
+        lab, w = A.labels.get(7000 + m), None
+        if m == D['MMI_GUILDCOMBAT_RANKING']:
+            lab = 'Overall Rankings'
+        elif m == D['MMI_COLLECTOR_DETAILS']:
+            lab = 'Collection Details'
+        elif m == D['MMI_GUILDBANKING']:
+            w = 'guild member, guild warehouse on'
+        elif m == D['MMI_ARENA_ENTER']:
+            w = 'after the first job change'
+        menus.append(m); labels.append(lab); when.append(w)
+        if m == D['MMI_GUILDCOMBAT_RANKING'] and D['MMI_GUILDCOMBAT_RANKING_WEEKLY'] in flags:
+            menus.append(D['MMI_GUILDCOMBAT_RANKING_WEEKLY']); labels.append('Weekly Rankings'); when.append(None)
+    return dict(name=npc['name'], tag=tag, menus=menus, labels=labels, when=when, tabs=tabs, placed=placed)
+
+
+NN_EXAMPLE = dict(key='MaFl_Lumi', name='Lumi', model='MI_MAFL_JURIA', image='IDS_CHARACTER_INC_000056', structure='SRT_GENERAL',
+                  map='WdMadrigal', x=6966, y=100, z=3220, angle=180, menus=['MMI_TRADE', 'MMI_BANKING'],
+                  tabs=[dict(slot=0, title='General Goods', rules=[], items=[dict(define='II_SYS_SYS_SCR_BLESSEDNESS')]),
+                        dict(slot=1, title='Scrolls', rules=[dict(ik3='IK3_SCROLL', job=-1, min=1, max=150)], items=[])])
+
+
+def nn_cases(A):
+    """forms: the §5 example, the same NPC on every map, and inputs that must (or must not) trip each rule"""
+    import copy
+    C = []
+    def case(label, game=False, defs=None, hideTex=None, **ch):
+        f = copy.deepcopy(NN_EXAMPLE)
+        for k, v in ch.items():
+            f[k] = v
+        C.append(dict(name=label, form=f, game=game, defs=defs or {}, hideTex=hideTex or []))
+    case('example', game=True)
+    for m in A.maps:
+        ms = nn_dyo(A.dyo[m])[0] if m in A.dyo else []
+        if ms:
+            k, x, y, z, ang, _ = ms[0]
+            case('map ' + m, game=len(C) < 12, map=m, x=round(x + 10, 2), y=round(y, 2), z=round(z + 10, 2), angle=round(ang, 1), key='MaFl_Test_' + m[:20])
+        else:
+            case('map ' + m, map=m, x=400, y=100, z=400, key='MaFl_Test_' + m[:20])
+    # the NPC files' own facts the rules are checked against
+    unused = next(k for k, v in sorted(A.D.items(), key=lambda kv: kv[1]) if k.startswith('MMI_') and 0 <= v < 350 and v not in A.used)
+    priced = next((iid, ps[0][1]) for iid, ps in sorted(A.prices.items()) if iid in A.I[0])
+    pdef = next(k for k, v in A.D.items() if k.startswith('II_') and U32(v) == priced[0])
+    bigk = next(k for k, v in sorted(A.D.items()) if k.startswith('IK3_') and len(nn_rule_items(A.I, v, -1, 0, 399)) > 100)
+    jur = next(p for p in nn_dyo(A.dyo['WdMadrigal'])[0] if p[0] == 'MaFl_Juria')
+    tab0 = lambda **t: [dict(dict(slot=0, title='Goods', rules=[], items=[dict(define='II_SYS_SYS_SCR_BLESSEDNESS')]), **t)]
+    case('key bad start', key='1Lumi'); case('key 32 long', key='M' * 32); case('key 31 long', key='M' * 31)
+    case('key dup', key='MaFl_Juria'); case('key dup other case', key='mafl_juria'); case('key is a define', key='II_SYS_SYS_SCR_BLESSEDNESS')
+    case('key is a text key', key='IDS_CHARACTER_INC_000056')
+    case('name korean', name='루미'); case('name quote', name='Lu"mi'); case('name space', name='Lumi '); case('name empty', name='')
+    case('name 63', name='L' * 63); case('name 64', name='L' * 64); case('name cp1252', name='Lümi €')
+    case('menu not real', menus=['MMI_TRADE', 'MMI_NOT_REAL']); case('menu dialog', menus=['MMI_DIALOG', 'MMI_TRADE'])
+    case('menu unused', menus=['MMI_TRADE', unused]); case('menu twice', menus=['MMI_TRADE', 'MMI_TRADE'])
+    # no real menu id reaches MAX_MOVER_MENU: two made-up #defines added for these cases only
+    case('menu 349', menus=['MMI_TRADE', 'MMI_TEST_349'], defs={'MMI_TEST_349': 349})
+    case('menu 350', menus=['MMI_TRADE', 'MMI_TEST_350'], defs={'MMI_TEST_350': 350})
+    case('menu no trade, no tabs', menus=['MMI_BANKING'], tabs=[])
+    no_mdl = next(k for k, v in sorted(A.D.items()) if k.startswith('MI_') and v in A.movers and k not in A.mdl)
+    unproven = next(k for k in sorted(A.mdl) if k in A.D and A.D[k] in A.movers and A.D[k] not in A.proven)
+    case('model without mdlDyna entry', model=no_mdl)
+    # unused models: complete (only a warning), one animation missing, the .o3d missing (both block)
+    inv = {}
+    for k, v in A.D.items(): inv.setdefault(v, k)
+    cand = [k for k in sorted(A.mdl) if k in A.D and inv.get(A.D[k]) == k and A.D[k] in A.movers and A.D[k] not in A.proven]
+    has = lambda f: f.lower() in A.client_models
+    complete = next(k for k in cand if all(has(f) for f in A.mdl_files[k]))
+    no_ani = next(k for k in cand if has(A.mdl_files[k][0]) and not all(has(f) for f in A.mdl_files[k][1:]))
+    no_o3d = next(k for k in cand if not has(A.mdl_files[k][0]))
+    # a model of an NPC b6abf414 hid: proven (no warning), and one whose texture is missing from the Model/Texture list
+    sb = next(k for k in sorted(A.mdl) if k in A.D and A.D[k] in A.seen_before and inv.get(A.D[k]) == k)
+    case('model seen before b6abf414', game=True, model=sb)
+    jt = A.model_tex.get('mvr_mafljuria.o3d', [])
+    case('model texture missing', hideTex=jt[:1]); case('model textures all there', game=True)
+    case('model unproven', model=unproven); case('unused model, files complete', game=True, model=complete)
+    case('unused model, an animation missing', model=no_ani); case('unused model, no .o3d', model=no_o3d)
+    case('no menu at all', menus=[], tabs=[])
+    case('model bad', model='MI_NOT_REAL'); case('model not MI', model='II_SYS_SYS_SCR_BLESSEDNESS')
+    case('image unknown', image='IDS_NOPE_000001'); case('no image', image=None); case('structure bad', structure='SRT_NOPE'); case('no structure', structure=None)
+    case('items without trade', menus=['MMI_BANKING']); case('trade empty', tabs=[dict(slot=0, title='Empty', rules=[], items=[])])
+    case('tab 4', tabs=tab0(slot=4)); case('tab twice', tabs=tab0() + tab0()); case('tab 3', game=True, tabs=tab0(slot=3))
+    case('tab title bad', tabs=tab0(title='가'))
+    case('item not real', tabs=tab0(items=[dict(define='II_NOT_REAL')]))
+    case('item twice', tabs=tab0(items=[dict(define='II_SYS_SYS_SCR_BLESSEDNESS'), dict(define='II_SYS_SYS_SCR_BLESSEDNESS')]))
+    case('rule kind bad', tabs=tab0(rules=[dict(ik3='IK3_NOPE', job=-1, min=1, max=10)]))
+    case('rule min > max', tabs=tab0(rules=[dict(ik3='IK3_SCROLL', job=-1, min=10, max=1)]))
+    case('rule negative', tabs=tab0(rules=[dict(ik3='IK3_SCROLL', job=-1, min=-1, max=1)]))
+    case('rule job -2', tabs=tab0(rules=[dict(ik3='IK3_SCROLL', job=-2, min=1, max=10)]))
+    case('rule empty', tabs=tab0(rules=[dict(ik3='IK3_SCROLL', job=-1, min=398, max=399)]))
+    case('rule one job', game=True, tabs=tab0(rules=[dict(ik3='IK3_SWD', job=A.D['JOB_MERCENARY'], min=0, max=399)]))
+    case('rule big', game=True, tabs=tab0(rules=[dict(ik3=bigk, job=-1, min=0, max=399)]))
+    case('rule + same item', tabs=tab0(rules=[dict(ik3='IK3_SCROLL', job=-1, min=0, max=399)],
+                                       items=[dict(define=next(k for k, v in A.D.items() if k.startswith('II_') and U32(v) == nn_rule_items(A.I, A.D['IK3_SCROLL'], -1, 0, 399)[0]['id']))]))
+    case('price', tabs=tab0(items=[dict(define='II_SYS_SYS_SCR_BLESSEDNESS', cost=5000)]))
+    case('price 0', tabs=tab0(items=[dict(define='II_SYS_SYS_SCR_BLESSEDNESS', cost=0)]))
+    case('price too big', tabs=tab0(items=[dict(define='II_SYS_SYS_SCR_BLESSEDNESS', cost=2147483648)]))
+    case('price conflict', tabs=tab0(items=[dict(define=pdef, cost=priced[1] + 1)]))
+    case('price same as other npc', game=True, tabs=tab0(items=[dict(define=pdef, cost=priced[1])]))
+    case('map blocked', map='WdVolcaneYellow'); case('map unknown', map='WdNope')
+    case('y missing', y=None); case('angle 360', angle=360); case('angle 359.9', angle=359.9); case('angle -1', angle=-1)
+    case('overlap Juria', x=round(jur[1] + 1, 3), z=round(jur[3] + 1, 3), y=round(jur[2], 3))
+    # boundaries next to the only NPC of a small map: 4 units apart (1 in the file) and 30 units of height
+    lone = next(m for m in A.maps if m in A.dyo and len(nn_dyo(A.dyo[m])[0]) == 1 and nn_dyo(A.dyo[m])[1] is not None)
+    k1, x1, y1, z1, _, _ = nn_dyo(A.dyo[lone])[0][0]
+    at = lambda dx, dy=0: dict(map=lone, x=x1 + dx, y=y1 + dy, z=z1, key='MaFl_Test_Lone')
+    case('3.9 from the lone NPC', **at(3.9)); case('4.1 from the lone NPC', **at(4.1)); case('4 from the lone NPC', **at(4.0))
+    case('30 above', **at(10, 30)); case('30.5 above', **at(10, 30.5)); case('29.5 above', **at(10, 29.5)); case('30.5 below', **at(10, -30.5))
+    case('floating', y=200)
+    case('one tab', game=True, menus=['MMI_TRADE'], tabs=tab0(title='Only tab'))
+    case('no shop', game=True, menus=['MMI_BANKING', 'MMI_GUILDBANKING'], tabs=[])
+    # the popup lists menus by id, once each, whatever the AddMenu order; special labels and conditions
+    case('menus out of order', game=True, menus=['MMI_GUILDBANKING', 'MMI_TRADE', 'MMI_BANKING', 'MMI_ARENA_ENTER'])
+    case('rankings', game=True, menus=['MMI_GUILDCOMBAT_RANKING_WEEKLY', 'MMI_COLLECTOR_DETAILS', 'MMI_GUILDCOMBAT_RANKING'], tabs=[])
+    case('weekly alone', game=True, menus=['MMI_GUILDCOMBAT_RANKING_WEEKLY', 'MMI_BANKING'], tabs=[])
+    # building tags: a new one (b4b9a465 way), the 31/32 character edge, the MAX_STRUCTURE edge, rows taken
+    tag = lambda t, **k: dict(structure=None, newTag=t, **k)
+    case('new tag', game=True, **tag('Dungeon Pieces'))
+    case('new tag typed with brackets', game=True, **tag(' [Dungeon Pieces] '))
+    case('new tag 31', game=True, **tag('T' * 31)); case('new tag 32', **tag('T' * 32)); case('new tag 70', **tag('T' * 70))
+    case('new tag empty', **tag('')); case('new tag only brackets', **tag('[]')); case('new tag korean', **tag('던전'))
+    case('new tag spaces inside the brackets', game=True, **tag('[  Dungeon Pieces  ]'))
+    case('new tag symbols only', game=True, **tag('***'))
+    case('new tag same text as [General]', **tag('general'))
+    case('new tag define exists', **tag('Lodestar!'))
+    case('new tag same text, other define', **tag('Public Office'))
+    case('new tag, row 18 taken', game=True, defs={'SRT_TEST_18': 18}, **tag('Dungeon Pieces'))
+    case('new tag, rows 18 and 19 taken', defs={'SRT_TEST_18': 18, 'SRT_TEST_19': 19}, **tag('Dungeon Pieces'))
+    case('new tag, MAX_STRUCTURE 19', game=True, defs={'MAX_STRUCTURE': 19}, **tag('Dungeon Pieces'))
+    case('new tag, MAX_STRUCTURE 18', defs={'MAX_STRUCTURE': 18}, **tag('Dungeon Pieces'))
+    case('existing tag', game=True, structure='SRT_REDCHIPMERCHANT')
+    case('four tabs', game=True, tabs=[dict(slot=s, title=f'Tab {s}', rules=[], items=[dict(define='II_SYS_SYS_SCR_BLESSEDNESS')]) for s in (3, 1, 0, 2)])
+    return C
+
+
+def nn_run(root):
+    A = NNData(root)
+    out = []
+    for c in nn_cases(A):
+        saved = A.D
+        A.D = dict(A.D, **c['defs'])                    # made-up #defines hold for the whole case
+        tex_saved = A.client_tex
+        if c['hideTex'] and A.client_tex is not None: A.client_tex = A.client_tex - set(c['hideTex'])
+        codes = nn_check(A, c['form'])
+        r = dict(name=c['name'], form=c['form'], game=c['game'], defs=c['defs'], hideTex=c['hideTex'], codes=codes, build=None, inGame=None)
+        if not any(x.split('|')[0] in NN_BLOCKING for x in codes):
+            build, inc, txt, dyo, files = nn_build(A, c['form'])
+            r['build'] = build
+            if c['game']:
+                r['inGame'] = nn_game(A, c['form'], inc, txt, dyo, files)
+        A.D = saved
+        A.client_tex = tex_saved
+        out.append(r)
+    return dict(cases=out, lastId=A.last_id(), structs=nn_struct_cases(A))
+
+
+def nn_struct_cases(A):
+    """small etc.inc files through LoadEtc's structure loop: (text, strings, MAX_STRUCTURE) -> names, bad"""
+    S = {'IDS_A': 'Alpha', 'IDS_B': 'Beta Shop', 'IDS_31': 'L' * 31, 'IDS_32': 'L' * 32, 'IDS_E': ''}
+    D = {'SRT_A': 1, 'SRT_B': 2, 'SRT_MAX': 5, 'SRT_OVER': 6}
+    texts = [
+        'job\n{\n\t1 IDS_A 0 0\n}\nstructure\n{\n\tSRT_A IDS_A\n\tSRT_B IDS_B\n}\nGuild\n{\n\t3 IDS_A\n}\n',
+        'structure\n{\n\t0 IDS_B\n\t4 IDS_A\n\tSRT_MAX IDS_B\n\tSRT_OVER IDS_A\n\t-1 IDS_A\n}\n',
+        'structure\n{\n\t1 IDS_31\n\t2 IDS_32\n\t3 IDS_E\n}\nGuild\n{\n}\n',
+        'structure\n{\n\t1 IDS_A\n\t1 IDS_B\n\t2 Plain\n\t= IDS_A\n}\n',
+        'job\n{\n}\n',
+        'structure { SRT_A IDS_A SRT_B IDS_B } next { 9 IDS_A }',
+    ]
+    out = []
+    for t in texts:
+        for mx in (5, 6):
+            names, bad = nn_structs(t, D, S, mx)
+            out.append(dict(text=t, strings=S, defines=D, max=mx, names={str(k): v for k, v in names.items()}, bad=bad))
+    return out
+
+
+NN_BLOCKING = {'NN_KEY', 'NN_KEY_DUP', 'NN_KEY_NAME', 'NN_TEXT', 'NN_IDS_TAKEN', 'NN_MENU', 'NN_MODEL', 'NN_MODEL_FILES', 'NN_STRUCTURE',
+               'NN_TAG_FILES', 'NN_TAG_FULL', 'NN_TAG_CHARS', 'NN_TAG_LONG', 'NN_TAG_DUP',
+               'NN_SHOP_NO_TRADE', 'NN_SHOP_EMPTY', 'NN_TAB', 'NN_RULE', 'NN_ITEM', 'NN_PRICE', 'NN_PRICE_CONFLICT', 'NN_MAP', 'NN_POS'}
+
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -1393,3 +2136,11 @@ if __name__ == '__main__':
         print(json.dumps(bp_run(root)))
     elif what == 'area':
         print(json.dumps(area_run(root)))
+    elif what == 'newnpc':
+        print(json.dumps(nn_run(root)))
+    elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model
+        for f in sorted(os.listdir(root)):
+            if f.lower().startswith('mvr_') and f.lower().endswith('.o3d'):
+                print('\t'.join([f] + nn_o3d_textures(open(os.path.join(root, f), 'rb').read())))
+    elif what == 'o3d':                         # texture names of single .o3d files -> JSON
+        print(json.dumps({os.path.basename(f): nn_o3d_textures(open(f, 'rb').read()) for f in sys.argv[2:]}))

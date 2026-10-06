@@ -18,6 +18,7 @@
   function modeOf(serverFile, clientFile) {
     if (!clientFile) return 'missing';
     if (FRE.bytes.bytesEqual(clientFile.bytes, serverFile.bytes)) return 'identical';
+    if (serverFile.kind === FRE.SourceFile.KIND_BINARY) return 'different';   // a .dyo: only identical copies are synced
     if (clientFile.kind === serverFile.kind && serverFile.originalText.includes('\r\n')
       && clientFile.originalText === toLf(serverFile.originalText)) return 'eol';
     return 'different';

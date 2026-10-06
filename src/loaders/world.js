@@ -28,8 +28,10 @@
     return out;
   }
 
-  // One .dyo file (bytes) -> { movers: [key], placements: [{ key, x, y, z }] (keyed movers only),
-  // end: 'eof' | 'stop' | 'short', stopType }
+  // One .dyo file (bytes) -> { movers: [key], placements: [{ key, x, y, z, angle, model, at }] (keyed movers only),
+  // end: 'eof' | 'stop' | 'short', stopType, endAt }
+  // endAt: offset of the type the server stopped at (the final 0xFFFFFFFF when end is 'eof' and a
+  // marker is there). A new record inserted there is read like the others (Add New NPC).
   // A record type the WorldServer cannot create (OT_ANI, OT_SFX on the server, junk) makes ReadObj
   // return NULL and the server stops reading the rest of the file. OT_SHIP is a CShip, whose Read is
   // CCtrl::Read = CObj::Read (Ctrl.cpp:85). No map file holds one.
@@ -46,16 +48,17 @@
         if (i + OBJ_BYTES + 136 > bytes.length) return { movers, placements, end: 'short' };
         const key = str(i + OBJ_BYTES + 96, 32);
         movers.push(key);
-        if (key) placements.push({ key, x: dv.getFloat32(i + 16, true) * OLD_MPU, y: dv.getFloat32(i + 20, true), z: dv.getFloat32(i + 24, true) * OLD_MPU });
+        if (key) placements.push({ key, x: dv.getFloat32(i + 16, true) * OLD_MPU, y: dv.getFloat32(i + 20, true), z: dv.getFloat32(i + 24, true) * OLD_MPU,
+          angle: dv.getFloat32(i, true), model: dv.getUint32(i + 44, true), at: i - 4 });
         i += OBJ_BYTES + 136;
       } else if (type === OT.CTRL) {
         // CCommonCtrl::Read (CommonCtrl.cpp:84): a version DWORD, then the CCtrlElem
         i += OBJ_BYTES;
         const v = dv.getUint32(i, true); i += 4;
         i += v === 0x80000000 ? CTRL_ELEM : v === 0x90000000 ? 88 + CTRL_ELEM - 152 : CTRL_ELEM - 40;
-      } else return { movers, placements, end: type === 0xFFFFFFFF && i === bytes.length ? 'eof' : 'stop', stopType: type };
+      } else return { movers, placements, end: type === 0xFFFFFFFF && i === bytes.length ? 'eof' : 'stop', stopType: type, endAt: i - 4 };
     }
-    return { movers, placements, end: i === bytes.length ? 'eof' : 'short' };
+    return { movers, placements, end: i === bytes.length ? 'eof' : 'short', endAt: i };
   }
 
   // CWorld::IsUsableDYO2: no SetLang list -> SetOutput decides; the server's language in the
@@ -74,5 +77,5 @@
     return { inGame: maps ? true : null, maps, why: maps ? `on ${maps.join(', ')}` : 'map files not read' };
   }
 
-  FRE.world = { readWorldList, readDyo, npcShown, npcStatus, SERVER_LANG, SERVER_SUBLANG };
+  FRE.world = { readWorldList, readDyo, OLD_MPU, npcShown, npcStatus, SERVER_LANG, SERVER_SUBLANG };
 })(globalThis.FRE = globalThis.FRE || {});
