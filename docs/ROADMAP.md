@@ -2,7 +2,7 @@
 
 _Last updated 2026-10-06._
 
-> **Handoff (2026-10-06, end of session):** Committed after the user's test in Brave: the exchange simulator ("Try it"), the independent Python copies of the simulators (`tools/oracle_sim.py`), Battle Pass Past seasons (+ pop-up, "Use this whole ladder", ↑ / ↓, ✕ on any level, total on top), the Exchanges wording, and the Undo (n) / scroll / badge fixes. **Next session:** (1) **where each NPC stands**: area names players know (Flaris, Saint Morning, Darkon 1/2/3, Elliun, Valley of the Risen, Shaduwar …) in every task, from the C++ that names the area at a position, plus the NPC positions in the `.dyo` files; (2) a **Donation Shop simulator** (the buy flow) + its Python copy; (3) **F. Monster drops**, with both copies. Rule (CLAUDE.md): every task has a JS simulator AND an independent Python copy, and the tests require them to agree. Tests: `gjs -m tests/run-tests.js` (457 pass, about 90 s, reads `test-data/fixtures`), `tests/run-ui.sh` (147 pass). Reset the manual copy with `tools/refresh-fixtures.sh test-data` (leave `test-data/backups`: Past seasons reads it).
+> **Handoff (2026-10-06, end of session):** Committed after the user's test in Brave: the exchange simulator ("Try it"), the independent Python copies of the simulators (`tools/oracle_sim.py`), Battle Pass Past seasons (+ pop-up, "Use this whole ladder", ↑ / ↓, ✕ on any level, total on top), the Exchanges wording, and the Undo (n) / scroll / badge fixes. **Next session:** (1) **where each NPC stands**: area names players know (Flaris, Saint Morning, Darkon 1/2/3, Elliun, Valley of the Risen, Shaduwar …) in every task, from the C++ that names the area at a position, plus the NPC positions in the `.dyo` files; (2) **Add New NPC** (`docs/HANDOFF-ADD-NPC.md`); (3) a **Donation Shop simulator** (the buy flow) + its Python copy; (4) **F. Monster drops**, with both copies. Rule (CLAUDE.md): every task has a JS simulator AND an independent Python copy, and the tests require them to agree. Tests: `gjs -m tests/run-tests.js` (457 pass, about 90 s, reads `test-data/fixtures`), `tests/run-ui.sh` (147 pass). Reset the manual copy with `tools/refresh-fixtures.sh test-data` (leave `test-data/backups`: Past seasons reads it).
 
 ## Done
 - **Build 1** (`1c785ce`): NPC shop editor (`character*.inc`). Add, remove, price and tab edits; byte-exact save with verified backup. Tested by the user in Brave on `test-data`.
@@ -119,6 +119,12 @@ _Last updated 2026-10-06._
 ### Where each NPC stands (asked 2026-10-06)
 - In every task, show the area of each NPC in names players use (Flaris, Saint Morning, Darkon 1/2/3, Elliun, Valley of the Risen, Shaduwar …), so the user knows where to go to test in game.
 - First find in the C++ how the game names the area at a position (continent / region data), port it, and use the NPC positions read from the `.dyo` files (`loaders/world.js`).
+
+### Add New NPC (handoff written 2026-10-05, branch `ccr-25b694d1-jie3e1`, merged)
+- Spec: **`docs/HANDOFF-ADD-NPC.md`** (read it whole first). In the web app the user creates an NPC, places it on a map (a new 200-byte record in `World/<map>/<map>.dyo`), ticks its right-click menus, and gives it up to 4 shop tabs with items. The app validates (§6, with self-tests §6.5), shows the exact text and bytes, backs up, writes the 6 files (Server + Client), reads them back and validates again (§7). In-game checklist: §8; out of scope: §9; build order: §10.
+- `docs/resource-forensics.csv`: encoding, BOM and line ending of every Resource file (byte-exact saves).
+- Reuses `loaders/world.js` (.dyo reading, IsUsableDYO2), `loaders/character.js`, `loaders/vendor-sim.js`. The area names (task above) help choose where to place the NPC.
+- Simulator rule: port what the server does with the new NPC (LoadCharacter + .dyo read + shop fill), plus an independent Python copy, as for every task.
 
 ### F. Monster drops (`propMoverEx.inc`)
 - **Loader:** port `LoadPropMoverEx`, including the `AI{}` sub-parser.

@@ -1,0 +1,461 @@
+file,bytes,encoding,bom,line_ending,round_trip,notes
+0504Event_LevelUp_ItemList.txt,270295,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+0504Event_LevelUp_RealItemList.txt,4284,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+0504Event_LevelUp_RealItemList03.txt,4069,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+1Rebirth.inc,2819,ASCII,no,LF,True,
+AI_Script.txt,923,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+Anarchy.txt,1283,ASCII,no,LF,True,
+Badge.inc,25459,ASCII,no,LF,True,
+Baruna.lua,1492,ASCII,no,CRLF,True,no final newline
+BattlePass.inc,72236,ASCII,no,LF,True,
+Campus.lua,838,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+CampusFunc.lua,890,ASCII,no,CRLF,True,
+Colosseum.lua,1857,ASCII,no,CRLF,True,no final newline
+Constant.inc,2143,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+ContinentDef.h,1778,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+Costume_GemAbility.txt,553,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+CreateMonster.lua,9179,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+CreateMonster.txt,4611,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+DPSProp.txt,17,ASCII,no,LF,True,
+DiePenalty.inc,1401,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+DonationShop.inc,15398,ASCII,no,LF,True,
+EnvironmentEffect.txt,211,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+Event.lua,5240,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+EventMonster.lua,967,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+Event_LevelUp_ItemList.txt,190933,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+Exchange_Script.txt,134457,UTF-8,no,CRLF,True,522 lines w/ UTF-8 multibyte; no final newline
+Flyffpiece.txt,63599,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+FreePKTime.txt,1140,ASCII,no,LF,True,
+GuildBuff.txt,701,ASCII,no,LF,True,
+GuildCombat.txt,6073,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+GuildCombat1TO1.lua,3684,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+GuildSiegePrize.lua,505,ASCII,no,LF,True,
+InvalidName.inc,10045,ANSI-CP949+UTF8-MIXED,no,CRLF,True,CP949/EUC-KR; MIXED ENCODING: 1 lines valid UTF-8 vs 1430 legacy lines
+InvalidName_CHI.inc,366,UTF-16LE,UTF-16LE BOM,"MIXED(CRLF=21,LF=20)",True,no final newline
+InvalidName_ENG.inc,3050,UTF-16LE,UTF-16LE BOM,"MIXED(CRLF=126,CR=68)",True,no final newline
+InvalidName_FRE.inc,6316,ANSI-8bit,no,CRLF,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other)"
+InvalidName_GER.inc,466,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+InvalidName_ID.inc,508,UTF-16LE,UTF-16LE BOM,CRLF,True,
+InvalidName_JAP.inc,408,UTF-16LE,UTF-16LE BOM,CRLF,True,31 non-ASCII chars; 22 distinct chars NOT in cp1252 (eg 'アィクシジスッテトナバパ')
+InvalidName_KOR.inc,10045,ANSI-CP949+UTF8-MIXED,no,CRLF,True,CP949/EUC-KR; MIXED ENCODING: 1 lines valid UTF-8 vs 1430 legacy lines
+InvalidName_PHP.inc,508,UTF-16LE,UTF-16LE BOM,CRLF,True,
+InvalidName_SPA.inc,360,UTF-16LE,UTF-16LE BOM,CRLF,True,
+InvalidName_THA.inc,366,UTF-16LE,UTF-16LE BOM,"MIXED(CRLF=21,LF=20)",True,no final newline
+InvalidName_TWN.inc,366,UTF-16LE,UTF-16LE BOM,"MIXED(CRLF=21,LF=20)",True,no final newline
+InvalidName_USA.inc,3050,UTF-16LE,UTF-16LE BOM,"MIXED(CRLF=126,CR=68)",True,no final newline
+ItemMergeRandomOption.txt,293,ASCII,no,CRLF,True,no final newline
+ItemUpgrade.lua,3295,ASCII,no,CRLF,True,no final newline
+Letter2_FRE.inc,259,ANSI-8bit,no,CRLF,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+Letter2_GER.inc,235,ANSI-8bit,no,CRLF,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+Letter_ENG.inc,184,ASCII,no,CRLF,True,no final newline
+Letter_FRE.inc,196,ANSI-8bit,no,CRLF,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+Letter_GER.inc,205,ANSI-8bit,no,CRLF,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+Letter_ID.inc,184,ASCII,no,CRLF,True,no final newline
+Letter_SPA.inc,210,ANSI-8bit,no,CRLF,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other)"
+Letter_USA.inc,184,ASCII,no,CRLF,True,no final newline
+LuaFunc/CampusFunc.lua,851,ASCII,no,CRLF,True,
+LuaFunc/ColosseumFunc.lua,438,ASCII,no,CRLF,True,no final newline
+LuaFunc/CreateMonsterFunc.lua,655,ASCII,no,CRLF,True,no final newline
+LuaFunc/EventFunc.lua,17721,UTF-8,no,CRLF,True,2 lines w/ UTF-8 multibyte
+LuaFunc/EventMonsterFunc.lua,449,ASCII,no,CRLF,True,
+LuaFunc/GuildSiegePrizeFunc.lua,2067,ASCII,no,LF,True,
+LuaFunc/InstanceDungeonBase.lua,2223,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+LuaFunc/MonsterSkillFunc.lua,906,ASCII,no,CRLF,True,no final newline
+LuaFunc/QuizEventFunc.lua,473,ASCII,no,CRLF,True,no final newline
+LuaFunc/RainbowRaceFunc.lua,2732,ASCII,no,CRLF,True,no final newline
+LuaFunc/SecretRoomFunc.lua,2524,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+LuaFunc/TaxFunc.lua,2535,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+Masquerade.prj,3978,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+MiniGame_Alphabet.txt,11949,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+MiniGame_Alphabet.txt.txt,1554,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+MiniGame_FiveSystem.txt,1054,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+MiniGame_KawiBawiBo.txt,5699,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+MiniGame_Reassemble.txt,1141,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+Model/Mvr_PetBabykargo.ASE,983406,ASCII,no,CRLF,True,
+Model/Mvr_PetBabykargo_idle1.ASE,1064411,ASCII,no,CRLF,True,
+Model/Mvr_PetBabykargo_stand.ASE,1022486,ASCII,no,CRLF,True,
+Model/Mvr_PetBabykargo_walk.ASE,962502,ASCII,no,CRLF,True,
+Model/mvr_GuruCatcher_die1.ASE,841005,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+Model/mvr_NpcCollect.ASE,1039991,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+MonsterHunt.inc,25407,ASCII,no,LF,True,
+MonsterSkill.lua,39641,UTF-8,no,CRLF,True,173 lines w/ UTF-8 multibyte
+Mount.inc,14420,UTF-16LE,UTF-16LE BOM,"MIXED(CRLF=199,LF=420)",True,
+PCBang.lua,545,ASCII,no,CRLF,True,
+PKSetting.inc,4048,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+PaidWorldSet.txt,261,ASCII,no,CRLF,True,no final newline
+PaidWorldTicket.txt,570,ASCII,no,CRLF,True,no final newline
+PartyDungeon.lua,7659,ASCII,no,CRLF,True,no final newline
+PatrolDestination.txt.txt,391,ASCII,no,CRLF,True,
+PenyaTable.txt,3295,ASCII,no,LF,True,
+PiercingSize.txt,754,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+PreLoadDefine.inc,654,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+PreLoadText.inc,3445,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+PropQuest-DungeonandPKtxt.txt,12004,UTF-16LE,UTF-16LE BOM,CRLF,True,48 non-ASCII chars
+QuestDestination.txt.txt,10076,ASCII,no,CRLF,True,
+QuizEvent.lua,1492,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+RainbowRace.lua,2635,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+ResData.h,137608,ASCII,no,CRLF,True,
+SecretRoom.lua,4533,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+ServerBuff.txt,2158,ASCII,no,LF,True,
+Spec_Item.txt,4775060,ANSI-8bit+UTF8-MIXED,no,CRLF,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); MIXED ENCODING: 185 lines valid UTF-8 vs 76 legacy lines"
+StartPartyQuestInfo.txt,588,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+Tax.lua,861,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+Teleporter.inc,3305,ASCII,no,LF,True,
+Terrain.inc,20566,UTF-16LE,UTF-16LE BOM,CRLF,True,88 non-ASCII chars; 62 distinct chars NOT in cp1252 (eg '가기네다던도둠드디라럭레')
+TreasureCombine.txt,636,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+TreasureItem.txt,196740,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+TresureCombine.txt,772,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+TresureItem.txt,5408,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+Ultimate_GemAbility.txt,3114,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+Ultimate_UltimateWeapon.txt,1045,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+VisCheckList.txt,628,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+VisGroupList.txt,4889,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+WeaponRarity.inc,2086,UTF-16LE,UTF-16LE BOM,"MIXED(CRLF=17,LF=56)",True,
+WndStyle.h,7141,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+World.inc,13566,UTF-16LE,UTF-16LE BOM,CRLF,True,no final newline
+World/DuBear/DuBear.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/DuBear/DuBear.rgn,694,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuBear/DuBear.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/DuBear/DuBear.wld,261,ASCII,no,CRLF,True,
+World/DuBehamah/DuBehamah.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/DuBehamah/DuBehamah.rgn,48454,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuBehamah/DuBehamah.txt.txt,158,UTF-16LE,UTF-16LE BOM,CRLF,True,no final newline
+World/DuBehamah/DuBehamah.wld,375,ASCII,no,CRLF,True,
+World/DuBehamah/DuBehamah.wld.cnt,1510,ASCII,no,CRLF,True,no final newline
+World/DuDaDk/DuDaDk.rgn,22186,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuDaDk/DuDaDk.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/DuDaDk/DuDaDk.wld,379,ASCII,no,CRLF,True,
+World/DuDreadfulCave/DudreadfulCave.rgn,31562,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuDreadfulCave/DudreadfulCave.txt.txt,376,UTF-16LE,UTF-16LE BOM,CRLF,True,no final newline
+World/DuDreadfulCave/DudreadfulCave.wld,378,ASCII,no,CRLF,True,
+World/DuFlMas/DuFlMas.rgn,21638,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuFlMas/DuFlMas.txt.txt,306,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuFlMas/DuFlMas.wld,380,ASCII,no,CRLF,True,
+World/DuHerneos/DuHerneos.rgn,21370,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuHerneos/DuHerneos.txt.txt,238,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuHerneos/DuHerneos.wld,379,ASCII,no,CRLF,True,
+World/DuHerneos/DuHerneos.wld.cnt,731,ASCII,no,CRLF,True,no final newline
+World/DuHerneos_1/DuHerneos_1.rgn,22694,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuHerneos_1/DuHerneos_1.txt.txt,278,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuHerneos_1/DuHerneos_1.wld,378,ASCII,no,CRLF,True,
+World/DuHerneos_1/DuHerneos_1.wld.cnt,733,ASCII,no,CRLF,True,no final newline
+World/DuKalgas/DuKalgas.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/DuKalgas/DuKalgas.rgn,41942,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuKalgas/DuKalgas.txt.txt,256,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuKalgas/DuKalgas.wld,380,ASCII,no,CRLF,True,
+World/DuKrr/DuKrr.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/DuKrr/DuKrr.rgn,690,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuKrr/DuKrr.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/DuKrr/DuKrr.wld,261,ASCII,no,CRLF,True,
+World/DuMuscle/DuMuscle.rgn,698,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuMuscle/DuMuscle.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/DuMuscle/DuMuscle.wld,261,ASCII,no,CRLF,True,
+World/DuOminous/DuOminous.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/DuOminous/DuOminous.rgn,12112,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuOminous/DuOminous.txt.txt,166,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuOminous/DuOminous.wld,360,ASCII,no,CRLF,True,
+World/DuOminous_1/DuOminous_1.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/DuOminous_1/DuOminous_1.rgn,12130,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuOminous_1/DuOminous_1.txt.txt,202,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuOminous_1/DuOminous_1.wld,360,ASCII,no,CRLF,True,
+World/DuRustia/DuRustia.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/DuRustia/DuRustia.rgn,13406,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuRustia/DuRustia.txt.txt,74,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuRustia/DuRustia.wld,376,ASCII,no,CRLF,True,
+World/DuRustia_1/DuRustia_1.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/DuRustia_1/DuRustia_1.rgn,13410,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuRustia_1/DuRustia_1.txt.txt,90,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuRustia_1/DuRustia_1.wld,376,ASCII,no,CRLF,True,
+World/DuSaTemple/DuSaTemple.rgn,19612,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuSaTemple/DuSaTemple.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/DuSaTemple/DuSaTemple.wld,387,ASCII,no,CRLF,True,
+World/DuSaTempleBoss/DuSaTempleBoss.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/DuSaTempleBoss/DuSaTempleBoss.rgn,380,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuSaTempleBoss/DuSaTempleBoss.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/DuSaTempleBoss/DuSaTempleBoss.wld,272,ASCII,no,CRLF,True,
+World/DuSanpres/DuSanpres.rgn,28002,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuSanpres/DuSanpres.txt.txt,428,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuSanpres/DuSanpres.wld,380,ASCII,no,CRLF,True,
+World/DuSanpres/DuSanpres.wld.cnt,1834,ASCII,no,CRLF,True,no final newline
+World/DuSanpres_1/DuSanpres_1.rgn,25606,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuSanpres_1/DuSanpres_1.txt.txt,440,UTF-16LE,UTF-16LE BOM,CRLF,True,no final newline
+World/DuSanpres_1/DuSanpres_1.wld,380,ASCII,no,CRLF,True,
+World/DuSanpres_1/DuSanpres_1.wld.cnt,1836,ASCII,no,CRLF,True,no final newline
+World/DuUpresia/DuUpresia.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/DuUpresia/DuUpresia.rgn,17552,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuUpresia/DuUpresia.txt.txt,226,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuUpresia/DuUpresia.wld,378,ASCII,no,CRLF,True,
+World/DuUpresia/DuUpresia.wld.cnt,766,ASCII,no,CRLF,True,no final newline
+World/DuUpresia_1/DuUpresia_1.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/DuUpresia_1/DuUpresia_1.rgn,18238,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuUpresia_1/DuUpresia_1.txt.txt,252,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/DuUpresia_1/DuUpresia_1.wld,378,ASCII,no,CRLF,True,
+World/DuUpresia_1/DuUpresia_1.wld.cnt,768,ASCII,no,CRLF,True,no final newline
+World/WdArena/WdArena.rgn,764,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdArena/WdArena.txt.txt,122,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdArena/WdArena.wld,262,ASCII,no,CRLF,True,
+World/WdArena_1/WdArena_1.rgn,768,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdArena_1/WdArena_1.txt.txt,216,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdArena_1/WdArena_1.wld,375,ASCII,no,CRLF,True,
+World/WdCisland/WdCisland.rgn,21116,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdCisland/WdCisland.txt.txt,158,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdCisland/WdCisland.wld,383,ASCII,no,CRLF,True,
+World/WdColosseum/WdColosseum.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdColosseum/WdColosseum.rgn,1478,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdColosseum/WdColosseum.txt.txt,94,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdColosseum/WdColosseum.wld,379,ASCII,no,CRLF,True,
+World/WdDarkRartesia/WdDarkRartesia.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdDarkRartesia/WdDarkRartesia.rgn,20774,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdDarkRartesia/WdDarkRartesia.txt.txt,86,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/WdDarkRartesia/WdDarkRartesia.wld,390,ASCII,no,CRLF,True,
+World/WdEvent01/WdEvent01.rgn,486,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdEvent01/WdEvent01.txt.txt,140,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdEvent01/WdEvent01.wld,263,ASCII,no,CRLF,True,
+World/WdFwc/WdFwc.rgn,1364,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdFwc/WdFwc.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/WdFwc/WdFwc.wld,373,ASCII,no,CRLF,True,
+World/WdFwc/WdFwc.wld.cnt,370,ASCII,no,CRLF,True,no final newline
+World/WdGuildWar/WdGuildWar.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdGuildWar/WdGuildWar.rgn,1836,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdGuildWar/WdGuildWar.txt.txt,190,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdGuildWar/WdGuildWar.wld,258,ASCII,no,CRLF,True,
+World/WdGuildWar1To1/WdGuildWar1To1.dyo,404,ANSI-8bit,no,CR,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdGuildWar1To1/WdGuildWar1To1.rgn,708,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdGuildWar1To1/WdGuildWar1To1.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/WdGuildWar1To1/WdGuildWar1To1.wld,257,ASCII,no,CRLF,True,
+World/WdGuildhouselarge/WdGuildhouselarge00-00.dds,131200,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdGuildhouselarge/Wdguildhouselarge.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdGuildhouselarge/Wdguildhouselarge.rgn,52,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdGuildhouselarge/Wdguildhouselarge.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/WdGuildhouselarge/Wdguildhouselarge.wld,343,ASCII,no,CRLF,True,
+World/WdGuildhousemiddle/WdGuildhousemiddle00-00.dds,131200,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdGuildhousemiddle/Wdguildhousemiddle.rgn,52,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdGuildhousemiddle/Wdguildhousemiddle.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/WdGuildhousemiddle/Wdguildhousemiddle.wld,368,ASCII,no,CRLF,True,
+World/WdGuildhousesmall/WdGuildhousesmall.rgn,52,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdGuildhousesmall/WdGuildhousesmall.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/WdGuildhousesmall/WdGuildhousesmall.wld,348,ASCII,no,CRLF,True,
+World/WdGuildhousesmall/WdGuildhousesmall00-00.dds,131200,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdHeaven01/WdHeaven01.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdHeaven01/WdHeaven01.rgn,4294,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdHeaven01/WdHeaven01.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/WdHeaven01/WdHeaven01.wld,362,ASCII,no,CRLF,True,
+World/WdHeaven02/WdHeaven02.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdHeaven02/WdHeaven02.rgn,2388,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdHeaven02/WdHeaven02.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/WdHeaven02/WdHeaven02.wld,362,ASCII,no,CRLF,True,
+World/WdHeaven03/WdHeaven03.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdHeaven03/WdHeaven03.rgn,4490,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdHeaven03/WdHeaven03.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/WdHeaven03/WdHeaven03.wld,362,ASCII,no,CRLF,True,
+World/WdHeaven04/WdHeaven04.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdHeaven04/WdHeaven04.rgn,1950,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdHeaven04/WdHeaven04.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/WdHeaven04/WdHeaven04.wld,362,ASCII,no,CRLF,True,
+World/WdHeaven05/WdHeaven05.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdHeaven05/WdHeaven05.rgn,3424,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdHeaven05/WdHeaven05.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/WdHeaven05/WdHeaven05.wld,362,ASCII,no,CRLF,True,
+World/WdHeaven06/WdHeaven06.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdHeaven06/WdHeaven06.rgn,9274,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdHeaven06/WdHeaven06.txt.txt,242,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdHeaven06/WdHeaven06.wld,261,ASCII,no,CRLF,True,
+World/WdHeaven06_1/WdHeaven06_1.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdHeaven06_1/WdHeaven06_1.rgn,838,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdHeaven06_1/WdHeaven06_1.txt.txt,402,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdHeaven06_1/WdHeaven06_1.wld,261,ASCII,no,CRLF,True,
+World/WdKebaras/WdKebaras.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdKebaras/WdKebaras.rgn,12178,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdKebaras/WdKebaras.txt.txt,466,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdKebaras/WdKebaras.wld,364,ASCII,no,CRLF,True,
+World/WdMadrigal/WdMadrigal.rgn,289040,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdMadrigal/WdMadrigal.wld,369,ASCII,no,CRLF,True,
+World/WdMadrigal/WdMadrigal.wld.cnt,5829,ASCII,no,CRLF,True,no final newline
+World/WdMadrigal/wdMadrigal.txt.txt,34508,UTF-16LE,UTF-16LE BOM,CRLF,True,no final newline
+World/WdMarket/WdMarket.rgn,434,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdMarket/WdMarket.txt.txt,98,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdMarket/WdMarket.wld,369,ASCII,no,CRLF,True,
+World/WdMarket/WdMarket.wld.cnt,203,ASCII,no,CRLF,True,no final newline
+World/WdMiniroom/WdMiniroom.rgn,52,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdMiniroom/WdMiniroom.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/WdMiniroom/WdMiniroom.wld,256,ASCII,no,CRLF,True,
+World/WdQuiz/WdQuiz.rgn,52,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdQuiz/WdQuiz.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/WdQuiz/WdQuiz.wld,371,ASCII,no,CRLF,True,
+World/WdQuiz/WdQuiz00-00.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz00-01.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz00-02.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz00-03.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz00-04.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz01-00.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz01-01.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz01-02.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz01-03.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz01-04.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz02-00.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz02-01.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz02-02.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz02-03.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz02-04.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz03-00.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz03-01.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz03-02.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz03-03.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz03-04.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz04-00.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz04-01.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz04-02.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz04-03.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdQuiz/WdQuiz04-04.dds,32896,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdRartesia/WdRartesia.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdRartesia/WdRartesia.rgn,20770,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdRartesia/WdRartesia.txt.txt,76,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdRartesia/WdRartesia.wld,389,ASCII,no,CRLF,True,
+World/WdVolcane/WdVolcane.rgn,9352,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdVolcane/WdVolcane.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/WdVolcane/WdVolcane.wld,270,ASCII,no,CRLF,True,
+World/WdVolcaneRed/WdVolcaneRed.dyo,4,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdVolcaneRed/WdVolcaneRed.rgn,1378,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdVolcaneRed/WdVolcaneRed.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/WdVolcaneRed/WdVolcaneRed.wld,269,ASCII,no,CRLF,True,
+World/WdVolcaneYellow/WdVolcaneYellow.dyo,404,ANSI-8bit,no,none,True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); no final newline"
+World/WdVolcaneYellow/WdVolcaneYellow.rgn,52,UTF-16LE,UTF-16LE BOM,CRLF,True,
+World/WdVolcaneYellow/WdVolcaneYellow.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+World/WdVolcaneYellow/WdVolcaneYellow.wld,255,ASCII,no,CRLF,True,
+WorldDialog.txt,136930,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+accessory.inc,15851,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+character-etc.inc,4474,UTF-16LE,UTF-16LE BOM,CRLF,True,45 non-ASCII chars; 34 distinct chars NOT in cp1252 (eg '니다대돌드를마메모부분사'); no final newline
+character-etc.txt.txt,1192,UTF-16LE,UTF-16LE BOM,CRLF,True,no final newline
+character-school.inc,84242,UTF-16LE,UTF-16LE BOM,CRLF,True,45 non-ASCII chars; 34 distinct chars NOT in cp1252 (eg '니다대돌드를마메모부분사')
+character-school.txt.txt,11992,UTF-16LE,UTF-16LE BOM,CRLF,True,no final newline
+character.inc,411282,UTF-16LE,UTF-16LE BOM,CRLF,True,2762 non-ASCII chars; 358 distinct chars NOT in cp1252 (eg '가간감갑값같개거건게경고')
+character.txt.txt,96564,UTF-16LE,UTF-16LE BOM,CRLF,True,63 non-ASCII chars; 44 distinct chars NOT in cp1252 (eg '가고교급녀년니달담당델라')
+collecting.inc,210,ASCII,no,CRLF,True,
+connect.txt,666,ASCII,no,"MIXED(CRLF=18,CR=17)",True,
+conv.txt,0,EMPTY,no,none,True,no final newline
+couple.inc,2437,ANSI-CP949,no,"MIXED(CRLF=172,LF=2)",True,CP949/EUC-KR; no final newline
+credit.txt,2300,ANSI-CP949+UTF8-MIXED,no,CRLF,True,CP949/EUC-KR; MIXED ENCODING: 1 lines valid UTF-8 vs 144 legacy lines; no final newline
+define.h,9999,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+defineAttribute.h,24229,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+defineEvent.h,361,ASCII,no,CRLF,True,
+defineHonor.h,2295,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+defineItem.h,422497,ANSI-8bit+UTF8-MIXED,no,"MIXED(CRLF=9810,LF=52)",True,"legacy 8-bit, NOT valid CP949 (likely cp1252/other); MIXED ENCODING: 946 lines valid UTF-8 vs 314 legacy lines; no final newline"
+defineItemGrade.h,433,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+defineItemType.h,8446,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+defineItemkind.h,17025,ANSI-CP949+UTF8-MIXED,no,CRLF,True,CP949/EUC-KR; MIXED ENCODING: 1 lines valid UTF-8 vs 278 legacy lines; no final newline
+defineJob.h,9609,ANSI-CP949+UTF8-MIXED,no,CRLF,True,CP949/EUC-KR; MIXED ENCODING: 1 lines valid UTF-8 vs 42 legacy lines
+defineMapComboBoxData.h,9597,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+defineNeuz.h,60158,UTF-8,no,CRLF,True,308 lines w/ UTF-8 multibyte
+defineObj.h,138071,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+defineSkill.h,100372,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+defineSound.h,107157,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+defineText.h,278251,UTF-8,no,CRLF,True,1324 lines w/ UTF-8 multibyte
+defineWorld.h,3128,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+definelordskill.h,355,ASCII,no,CRLF,True,
+definequest.h,50461,UTF-8,no,CRLF,True,421 lines w/ UTF-8 multibyte
+election.inc,922,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+etc.inc,8068,UTF-16LE,UTF-16LE BOM,CRLF,True,36 non-ASCII chars; 32 distinct chars NOT in cp1252 (eg '것고국니다대도드를마만버')
+etc.txt.txt,2680,UTF-16LE,UTF-16LE BOM,CRLF,True,
+except.txt,57460,ASCII,no,CRLF,True,no final newline
+expTable.inc,24323,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+filter.inc,32468,UTF-16LE,UTF-16LE BOM,CRLF,True,6655 non-ASCII chars; 538 distinct chars NOT in cp1252 (eg '가간갈감갑강갗같개갷갸걔')
+filter_CHI.inc,54,UTF-16LE,UTF-16LE BOM,CRLF,True,no final newline
+filter_ENG.inc,10904,UTF-16LE,UTF-16LE BOM,CRLF,True,
+filter_FRE.inc,18436,UTF-16LE,UTF-16LE BOM,CRLF,True,87 non-ASCII chars
+filter_GER.inc,6956,UTF-16LE,UTF-16LE BOM,CRLF,True,20 non-ASCII chars; no final newline
+filter_ID.inc,6045,ASCII,no,CRLF,True,
+filter_JAP.inc,9256,UTF-16LE,UTF-16LE BOM,CRLF,True,2206 non-ASCII chars; 302 distinct chars NOT in cp1252 (eg '△○☆ぁあぃいうぇえぉお'); no final newline
+filter_KOR.inc,32468,UTF-16LE,UTF-16LE BOM,CRLF,True,6655 non-ASCII chars; 538 distinct chars NOT in cp1252 (eg '가간갈감갑강갗같개갷갸걔')
+filter_PHP.inc,12092,UTF-16LE,UTF-16LE BOM,CRLF,True,
+filter_SPA.inc,476,UTF-16LE,UTF-16LE BOM,CRLF,True,
+filter_THA.inc,2362,UTF-16LE,UTF-16LE BOM,CRLF,True,359 non-ASCII chars; 41 distinct chars NOT in cp1252 (eg 'กคฅฆงจชญดตถท'); no final newline
+filter_TWN.inc,1702,UTF-16LE,UTF-16LE BOM,CRLF,True,66 non-ASCII chars; 43 distinct chars NOT in cp1252 (eg 'ㄇㄉ三么他你八叫唱女妓姬'); no final newline
+filter_USA.inc,10904,UTF-16LE,UTF-16LE BOM,CRLF,True,
+honorList.txt,10328,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+honorList.txt.txt,7890,UTF-16LE,UTF-16LE BOM,CRLF,True,no final newline
+itemScript.lua,365,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+itemScript.txt,287,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+itemremove.txt,0,EMPTY,no,none,True,no final newline
+jobItem.inc,7599,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+lang.h,789,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+layer.inc,255,ASCII,no,CRLF,True,no final newline
+lordevent.inc,371,ASCII,no,CRLF,True,no final newline
+lordskill.txt,1167,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+lordskill.txt.txt,991,ASCII,no,CRLF,True,
+mdlDyna.inc,3572530,UTF-16LE,UTF-16LE BOM,CRLF,True,10674 non-ASCII chars; 463 distinct chars NOT in cp1252 (eg 'đ가각간갈감갑개객거검것')
+mdlObj.inc,285302,UTF-16LE,UTF-16LE BOM,CRLF,True,488 non-ASCII chars; 191 distinct chars NOT in cp1252 (eg '가각간갑개거건격경계곡공')
+neuzDefault.ini,321,ASCII,no,CRLF,True,no final newline
+notice1.htm,380,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+notice2.htm,1062,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+pet.inc,4338,UTF-16LE,UTF-16LE BOM,CRLF,True,127 non-ASCII chars; 58 distinct chars NOT in cp1252 (eg '가격경기널능당대득라량레'); no final newline
+propCtrl.csv,543,ASCII,no,CRLF,True,
+propCtrl.txt,28974,UTF-16LE,UTF-16LE BOM,CRLF,True,83 non-ASCII chars; 42 distinct chars NOT in cp1252 (eg '가간과구길나닝동드든레로')
+propCtrl.txt.txt,19798,UTF-16LE,UTF-16LE BOM,CRLF,True,no final newline
+propDropEvent.inc,95294,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+propEnchant.inc,167,ASCII,no,CRLF,True,
+propEvent.inc,6560,UTF-16LE,UTF-16LE BOM,CRLF,True,16 non-ASCII chars; 16 distinct chars NOT in cp1252 (eg '도라렌물발벤보아이인지찾'); no final newline
+propFlyffpiece.inc,2430,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+propGiftbox.inc,465108,UTF-16LE,UTF-16LE BOM,CRLF,True,3999 non-ASCII chars; 379 distinct chars NOT in cp1252 (eg '가간갈감갑강같개객거걸검'); no final newline
+propGuildQuest.inc,2374,UTF-16LE,UTF-16LE BOM,CRLF,True,68 non-ASCII chars; 35 distinct chars NOT in cp1252 (eg '가공냥등락료몬사생성스시'); no final newline
+propItem.csv,2137764,ANSI-CP949+UTF8-MIXED,no,CRLF,True,CP949/EUC-KR; MIXED ENCODING: 1 lines valid UTF-8 vs 2514 legacy lines
+propItem.txt,2295915,ANSI-CP949+UTF8-MIXED,no,CRLF,True,CP949/EUC-KR; MIXED ENCODING: 1 lines valid UTF-8 vs 81 legacy lines
+propItem.txt.txt,1828502,UTF-16LE,UTF-16LE BOM,CRLF,True,706 non-ASCII chars; 182 distinct chars NOT in cp1252 (eg '小杯重量가간같개걸검것겨'); no final newline
+propItemEtc.inc,152012,UTF-16LE,UTF-16LE BOM,CRLF,True,60 non-ASCII chars; 34 distinct chars NOT in cp1252 (eg '갑값계구기드땅람맹무물바'); no final newline
+propItemEtc.txt.txt,18822,UTF-16LE,UTF-16LE BOM,CRLF,True,no final newline
+propJob.inc,3798,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+propKarma.txt,4726,UTF-16LE,UTF-16LE BOM,CRLF,True,105 non-ASCII chars; 60 distinct chars NOT in cp1252 (eg '가간개갯경구글급깔냐널드')
+propKarma.txt.txt,1594,UTF-16LE,UTF-16LE BOM,CRLF,True,
+propLang.txt,8432,UTF-16LE,UTF-16LE BOM,CRLF,True,28 non-ASCII chars; 19 distinct chars NOT in cp1252 (eg 'ⁿ가굃굊굍굴긏긕긘긞꾄림')
+propMapComboBoxData.inc,49002,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+propMapComboBoxData.txt.txt,10997,ASCII,no,CRLF,True,no final newline
+propMediation.inc,4352,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+propMotion.csv,1965,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+propMotion.txt,6884,UTF-16LE,UTF-16LE BOM,CRLF,True,147 non-ASCII chars; 49 distinct chars NOT in cp1252 (eg '가것고글누는다덱동된때라')
+propMotion.txt.txt,3970,UTF-16LE,UTF-16LE BOM,CRLF,True,
+propMover.csv,133004,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+propMover.txt,473955,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+propMover.txt.txt,151364,UTF-16LE,UTF-16LE BOM,CRLF,True,1 non-ASCII chars; no final newline
+propMoverEx.inc,1726233,UTF-8,no,CRLF,True,986 lines w/ UTF-8 multibyte
+propObj.csv,3812,ASCII,no,CRLF,True,
+propPackItem.inc,152298,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+propPartyQuest.inc,10066,UTF-16LE,UTF-16LE BOM,CRLF,True,364 non-ASCII chars; 67 distinct chars NOT in cp1252 (eg '가공관그냥네다되등러레련'); no final newline
+propQuest-DungeonandPK.inc,183862,UTF-16LE,UTF-16LE BOM,CRLF,True,214 non-ASCII chars; 64 distinct chars NOT in cp1252 (eg '가거것고관네는니다대더던')
+propQuest-DungeonandPK.txt.txt,106800,UTF-16LE,UTF-16LE BOM,CRLF,True,57 non-ASCII chars; no final newline
+propQuest-RequestBox.inc,663738,UTF-16LE,UTF-16LE BOM,CRLF,True,120 non-ASCII chars; 70 distinct chars NOT in cp1252 (eg '가글너니다대던돌드라락레')
+propQuest-RequestBox.txt.txt,309046,UTF-16LE,UTF-16LE BOM,CRLF,True,81 non-ASCII chars; no final newline
+propQuest-RequestBox2.inc,21474,UTF-16LE,UTF-16LE BOM,CRLF,True,1036 non-ASCII chars; 203 distinct chars NOT in cp1252 (eg '가간갖같개갯거건것게경고'); no final newline
+propQuest-RequestBox2.txt.txt,2,UTF-16LE,UTF-16LE BOM,none,True,no final newline
+propQuest-Scenario.inc,862854,UTF-16LE,UTF-16LE BOM,CRLF,True,451 non-ASCII chars; 135 distinct chars NOT in cp1252 (eg '가갈격견계고관광괴굴권귀')
+propQuest-Scenario.txt.txt,494468,UTF-16LE,UTF-16LE BOM,CRLF,True,300 non-ASCII chars; 22 distinct chars NOT in cp1252 (eg '가관나대련료리미부분빠사'); no final newline
+propQuest.inc,1697432,UTF-16LE,UTF-16LE BOM,CRLF,True,1380 non-ASCII chars; 251 distinct chars NOT in cp1252 (eg '가간감같거걸게경고공관교')
+propQuest.txt.txt,1039072,UTF-16LE,UTF-16LE BOM,CRLF,True,6071 non-ASCII chars; 373 distinct chars NOT in cp1252 (eg '☆가각간갈감갔강갖같개거')
+propSkill.csv,90743,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+propSkill.txt,299064,UTF-16LE,UTF-16LE BOM,CRLF,True,634 non-ASCII chars; 179 distinct chars NOT in cp1252 (eg '가각간값개거건것겟격결경')
+propSkill.txt.txt,54054,UTF-16LE,UTF-16LE BOM,CRLF,True,no final newline
+propSkillAdd.csv,329175,UTF-8,no,CRLF,True,3 lines w/ UTF-8 multibyte
+propTroupeSkill.csv,22492,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+propTroupeSkill.txt,13238,UTF-16LE,UTF-16LE BOM,CRLF,True,618 non-ASCII chars; 174 distinct chars NOT in cp1252 (eg '가각간값개거건것겟격결경')
+propTroupeSkill.txt.txt,2976,UTF-16LE,UTF-16LE BOM,CRLF,True,
+provide.txt,11162,ASCII,no,CRLF,True,
+questState.dat,116,UTF-16LE,no,none,True,7 non-ASCII chars; 7 distinct chars NOT in cp1252 (eg 'ϩϪϫϬϭϴϵ'); no final newline
+randomeventmonster.inc,1249,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+randomoption.inc,10911,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+regInfo.dat,256,UTF-16LE,no,none,True,26 non-ASCII chars; 15 distinct chars NOT in cp1252 (eg '\x91Āİưɐɘː̈͐ͰϨ϶'); no final newline
+removequest.txt,218,ASCII,no,CRLF,True,no final newline
+resData.txt.txt,599400,UTF-16LE,UTF-16LE BOM,CRLF,True,1 non-ASCII chars
+resdata.inc,1658880,UTF-16LE,UTF-16LE BOM,CRLF,True,
+resource.txt,3519,ASCII,no,CRLF,True,no final newline
+s.txt,2863,UTF-8,no,CRLF,True,9 lines w/ UTF-8 multibyte
+school.txt,325,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+serverIPList.txt,730,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+servermoveinfo.inc,655,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+spevent.txt,128,ASCII,no,CRLF,True,
+teleportscroll.txt,1837,ANSI-CP949,no,CRLF,True,CP949/EUC-KR
+textClient.inc,643168,UTF-16LE,UTF-16LE BOM,CRLF,True,10732 non-ASCII chars; 453 distinct chars NOT in cp1252 (eg '가각간갈감갑값강같개거건')
+textClient.txt.txt,501928,UTF-16LE,UTF-16LE BOM,CRLF,True,705 non-ASCII chars; 163 distinct chars NOT in cp1252 (eg '→가각간값개게결고곤과교')
+textEmotion.txt,2198,UTF-16LE,UTF-16LE BOM,CRLF,True,26 non-ASCII chars; 22 distinct chars NOT in cp1252 (eg '고국니다대드를만버본쓰어')
+textEmotion.txt.txt,1992,UTF-16LE,UTF-16LE BOM,CRLF,True,
+ticket.inc,903,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+transformitem.inc,1528,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+wordToolTip.inc,601,ANSI-CP949,no,CRLF,True,CP949/EUC-KR; no final newline
+world.txt.txt,5250,UTF-16LE,UTF-16LE BOM,CRLF,True,
