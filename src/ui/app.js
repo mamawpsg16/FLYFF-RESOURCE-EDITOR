@@ -100,18 +100,28 @@
     finally { S.busy = false; }
   }
 
-  // World/<map>/<map>.dyo for every map in World.inc: which NPCs stand in the game (read-only)
+  // For every map in World.inc (read-only): World/<map>/<map>.dyo (which NPCs stand in the game),
+  // <map>.rgn + <map>.txt.txt (area names) and WdMadrigal.wld.cnt (continents): loaders/area.js
   async function loadMaps(res) {
     const world = await FRE.layout.child(res, 'World');
     if (!world) return;
-    const dyo = new Map();
+    const dyo = new Map(), worldFiles = new Map(), seen = new Set();
     for (const w of S.ws.worldList()) {
-      if (dyo.has(w.name)) continue;
+      if (seen.has(w.name)) continue;
+      seen.add(w.name);
       const dir = await FRE.layout.child(world, w.name);
-      const fh = dir && (await FRE.fsa.findFiles(dir, [w.name + '.dyo'])).get((w.name + '.dyo').toLowerCase());
-      if (fh) dyo.set(w.name, (await FRE.fsa.readHandle(fh)).bytes);
+      if (!dir) continue;
+      const names = ['.dyo', '.rgn', '.txt.txt', '.wld.cnt'].map(e => w.name + e);
+      const found = await FRE.fsa.findFiles(dir, names);
+      for (const n of names) {
+        const fh = found.get(n.toLowerCase());
+        if (!fh) continue;
+        const { bytes } = await FRE.fsa.readHandle(fh);
+        if (n.endsWith('.dyo')) dyo.set(w.name, bytes);
+        else worldFiles.set(`world/${w.name}/${n}`.toLowerCase(), new FRE.SourceFile(fh.name, bytes));
+      }
     }
-    S.ws.setMapObjects(dyo);
+    S.ws.setMapObjects(dyo, worldFiles);
   }
 
   // back to the start screen; unsaved edits are only dropped after asking

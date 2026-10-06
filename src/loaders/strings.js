@@ -46,5 +46,6 @@
   }
 
   FRE.loadStrings = loadStrings;
+  FRE.loadStringFile = loadStringFile;     // (state, file): one more file into a string table (loaders/area.js)
   FRE.STRING_FILES = STRING_FILES;
 })(globalThis.FRE = globalThis.FRE || {});

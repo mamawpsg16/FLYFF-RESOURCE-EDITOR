@@ -175,7 +175,8 @@
             h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : null,
               ctx.edited.has('npc|' + id) ? h('span.tag.edit', 'edited') : null,
               dg && dg.b ? h('span.tag.bad', '⛔' + dg.b) : dg && dg.w ? h('span.tag.warn', '⚠' + dg.w) : null)),
-          h('div.k', `${npc.key} · ${npc.file}`)));
+          h('div.k', `${npc.key} · ${npc.file}`),
+          ctx.ws.area ? h('div.k.where-short', FRE.ui.whereText(ctx.ws.whereOf(npc.key))) : null));
       }
       if (!shown) el.appendChild(h('div.pad.muted', 'No NPCs match.'));
     },
@@ -195,6 +196,11 @@
         h('span.line', `${npc.file}:${f.lineOf(npc.start) + 1}`),
         shopTypeSelect(ctx, npc, canEdit),
         canEdit ? null : h('span.tag.bad', 'read-only')));
+      if (ws.placed) {
+        const status = FRE.world.npcStatus(npc, ws.placed);
+        el.appendChild(h('div', FRE.ui.whereLine(ws.whereOf(npc.key)),
+          status.inGame === false && status.maps.length ? h('span.tag.warn', { title: 'CWorld::IsUsableDYO2: the WorldServer does not load this NPC' }, status.why) : null));
+      }
       const menus = npc.menus.map(v => D.byValue('MMI_', v) || String(v));
       if (menus.length) el.appendChild(h('div.menus', 'Menus: ', menus.map(m => ws.exchangeMenus.has(m)
         ? h('span.tag.exch', { title: `${m} is an item exchange defined in Exchange_Script.txt (Exchanges editor coming)` }, `${pretty(m)} ⇄ exchange`)

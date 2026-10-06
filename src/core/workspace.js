@@ -14,7 +14,8 @@
   const CORE_EDITABLE = ['Spec_Item.txt'];
   const CORE_CLIENT = ['Spec_Item.txt'];
   // Read when present, never required (context only).
-  const OPTIONAL = ['textClient.inc', 'textClient.txt.txt', 'World.inc'];
+  // World.inc, world.txt.txt and propMapComboBoxData.*: where NPCs stand (loaders/area.js)
+  const OPTIONAL = ['textClient.inc', 'textClient.txt.txt', 'World.inc', 'world.txt.txt', 'propMapComboBoxData.inc', 'propMapComboBoxData.txt.txt'];
 
   // id, files it needs, files it may write, files the game client also reads,
   // parse(ws) -> model, validate(ws, model) -> diagnostics
@@ -24,6 +25,7 @@
       required: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt'],
       editable: ['character.inc', 'character-etc.inc', 'character-school.inc'],
       client: ['character.inc', 'character-etc.inc', 'character-school.inc'],
+      maps: true,            // reads World/*/ to show where each NPC stands
       parse(ws) {
         ws._sim = new Map();
         return (ws.chars = FRE.character.loadCharacters(ws.files, { defines: ws.defines.defines, strings: ws.strings.map }));
@@ -38,6 +40,7 @@
     {
       id: 'donation', label: 'Donation Shop', editsSpec: true,
       required: ['DonationShop.inc'], editable: ['DonationShop.inc'], client: ['DonationShop.inc'],
+      maps: true,            // where MaFl_DONATION stands (the client opens the shop for that key, WndWorld.cpp:5835)
       parse(ws) {
         return FRE.donation.loadDonation(ws.files.get('donationshop.inc'), { defines: ws.defines.defines, strings: ws.strings.map });
       },
@@ -63,7 +66,7 @@
       required: ['Exchange_Script.txt'], editable: ['Exchange_Script.txt'], client: ['Exchange_Script.txt'],
       deps: ['character.inc', 'character-etc.inc', 'character-school.inc'],
       uses: ['npc'],         // the NPC files are read (not edited) to name the NPCs that open each menu
-      maps: true,            // reads World/*/*.dyo to tell which of those NPCs stand in the game
+      maps: true,            // reads World/*/ to tell which of those NPCs stand in the game, and where
       parse(ws) {
         return FRE.exchange.loadExchange(ws.files.get('exchange_script.txt'), { defines: ws.defines.defines });
       },
@@ -92,6 +95,7 @@
       this.donationTree = null;
       this.clientTheme = null;      // lowercase file names in Client/Theme (Battle Pass textures), when the Client folder is chosen
       this.placed = null;           // lowercase NPC key -> [map names] from World/*/*.dyo (null: not read)
+      this.area = null;             // FRE.area.build: where each NPC stands, named as the client names it (null: not read)
       const task = this.only ? MODULES.find(m => m.id === this.only) : null;
       if (this.only && !task) throw new Error(`unknown task ${this.only}`);
       this.active = new Set(task ? [task.id, ...(task.uses || [])] : MODULES.map(m => m.id));
@@ -163,7 +167,7 @@
       const m = new Map();
       for (const npc of this.chars.npcs) for (const id of npc.menus) {
         if (!m.has(id)) m.set(id, []);
-        m.get(id).push(Object.assign({ npc, name: npc.name || npc.key, key: npc.key }, FRE.world.npcStatus(npc, this.placed)));
+        m.get(id).push(Object.assign({ npc, name: npc.name || npc.key, key: npc.key, where: this.whereOf(npc.key) }, FRE.world.npcStatus(npc, this.placed)));
       }
       return m;
     }
@@ -176,7 +180,9 @@
     // The maps the server loads (World.inc), for the app to read their .dyo files
     worldList() { return FRE.world.readWorldList(this.files.get('world.inc'), this.defines.defines); }
     // dyo: Map map name -> bytes of World/<name>/<name>.dyo
-    setMapObjects(dyo) {
+    // worldFiles: Map lowercase path ('world/wdmadrigal/wdmadrigal.rgn') -> SourceFile: each map's .rgn and
+    // .txt.txt, and WdMadrigal.wld.cnt (read-only; loaders/area.js names the spots)
+    setMapObjects(dyo, worldFiles = new Map()) {
       const placed = new Map();
       for (const [name, bytes] of dyo) for (const key of FRE.world.readDyo(bytes).movers) {
         const k = key.toLowerCase();
@@ -184,8 +190,12 @@
         if (!placed.get(k).includes(name)) placed.get(k).push(name);
       }
       this.placed = placed;
+      const get = rel => worldFiles.get(rel.toLowerCase()) || this.files.get(rel.toLowerCase()) || null;
+      this.area = FRE.area.build({ defines: this.defines.defines, get, dyo });
       for (const m of MODULES) if (m.maps && this.available[m.id].ok) this.reparse(m.required[0].toLowerCase());
     }
+    // [{ place, caption, te, world, x, z, … }] where the NPC with this key stands (FRE.area.whereIs); null: maps not read
+    whereOf(key) { return this.area ? FRE.area.whereIs(this.area, key) : null; }
     needsMaps() { return MODULES.some(m => m.maps && this.shown.has(m.id) && this.available[m.id].ok); }
 
     textOf(name) { return (this.files.get(String(name).toLowerCase()) || { text: '' }).text; }

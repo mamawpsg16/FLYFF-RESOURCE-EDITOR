@@ -41,5 +41,31 @@
     return h('td', info && info.jobName ? pretty(info.jobName) : h('span.muted', 'any'));
   }
 
-  FRE.ui = { modules: [], pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell };
+  // Where an NPC stands (list from Workspace.whereOf / FRE.area.whereIs): one entry per spot, named the
+  // way the client names it ("Flaris — Flarine / Central Flarine"), with a button that copies the GM
+  // teleport command. null: the map files were not read.
+  function copyText(text) {
+    const done = () => FRE.dom.toast(`Copied: ${text}. Paste it in the game chat (GM account).`, 'ok');
+    try { navigator.clipboard.writeText(text).then(done, () => FRE.dom.toast(`Copy this: ${text}`)); }
+    catch (e) { FRE.dom.toast(`Copy this: ${text}`); }
+  }
+  function whereTip(w) {
+    return [`${w.worldTitle} (${w.world}), x ${Math.trunc(w.x)}, z ${Math.trunc(w.z)}`,
+      w.mapWindow !== null ? `Map window (M) opens: ${w.mapWindow || '—'}` : null,
+      `Area name on screen when you arrive: ${w.caption || '(none)'}`,
+      w.te ? `${w.te} takes a GM to this spot (TextCmd_Teleport)` : null].filter(Boolean).join('\n');
+  }
+  function whereLine(list, opts = {}) {
+    if (!list) return opts.quiet ? null : h('div.where.muted.small', 'Where: map files not read.');
+    if (!list.length) return h('div.where.muted.small', 'Where: not placed on any map.');
+    return h('div.where', h('span.muted', 'Where:'), list.map(w => h('span.where-spot', { title: whereTip(w) },
+      FRE.area.label(w), w.te ? h('button.te', { title: `Copy ${w.te}`, on: { click: e => { e.stopPropagation(); copyText(w.te); } } }, w.te) : null)));
+  }
+  // Short text for lists: the first spot, "+n" for more
+  function whereText(list) {
+    if (!list || !list.length) return '';
+    return FRE.area.label(list[0]) + (list.length > 1 ? ` +${list.length - 1}` : '');
+  }
+
+  FRE.ui = { modules: [], pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell, whereLine, whereText, copyText };
 })(globalThis.FRE = globalThis.FRE || {});

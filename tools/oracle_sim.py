@@ -6,7 +6,7 @@ one copy shows up as a disagreement in tests/run-tests.js. It makes its own test
 cases (bags, seeds, small scripts), runs them, and prints both as JSON; the JS
 test runs the same cases through src/loaders/exchange-sim.js and compares.
 
-Usage: python3 tools/oracle_sim.py exchange|battlepass <Resource folder>   -> JSON
+Usage: python3 tools/oracle_sim.py exchange|battlepass|area <Resource folder>   -> JSON
 
 exchange: CExchange::Load_Script / CheckCondition / GetPayItemList / IsFull /
 ResultExchange (_Common/Exchange.cpp), CMover::GetItemNum / RemoveItemA /
@@ -16,10 +16,10 @@ xRand / xRandom. __NEW_EXCHANGE_V19 on.
 Same simplification as the JS copy: equipped items sit after the 336 bag slots
 (in the server they keep the object id they had in the bag).
 """
-import json, os, re, sys
+import json, os, re, struct, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from oracle import tokens  # the CScanner token split (shared with tools/oracle.py)
+from oracle import tokens, ISDELIM  # the CScanner token split (shared with tools/oracle.py)
 
 NULL_ID = 0xFFFFFFFF
 BAG = 336            # MAX_INVENTORY
@@ -754,6 +754,636 @@ def bp_run(root):
     return {'steps': out, 'top': top}
 
 
+# ============================================================================ area
+# Where an NPC stands, named the way the game client names it.
+#   .dyo        ReadObj (CreateObj.cpp:761, WorldServer build: OT_SFX gives NULL = stop), CObj::Read
+#               (Obj.cpp:474; x and z *= OLD_MPU = 4, Obj.cpp:525, DefineCommon.cpp:11), CMover::Read
+#               (Mover.cpp:3365), CCommonCtrl::Read (CommonCtrl.cpp:84), CCtrl / CItem::Read = CObj::Read
+#   World.inc   CWorldMng::LoadScript (worldmng.cpp:302): world id -> file name, SetTitle -> m_szWorldName
+#   strings     CProject::LoadStrings (ProjectCmn.cpp:1253), CScript::LoadString (Script.cpp:103),
+#               CScript::GetToken (Script.cpp:184: string table first, then #define)
+#   continents  CContinent::Init / Point_In_Poly / GetContinent / GetTown (_Common/Continent.cpp)
+#   map window  CMapInformationManager::LoadPropMapComboBoxData (MapInformationManager.cpp:261),
+#               CWndMapEx::GetMapArea (WndMapEx.cpp:1385), InitializeMapComboBoxSelecting (first match)
+#   regions     CWorld::LoadRegion / ReadRegion (WorldFile.cpp:775, 413) and the region loop of the
+#               client's CWndWorld (WndWorld.cpp:9258-9370; area caption style bdf9f5cb)
+# Not modelled: RA_INN (needs the land height; the player stands on the ground), caption timers and
+# fades, music, regions the server adds at run time (CDPClient::OnAddRegion), DBCS lead bytes.
+# respawn records are skipped token by token (their arguments are all numbers).
+
+OLD_MPU = 4
+OT_OBJ, OT_CTRL, OT_SFX, OT_ITEM, OT_MOVER, OT_SHIP = 0, 2, 3, 4, 5, 7
+CTRL_ELEM = 432          # sizeof( CCtrlElem ), CommonCtrl.cpp:101
+
+# CProject::LoadStrings, only the files that hold world, region and map-window names, in its order
+AREA_STRING_FILES = [
+    'world.txt.txt',
+    'World/WdVolcane/WdVolcane.txt.txt', 'World/WdMadrigal/wdMadrigal.txt.txt', 'World/WdKebaras/WdKebaras.txt.txt',
+    'World/WdGuildWar/WdGuildWar.txt.txt', 'World/WdEvent01/WdEvent01.txt.txt', 'World/DuMuscle/DuMuscle.txt.txt',
+    'World/DuKrr/DuKrr.txt.txt', 'World/DuFlMas/DuFlMas.txt.txt', 'World/DuDaDk/DuDaDk.txt.txt',
+    'World/DuBear/DuBear.txt.txt', 'World/DuSaTemple/DuSaTemple.txt.txt', 'World/DuSaTempleBoss/DuSaTempleBoss.txt.txt',
+    'World/WdVolcane/WdVolcane.txt.txt', 'World/WdVolcaneRed/WdVolcaneRed.txt.txt', 'World/WdVolcaneYellow/WdVolcaneYellow.txt.txt',
+    'World/WdArena/WdArena.txt.txt',                                                                     # __JEFF_11_4
+    'World/WdHeaven01/wdheaven01.txt.txt', 'World/WdHeaven02/wdheaven02.txt.txt', 'World/WdHeaven03/wdheaven03.txt.txt',
+    'World/WdHeaven04/wdheaven04.txt.txt', 'World/WdHeaven05/wdheaven05.txt.txt', 'World/WdHeaven06/wdheaven06.txt.txt',
+    'World/WdHeaven06_1/wdheaven06_1.txt.txt',
+    'World/WdCisland/WdCisland.txt.txt',                                                                 # __AZRIA_1023
+    'World/DuOminous/duominous.txt.txt', 'World/DuOminous_1/duominous_1.txt.txt',
+    'World/WdGuildhousesmall/WdGuildhousesmall.txt.txt', 'World/WdGuildhousemiddle/WdGuildhousemiddle.txt.txt',
+    'World/WdGuildhouselarge/WdGuildhouselarge.txt.txt', 'World/DuDreadfulCave/DuDreadfulCave.txt.txt',
+    'World/DuRustia/DuRustia.txt.txt', 'World/DuRustia_1/DuRustia_1.txt.txt',
+    'propMapComboBoxData.txt.txt',                                                                       # __IMPROVE_MAP_SYSTEM
+    'World/WdRartesia/WdRartesia.txt.txt', 'World/DuBehamah/DuBehamah.txt.txt', 'World/DuKalgas/DuKalgas.txt.txt',
+    'World/WdColosseum/WdColosseum.txt.txt', 'World/DuUpresia/DuUpresia.txt.txt', 'World/DuUpresia_1/DuUpresia_1.txt.txt',
+    'World/DuSanpres/DuSanpres.txt.txt', 'World/DuSanpres_1/DuSanpres_1.txt.txt', 'World/DuHerneos/DuHerneos.txt.txt',
+    'World/DuHerneos_1/DuHerneos_1.txt.txt', 'World/WdFwc/WdFwc.txt.txt', 'World/WdMarket/WdMarket.txt.txt',
+    'World/WdDarkRartesia/WdDarkRartesia.txt.txt',
+]
+
+
+def area_files(root):
+    """lowercase relative path -> real path (Windows opens files without caring about case)"""
+    idx = {}
+    for d, _, fs in os.walk(root):
+        for f in fs:
+            p = os.path.join(d, f)
+            idx[os.path.relpath(p, root).replace(os.sep, '/').lower()] = p
+    return idx
+
+
+def area_bytes(data):
+    """CScanner::Read: a UTF-16 file (FF FE) becomes multibyte text; the scan stops at the first NUL"""
+    if data[:2] == b'\xff\xfe':
+        data = data[2:].decode('utf-16-le').encode('cp949', 'replace')
+    nul = data.find(b'\0')
+    return data if nul < 0 else data[:nul]
+
+
+def cdiv(a, b):
+    """C integer division: truncates toward zero"""
+    q = abs(a) // abs(b)
+    return q if (a < 0) == (b < 0) else -q
+
+
+class AScript:
+    """CScript over the CScanner token split: identifiers go through the string table, then #defines"""
+    def __init__(self, data, D, S):
+        self.t = [x.decode('latin-1') for x in tokens(area_bytes(data))]
+        self.D, self.S = D, S
+        self.k = 0
+        self.tok = None
+
+    def get(self):
+        if self.k >= len(self.t):
+            self.k += 1
+            self.tok = None          # FINISHED
+            return None
+        x = self.t[self.k]
+        self.k += 1
+        c = x[:1]
+        if c.isalpha() or c in '#_@$?' or (c and ord(c) >= 128):
+            if x in self.S:
+                x = self.S[x]
+            elif x in self.D:
+                x = str(self.D[x])
+        elif c == '"':
+            x = x[1:-1] if len(x) >= 2 and x.endswith('"') else x[1:]
+        self.tok = x
+        return x
+
+    def number(self):
+        x = self.get()
+        if x is None or x == '':
+            return 0
+        if x.lower().startswith('0x'):
+            return s32(int(re.match(r'[0-9a-fA-F]*', x[2:]).group(0) or '0', 16))
+        if x[0] == '=':
+            return -1
+        if x[0] in '-+':
+            y = self.get() or ''
+            return s32(-atoi(y)) if x[0] == '-' else atoi(y)
+        return atoi(x)
+
+    def float(self):
+        x = self.get()
+        if x is None or x == '':
+            return 0.0
+        if x[0] == '=':
+            return -1.0
+        neg = False
+        if x[0] in '-+':
+            neg = x[0] == '-'
+            x = self.get() or ''
+        m = re.match(r'\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?', x)
+        v = float(m.group(0)) if m else 0.0
+        return -v if neg else v
+
+    def lang(self):
+        """CProject::GetLangScript (ProjectCmn.cpp:1241): the token, then ")" and ";"; empty -> " " """
+        s = self.get() or ''
+        self.get()
+        self.get()
+        return s if s else ' '
+
+
+def area_strings(idx):
+    """CScript::LoadString over AREA_STRING_FILES: key (must start with IDS), then GetLastFull
+    (rest of the line up to CR, outer white space trimmed). The first key wins (map::insert)."""
+    S = {}
+    white = lambda c: 0 < c <= 0x20
+    for name in AREA_STRING_FILES:
+        p = idx.get(name.lower())
+        if not p:
+            continue
+        b = area_bytes(open(p, 'rb').read())
+        n, i = len(b), 0
+        while True:
+            while True:                              # white space and comments
+                while i < n and white(b[i]):
+                    i += 1
+                if b[i:i + 2] == b'//':
+                    while i < n and b[i] not in (13, 10):
+                        i += 1
+                    continue
+                if b[i:i + 2] == b'/*':
+                    j = b.find(b'*/', i + 2)
+                    i = n if j < 0 else j + 2
+                    continue
+                break
+            if i >= n:
+                break
+            j = i
+            while j < n and b[j] not in ISDELIM:
+                j += 1
+            if j == i:
+                j = i + 1
+            key = b[i:j].decode('latin-1')
+            i = j
+            if not key.startswith('IDS'):
+                continue
+            while i < n and white(b[i]) and b[i] != 13:
+                i += 1
+            j = i
+            while j < n and b[j] != 13:
+                j += 1
+            val = b[i:j]
+            while val and white(val[-1]):
+                val = val[:-1]
+            i = j
+            S.setdefault(key, val.decode('latin-1'))
+    return S
+
+
+def area_worlds(data, D, S):
+    """CWorldMng::LoadScript: { id: { file, title } }"""
+    s = AScript(data, D, S)
+    W = {}
+    mark = s.k
+    i = s.number()
+    brace = 1
+    while brace:
+        if s.tok is None or s.tok[:1] == '}':
+            brace -= 1
+            if brace == 0:
+                continue
+        s.get()
+        if s.tok == 'SetTitle':
+            s.get()                                   # (
+            title = s.lang()
+            if i in W:
+                W[i]['title'] = title
+        else:
+            s.k = mark                                # GoMark
+            i = s.number()
+            s.get()
+            W[i] = {'id': i, 'file': s.tok or '', 'title': ''}
+        mark = s.k                                    # SetMark
+        i = s.number()
+    return W
+
+
+def area_dyo(b):
+    """ReadObj until it returns NULL: [ (key, x, y, z) ] of the movers that have a character key"""
+    out, i, n = [], 0, len(b)
+    while i + 4 <= n:
+        t = struct.unpack_from('<I', b, i)[0]
+        i += 4
+        if t in (OT_OBJ, OT_ITEM, OT_SHIP, OT_MOVER, OT_CTRL):
+            if i + 60 > n:
+                break
+            x, y, z = struct.unpack_from('<3f', b, i + 16)
+            x, z = x * OLD_MPU, z * OLD_MPU
+            i += 60
+            if t == OT_MOVER:                         # m_szName[64], szDialogFile[32], m_szCharacterKey[32], 2 DWORDs
+                key = b[i + 96:i + 128].split(b'\0')[0].decode('latin-1')
+                i += 136
+                if key:
+                    out.append((key, x, y, z))
+            elif t == OT_CTRL:
+                v = struct.unpack_from('<I', b, i)[0]
+                i += 4
+                i += CTRL_ELEM if v == 0x80000000 else (88 + CTRL_ELEM - 152 if v == 0x90000000 else CTRL_ELEM - 40)
+        else:
+            break
+    return out
+
+
+def area_continents(data, D, S):
+    """CContinent::Init: ({id: polygon}, {id: town polygon})"""
+    s = AScript(data, D, S)
+    cont, town = {}, {}
+    vec, cid, btown = [], 0, 0
+    while True:
+        s.get()
+        if s.tok is None:
+            break
+        if s.tok == 'Continent':
+            s.get()
+            if s.tok == 'BEGIN':
+                vec = []
+            elif s.tok == 'END':
+                if vec:
+                    vec.append(vec[0])
+                m = town if btown else cont
+                if (cid & 0xFF) not in m:             # map::insert: the first one stays
+                    m[cid & 0xFF] = list(vec)
+                btown = 0
+        elif s.tok == 'C_id':
+            cid = s.number()
+        elif s.tok == 'VERTEX':
+            x = s.float()
+            s.float()
+            z = s.float()
+            vec.append((int(x), int(z)))
+        elif s.tok == 'TOWN':
+            btown = s.number()
+        elif s.tok == 'C_useRealData':
+            if not s.number():                        # client-only look: skip to END
+                while True:
+                    s.get()
+                    if s.tok is None or s.tok == 'END':
+                        break
+    return cont, town
+
+
+def area_pip(vec, x, y):
+    """CContinent::Point_In_Poly, all in LONG arithmetic"""
+    counter = 0
+    p1 = vec[0]
+    n = len(vec)
+    for i in range(1, n + 1):
+        p2 = vec[i % n]
+        if y > min(p1[1], p2[1]):
+            if y <= max(p1[1], p2[1]):
+                if x <= max(p1[0], p2[0]):
+                    if p1[1] != p2[1]:
+                        xin = cdiv((y - p1[1]) * (p2[0] - p1[0]), p2[1] - p1[1]) + p1[0]
+                        if p1[0] == p2[0] or x <= xin:
+                            counter += 1
+        p1 = p2
+    return counter % 2 == 1
+
+
+def area_lookup(polys, x, z):
+    """GetContinent( vPos ) / GetTown( vPos ): the first polygon by id (std::map order)"""
+    px, pz = int(x), int(z)
+    for cid in sorted(polys):
+        if area_pip(polys[cid], px, pz):
+            return cid
+    return 0
+
+
+def area_map_area(A, x, z):
+    """CWndMapEx::GetMapArea"""
+    D = A['D']
+    loc = area_lookup(A['towns'], x, z)
+    if loc == 0:
+        loc = area_lookup(A['cont'], x, z)
+    for t in ('TOWN_SAINCITY', 'TOWN_DARKEN', 'TOWN_FLARINENOSPLE', 'TOWN_ELIUN'):
+        if loc == D[t]:
+            loc = area_lookup(A['towns'], x, z)
+    return loc
+
+
+def area_mapnames(data, D, S):
+    """LoadPropMapComboBoxData: the MCC_MAP_NAME entries in file order [ {id, loc, title} ]"""
+    s = AScript(data, D, S)
+    out = []
+    did = s.number()
+    while s.tok is not None:
+        s.get()                                       # {
+        cat, title, loc = D['MCC_MAP_CATEGORY'], '', 0
+        nb = 1
+        while nb > 0 and s.tok is not None:
+            s.get()
+            w = s.tok
+            if w == '{':
+                nb += 1
+            elif w == '}':
+                nb -= 1
+            elif w == 'SetCategory':
+                s.get(); cat = s.number(); s.get(); s.get()
+            elif w == 'SetTitle':
+                s.get(); title = s.lang()
+            elif w in ('SetPictureFile', 'SetMonsterInformationFile'):
+                s.get(); s.lang()
+            elif w == 'SetRealPositionRect':
+                s.get()
+                for k in range(4):
+                    s.number(); s.get()               # value, then , or )
+                s.get()                               # ;
+            elif w == 'SetLocationID':
+                s.get(); loc = s.number() & 0xFF; s.get(); s.get()
+            elif w == 'SetNPCPosition':
+                s.get(); s.number(); s.get(); s.number(); s.get(); s.get()
+            elif w == 'SetParentID':
+                s.get(); s.number(); s.get(); s.get()
+        if cat == D['MCC_MAP_NAME']:
+            out.append({'id': did, 'loc': loc, 'title': title})
+        did = s.number()
+    return out
+
+
+def area_regions(data, D, S):
+    """CWorld::LoadRegion + ReadRegion: m_aRegion in file order"""
+    s = AScript(data, D, S)
+    skip = (D['RI_BEGIN'], D['RI_REVIVAL'], D['RI_STRUCTURE'])
+    out = []
+    s.get()
+    while s.tok is not None:
+        w = s.tok
+        if w in ('region', 'region2', 'region3'):
+            new, new3 = w in ('region2', 'region3'), w == 'region3'
+            s.number()                                # dwType
+            index = s.number() & 0xFFFFFFFF
+            s.float(); s.float(); s.float()           # vPos
+            attr = s.number() & 0xFFFFFFFF
+            s.number(); s.number()                    # music, direct music
+            s.get(); s.get()                          # script, sound
+            s.number(); s.float(); s.float(); s.float()   # teleport world + position
+            rect = [s.number(), s.number(), s.number(), s.number()]
+            s.get(); s.number()                       # key, target key
+            if new3:
+                for k in range(11):
+                    s.number()
+            title = desc = ''
+            if not new:
+                if s.number() & 0xFF:                 # m_cDescSize is a char
+                    s.get(); s.get()
+                    desc = (s.tok or '').replace('\\n', '\r\n')
+                    s.get()
+            else:
+                s.get()                               # "title"
+                if s.number():
+                    s.get(); s.get()
+                    title = (s.tok or '').replace('\\n', '\r\n')
+                    s.get()
+                s.get()                               # "desc"
+                if s.number():
+                    s.get(); s.get()
+                    desc = (s.tok or '').replace('\\n', '\r\n')
+                    s.get()
+            if index not in skip:
+                out.append({'rect': rect, 'attr': attr, 'title': title, 'desc': desc})
+        s.get()
+    return out
+
+
+def area_lines(text):
+    """The caption loop's split: CRLF or NUL ends a line; after a CRLF the loop stops at the NUL.
+    The buffer is zero-filled (ZeroMemory + strcpy), so reading past the NUL finds zeros."""
+    b = text + '\0\0\0'
+    out, cur, i = [], '', 0
+    while True:
+        if (b[i] == '\r' and b[i + 1] == '\n') or b[i] == '\0':
+            out.append(cur)
+            cur = ''
+            i += 2
+            if i >= len(b) or b[i] == '\0':
+                break
+        else:
+            cur += b[i]
+            i += 1
+    return out
+
+
+def area_frame(regs, inside, st, x, z):
+    """One frame of the client's region loop. Returns the index of the region entered, or None."""
+    px, pz = int(x), int(z)
+    for i, r in enumerate(regs):
+        l, t, rr, bb = r['rect']
+        if l <= px < rr and t <= pz < bb:             # CRect::PtInRect
+            if not inside[i]:
+                if r['title'] == '':
+                    st['nav'] = ''
+                inside[i] = True
+                for line in area_lines(r['desc']):
+                    if line:
+                        st['msgs'].append(line)
+                for n, line in enumerate(area_lines(r['title'])):
+                    if line:
+                        if n == 0:
+                            st['nav'] = line
+                            st['caps'] = [[line, True]]        # AddAreaCaption( bNewArea ): old area names go
+                        else:
+                            st['caps'].append([line, False])
+                return i                                       # __VER >= 9: one new region per frame
+        else:
+            inside[i] = False
+    return None
+
+
+def area_state():
+    return {'nav': None, 'caps': [], 'msgs': []}
+
+
+def area_stand(regs, x, z):
+    """Arrive at (x, z) (all m_bInside FALSE) and stay until no new region is entered"""
+    inside = [False] * len(regs)
+    st = area_state()
+    entered = []
+    for f in range(len(regs) + 1):
+        i = area_frame(regs, inside, st, x, z)
+        if i is None:
+            break
+        entered.append(i)
+    return {'entered': entered, 'nav': st['nav'], 'caps': st['caps'], 'msgs': st['msgs']}
+
+
+def area_walk(regs, path, step):
+    """Walk the path (int points) in frames of at most `step` units per axis; record every entry"""
+    inside = [False] * len(regs)
+    st = area_state()
+    out = []
+    pts = [tuple(path[0])]
+    for a, b in zip(path, path[1:]):
+        dx, dz = b[0] - a[0], b[1] - a[1]
+        n = max(abs(dx), abs(dz)) // step + 1
+        for k in range(1, n + 1):
+            pts.append((a[0] + cdiv(dx * k, n), a[1] + cdiv(dz * k, n)))
+    for f, (x, z) in enumerate(pts):
+        m = len(st['msgs'])
+        i = area_frame(regs, inside, st, x, z)
+        if i is not None:
+            out.append({'f': f, 'x': x, 'z': z, 'region': i, 'nav': st['nav'], 'caps': [list(c) for c in st['caps']], 'msgs': st['msgs'][m:]})
+    return {'frames': len(pts), 'events': out}
+
+
+def area_load(root):
+    D = defines(root)
+    idx = area_files(root)
+    S = area_strings(idx)
+    rd = lambda rel: open(idx[rel.lower()], 'rb').read() if rel.lower() in idx else None
+    W = area_worlds(rd('World.inc'), D, S)
+    cont, towns = area_continents(rd('World/WdMadrigal/WdMadrigal.wld.cnt') or b'', D, S)
+    A = {'D': D, 'S': S, 'W': W, 'cont': cont, 'towns': towns,
+         'maps': area_mapnames(rd('propMapComboBoxData.inc') or b'', D, S), 'regions': {}, 'placed': {}}
+    for wid in sorted(W):
+        name = W[wid]['file']
+        if not name or name in A['regions']:
+            continue
+        rg = rd(f'World/{name}/{name}.rgn')
+        A['regions'][name] = area_regions(rg, D, S) if rg is not None else []
+        dy = rd(f'World/{name}/{name}.dyo')
+        A['placed'][name] = area_dyo(dy) if dy is not None else []
+    return A
+
+
+def area_map_title(A, loc):
+    for m in A['maps']:
+        if m['loc'] == loc:
+            return m['title']
+    return None
+
+
+def area_run(root):
+    A = area_load(root)
+    D, S = A['D'], A['S']
+    first_id = {}
+    for wid in sorted(A['W']):
+        first_id.setdefault(A['W'][wid]['file'], wid)
+    madrigal = A['W'].get(D['WI_WORLD_MADRIGAL'], {}).get('file')
+    stands = []
+    for name, pl in A['placed'].items():
+        for key, x, y, z in pl:
+            r = area_stand(A['regions'][name], x, z)
+            loc = area_map_area(A, x, z) if name == madrigal else None
+            r.update({'world': name, 'worldId': first_id[name], 'key': key, 'x': x, 'z': z,
+                      'mapArea': loc, 'mapWindow': area_map_title(A, loc) if loc is not None else None})
+            stands.append(r)
+
+    # random walks between NPC spots of one map (the server's xRand, seeded per walk)
+    g = [0]
+
+    def xrand():
+        g[0] = (g[0] * 1103515245 + 12345) & 0xFFFFFFFF
+        return g[0]
+
+    def xrandom(n):
+        return xrand() % n
+
+    names = [n for n in A['placed'] if len(A['placed'][n]) >= 2 and A['regions'][n]]
+    walks = []
+    for seed in range(1, 301):
+        g[0] = seed
+        name = names[xrandom(len(names))] if seed % 3 else madrigal
+        pl = A['placed'][name]
+        path = []
+        for k in range(2 + xrandom(3)):
+            key, x, y, z = pl[xrandom(len(pl))]
+            path.append([int(x) + xrandom(161) - 80, int(z) + xrandom(161) - 80])
+        step = 1 + xrandom(48)
+        walks.append({'world': name, 'seed': seed, 'path': path, 'step': step, 'expect': area_walk(A['regions'][name], path, step)})
+
+    # small polygons: vertices, edges, horizontal / vertical edges, negative values (C division)
+    polys = [
+        [(-10, -10), (7, -3), (3, 9), (-8, 5), (-10, -10)],
+        [(0, 0), (10, 0), (10, 10), (0, 10), (0, 0)],
+        [(0, 0), (12, 4), (0, 8), (6, 4), (0, 0)],
+        [(-7, 3), (5, -9), (9, 9), (-3, -1), (8, -4), (-7, 3)],          # self-intersecting, like Flaris
+    ]
+    poly_cases = []
+    for p in polys:
+        pts = [(x, y) for x in range(-13, 14) for y in range(-13, 14)]
+        poly_cases.append({'poly': [list(v) for v in p], 'hits': ''.join('1' if area_pip(p, x, y) else '0' for x, y in pts)})
+
+    # small continent files: towns with real data, a duplicate id, an id over 255, a skipped block
+    cnt_scripts = [
+        'Continent BEGIN\nTOWN 0\nC_useRealData 1\nC_id 1\nVERTEX 0 0 0\nVERTEX 100.9 3 0\nVERTEX 100 3 100.7\nContinent END\n'
+        'Continent BEGIN\nTOWN 1\nC_useRealData 1\nC_id 54\nVERTEX 10 0 10\nVERTEX 50 3 10\nVERTEX 50 3 50\nVERTEX 10 0 50\nContinent END\n'
+        'Continent BEGIN\nTOWN 0\nC_useRealData 1\nC_id 1\nVERTEX 0 0 0\nVERTEX 9 0 0\nVERTEX 9 0 9\nContinent END\n'
+        'Continent BEGIN\nTOWN 1\nC_useRealData 0\nC_id 52\nVERTEX 0 0 0\nVERTEX 900 0 0\nVERTEX 900 0 900\nContinent END\n'
+        'Continent BEGIN\nTOWN 0\nC_useRealData 1\nC_id 258\nVERTEX -20 0 -20\nVERTEX -1 0 -20\nVERTEX -1 0 -1\nContinent END\n',
+    ]
+    cnt_scripts.append(                               # overlapping continents: the lower id wins
+        'Continent BEGIN\nTOWN 0\nC_useRealData 1\nC_id 9\nVERTEX 0 0 0\nVERTEX 60 0 0\nVERTEX 60 0 60\nVERTEX 0 0 60\nContinent END\n'
+        'Continent BEGIN\nTOWN 0\nC_useRealData 1\nC_id 7\nVERTEX 30 0 30\nVERTEX 90 0 30\nVERTEX 90 0 90\nVERTEX 30 0 90\nContinent END\n')
+    cnt_cases = []
+    for t in cnt_scripts:
+        c, tw = area_continents(t.encode(), D, S)
+        cnt_cases.append({'text': t, 'cont': {str(k): [list(v) for v in c[k]] for k in sorted(c)},
+                          'towns': {str(k): [list(v) for v in tw[k]] for k in sorted(tw)},
+                          'lookup': [[x, z, area_lookup(c, x, z)] for x in range(-25, 110, 9) for z in range(-25, 110, 9)]})
+
+    # the real map window over the Flaris polygon (its stray vertex overlaps other continents)
+    fx = [v[0] for v in A['cont'].get(D['CONT_FLARIS'], [(0, 0)])]
+    fz = [v[1] for v in A['cont'].get(D['CONT_FLARIS'], [(0, 0)])]
+    grid = [[x, z, area_map_area(A, x, z)] for x in range(min(fx), max(fx) + 1, 50) for z in range(min(fz), max(fz) + 1, 50)]
+
+    # a small map-window file: two names for one location (the first one is shown), categories, a NPC entry
+    mapinc = ('MCD_A\n{\n\tSetCategory( MCC_MAP_CATEGORY );\n\tSetTitle( IDS_M_CAT );\n}\n'
+              'MCD_B\n{\n\tSetCategory( MCC_MAP_NAME );\n\tSetTitle( IDS_M_ONE );\n\tSetRealPositionRect( -1, 2, 3, 4 );\n\tSetLocationID( 300 );\n}\n'
+              'MCD_C\n{\n\tSetCategory( MCC_MAP_NAME );\n\tSetTitle( IDS_M_TWO );\n\tSetLocationID( 44 );\n\tSetNPCPosition( 5, 6 );\n}\n'
+              'MCD_D\n{\n\tSetCategory( MCC_NPC_NAME );\n\tSetTitle( IDS_M_NPC );\n\tSetLocationID( 44 );\n}\n'
+              'MCD_E\n{\n\tSetCategory( MCC_MAP_NAME );\n\tSetTitle( );\n\tSetLocationID( 7 );\n}\n'
+              'MCD_F\n{\n\tSetCategory( MCC_MAP_NAME );\n\tSetTitle( "" );\n\tSetLocationID( 8 );\n}\n')
+    MS = {'IDS_M_CAT': 'Category', 'IDS_M_ONE': 'One', 'IDS_M_TWO': 'Two', 'IDS_M_NPC': 'Npc'}
+    MS2 = dict(S)
+    MS2.update(MS)
+    mn = area_mapnames(mapinc.encode(), D, MS2)
+    mapnames_case = {'text': mapinc, 'strings': MS, 'maps': mn,
+                     'titles': [[loc, area_map_title({'maps': mn}, loc)] for loc in (0, 7, 8, 44, 300 & 0xFF, 99)]}
+
+    # small region files: overlaps, no title, two-line title, trailing \n, desc lines, the old format,
+    # excluded indexes, a title key that is not in the string table
+    SS = {'IDS_T_A': 'Alpha\\nAlpha West', 'IDS_T_B': 'Beta', 'IDS_T_C': 'Gamma\\n', 'IDS_D_A': 'first line\\nsecond line',
+          'IDS_T_E': '\\nOnly small'}
+    S2 = dict(S)
+    S2.update(SS)
+    head = lambda idx, l, t, r, b, attr='0x0': f'region3 6 {idx} 0.0 0.0 0.0 {attr} 0 0 "" "" 0 0.0 0.0 0.0 {l} {t} {r} {b} "" 0 -1 -1 -1 -1 -1 -1 -1 -1 0 0 0\n'
+    rgn_scripts = [
+        head(10, 0, 0, 100, 100) + 'title 1\n{\nIDS_T_A\n}\ndesc 1\n{\nIDS_D_A\n}\n'
+        + head(10, 50, 50, 150, 150) + 'title 0\ndesc 0\n'
+        + head(10, 60, 60, 70, 70) + 'title 1\n{\nIDS_T_B\n}\ndesc 0\n'
+        + head(D['RI_REVIVAL'], 0, 0, 500, 500) + 'title 1\n{\nIDS_T_B\n}\ndesc 0\n'
+        + 'respawn7 5 20 1.0 2.0 3.0 1 30 1 1 2 3 4 5 6 7 8 9 10 11 12 0.0 -1 0 0\n'
+        + head(10, 100, 0, 200, 100, '0x80') + 'title 1\n{\nIDS_T_C\n}\ndesc 0\n'
+        + head(10, 120, 120, 180, 180) + 'title 1\n{\nIDS_T_E\n}\ndesc 0\n'
+        + head(D['RI_STRUCTURE'], 0, 0, 500, 500) + 'title 1\n{\nIDS_T_A\n}\ndesc 0\n'
+        + 'region 6 10 0.0 0.0 0.0 0x0 0 0 "" "" 0 0.0 0.0 0.0 150 150 300 300 "" 0 1\n{\nIDS_D_A\n}\n'
+        + 'region2 6 10 0.0 0.0 0.0 0x0 0 0 "" "" 0 0.0 0.0 0.0 0 150 40 300 "" 0\ntitle 1\n{\nIDS_NOT_A_STRING\n}\ndesc 0\n'
+        + 'region 6 10 0.0 0.0 0.0 0x0 0 0 "" "" 0 0.0 0.0 0.0 40 200 80 260 "" 0 256\n{\nIDS_D_A\n}\n',     # m_cDescSize = (char)256 = 0
+    ]
+    rgn_paths = [
+        [[-10, -10], [65, 65], [65, 65], [130, 20], [175, 175], [260, 260], [20, 200], [-5, -5], [99, 99], [100, 100]],
+        [[300, 300], [0, 0]],
+        [[149, 149], [150, 150], [151, 151], [199, 99], [200, 100]],
+    ]
+    rgn_cases = []
+    for t in rgn_scripts:
+        regs = area_regions(t.encode(), D, S2)
+        rgn_cases.append({'text': t, 'strings': SS, 'regions': regs,
+                          'walks': [{'path': p, 'step': st, 'expect': area_walk(regs, p, st)} for p in rgn_paths for st in (1, 7, 40)],
+                          'stands': [dict(area_stand(regs, x, z), x=x, z=z) for x in range(-5, 310, 15) for z in range(-5, 310, 15)]})
+
+    return {'worlds': {str(k): v for k, v in A['W'].items()}, 'maps': A['maps'],
+            'cont': {str(k): [list(v) for v in A['cont'][k]] for k in sorted(A['cont'])},
+            'towns': {str(k): [list(v) for v in A['towns'][k]] for k in sorted(A['towns'])},
+            'regionCounts': {n: len(r) for n, r in A['regions'].items()},
+            'stands': stands, 'walks': walks, 'polys': poly_cases, 'cnt': cnt_cases, 'rgn': rgn_cases,
+            'grid': grid, 'mapnames': mapnames_case}
+
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -761,3 +1391,5 @@ if __name__ == '__main__':
         print(json.dumps(exchange_cases(root)))
     elif what == 'battlepass':
         print(json.dumps(bp_run(root)))
+    elif what == 'area':
+        print(json.dumps(area_run(root)))

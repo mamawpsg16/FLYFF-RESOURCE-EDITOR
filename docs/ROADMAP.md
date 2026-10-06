@@ -2,7 +2,7 @@
 
 _Last updated 2026-10-06._
 
-> **Handoff (2026-10-06, end of session):** Committed after the user's test in Brave: the exchange simulator ("Try it"), the independent Python copies of the simulators (`tools/oracle_sim.py`), Battle Pass Past seasons (+ pop-up, "Use this whole ladder", ↑ / ↓, ✕ on any level, total on top), the Exchanges wording, and the Undo (n) / scroll / badge fixes. **Next session:** (1) **where each NPC stands**: area names players know (Flaris, Saint Morning, Darkon 1/2/3, Elliun, Valley of the Risen, Shaduwar …) in every task, from the C++ that names the area at a position, plus the NPC positions in the `.dyo` files; (2) **Add New NPC** (`docs/HANDOFF-ADD-NPC.md`); (3) a **Donation Shop simulator** (the buy flow) + its Python copy; (4) **F. Monster drops**, with both copies; (5) **G. Item set effects and weapon effects**, with both copies. Rule (CLAUDE.md): every task has a JS simulator AND an independent Python copy, and the tests require them to agree. Tests: `gjs -m tests/run-tests.js` (457 pass, about 90 s, reads `test-data/fixtures`), `tests/run-ui.sh` (147 pass). Reset the manual copy with `tools/refresh-fixtures.sh test-data` (leave `test-data/backups`: Past seasons reads it).
+> **Handoff (2026-10-06, later):** **Where each NPC stands** is committed after the user's test in Brave (in-game check deferred to the Windows PC). The NPC Shops, Exchanges and Donation Shop tasks show "Where: Flaris — Flarine / Central Flarine" with a `/te 1 x z` copy button for each spot. The simulator is `loaders/area.js` + `tools/area-sim.js`, the independent copy is `tools/oracle_sim.py area`, and they agree on every case. **Next:** (1) **Add New NPC** (`docs/HANDOFF-ADD-NPC.md`; the area names help pick a spot); (2) a **Donation Shop simulator** (the buy flow) + its Python copy; (3) **F. Monster drops**, with both copies; (4) **G. Item set effects and weapon effects**, with both copies. Rule (CLAUDE.md): every task has a JS simulator AND an independent Python copy, and the tests require them to agree. Tests: `gjs -m tests/run-tests.js` (492 pass, about 90 s, reads `test-data/fixtures`), `tests/run-ui.sh` (150 pass). `tools/refresh-fixtures.sh` now also copies each map's `.rgn` / `.txt.txt`, `WdMadrigal.wld.cnt`, `world.txt.txt` and `propMapComboBoxData.*`; run `tools/refresh-fixtures.sh test-data` once so the manual copy has them (leave `test-data/backups`: Past seasons reads it).
 
 ## Done
 - **Build 1** (`1c785ce`): NPC shop editor (`character*.inc`). Add, remove, price and tab edits; byte-exact save with verified backup. Tested by the user in Brave on `test-data`.
@@ -114,11 +114,30 @@ _Last updated 2026-10-06._
     - After the user's test: the current season has no card there (it is edited in Reward ladder); cards start closed; **+** opens a pop-up (a new top level, or instead of level N, with qty and cost editable) and a message says what changed; "BP4" / "BP5" replaced by plain words.
     - Reward ladder: the total ("146,000 points to reach level 50") is on top and follows every cost edit; **✕ on any level** (`removeLevel`: the levels above move down one with their rewards and costs, no gap), checked through the simulator.
 
-## Next (in this order, agreed with the user)
+- **Where each NPC stands** (2026-10-06, user-tested in Brave): `loaders/area.js` (`FRE.area`), `tools/area-sim.js`, `tools/oracle_sim.py area`.
+  - Asked: in every task, show where each NPC stands in names players know, to know where to go when testing in game. Agreed: the map-window name, the area name on screen, and a GM `/te` command; shown in NPC Shops (header + list), Exchanges (each menu NPC) and Donation Shop (`MaFl_DONATION`). Battle Pass has no NPC.
+  - C++ ported (details in INVESTIGATION.md §1.8):
+    - `.dyo` positions × `OLD_MPU` 4 (`Obj.cpp:525`);
+    - `CContinent::Init` / `Point_In_Poly` / `GetContinent` / `GetTown` (`WdMadrigal.wld.cnt`);
+    - `CWndMapEx::GetMapArea`, with names from `propMapComboBoxData.inc` (`LoadPropMapComboBoxData`);
+    - `CWorld::LoadRegion` / `ReadRegion` (`.rgn`) and the client's per-frame region loop (`WndWorld.cpp:9258`; caption style `bdf9f5cb`);
+    - `CWorldMng::LoadScript` world titles, and the `LoadStrings` order for the world string files;
+    - `TextCmd_Teleport` (`/te <world id> <x> <z>`).
+  - Findings:
+    - Town blocks in `.wld.cnt` have `C_useRealData 0`, so `GetTown` never finds a town (the map window never opens Flarine / Sain City / Darken / Eillun by itself).
+    - The Flaris polygon has a stray vertex (7087, 8157), so it is self-intersecting.
+    - `WdArena_1`'s strings file is not in `LoadStrings`, so its area names show as raw `IDS_` keys.
+    - Valley of the Risen has no NPC.
+    - Collins stands in three towns (Flaris, Saint Morning, Darkon 1, 2).
+    - `readDyo` now treats `OT_SHIP` like `CObj` (`CShip` → `CCtrl::Read` = `CObj::Read`); no map holds one.
+  - Real data: 427 NPC spots on 19 maps. WdMadrigal: Flaris 143, Saint Morning 72, Darkon 1, 2 49, Kaillun Grassland 39, Darkon 3 27, Shaduwar 6, Bahara Desert 4, Garden of Rhisis 2, outside every continent 4 (the map window shows "Madrigal").
+  - Anchors in tests: the NPCs removed "from Flaris" in `b6abf414` are in Flaris; the `CContinent::GetRevivalPos` points land in Flaris / Saint Morning / Darkon 1, 2.
+  - Independent copy: 427 NPC spots, 300 random walks (seeded `xRand`, 84,000 frames), 4,662 grid points over the Flaris polygon, small polygons, continent, map-window and region files. JS and Python agree on every case.
+  - 16 one-line bugs were planted in the Python copy one at a time, and all 16 were caught. Cases were added for the 4 that slipped through at first: overlapping continents (id order), a duplicate map-window location, an old-format desc size of 256 (a `char`), and an empty `SetTitle( "" )`.
+  - Not modelled: `RA_INN` regions (need the land height), caption timers, regions the server adds at run time, and the map window in other worlds (the world title names those).
+  - `tools/refresh-fixtures.sh` and the UI harness also carry the region, string and continent files.
 
-### Where each NPC stands (asked 2026-10-06)
-- In every task, show the area of each NPC in names players use (Flaris, Saint Morning, Darkon 1/2/3, Elliun, Valley of the Risen, Shaduwar …), so the user knows where to go to test in game.
-- First find in the C++ how the game names the area at a position (continent / region data), port it, and use the NPC positions read from the `.dyo` files (`loaders/world.js`).
+## Next (in this order, agreed with the user)
 
 ### Add New NPC (handoff written 2026-10-05, branch `ccr-25b694d1-jie3e1`, merged)
 - Spec: **`docs/HANDOFF-ADD-NPC.md`** (read it whole first). In the web app the user creates an NPC, places it on a map (a new 200-byte record in `World/<map>/<map>.dyo`), ticks its right-click menus, and gives it up to 4 shop tabs with items. The app validates (§6, with self-tests §6.5), shows the exact text and bytes, backs up, writes the 6 files (Server + Client), reads them back and validates again (§7). In-game checklist: §8; out of scope: §9; build order: §10.
@@ -142,6 +161,7 @@ _Last updated 2026-10-06._
 - Editing `AddVendorItem` rules (the simulator in `loaders/vendor-sim.js` is ready for a live preview).
 - The first save against the real `Server/Resource`, then copy to `Client/`, restart, and check in-game.
 - An exchange in game after an edit (Server and Client copies saved together).
+- Where NPCs stand: `/te <id> <x> <z>` to a few NPCs (Lui, Collins ×3, Adrian), then check the area name on screen and the map window (M) against the editor.
 - A new Battle Pass season in game: free track at login, kill points, buying the pass back-pays (the season-1 pass item reused).
 
 ## Known data findings (pre-existing, shown as warnings or info)

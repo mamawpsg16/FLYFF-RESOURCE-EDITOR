@@ -264,6 +264,15 @@ body.start #layout { grid-template-columns: 1fr; }
 .bp-place-now p { margin: 10px 0 0; }
 .bp-place-diff { margin-top: 10px; }
 
+/* where an NPC stands (loaders/area.js) */
+.where { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 6px; font-size: 13px; }
+.where-spot { display: inline-flex; align-items: center; gap: 6px; }
+button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; padding: 1px 7px; }
+.where-short { color: var(--accent); }
+.ex-npc { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.ex-npc .where { margin-top: 0; }
+.ex-npc { flex-basis: 100%; }
+
 </style>
 </head>
 <body class="start">
@@ -316,7 +325,7 @@ body.start #layout { grid-template-columns: 1fr; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when": "Tue 6 Oct 2026, 11:09", "rev": "b829398", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "16+", "when": "Tue 6 Oct 2026, 13:28", "rev": "6d5c4c3", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -1087,6 +1096,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
   }
 
   FRE.loadStrings = loadStrings;
+  FRE.loadStringFile = loadStringFile;     // (state, file): one more file into a string table (loaders/area.js)
   FRE.STRING_FILES = STRING_FILES;
 })(globalThis.FRE = globalThis.FRE || {});
 
@@ -1553,7 +1563,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
 // Where NPCs stand in the game, and whether the WorldServer shows them.
 //   World.inc    CWorldMng::LoadScript (_Common/worldmng.cpp:302): `WI_x "WdName"` per map
 //   *.dyo        CWorld::LoadObject (_Common/WorldFile.cpp:297): World/<name>/<name>.dyo, a stream of
-//                ReadObj records (_Common/CreateObj.cpp:761) ended by 0xFFFFFFFF
+//                ReadObj records (_Common/CreateObj.cpp:761) ended by 0xFFFFFFFF. Positions: CObj::Read
+//                (Obj.cpp:474) reads m_vPos at byte 16 and multiplies x and z by OLD_MPU = 4 (Obj.cpp:525)
 //   visibility   CWorld::IsUsableDYO2 (_Common/WorldFile.cpp:1181): SetOutput / SetLang in character.inc
 // The WorldServer's language is compiled into the exe: WORLDSERVER/WorldServer.rc:137
 // IDS_LANG "1" (LANG_USA), IDS_SUBLANG "0"; __NO_SUB_LANG is on, so SetLang's sub language is 0.
@@ -1562,6 +1573,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
   const SERVER_LANG = 1, SERVER_SUBLANG = 0;
   const OT = { OBJ: 0, ANI: 1, CTRL: 2, SFX: 3, ITEM: 4, MOVER: 5, SHIP: 7 };
   const OBJ_BYTES = 60;              // CObj::Read (Obj.cpp:474): angle, axis[3], pos[3], scale[3], type, index, motion, AI, AI2
+  const OLD_MPU = 4;                 // DefineCommon.cpp:11
   const CTRL_ELEM = 432;             // sizeof(CCtrlElem) (CommonCtrl.cpp:96, __LEGEND "432")
 
   // World.inc -> [{ define, id, name }]. SetTitle lines and comments are skipped.
@@ -1578,30 +1590,34 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
     return out;
   }
 
-  // One .dyo file (bytes) -> { movers: [key], end: 'eof' | 'stop' | 'short', stopType }
-  // A record type the WorldServer cannot create (OT_ANI, OT_SFX, OT_SHIP has no Read here, junk)
-  // makes ReadObj return NULL and the server stops reading the rest of the file.
+  // One .dyo file (bytes) -> { movers: [key], placements: [{ key, x, y, z }] (keyed movers only),
+  // end: 'eof' | 'stop' | 'short', stopType }
+  // A record type the WorldServer cannot create (OT_ANI, OT_SFX on the server, junk) makes ReadObj
+  // return NULL and the server stops reading the rest of the file. OT_SHIP is a CShip, whose Read is
+  // CCtrl::Read = CObj::Read (Ctrl.cpp:85). No map file holds one.
   function readDyo(bytes) {
     const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    const movers = [];
+    const movers = [], placements = [];
     let i = 0;
     const str = (at, len) => { let s = ''; for (let k = at; k < at + len && bytes[k]; k++) s += String.fromCharCode(bytes[k]); return s; };
     while (i + 4 <= bytes.length) {
       const type = dv.getUint32(i, true); i += 4;
-      if (type === OT.OBJ || type === OT.ITEM) i += OBJ_BYTES;
+      if (type === OT.OBJ || type === OT.ITEM || type === OT.SHIP) i += OBJ_BYTES;
       else if (type === OT.MOVER) {
         // CMover::Read (Mover.cpp:3365): m_szName[64], szDialogFile[32], m_szCharacterKey[32], belligerence, extra flag
-        if (i + OBJ_BYTES + 136 > bytes.length) return { movers, end: 'short' };
-        movers.push(str(i + OBJ_BYTES + 96, 32));
+        if (i + OBJ_BYTES + 136 > bytes.length) return { movers, placements, end: 'short' };
+        const key = str(i + OBJ_BYTES + 96, 32);
+        movers.push(key);
+        if (key) placements.push({ key, x: dv.getFloat32(i + 16, true) * OLD_MPU, y: dv.getFloat32(i + 20, true), z: dv.getFloat32(i + 24, true) * OLD_MPU });
         i += OBJ_BYTES + 136;
       } else if (type === OT.CTRL) {
         // CCommonCtrl::Read (CommonCtrl.cpp:84): a version DWORD, then the CCtrlElem
         i += OBJ_BYTES;
         const v = dv.getUint32(i, true); i += 4;
         i += v === 0x80000000 ? CTRL_ELEM : v === 0x90000000 ? 88 + CTRL_ELEM - 152 : CTRL_ELEM - 40;
-      } else return { movers, end: type === 0xFFFFFFFF && i === bytes.length ? 'eof' : 'stop', stopType: type };
+      } else return { movers, placements, end: type === 0xFFFFFFFF && i === bytes.length ? 'eof' : 'stop', stopType: type };
     }
-    return { movers, end: i === bytes.length ? 'eof' : 'short' };
+    return { movers, placements, end: i === bytes.length ? 'eof' : 'short' };
   }
 
   // CWorld::IsUsableDYO2: no SetLang list -> SetOutput decides; the server's language in the
@@ -1621,6 +1637,347 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
   }
 
   FRE.world = { readWorldList, readDyo, npcShown, npcStatus, SERVER_LANG, SERVER_SUBLANG };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/area.js ----
+// Where an NPC stands, named the way the game client names it (simulator; Python copy:
+// tools/oracle_sim.py area).
+//   position     .dyo mover records (FRE.world.readDyo): CObj::Read multiplies x and z by OLD_MPU = 4
+//                (_Common/Obj.cpp:525, DefineCommon.cpp:11); CWorld::LoadObject (WorldFile.cpp:297) uses them as is.
+//   world title  CWorldMng::LoadScript (_Common/worldmng.cpp:302): World.inc `WI_x SetTitle( IDS_… )`.
+//   map window   CWndMapEx::GetMapArea (_Interface/WndMapEx.cpp:1385) = CContinent::GetTown, else
+//                CContinent::GetContinent (_Common/Continent.cpp: Init reads World/WdMadrigal/WdMadrigal.wld.cnt,
+//                Point_In_Poly), named by the first MCC_MAP_NAME entry of propMapComboBoxData.inc with that
+//                SetLocationID (CMapInformationManager::LoadPropMapComboBoxData, MapInformationManager.cpp:261;
+//                InitializeMapComboBoxSelecting, WndMapEx.cpp:571).
+//                Every town block of WdMadrigal.wld.cnt has C_useRealData 0, so Init skips it: GetTown never
+//                finds a town and the map window never opens Flarine / Sain City / Darken / Eillun by itself.
+//   area caption CWorld::LoadRegion / ReadRegion (WorldFile.cpp:775, 413): World/<map>/<map>.rgn, titles from the
+//                string table (CProject::LoadStrings, ProjectCmn.cpp:1253). The client's region loop
+//                (_Interface/WndWorld.cpp:9258-9370, caption style bdf9f5cb): regions in file order, CRect::PtInRect;
+//                the first region newly entered sets the navigator name, sends its desc lines to the chat,
+//                shows its title (first line big, it clears the old area names; the rest small), then stops
+//                for this frame (__VER >= 9 break).
+//   teleport     TextCmd_Teleport (_Interface/FuncTextCmd.cpp:2718): `/te <world id> <x> <z>`, ints above 0.
+// Not modelled: RA_INN regions (the client checks the land height; here the player stands on the ground),
+// caption timers and fades, music, regions the server adds at run time (CDPClient::OnAddRegion), DBCS lead
+// bytes. respawn records are skipped token by token (their arguments are all numbers). In other worlds the
+// map window is not modelled (GetMapArea still reads Madrigal's polygons there); the world title names them.
+(function (FRE) {
+  'use strict';
+  const OLD_MPU = 4;
+
+  // CProject::LoadStrings: only the files that hold world, region and map-window names, in its order
+  // (__JEFF_11_4, __AZRIA_1023, __IMPROVE_MAP_SYSTEM and __VER >= 19 are on in Neuz/VersionCommon.h).
+  const STRING_FILES = [
+    'world.txt.txt',
+    ...['WdVolcane', 'WdMadrigal:wdMadrigal', 'WdKebaras', 'WdGuildWar', 'WdEvent01', 'DuMuscle', 'DuKrr', 'DuFlMas', 'DuDaDk',
+      'DuBear', 'DuSaTemple', 'DuSaTempleBoss', 'WdVolcane', 'WdVolcaneRed', 'WdVolcaneYellow', 'WdArena',
+      'WdHeaven01:wdheaven01', 'WdHeaven02:wdheaven02', 'WdHeaven03:wdheaven03', 'WdHeaven04:wdheaven04', 'WdHeaven05:wdheaven05',
+      'WdHeaven06:wdheaven06', 'WdHeaven06_1:wdheaven06_1', 'WdCisland', 'DuOminous:duominous', 'DuOminous_1:duominous_1',
+      'WdGuildhousesmall', 'WdGuildhousemiddle', 'WdGuildhouselarge', 'DuDreadfulCave', 'DuRustia', 'DuRustia_1'].map(worldTxt),
+    'propMapComboBoxData.txt.txt',
+    ...['WdRartesia', 'DuBehamah', 'DuKalgas', 'WdColosseum', 'DuUpresia', 'DuUpresia_1', 'DuSanpres', 'DuSanpres_1',
+      'DuHerneos', 'DuHerneos_1', 'WdFwc', 'WdMarket', 'WdDarkRartesia'].map(worldTxt),
+  ];
+  function worldTxt(s) { const [dir, file] = s.split(':'); return `World/${dir}/${file || dir}.txt.txt`; }
+
+  const script = (file, defines, strings) => new FRE.lexer.Script(file ? file.text : '', { defines, strings, diags: [] });
+  // CProject::GetLangScript (ProjectCmn.cpp:1241): the token, then ")" and ";"; an empty one becomes " "
+  function langScript(s) {
+    const t = s.getToken();
+    s.getToken(); s.getToken();
+    return t.type === 'eof' || t.text === '' ? ' ' : t.text;
+  }
+  const isEnd = t => t.type === 'eof';
+  const byte = v => v & 0xff;
+  // C integer division (LONG / LONG truncates toward zero)
+  const cdiv = (a, b) => Math.trunc(a / b);
+
+  // The area string table: get(relPath) -> { name, text } | null. First key wins.
+  function loadStrings(get) {
+    const state = { map: new Map(), meta: new Map(), diags: [], missing: [] };
+    for (const p of STRING_FILES) {
+      const f = get(p);
+      if (f) FRE.loadStringFile(state, f); else state.missing.push(p);
+    }
+    return state.map;
+  }
+
+  // CWorldMng::LoadScript -> Map id -> { id, file, title }
+  function readWorlds(file, defines, strings) {
+    const s = script(file, defines, strings);
+    const out = new Map();
+    let mark = s.lex.pos;
+    let i = s.getNumber().value;
+    let brace = 1;
+    while (brace) {
+      if (isEnd(s.token) || s.token.text[0] === '}') {
+        brace--;
+        if (brace === 0) continue;
+      }
+      const t = s.getToken();
+      if (t.text === 'SetTitle') {
+        s.getToken();                                    // (
+        const title = langScript(s);
+        if (out.has(i)) out.get(i).title = title;
+      } else {
+        s.lex.pos = mark;                                // GoMark
+        i = s.getNumber().value;
+        const f = s.getToken();
+        out.set(i, { id: i, file: isEnd(f) ? '' : f.text, title: '' });
+      }
+      mark = s.lex.pos;                                  // SetMark
+      i = s.getNumber().value;
+    }
+    return out;
+  }
+
+  // CContinent::Init -> { cont: Map id -> [[x, z]...] (closed), towns: Map }. std::map keeps the first insert.
+  function readContinents(file, defines, strings) {
+    const s = script(file, defines, strings);
+    const cont = new Map(), towns = new Map();
+    let vec = [], id = 0, town = 0;
+    for (;;) {
+      const t = s.getToken();
+      if (isEnd(t)) break;
+      if (t.text === 'Continent') {
+        const u = s.getToken();
+        if (u.text === 'BEGIN') vec = [];
+        else if (u.text === 'END') {
+          if (vec.length) vec.push(vec[0]);
+          const m = town ? towns : cont;
+          if (!m.has(byte(id))) m.set(byte(id), vec.slice());
+          town = 0;
+        }
+      } else if (t.text === 'C_id') id = s.getNumber().value;
+      else if (t.text === 'VERTEX') {
+        const x = s.getFloat().value; s.getFloat(); const z = s.getFloat().value;
+        vec.push([Math.trunc(x), Math.trunc(z)]);       // CPoint( (int)x, (int)z )
+      } else if (t.text === 'TOWN') town = s.getNumber().value;
+      else if (t.text === 'C_useRealData') {
+        if (!s.getNumber().value) {                     // client-only look: skip to END
+          for (;;) { const k = s.getToken(); if (isEnd(k) || k.text === 'END') break; }
+        }
+      }
+    }
+    return { cont, towns };
+  }
+
+  // CContinent::Point_In_Poly (LONG arithmetic)
+  function pointInPoly(vec, x, y) {
+    let counter = 0, p1 = vec[0];
+    const n = vec.length;
+    for (let i = 1; i <= n; i++) {
+      const p2 = vec[i % n];
+      if (y > Math.min(p1[1], p2[1]) && y <= Math.max(p1[1], p2[1]) && x <= Math.max(p1[0], p2[0]) && p1[1] !== p2[1]) {
+        const xinters = cdiv((y - p1[1]) * (p2[0] - p1[0]), p2[1] - p1[1]) + p1[0];
+        if (p1[0] === p2[0] || x <= xinters) counter++;
+      }
+      p1 = p2;
+    }
+    return counter % 2 === 1;
+  }
+
+  // GetContinent( vPos ) / GetTown( vPos ): the first polygon in id order
+  function lookup(polys, x, z) {
+    const px = Math.trunc(x), pz = Math.trunc(z);
+    for (const id of [...polys.keys()].sort((a, b) => a - b)) if (pointInPoly(polys.get(id), px, pz)) return id;
+    return 0;
+  }
+
+  // CWndMapEx::GetMapArea
+  function mapArea(model, x, z) {
+    const D = model.defines;
+    let loc = lookup(model.towns, x, z);
+    if (loc === 0) loc = lookup(model.cont, x, z);
+    for (const t of ['TOWN_SAINCITY', 'TOWN_DARKEN', 'TOWN_FLARINENOSPLE', 'TOWN_ELIUN'])
+      if (loc === D.get(t)) loc = lookup(model.towns, x, z);
+    return loc;
+  }
+
+  // LoadPropMapComboBoxData -> the MCC_MAP_NAME entries in file order [{ id, loc, title }]
+  function readMapNames(file, defines, strings) {
+    const s = script(file, defines, strings);
+    const out = [];
+    let id = s.getNumber().value;
+    while (!isEnd(s.token)) {
+      s.getToken();                                     // {
+      let cat = defines.get('MCC_MAP_CATEGORY'), title = '', loc = 0, nb = 1;
+      while (nb > 0 && !isEnd(s.token)) {
+        const w = s.getToken().text;
+        if (w === '{') nb++;
+        else if (w === '}') nb--;
+        else if (w === 'SetCategory') { s.getToken(); cat = s.getNumber().value; s.getToken(); s.getToken(); }
+        else if (w === 'SetTitle') { s.getToken(); title = langScript(s); }
+        else if (w === 'SetPictureFile' || w === 'SetMonsterInformationFile') { s.getToken(); langScript(s); }
+        else if (w === 'SetRealPositionRect') { s.getToken(); for (let k = 0; k < 4; k++) { s.getNumber(); s.getToken(); } s.getToken(); }
+        else if (w === 'SetLocationID') { s.getToken(); loc = byte(s.getNumber().value); s.getToken(); s.getToken(); }
+        else if (w === 'SetNPCPosition') { s.getToken(); s.getNumber(); s.getToken(); s.getNumber(); s.getToken(); s.getToken(); }
+        else if (w === 'SetParentID') { s.getToken(); s.getNumber(); s.getToken(); s.getToken(); }
+      }
+      if (cat === defines.get('MCC_MAP_NAME')) out.push({ id, loc, title });
+      id = s.getNumber().value;
+    }
+    return out;
+  }
+
+  // CWorld::LoadRegion + ReadRegion -> m_aRegion [{ rect: [l, t, r, b], attr, title, desc }]
+  function readRegions(file, defines, strings) {
+    const s = script(file, defines, strings);
+    const skip = ['RI_BEGIN', 'RI_REVIVAL', 'RI_STRUCTURE'].map(n => defines.get(n));
+    const out = [];
+    const text = () => { s.getToken(); const t = s.getToken(); s.getToken(); return (isEnd(t) ? '' : t.text).split('\\n').join('\r\n'); };
+    for (let t = s.getToken(); !isEnd(t); t = s.getToken()) {
+      if (!['region', 'region2', 'region3'].includes(t.text)) continue;
+      const v2 = t.text !== 'region', v3 = t.text === 'region3';
+      s.getNumber();                                   // dwType
+      const index = s.getNumber().value >>> 0;
+      s.getFloat(); s.getFloat(); s.getFloat();        // vPos
+      const attr = s.getNumber().value >>> 0;
+      s.getNumber(); s.getNumber();                    // music, direct music
+      s.getToken(); s.getToken();                      // script, sound
+      s.getNumber(); s.getFloat(); s.getFloat(); s.getFloat();   // teleport world and position
+      const rect = [s.getNumber().value, s.getNumber().value, s.getNumber().value, s.getNumber().value];
+      s.getToken(); s.getNumber();                     // key, target key
+      if (v3) for (let k = 0; k < 11; k++) s.getNumber();
+      let title = '', desc = '';
+      if (!v2) {
+        if (byte(s.getNumber().value)) desc = text();  // m_cDescSize is a char
+      } else {
+        s.getToken();                                  // "title"
+        if (s.getNumber().value) title = text();
+        s.getToken();                                  // "desc"
+        if (s.getNumber().value) desc = text();
+      }
+      if (!skip.includes(index)) out.push({ rect, attr, title, desc });
+    }
+    return out;
+  }
+
+  // The caption loop's line split: CRLF or NUL ends a line; after a CRLF it stops at a NUL (the
+  // buffers are zero-filled, so reading past the end finds zeros).
+  function captionLines(text) {
+    const b = text + '\0\0\0', out = [];
+    let cur = '', i = 0;
+    for (;;) {
+      if ((b[i] === '\r' && b[i + 1] === '\n') || b[i] === '\0') {
+        out.push(cur); cur = ''; i += 2;
+        if (i >= b.length || b[i] === '\0') break;
+      } else cur += b[i++];
+    }
+    return out;
+  }
+
+  const newState = () => ({ nav: null, caps: [], msgs: [] });
+
+  // One frame of the client's region loop -> index of the region entered, or null
+  function frame(regs, inside, st, x, z) {
+    const px = Math.trunc(x), pz = Math.trunc(z);
+    for (let i = 0; i < regs.length; i++) {
+      const [l, t, r, b] = regs[i].rect;
+      if (l <= px && px < r && t <= pz && pz < b) {            // CRect::PtInRect
+        if (inside[i]) continue;
+        const reg = regs[i];
+        if (reg.title === '') st.nav = '';
+        inside[i] = true;
+        for (const line of captionLines(reg.desc)) if (line) st.msgs.push(line);
+        captionLines(reg.title).forEach((line, n) => {
+          if (!line) return;
+          if (n === 0) { st.nav = line; st.caps = [[line, true]]; }     // AddAreaCaption( bNewArea ): old area names go
+          else st.caps.push([line, false]);
+        });
+        return i;                                               // one new region per frame
+      }
+      inside[i] = false;
+    }
+    return null;
+  }
+
+  // Arrive at (x, z) with every region left, and stay until no new region is entered.
+  function stand(regs, x, z) {
+    const inside = regs.map(() => false), st = newState(), entered = [];
+    for (let f = 0; f <= regs.length; f++) {
+      const i = frame(regs, inside, st, x, z);
+      if (i === null) break;
+      entered.push(i);
+    }
+    return { entered, nav: st.nav, caps: st.caps, msgs: st.msgs };
+  }
+
+  // Walk the path (int points), at most `step` units per axis each frame; every region entry is an event.
+  function walk(regs, path, step) {
+    const inside = regs.map(() => false), st = newState(), events = [];
+    const pts = [[path[0][0], path[0][1]]];
+    for (let k = 1; k < path.length; k++) {
+      const [ax, az] = path[k - 1], [bx, bz] = path[k];
+      const dx = bx - ax, dz = bz - az, n = Math.floor(Math.max(Math.abs(dx), Math.abs(dz)) / step) + 1;
+      for (let j = 1; j <= n; j++) pts.push([ax + cdiv(dx * j, n), az + cdiv(dz * j, n)]);
+    }
+    pts.forEach(([x, z], f) => {
+      const m = st.msgs.length;
+      const i = frame(regs, inside, st, x, z);
+      if (i !== null) events.push({ f, x, z, region: i, nav: st.nav, caps: st.caps.map(c => c.slice()), msgs: st.msgs.slice(m) });
+    });
+    return { frames: pts.length, events };
+  }
+
+  // Everything the client needs to name a spot. get(relPath) -> { name, text } | null (case-insensitive);
+  // dyo: Map world file name -> bytes.
+  function build({ defines, get, dyo }) {
+    const strings = loadStrings(get);
+    const worlds = readWorlds(get('World.inc'), defines, strings);
+    const { cont, towns } = readContinents(get('World/WdMadrigal/WdMadrigal.wld.cnt'), defines, strings);
+    const model = { defines, strings, worlds, cont, towns, maps: readMapNames(get('propMapComboBoxData.inc'), defines, strings),
+      regions: new Map(), placed: new Map(), firstId: new Map(), cache: new Map() };
+    for (const id of [...worlds.keys()].sort((a, b) => a - b)) {
+      const name = worlds.get(id).file;
+      if (!name || model.firstId.has(name)) continue;
+      model.firstId.set(name, id);
+      const rgn = get(`World/${name}/${name}.rgn`);
+      model.regions.set(name, rgn ? readRegions(rgn, defines, strings) : []);
+      const bytes = dyo && dyo.get(name);
+      model.placed.set(name, bytes ? FRE.world.readDyo(bytes).placements : []);
+    }
+    model.madrigal = (worlds.get(defines.get('WI_WORLD_MADRIGAL')) || {}).file;
+    return model;
+  }
+
+  const mapTitle = (model, loc) => { const m = model.maps.find(x => x.loc === loc); return m ? m.title : null; };
+
+  // What the client shows when a player stands at (x, z) in a world (file name)
+  function standAt(model, world, x, z) {
+    const r = stand(model.regions.get(world) || [], x, z);
+    const loc = world === model.madrigal ? mapArea(model, x, z) : null;
+    return Object.assign(r, { mapArea: loc, mapWindow: loc === null ? null : mapTitle(model, loc) });
+  }
+
+  // Every spot where the NPC (character key) stands: [{ world, worldId, worldTitle, x, z, mapWindow, nav, caps, place, caption, te }]
+  function whereIs(model, key) {
+    if (!model) return null;
+    const k = String(key).toLowerCase();
+    if (model.cache.has(k)) return model.cache.get(k);
+    const out = [];
+    for (const [world, list] of model.placed) for (const p of list) {
+      if (p.key.toLowerCase() !== k) continue;
+      const r = standAt(model, world, p.x, p.z);
+      const id = model.firstId.get(world), w = model.worlds.get(id);
+      const worldTitle = w && w.title.trim() ? w.title : world;
+      const caption = r.caps.map(c => c[0]).join(' / ');
+      const x = Math.trunc(p.x), z = Math.trunc(p.z);
+      out.push(Object.assign(r, { world, worldId: id, worldTitle, x: p.x, z: p.z, caption,
+        place: world === model.madrigal ? (r.mapWindow || worldTitle) : worldTitle,
+        te: x > 0 && z > 0 ? `/te ${id} ${x} ${z}` : null }));
+    }
+    model.cache.set(k, out);
+    return out;
+  }
+
+  // "Flaris — Flarine / Central Flarine"
+  const label = w => w.caption ? `${w.place} — ${w.caption}` : w.place;
+
+  FRE.area = { OLD_MPU, STRING_FILES, loadStrings, readWorlds, readContinents, pointInPoly, lookup, mapArea, readMapNames,
+    readRegions, captionLines, frame, stand, walk, build, mapTitle, standAt, whereIs, label };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- loaders/character.js ----
@@ -4103,7 +4460,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
   const CORE_EDITABLE = ['Spec_Item.txt'];
   const CORE_CLIENT = ['Spec_Item.txt'];
   // Read when present, never required (context only).
-  const OPTIONAL = ['textClient.inc', 'textClient.txt.txt', 'World.inc'];
+  // World.inc, world.txt.txt and propMapComboBoxData.*: where NPCs stand (loaders/area.js)
+  const OPTIONAL = ['textClient.inc', 'textClient.txt.txt', 'World.inc', 'world.txt.txt', 'propMapComboBoxData.inc', 'propMapComboBoxData.txt.txt'];
 
   // id, files it needs, files it may write, files the game client also reads,
   // parse(ws) -> model, validate(ws, model) -> diagnostics
@@ -4113,6 +4471,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
       required: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt'],
       editable: ['character.inc', 'character-etc.inc', 'character-school.inc'],
       client: ['character.inc', 'character-etc.inc', 'character-school.inc'],
+      maps: true,            // reads World/*/ to show where each NPC stands
       parse(ws) {
         ws._sim = new Map();
         return (ws.chars = FRE.character.loadCharacters(ws.files, { defines: ws.defines.defines, strings: ws.strings.map }));
@@ -4127,6 +4486,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
     {
       id: 'donation', label: 'Donation Shop', editsSpec: true,
       required: ['DonationShop.inc'], editable: ['DonationShop.inc'], client: ['DonationShop.inc'],
+      maps: true,            // where MaFl_DONATION stands (the client opens the shop for that key, WndWorld.cpp:5835)
       parse(ws) {
         return FRE.donation.loadDonation(ws.files.get('donationshop.inc'), { defines: ws.defines.defines, strings: ws.strings.map });
       },
@@ -4152,7 +4512,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
       required: ['Exchange_Script.txt'], editable: ['Exchange_Script.txt'], client: ['Exchange_Script.txt'],
       deps: ['character.inc', 'character-etc.inc', 'character-school.inc'],
       uses: ['npc'],         // the NPC files are read (not edited) to name the NPCs that open each menu
-      maps: true,            // reads World/*/*.dyo to tell which of those NPCs stand in the game
+      maps: true,            // reads World/*/ to tell which of those NPCs stand in the game, and where
       parse(ws) {
         return FRE.exchange.loadExchange(ws.files.get('exchange_script.txt'), { defines: ws.defines.defines });
       },
@@ -4181,6 +4541,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
       this.donationTree = null;
       this.clientTheme = null;      // lowercase file names in Client/Theme (Battle Pass textures), when the Client folder is chosen
       this.placed = null;           // lowercase NPC key -> [map names] from World/*/*.dyo (null: not read)
+      this.area = null;             // FRE.area.build: where each NPC stands, named as the client names it (null: not read)
       const task = this.only ? MODULES.find(m => m.id === this.only) : null;
       if (this.only && !task) throw new Error(`unknown task ${this.only}`);
       this.active = new Set(task ? [task.id, ...(task.uses || [])] : MODULES.map(m => m.id));
@@ -4252,7 +4613,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
       const m = new Map();
       for (const npc of this.chars.npcs) for (const id of npc.menus) {
         if (!m.has(id)) m.set(id, []);
-        m.get(id).push(Object.assign({ npc, name: npc.name || npc.key, key: npc.key }, FRE.world.npcStatus(npc, this.placed)));
+        m.get(id).push(Object.assign({ npc, name: npc.name || npc.key, key: npc.key, where: this.whereOf(npc.key) }, FRE.world.npcStatus(npc, this.placed)));
       }
       return m;
     }
@@ -4265,7 +4626,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
     // The maps the server loads (World.inc), for the app to read their .dyo files
     worldList() { return FRE.world.readWorldList(this.files.get('world.inc'), this.defines.defines); }
     // dyo: Map map name -> bytes of World/<name>/<name>.dyo
-    setMapObjects(dyo) {
+    // worldFiles: Map lowercase path ('world/wdmadrigal/wdmadrigal.rgn') -> SourceFile: each map's .rgn and
+    // .txt.txt, and WdMadrigal.wld.cnt (read-only; loaders/area.js names the spots)
+    setMapObjects(dyo, worldFiles = new Map()) {
       const placed = new Map();
       for (const [name, bytes] of dyo) for (const key of FRE.world.readDyo(bytes).movers) {
         const k = key.toLowerCase();
@@ -4273,8 +4636,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
         if (!placed.get(k).includes(name)) placed.get(k).push(name);
       }
       this.placed = placed;
+      const get = rel => worldFiles.get(rel.toLowerCase()) || this.files.get(rel.toLowerCase()) || null;
+      this.area = FRE.area.build({ defines: this.defines.defines, get, dyo });
       for (const m of MODULES) if (m.maps && this.available[m.id].ok) this.reparse(m.required[0].toLowerCase());
     }
+    // [{ place, caption, te, world, x, z, … }] where the NPC with this key stands (FRE.area.whereIs); null: maps not read
+    whereOf(key) { return this.area ? FRE.area.whereIs(this.area, key) : null; }
     needsMaps() { return MODULES.some(m => m.maps && this.shown.has(m.id) && this.available[m.id].ok); }
 
     textOf(name) { return (this.files.get(String(name).toLowerCase()) || { text: '' }).text; }
@@ -4883,7 +5250,33 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
     return h('td', info && info.jobName ? pretty(info.jobName) : h('span.muted', 'any'));
   }
 
-  FRE.ui = { modules: [], pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell };
+  // Where an NPC stands (list from Workspace.whereOf / FRE.area.whereIs): one entry per spot, named the
+  // way the client names it ("Flaris — Flarine / Central Flarine"), with a button that copies the GM
+  // teleport command. null: the map files were not read.
+  function copyText(text) {
+    const done = () => FRE.dom.toast(`Copied: ${text}. Paste it in the game chat (GM account).`, 'ok');
+    try { navigator.clipboard.writeText(text).then(done, () => FRE.dom.toast(`Copy this: ${text}`)); }
+    catch (e) { FRE.dom.toast(`Copy this: ${text}`); }
+  }
+  function whereTip(w) {
+    return [`${w.worldTitle} (${w.world}), x ${Math.trunc(w.x)}, z ${Math.trunc(w.z)}`,
+      w.mapWindow !== null ? `Map window (M) opens: ${w.mapWindow || '—'}` : null,
+      `Area name on screen when you arrive: ${w.caption || '(none)'}`,
+      w.te ? `${w.te} takes a GM to this spot (TextCmd_Teleport)` : null].filter(Boolean).join('\n');
+  }
+  function whereLine(list, opts = {}) {
+    if (!list) return opts.quiet ? null : h('div.where.muted.small', 'Where: map files not read.');
+    if (!list.length) return h('div.where.muted.small', 'Where: not placed on any map.');
+    return h('div.where', h('span.muted', 'Where:'), list.map(w => h('span.where-spot', { title: whereTip(w) },
+      FRE.area.label(w), w.te ? h('button.te', { title: `Copy ${w.te}`, on: { click: e => { e.stopPropagation(); copyText(w.te); } } }, w.te) : null)));
+  }
+  // Short text for lists: the first spot, "+n" for more
+  function whereText(list) {
+    if (!list || !list.length) return '';
+    return FRE.area.label(list[0]) + (list.length > 1 ? ` +${list.length - 1}` : '');
+  }
+
+  FRE.ui = { modules: [], pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell, whereLine, whereText, copyText };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/tooltip.js ----
@@ -5167,7 +5560,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
             h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : null,
               ctx.edited.has('npc|' + id) ? h('span.tag.edit', 'edited') : null,
               dg && dg.b ? h('span.tag.bad', '⛔' + dg.b) : dg && dg.w ? h('span.tag.warn', '⚠' + dg.w) : null)),
-          h('div.k', `${npc.key} · ${npc.file}`)));
+          h('div.k', `${npc.key} · ${npc.file}`),
+          ctx.ws.area ? h('div.k.where-short', FRE.ui.whereText(ctx.ws.whereOf(npc.key))) : null));
       }
       if (!shown) el.appendChild(h('div.pad.muted', 'No NPCs match.'));
     },
@@ -5187,6 +5581,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
         h('span.line', `${npc.file}:${f.lineOf(npc.start) + 1}`),
         shopTypeSelect(ctx, npc, canEdit),
         canEdit ? null : h('span.tag.bad', 'read-only')));
+      if (ws.placed) {
+        const status = FRE.world.npcStatus(npc, ws.placed);
+        el.appendChild(h('div', FRE.ui.whereLine(ws.whereOf(npc.key)),
+          status.inGame === false && status.maps.length ? h('span.tag.warn', { title: 'CWorld::IsUsableDYO2: the WorldServer does not load this NPC' }, status.why) : null));
+      }
       const menus = npc.menus.map(v => D.byValue('MMI_', v) || String(v));
       if (menus.length) el.appendChild(h('div.menus', 'Menus: ', menus.map(m => ws.exchangeMenus.has(m)
         ? h('span.tag.exch', { title: `${m} is an item exchange defined in Exchange_Script.txt (Exchanges editor coming)` }, `${pretty(m)} ⇄ exchange`)
@@ -5375,6 +5774,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
       el.appendChild(h('div.npc-title', h('h2', 'Donation Shop'),
         h('span.def', st.cat === ALL ? 'All items' : (t && t.isLeaf(st.cat) ? t.pathOf(st.cat).join(' › ') : st.cat)),
         h('span.line', `${f.name}`), canEdit ? null : h('span.tag.bad', 'read-only')));
+      // the client opens the shop from its taskbar button (7d7df4f9) or for the NPC with key MaFl_DONATION (WndWorld.cpp:5835)
+      if (ws.area) el.appendChild(h('div', h('span.muted.small', 'Players open it from the taskbar, or by talking to MaFl_DONATION. '),
+        FRE.ui.whereLine(ws.whereOf('MaFl_DONATION'))));
       el.appendChild(h('p.muted.small', 'Prices are each item\'s chip price (dwReferValue1 in Spec_Item.txt), paid in Donate Chips. ',
         'The same number is the item\'s price in Red Chip and Donate Chip NPC shops. An item listed here but without a price cannot be bought.'));
       if (!t) el.appendChild(h('p.muted.small', 'Choose the Client folder (toolbar) to check the categories against the client\'s DonationShopTree.inc.'));
@@ -6003,8 +6405,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
         h('span.line', `${f.name} L${f.lineOf(m.start) + 1}`), canEdit(ctx) ? null : h('span.tag.bad', 'read-only'),
         null));
       // who opens it, and whether the WorldServer shows that NPC (map files + SetOutput / SetLang)
-      if (info.length) el.appendChild(h('div.ex-npcs', info.map(x => h('span.tag.' + (x.inGame ? 'ok' : x.inGame === false ? 'warn' : 'info'),
-        { title: `${x.key}: ${x.why}` }, `${plainName(x.name) || x.key} · ${x.inGame ? x.why : x.inGame === false ? x.why : 'map files not read'}`))));
+      // where each NPC stands (loaders/area.js), with the GM teleport command
+      if (info.length) el.appendChild(h('div.ex-npcs', info.map(x => x.inGame && x.where && x.where.length
+        ? h('div.ex-npc', h('b', plainName(x.name) || x.key), FRE.ui.whereLine(x.where))
+        : h('span.tag.' + (x.inGame ? 'ok' : x.inGame === false ? 'warn' : 'info'),
+          { title: `${x.key}: ${x.why}` }, `${plainName(x.name) || x.key} · ${x.inGame ? x.why : x.inGame === false ? x.why : 'map files not read'}`))));
       el.appendChild(h('p.muted.small', info.length ? '' : 'No NPC has AddMenu with this menu, so players cannot open it. ',
         'This server takes the ingredients (CONDITION) when the exchange succeeds; the REMOVE list is ignored, and edits here keep it equal to CONDITION. ',
         'The client reads its own copy and sends only the exchange\'s position, so save with the Client folder chosen: otherwise players get the exchange that sits at that position in the old copy.'));
@@ -6355,18 +6760,28 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "11+", "when
     finally { S.busy = false; }
   }
 
-  // World/<map>/<map>.dyo for every map in World.inc: which NPCs stand in the game (read-only)
+  // For every map in World.inc (read-only): World/<map>/<map>.dyo (which NPCs stand in the game),
+  // <map>.rgn + <map>.txt.txt (area names) and WdMadrigal.wld.cnt (continents): loaders/area.js
   async function loadMaps(res) {
     const world = await FRE.layout.child(res, 'World');
     if (!world) return;
-    const dyo = new Map();
+    const dyo = new Map(), worldFiles = new Map(), seen = new Set();
     for (const w of S.ws.worldList()) {
-      if (dyo.has(w.name)) continue;
+      if (seen.has(w.name)) continue;
+      seen.add(w.name);
       const dir = await FRE.layout.child(world, w.name);
-      const fh = dir && (await FRE.fsa.findFiles(dir, [w.name + '.dyo'])).get((w.name + '.dyo').toLowerCase());
-      if (fh) dyo.set(w.name, (await FRE.fsa.readHandle(fh)).bytes);
+      if (!dir) continue;
+      const names = ['.dyo', '.rgn', '.txt.txt', '.wld.cnt'].map(e => w.name + e);
+      const found = await FRE.fsa.findFiles(dir, names);
+      for (const n of names) {
+        const fh = found.get(n.toLowerCase());
+        if (!fh) continue;
+        const { bytes } = await FRE.fsa.readHandle(fh);
+        if (n.endsWith('.dyo')) dyo.set(w.name, bytes);
+        else worldFiles.set(`world/${w.name}/${n}`.toLowerCase(), new FRE.SourceFile(fh.name, bytes));
+      }
     }
-    S.ws.setMapObjects(dyo);
+    S.ws.setMapObjects(dyo, worldFiles);
   }
 
   // back to the start screen; unsaved edits are only dropped after asking

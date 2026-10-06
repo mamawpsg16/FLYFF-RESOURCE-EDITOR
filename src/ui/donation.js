@@ -87,6 +87,9 @@
       el.appendChild(h('div.npc-title', h('h2', 'Donation Shop'),
         h('span.def', st.cat === ALL ? 'All items' : (t && t.isLeaf(st.cat) ? t.pathOf(st.cat).join(' › ') : st.cat)),
         h('span.line', `${f.name}`), canEdit ? null : h('span.tag.bad', 'read-only')));
+      // the client opens the shop from its taskbar button (7d7df4f9) or for the NPC with key MaFl_DONATION (WndWorld.cpp:5835)
+      if (ws.area) el.appendChild(h('div', h('span.muted.small', 'Players open it from the taskbar, or by talking to MaFl_DONATION. '),
+        FRE.ui.whereLine(ws.whereOf('MaFl_DONATION'))));
       el.appendChild(h('p.muted.small', 'Prices are each item\'s chip price (dwReferValue1 in Spec_Item.txt), paid in Donate Chips. ',
         'The same number is the item\'s price in Red Chip and Donate Chip NPC shops. An item listed here but without a price cannot be bought.'));
       if (!t) el.appendChild(h('p.muted.small', 'Choose the Client folder (toolbar) to check the categories against the client\'s DonationShopTree.inc.'));

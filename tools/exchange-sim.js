@@ -8,7 +8,7 @@
 //                   (default: the same fresh bag for every try)
 //   --seed n        random seed (default 1)
 //   --fixtures      read test-data/fixtures/Resource instead
-import { FRE, ROOT, loadFolder, openSource, readBytes, exists } from '../tests/gjs-env.js';
+import { FRE, ROOT, loadFolder, openSource, loadWorldFiles } from '../tests/gjs-env.js';
 
 const argv = [...ARGV];
 const flag = (name, def) => { const i = argv.indexOf(name); if (i < 0) return def; const v = argv[i + 1]; argv.splice(i, 2); return v; };
@@ -20,10 +20,9 @@ const files = new Map();
 const DIR = ROOT + (fixtures ? '/test-data/fixtures/Resource' : '/test-data/Resource');
 for (const [k, e] of loadFolder(DIR)) files.set(k, openSource(e));
 const ws = new FRE.Workspace(files, { only: 'exchange' }).load();
-// the map files say which NPCs stand in the game (loaders/world.js), as in the editor
-const dyo = new Map();
-for (const x of ws.worldList()) { const p = `${DIR}/World/${x.name}/${x.name}.dyo`; if (!dyo.has(x.name) && exists(p)) dyo.set(x.name, readBytes(p)); }
-ws.setMapObjects(dyo);
+// the map files say which NPCs stand in the game, and where (loaders/world.js, loaders/area.js), as in the editor
+const { dyo, worldFiles } = loadWorldFiles(DIR, ws);
+ws.setMapObjects(dyo, worldFiles);
 const S = FRE.exchangeSim, env = S.envFromWorkspace(ws), table = S.serverTable(ws.models.exchange);
 const fmt = n => FRE.num.group(n);
 const pct = v => `${v.toFixed(2)}%`;

@@ -95,8 +95,11 @@
         h('span.line', `${f.name} L${f.lineOf(m.start) + 1}`), canEdit(ctx) ? null : h('span.tag.bad', 'read-only'),
         null));
       // who opens it, and whether the WorldServer shows that NPC (map files + SetOutput / SetLang)
-      if (info.length) el.appendChild(h('div.ex-npcs', info.map(x => h('span.tag.' + (x.inGame ? 'ok' : x.inGame === false ? 'warn' : 'info'),
-        { title: `${x.key}: ${x.why}` }, `${plainName(x.name) || x.key} · ${x.inGame ? x.why : x.inGame === false ? x.why : 'map files not read'}`))));
+      // where each NPC stands (loaders/area.js), with the GM teleport command
+      if (info.length) el.appendChild(h('div.ex-npcs', info.map(x => x.inGame && x.where && x.where.length
+        ? h('div.ex-npc', h('b', plainName(x.name) || x.key), FRE.ui.whereLine(x.where))
+        : h('span.tag.' + (x.inGame ? 'ok' : x.inGame === false ? 'warn' : 'info'),
+          { title: `${x.key}: ${x.why}` }, `${plainName(x.name) || x.key} · ${x.inGame ? x.why : x.inGame === false ? x.why : 'map files not read'}`))));
       el.appendChild(h('p.muted.small', info.length ? '' : 'No NPC has AddMenu with this menu, so players cannot open it. ',
         'This server takes the ingredients (CONDITION) when the exchange succeeds; the REMOVE list is ignored, and edits here keep it equal to CONDITION. ',
         'The client reads its own copy and sends only the exchange\'s position, so save with the Client folder chosen: otherwise players get the exchange that sits at that position in the old copy.'));

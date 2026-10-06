@@ -37,3 +37,26 @@ export function loadFolder(dir) {
 export function openSource(entry) {
   return new FRE.SourceFile(entry.name, readBytes(entry.path));
 }
+
+// The World/<map>/ files the editor reads for every map in World.inc, as ui/app.js loadMaps does
+// (names matched without case, like Windows): .dyo bytes, and the .rgn / .txt.txt / .wld.cnt texts.
+export function loadWorldFiles(resDir, ws) {
+  const dyo = new Map(), worldFiles = new Map(), seen = new Set();
+  const ci = (dir, name) => exists(dir) ? listDir(dir).find(n => n.toLowerCase() === name.toLowerCase()) : undefined;
+  const world = ci(resDir, 'World');
+  if (!world) return { dyo, worldFiles };
+  for (const x of ws.worldList()) {
+    if (seen.has(x.name)) continue;
+    seen.add(x.name);
+    const d = ci(`${resDir}/${world}`, x.name);
+    if (!d) continue;
+    for (const ext of ['.dyo', '.rgn', '.txt.txt', '.wld.cnt']) {
+      const n = ci(`${resDir}/${world}/${d}`, x.name + ext);
+      if (!n) continue;
+      const bytes = readBytes(`${resDir}/${world}/${d}/${n}`);
+      if (ext === '.dyo') dyo.set(x.name, bytes);
+      else worldFiles.set(`world/${x.name}/${x.name}${ext}`.toLowerCase(), new FRE.SourceFile(n, bytes));
+    }
+  }
+  return { dyo, worldFiles };
+}

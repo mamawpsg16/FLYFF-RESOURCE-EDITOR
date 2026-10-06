@@ -128,6 +128,9 @@
     const lui = [...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MaFl_Lui'));
     click(lui);
     ok($('editor').textContent.includes('Lui'), 'Lui selected');
+    // where the NPC stands (loaders/area.js): map window name, area caption, /te
+    ok(/Where:\s*Flaris — Flarine \/ Central Flarine/.test($('editor').querySelector('.where').textContent) && /^\/te 1 \d+ \d+$/.test($('editor').querySelector('.where button.te').textContent), 'NPC header: where Lui stands + /te button');
+    ok(/Flaris — Flarine/.test(lui.querySelector('.where-short').textContent), 'NPC list: the area under each NPC');
     click(btnByText(document.querySelector('.tabs'), 'Magic Tools'));
     ok($('editor').textContent.includes('II_GEN_FOO_COO_DDUKGUKHOT'), 'tab 1 shows the existing AddShopItem');
     ok(/Items in this tab \(11\/100\)/.test($('editor').textContent), 'one table lists the 11 items players see in Lui tab 1');
@@ -268,6 +271,7 @@
     // ---- Donation Shop
     await openTask('donation');
     ok(S.mode === 'donation', 'Donation Shop mode');
+    ok(/MaFl_DONATION/.test($('editor').textContent) && /Flaris — Flarine \/ Central Flarine/.test($('editor').querySelector('.where').textContent), 'Donation Shop: where Adrian (MaFl_DONATION) stands');
     ok([...document.querySelectorAll('#list .group')].some(g => g.textContent === 'Weapon Skins'), 'categories follow the client tree');
     click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.startsWith('Consumables')));
     ok(/Items \(14\)/.test($('editor').textContent), 'Consumables lists 14 items');
@@ -429,7 +433,7 @@
     ok(btnByText(exEd().querySelector('.ex-card'), 'Remove Name Color Scroll (3 Days)') && /Exchange 1/.test(exEd().querySelector('.ex-label').textContent), 'the card is named by its reward: "Exchange 1", "Remove Name Color Scroll (3 Days)"');
     ok(/You get\s*Name Color Scroll \(3 Days\) ×1/.test(exEd().querySelector('.ex-get').textContent), 'card headline: what the player gets');
     ok(/Rewards/.test(exEd().querySelectorAll('.ex-section-title')[0].textContent) && /Costs/.test(exEd().querySelectorAll('.ex-section-title')[1].textContent), 'rewards first, then costs');
-    ok([...exEd().querySelectorAll('.ex-npcs .tag')].some(t => /Collins.*on WdMadrigal/.test(t.textContent)), 'NPC chip: Collins on WdMadrigal');
+    ok([...exEd().querySelectorAll('.ex-npcs .ex-npc')].some(t => /Collins/.test(t.textContent) && /Flaris/.test(t.textContent) && /Saint Morning/.test(t.textContent) && /Darkon 1, 2/.test(t.textContent) && t.querySelectorAll('button.te').length === 3), 'Collins: his three spots (Flaris, Saint Morning, Darkon 1, 2) with /te');
     if (STOP === 'exchange') return;
     // Try it: the exchange simulator (loaders/exchange-sim.js) on Collins recipe 8 (Scroll of Holy x5)
     click(btnByText(exEd().querySelectorAll('.ex-card')[7], 'Try it'));

@@ -255,3 +255,12 @@ body.start #layout { grid-template-columns: 1fr; }
 .bp-place .ex-tools label input.num-input { width: 90px; }
 .bp-place-now p { margin: 10px 0 0; }
 .bp-place-diff { margin-top: 10px; }
+
+/* where an NPC stands (loaders/area.js) */
+.where { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin-top: 6px; font-size: 13px; }
+.where-spot { display: inline-flex; align-items: center; gap: 6px; }
+button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; padding: 1px 7px; }
+.where-short { color: var(--accent); }
+.ex-npc { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.ex-npc .where { margin-top: 0; }
+.ex-npc { flex-basis: 100%; }

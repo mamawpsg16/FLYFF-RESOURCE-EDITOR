@@ -5,7 +5,7 @@
 //   round-trip test; nothing is ever written anywhere.
 import GLib from 'gi://GLib';
 import System from 'system';
-import { FRE, ROOT, readBytes, listDir, loadFolder, openSource, exists } from './gjs-env.js';
+import { FRE, ROOT, readBytes, listDir, loadFolder, openSource, exists, loadWorldFiles } from './gjs-env.js';
 import { bpServer } from './bp-server.js';
 
 const FIXTURES = ROOT + '/test-data/fixtures/Resource';
@@ -1273,6 +1273,88 @@ section('maps: which NPCs stand in the game (World.inc + .dyo + SetOutput/SetLan
   ok(a.output === false && a.langs.length === 1 && a.langs[0].lang === 0, 'SetOutput / SetLang parsed');
   const b = one('X {\n AddMenuLang( LANG_USA, MMI_COLLECT01 );\n AddMenuLang( LANG_KOR, MMI_EVENT_MAY );\n}\n');
   eq(b.menus.join(), String(W.defines.defines.get('MMI_COLLECT01')), 'AddMenuLang counts only for the server language (LANG_USA)');
+}
+
+// ---------------------------------------------------------------- where NPCs stand (loaders/area.js)
+section('where NPCs stand: map window, area names, /te (loaders/area.js)');
+const fixtureFiles = () => { const m = new Map(); for (const [k, e] of loadFolder(FIXTURES)) m.set(k, openSource(e)); return m; };
+const AR = FRE.area;
+const areaWs = (task) => { const w = new FRE.Workspace(fixtureFiles(), { only: task }).load(); const { dyo, worldFiles } = loadWorldFiles(FIXTURES, w); w.setMapObjects(dyo, worldFiles); return w; };
+const NW = areaWs('npc');
+{
+  const A = NW.area, D = NW.defines.defines;
+  eq(A.maps.filter(m => (m.loc >= 1 && m.loc <= 4) || (m.loc >= 241 && m.loc <= 245)).map(m => `${m.loc}=${m.title}`).join(', '),
+    '241=Darkon 1, 2, 242=Darkon 3, 3=Garden of Rhisis, 2=Saint Morning, 1=Flaris, 243=Shaduwar, 4=Valley of the Risen, 244=Kaillun Grassland, 245=Bahara Desert',
+    'map window names by location (propMapComboBoxData.inc + .txt.txt)');
+  eq(AR.mapTitle(A, 0), 'Madrigal', 'outside every continent the map window opens "Madrigal" (CONT_NODATA)');
+  eq([...A.cont.keys()].sort((a, b) => a - b).join(), '1,2,3,4,241,242,243,244,245', 'WdMadrigal.wld.cnt: 9 continents');
+  eq(A.towns.size, 0, 'finding: every town block has C_useRealData 0, so GetTown never finds a town');
+  ok(A.cont.get(1).some(([x, z]) => x === 7087 && z === 8157), 'finding: the Flaris polygon has a stray vertex (7087, 8157)');
+  // CContinent::GetRevivalPos points
+  eq(AR.mapArea(A, 6968, 3328), D.get('CONT_FLARIS'), 'revival point (6968, 3328) is in Flaris');
+  eq(AR.mapArea(A, 8470, 3635), D.get('CONT_SAINTMORNING'), 'revival point (8470, 3635) is in Saint Morning');
+  eq(AR.mapArea(A, 3808, 4455), D.get('CONT_DARKON12'), 'revival point (3808, 4455) is in Darkon 1, 2');
+  // b6abf414 removed these "from Flaris" (verified in game)
+  for (const k of ['MaFl_Shain', 'MaFl_COUPONPANG']) eq((NW.whereOf(k)[0] || {}).mapWindow, 'Flaris', `${k} stands in Flaris (b6abf414)`);
+  const don = NW.whereOf('MaFl_DONATION');
+  eq(don.map(w => `${AR.label(w)} ${w.te}`).join(), 'Flaris — Flarine / Central Flarine /te 1 6961 3231', 'Adrian (MaFl_DONATION): label and /te');
+  eq(NW.whereOf('MaFl_COLINSE').map(w => w.place).join(), 'Flaris,Saint Morning,Darkon 1, 2', 'Collins stands in three towns');
+  eq(NW.whereOf('MaFl_May').length, 0, 'an NPC on no map: no spot');
+  const darken = [...A.placed.get('WdMadrigal')].map(p => NW.whereOf(p.key)).flat().filter(w => w.caption === 'Darkon 2 / Darken');
+  ok(darken.length > 20 && darken.every(w => w.place === 'Darkon 1, 2'), `${darken.length} NPC spots read "Darkon 1, 2 — Darkon 2 / Darken"`);
+  const out = [...A.placed].flatMap(([w, l]) => l.map(p => AR.standAt(A, w, p.x, p.z)).filter(r => r.caps.some(c => c[0].startsWith('IDS_')))).length;
+  ok(out > 0, `finding: ${out} NPC spots on maps whose strings the client never loads (WdArena_1) show raw IDS_ area names`);
+  eq(AR.captionLines('A\r\nB').join('|'), 'A|B', 'caption lines split on CRLF');
+  eq(AR.captionLines('A\r\n').join('|'), 'A', 'a trailing CRLF ends the caption');
+  eq(AR.captionLines('').join('|'), '', 'an empty title is one empty line');
+  // the editor's workspaces
+  const XW = areaWs('exchange');
+  const col = (XW.npcInfoByMenu().get(D.get('MMI_COLLECT01')) || []).find(x => x.key === 'MaFl_COLINSE');
+  ok(col && col.where.length === 3, 'Exchanges: each menu NPC carries where it stands');
+  const DW = areaWs('donation');
+  eq(DW.whereOf('MaFl_DONATION').length, 1, 'Donation Shop task reads the maps too');
+  eq(new FRE.Workspace(fixtureFiles(), { only: 'battlepass' }).load().needsMaps(), false, 'Battle Pass (no NPC) reads no maps');
+}
+
+// The same spots, walks and small files through the independent Python copy (tools/oracle_sim.py
+// area, written from the C++ without reading area.js): every result must match.
+section('where NPCs stand: JS and Python copies agree');
+{
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ROOT}/tools/oracle_sim.py area ${FIXTURES}`);
+  const py = JSON.parse(new TextDecoder().decode(out));
+  const A = NW.area, D = NW.defines.defines, J = JSON.stringify;
+  const pm = m => { const o = {}; for (const k of [...m.keys()].sort((a, b) => a - b)) o[k] = m.get(k); return o; };
+  const src = t => new FRE.SourceFile('x', FRE.bytes.binaryStringToBytes(t));
+  const jw = {}; for (const [k, v] of A.worlds) jw[k] = v;
+  eq(J(jw), J(py.worlds), `World.inc: ${A.worlds.size} worlds, file names and titles agree`);
+  eq(J(A.maps), J(py.maps), 'map window names agree');
+  ok(J(pm(A.cont)) === J(py.cont) && J(pm(A.towns)) === J(py.towns), 'continent polygons agree');
+  const rc = {}; for (const [n, r] of A.regions) rc[n] = r.length;
+  eq(J(rc), J(py.regionCounts), 'regions per map agree');
+  let bad = [];
+  const js = []; for (const [w, list] of A.placed) for (const p of list) js.push(Object.assign(AR.standAt(A, w, p.x, p.z), { world: w, worldId: A.firstId.get(w), key: p.key, x: p.x, z: p.z }));
+  const norm = s => J({ w: s.world, id: s.worldId, k: s.key, x: s.x, z: s.z, e: s.entered, n: s.nav, c: s.caps, m: s.msgs, a: s.mapArea, t: s.mapWindow });
+  py.stands.forEach((s, i) => { if (!js[i] || norm(js[i]) !== norm(s)) bad.push(`stand ${norm(s)} | JS ${norm(js[i] || {})}`); });
+  ok(js.length === py.stands.length && py.stands.length > 400, `${py.stands.length} NPC spots from the Python copy`);
+  eq(bad.length, 0, 'every NPC spot agrees (map window, regions entered, navigator, captions, chat lines)');
+  bad.slice(0, 3).forEach(b => print('   ' + b.slice(0, 400)));
+  bad = py.walks.filter(w => J(AR.walk(A.regions.get(w.world), w.path, w.step)) !== J(w.expect)).map(w => w.seed);
+  eq(bad.join(), '', `${py.walks.length} random walks (${py.walks.reduce((n, w) => n + w.expect.frames, 0)} frames) agree frame by frame`);
+  bad = py.grid.filter(([x, z, id]) => AR.mapArea(A, x, z) !== id);
+  eq(bad.length, 0, `${py.grid.length} grid points over the Flaris polygon: same map window location`);
+  bad = py.polys.filter(c => { let h = ''; for (let x = -13; x < 14; x++) for (let y = -13; y < 14; y++) h += AR.pointInPoly(c.poly, x, y) ? '1' : '0'; return h !== c.hits; });
+  eq(bad.length, 0, `${py.polys.length} small polygons (edges, vertices, negative values, self-intersecting): Point_In_Poly agrees`);
+  bad = py.cnt.filter(c => { const r = AR.readContinents(src(c.text), D, new Map()); return J(pm(r.cont)) !== J(c.cont) || J(pm(r.towns)) !== J(c.towns) || c.lookup.some(([x, z, id]) => AR.lookup(r.cont, x, z) !== id); });
+  eq(bad.length, 0, `${py.cnt.length} small continent files (duplicate id, id over 255, towns, skipped blocks, overlap) agree`);
+  const c = py.mapnames, mn = AR.readMapNames(src(c.text), D, new Map(Object.entries(c.strings)));
+  ok(J(mn) === J(c.maps) && c.titles.every(([loc, t]) => AR.mapTitle({ maps: mn }, loc) === t), 'a small map-window file (duplicate location, BYTE id, empty titles) agrees');
+  for (const r of py.rgn) {
+    const regs = AR.readRegions(src(r.text), D, new Map(Object.entries(r.strings)));
+    eq(J(regs), J(r.regions), 'a small region file (overlaps, no title, two lines, old format, excluded indexes, unknown key) reads the same');
+    eq(r.walks.filter(w => J(AR.walk(r.regions, w.path, w.step)) !== J(w.expect)).length, 0, `${r.walks.length} walks over it agree`);
+    const n = o => J([o.entered, o.nav, o.caps, o.msgs]);
+    eq(r.stands.filter(s => n(AR.stand(r.regions, s.x, s.z)) !== n(s)).length, 0, `${r.stands.length} spots on it agree`);
+  }
 }
 
 section('mutations');

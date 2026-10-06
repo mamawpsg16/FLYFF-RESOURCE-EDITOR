@@ -156,6 +156,21 @@ Startup order (`OpenProject`):
 - **Two blocks for one monster:** the drop list is never cleared, so the drops append.
 - **Custom:** `PenyaTable` (`_Common/PenyaTable.h` + `PenyaTable.txt`) replaces `DropGold` for listed ranks at runtime. The file's DropGold isn't always what players get.
 
+### 1.8 Where an NPC stands, and the names players see (added 2026-10-06, `loaders/area.js`)
+- **Position:** a `.dyo` mover record holds `m_vPos` at byte 16 of the 60-byte CObj part. `CObj::Read` multiplies x and z by `OLD_MPU` = 4 (`Obj.cpp:525`, `DefineCommon.cpp:11`). `CWorld::LoadObject` uses the result as is.
+- **Map window (M):** `CWndMapEx::GetMapArea` (`WndMapEx.cpp:1385`) calls `CContinent::GetTown`, then `GetContinent`.
+  - The polygons come from `World/WdMadrigal/WdMadrigal.wld.cnt` (`CContinent::Init`, `_Common/Continent.cpp`). They are checked in id order with `Point_In_Poly`, whose arithmetic is integer (LONG).
+  - The name is the first `MCC_MAP_NAME` entry in `propMapComboBoxData.inc` with that `SetLocationID`: 1 Flaris, 2 Saint Morning, 3 Garden of Rhisis, 4 Valley of the Risen (Estia), 241 Darkon 1, 2, 242 Darkon 3, 243 Shaduwar (Harmonin), 244 Kaillun Grassland, 245 Bahara Desert, 0 Madrigal.
+  - **Finding:** every town block (Flarine, Sain City, Darken, Eillun) has `C_useRealData 0`. Init skips those blocks, so `GetTown` never finds a town and the map window never opens a town map by itself.
+  - **Finding:** the Flaris polygon has a stray vertex (7087, 8157), so it is self-intersecting and claims a thin strip of other continents. No NPC stands in that strip.
+- **Area name on screen:** this comes from the client's region loop in `CWndWorld` (`WndWorld.cpp:9258–9370`; white style `bdf9f5cb`).
+  - The regions are the `.rgn` records (`CWorld::ReadRegion`, `WorldFile.cpp:413`), in file order, minus `RI_BEGIN`, `RI_REVIVAL` and `RI_STRUCTURE`.
+  - Each frame, the first region newly entered (`CRect::PtInRect`) does four things: it sets the navigator name ("" when it has no title), sends its desc lines to the chat, and shows its title. The title's first line is big and clears the old area names; the rest is small. Then the loop stops for that frame.
+  - Titles come from the string table (`CProject::LoadStrings`). A map whose `.txt.txt` is not in that list (e.g. `WdArena_1`) shows the raw `IDS_…` key.
+- **Other maps:** `World.inc` `SetTitle` sets the world's name (`world.txt.txt`).
+- **Teleport:** a GM types `/te <world id> <x> <z>` (`TextCmd_Teleport`, `FuncTextCmd.cpp:2718`).
+- **Donation Shop:** the client opens it from the taskbar (`7d7df4f9`) or for the NPC whose key is `MaFl_DONATION` (`WndWorld.cpp:5835`).
+
 ---
 
 ## Phase 2: Encoding and line-ending forensics (all 15,299 files, raw bytes)

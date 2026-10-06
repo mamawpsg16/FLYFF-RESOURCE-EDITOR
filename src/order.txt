@@ -11,6 +11,7 @@ loaders/item-tooltip.js
 loaders/specitem.js
 loaders/propmover.js
 loaders/world.js
+loaders/area.js
 loaders/character.js
 loaders/vendor-sim.js
 loaders/donation.js
