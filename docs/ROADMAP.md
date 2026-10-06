@@ -155,18 +155,19 @@ _Last updated 2026-10-06._
 
 ## Next (in this order, agreed with the user)
 
-**Order (agreed 2026-10-06; tasks H–M added that day):**
-1. Add New NPC step 1: committed (`7cbb9c9`), **not tested in game yet**. Do the in-game test (handoff §8) before calling it done; fix what it finds before starting H.
-2. **H. "Where is this item used?"**
-3. Add New NPC step 2 (exchange NPCs + new menus, Jeff's Weapon Pieces).
-4. Add New NPC step 3 (edit NPC menus + info boards, Guild Siege rules).
-5. **I. Rates & Buffs** (server rates, level-up gifts, rebirth tiers, guild buff, server buff, couple; buff descriptions written from the stats).
-6. F. Monster drops (the Rates calculator then shows real drop chances).
-7. **J. Random boxes.**
-8. **K. Upgrade rates.**
-9. **L. Monster Hunt + Badges + Collecting.**
-10. G. Item set effects and weapon effects.
-11. **M. Teleporter.**
+**Order (agreed 2026-10-06; tasks S and H–M added that day):**
+1. Add New NPC step 1: committed (`7cbb9c9`), **not tested in game yet**. Do the in-game test (handoff §8) before calling it done; fix what it finds before starting S.
+2. **S. Shops: everything editable** (asked 2026-10-06: "the idea is we're able to edit everything in a shop").
+3. **H. "Where is this item used?"**
+4. Add New NPC step 2 (exchange NPCs + new menus, Jeff's Weapon Pieces).
+5. Add New NPC step 3 (edit NPC menus + info boards, Guild Siege rules).
+6. **I. Rates & Buffs** (server rates, level-up gifts, rebirth tiers, guild buff, server buff, couple; buff descriptions written from the stats).
+7. F. Monster drops (the Rates calculator then shows real drop chances).
+8. **J. Random boxes.**
+9. **K. Upgrade rates.**
+10. **L. Monster Hunt + Badges + Collecting.**
+11. G. Item set effects and weapon effects.
+12. **M. Teleporter.**
 
 The user may move tasks (e.g. L earlier if the badge TODOs become urgent). Sections H–M below are leads from a first look, not finished investigations: read the C++ named there before designing anything.
 
@@ -196,6 +197,25 @@ The user may move tasks (e.g. L earlier if the badge TODOs become urgent). Secti
 - What the bonuses of an item set (wearing N pieces) and a weapon's effects give a character, edited in the app.
 - First find in the C++ and the commits which files and loaders hold them. Leads: the `SetItem` blocks of `propItemEtc.inc` (`_Common/Project.cpp:4567`, the same file as `LoadPiercingAvail`), the item's own stat values in `Spec_Item.txt`, and `randomoption.inc` / `ItemMergeRandomOption.txt`.
 - Simulator: a character wears / wields the items, and the simulator applies the bonuses the way the server does, giving the stats the game would show. Plus the independent Python copy, as for every task.
+
+### S. Shops: everything editable (asked 2026-10-06)
+**Why:** today only fixed items (`AddShopItem` / `AddVenderItem2`) are editable. Items that come from an `AddVendorItem` rule show in the shop but can't be priced or removed.
+- Example: Peach `MaFl_Peach` (character.inc ~7520) and Raia (~9519) each have `AddVendorItem( 0, IK3_GENERAL_RANDOMOPTION_GEN, -1, 190, 190, 100 )` → Scroll of Awakening (`dwCost` 100,000), and `IK3_SYSTEMPET_RANDOMOPTION_GEN` → Scroll of Pet Awakening (200,000).
+
+**What the server allows** (port it; these limits must be shown, not hidden):
+- A rule item's price is the item's own `dwCost` (Spec_Item.txt). One value per item: it is the price in every shop that sells it and the base of the sell-back price.
+- `AddShopItem( tab, II_X, price )` also overwrites that same `dwCost` server-wide (`Project.cpp` AddShopItem branch; already a rule in this editor).
+- A rule can't drop one item for one shop. Only `dwShopAble = -1` hides an item from every rule in every shop.
+
+**What to build:**
+1. **Every row editable.** A row from a rule gets the same price box and ✕ as a fixed item. Editing it asks:
+   - **Make it a fixed item (default; the user's proven way, `73ee4bd6` re-priced only with `AddShopItem` lines):** replace the rule with `AddShopItem( tab, II_X, price )` for each item it gave in this shop (simulate with `vendor-sim.js`, same order), then apply the edit. One undo step. If the rule matched more items than the one edited, list them all in the preview.
+   - **Change the base price (`dwCost`)** in Spec_Item.txt (Server + Client, the `item-ops.js` way, like chip prices `93a02124` / `fea9840b`). The preview names every other shop and system that uses this price (task H can supply it later).
+2. **✕ on a rule item:** convert to fixed items without it. Never set `dwShopAble = -1` silently: it removes the item from every rule shop, so it is a separate, named action with the list of shops affected.
+3. **Rules themselves** (moves the Deferred item here): add / edit / remove `AddVendorItem` (tab, IK3, job, rarity min–max), with a live preview of the generated items from `vendor-sim.js`, the 100-per-tab cap and `VENDORITEM//` no-match warnings.
+4. **Same-price check:** when two shops sell the same item at different prices (e.g. Peach converted, Raia still on the rule), warn. Only one `dwCost` exists, so the last NPC loaded wins.
+
+**Simulator:** `vendor-sim.js` already ports ProcessRegenItem. Add the buy price the player pays (find where the shop price is computed for a normal Penya shop) and the sell-back price, so the preview shows "players pay / get back". Python copy in `tools/oracle.py`.
 
 ### H. "Where is this item used?" (asked 2026-10-06)
 - Pick any item (item DB panel or a new search box): list every place it appears, each with a jump link.
@@ -284,7 +304,7 @@ All five came in with the import commit `3ebc5356`. `Event.lua` was also changed
 - Simulator: the teleport window's list and where the player lands, plus the Python copy.
 
 ## Deferred (needs in-game testing on the user's Windows PC)
-- Editing `AddVendorItem` rules (the simulator in `loaders/vendor-sim.js` is ready for a live preview).
+- In-game check of task S edits (a converted rule shop, a changed `dwCost`: buy and sell-back prices).
 - The first save against the real `Server/Resource`, then copy to `Client/`, restart, and check in-game.
 - An exchange in game after an edit (Server and Client copies saved together).
 - Where NPCs stand: `/te <id> <x> <z>` to a few NPCs (Lui, Collins ×3, Adrian), then check the area name on screen and the map window (M) against the editor.
