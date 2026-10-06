@@ -155,6 +155,21 @@ _Last updated 2026-10-06._
 
 ## Next (in this order, agreed with the user)
 
+**Order (agreed 2026-10-06; tasks H–M added that day):**
+1. Add New NPC step 1: built, waiting for the user's test (handoff at the top).
+2. **H. "Where is this item used?"**
+3. Add New NPC step 2 (exchange NPCs + new menus, Jeff's Weapon Pieces).
+4. Add New NPC step 3 (edit NPC menus + info boards, Guild Siege rules).
+5. **I. Rates & Buffs** (server rates, level-up gifts, rebirth tiers, guild buff, server buff, couple; buff descriptions written from the stats).
+6. F. Monster drops (the Rates calculator then shows real drop chances).
+7. **J. Random boxes.**
+8. **K. Upgrade rates.**
+9. **L. Monster Hunt + Badges + Collecting.**
+10. G. Item set effects and weapon effects.
+11. **M. Teleporter.**
+
+The user may move tasks (e.g. L earlier if the badge TODOs become urgent). Sections H–M below are leads from a first look, not finished investigations: read the C++ named there before designing anything.
+
 ### Add New NPC (handoff written 2026-10-05, branch `ccr-25b694d1-jie3e1`, merged)
 - Spec: **`docs/HANDOFF-ADD-NPC.md`** (read it whole first). In the web app the user creates an NPC, places it on a map (a new 200-byte record in `World/<map>/<map>.dyo`), ticks its right-click menus, and gives it up to 4 shop tabs with items. The app validates (§6, with self-tests §6.5), shows the exact text and bytes, backs up, writes the 6 files (Server + Client), reads them back and validates again (§7). In-game checklist: §8; out of scope: §9; build order: §10.
 - `docs/resource-forensics.csv`: encoding, BOM and line ending of every Resource file (byte-exact saves).
@@ -181,6 +196,92 @@ _Last updated 2026-10-06._
 - What the bonuses of an item set (wearing N pieces) and a weapon's effects give a character, edited in the app.
 - First find in the C++ and the commits which files and loaders hold them. Leads: the `SetItem` blocks of `propItemEtc.inc` (`_Common/Project.cpp:4567`, the same file as `LoadPiercingAvail`), the item's own stat values in `Spec_Item.txt`, and `randomoption.inc` / `ItemMergeRandomOption.txt`.
 - Simulator: a character wears / wields the items, and the simulator applies the bonuses the way the server does, giving the stats the game would show. Plus the independent Python copy, as for every task.
+
+### H. "Where is this item used?" (asked 2026-10-06)
+- Pick any item (item DB panel or a new search box): list every place it appears, each with a jump link.
+  - NPC shops (`AddShopItem`, `AddVenderItem2`, and `AddVendorItem` rules that match it, via `vendor-sim.js`);
+  - Donation Shop, Exchanges (ingredient / reward), Battle Pass rewards;
+  - later, as their tasks land: monster drops (F), random boxes (J), level-up / rebirth / couple gifts (I), Monster Hunt (L).
+- Mostly reuses the existing loaders. It is read-only, so it needs no edit ops.
+- Useful checks shown with it: the item is sold cheaper than an exchange or box gives it; it is in a shop but `dwShopAble = -1`; an `AddShopItem` price overrides it server-wide (name the NPC).
+- Simulator: none of its own; it reports what the other tasks' simulators produce (e.g. the real shop contents). Its Python copy: an independent cross-reference of the same files in `tools/oracle_sim.py`.
+
+### I. Rates & Buffs (asked 2026-10-06)
+**Files, and the C++ that reads each one:**
+
+| What | File | Loader |
+|---|---|---|
+| Server rates + level-up gifts | `Event.lua` (Lua) | `CEventLua`, `_Common/EventLua.cpp:176` |
+| Rebirth tiers | `1Rebirth.inc` | `_Common/Project.cpp:6062` |
+| Guild buff tiers | `GuildBuff.txt` | `_Common/GuildBuff.cpp:15` |
+| Server buff tiers | `ServerBuff.txt` | `_Common/ServerBuff.cpp:30` |
+| Couple | `couple.inc` | `CCoupleProperty::Initialize`, `_Common/couple.cpp:234` |
+
+All five came in with the import commit `3ebc5356`. `Event.lua` was also changed by `4f268007` (`/weather`, the EXP bonus while it rains or snows).
+
+**Server rates:**
+- The real rates are the `Event.lua` event "Server Rates", running 2007-12-31 → 2099-12-31: `SetExpFactor( 30 )`, `SetGoldDropFactor( 10 )`, `SetItemDropRate( 10 )`, plus `SetWeatherEvent( 1.5, … )`.
+- **Trap:** `Constant.inc` has `itemDropRate` / `goldDropRate` / `monsterExpRate`, but `CProject::LoadConstant` (`_Common/Project.cpp:1182`) only reads the block whose `lang` equals the server language. The server is LANG_USA (`WorldServer.rc:137`), and the file has only KOR / JAP / CHI blocks, so **Constant.inc changes nothing**. Show it as INFO and never offer it as the place to change rates.
+- `Event.lua` is Lua, not CScanner. Port only the `AddEvent` / `SetTime` / `Set*` calls the server registers (`EventLua.cpp`), and edit them as statement splices.
+- Level-up gifts: `SetLevelUpGift( level, "all", "II_…", qty, flag, minutes )` in the event "Level Up Rewards". Edit them as a ladder, like the Battle Pass reward ladder.
+
+**Couple (first look):**
+- `couple.inc` has four sections:
+  - **Level:** points per level. 50 rows, but `couple.h` caps couples at `eMaxLevel = 21`, so rows 22–50 are unused (INFO).
+  - **Item:** gifts per level (item, sex, flag 2 = bound, minutes, count).
+  - **SkillKind:** `II_COUPLE_BUFF_POWER_01` / `BLESS_01` / `MIRACLE_01`.
+  - **SkillLevel:** couple level → buff level per kind. Buff item = kind + level − 1 (`LoadSkillLevel`, `couple.cpp:317`). Rows are carried forward.
+- `CUser::ProcessCouple` (`WORLDSERVER/User.cpp:3993`):
+  - buffs are on only while the partner is online;
+  - the couple gets 1 point per tick block, counted for only one of the two partners;
+  - the buff is applied only when no `IK3_COUPLE_BUFF` buff is active, so after a couple level-up the old buff level probably stays until it is removed (partner offline / relog). Needs an in-game check.
+- What the buffs really give (Spec_Item.txt):
+  - POWER 01–04: `DST_ATKPOWER_RATE` 3 / 5 / 8 / 10;
+  - BLESS 01–03: `DST_HP_MAX_RATE` 5 / 7 / 10;
+  - MIRACLE 01: `DST_SPEED` +20.
+- **The descriptions are wrong:** Power says "All Stats and Attack Power" (attack only), Bless says "Max HP and Movement Speed" (HP only), Miracle says "PvE Damage" (it is movement speed). Rule: warn when a buff's description doesn't match its stats.
+
+**Descriptions from stats (asked):**
+- For buff items edited here (couple, guild, server buff), offer to rewrite the item's description (`szCommand` IDS → `propItem.txt.txt`, Server + Client, UTF-16LE) from its real stats, in the house style ("Attack +10%, Max HP +10%").
+- Show it as a preview first; it is part of the same undo step as the stat change.
+
+**Simulator:**
+- A rate calculator: for a player (rebirth tier, guild buff tier, server buff tier, couple level, weather, active events), the EXP, Penya and drop multipliers per kill.
+- Port how the server COMBINES them: first find where each factor is applied (kill EXP, gold drop, item drop) and whether they multiply or add. Don't guess.
+- F extends the calculator with per-monster drop chances.
+- Python copy, as for every task.
+
+### J. Random boxes (asked 2026-10-06)
+- Files: `propGiftbox.inc` (`LoadGiftbox`, `_Common/Project.cpp:842`) and `propPackItem.inc` (`LoadPackItem`, `Project.cpp:855`; the client loads it too, see the comment in `OpenProject`).
+- Show each box's contents with the real chance of each item, as the server rolls it.
+- Rules: unknown items, chances that don't add up the way the loader expects, a box sold in the Donation Shop whose contents changed.
+- Simulator: "open N boxes" with the server's `xRandom` (port the open-box code path), plus the Python copy.
+
+### K. Upgrade rates (asked 2026-10-06)
+- Files:
+  - `ItemUpgrade.lua` (Lua; `CItemUpgrade::LoadScript`, `WORLDSERVER/ItemUpgrade.cpp:59`);
+  - `propEnchant.inc` (`LoadPropEnchant`, `Project.cpp:833`);
+  - `WeaponRarity.inc` (`Project.cpp:497`);
+  - the Ultimate files (`Ultimate_UltimateWeapon.txt`, `Ultimate_GemAbility.txt`).
+- Related commits: the done items "Trim the success rate in upgrading" and "Weapon rarity" in the TODO list. Find their hashes in `../FLYFF-V19-SOURCE` before designing.
+- Show the success / fail / break chance per level.
+- Simulator: "average tries and Penya / materials to reach +N", plus the Python copy.
+
+### L. Monster Hunt + Badges + Collecting (asked 2026-10-06)
+- Files:
+  - `MonsterHunt.inc` (`_Common/MonsterHunt.cpp:49`);
+  - `Badge.inc` (`_Common/Badge.cpp:93`; the badge right of the name, `__BADGE_SYSTEM`);
+  - `collecting.inc` (`CCollectingProperty::LoadScript`, `Project.cpp:935`).
+- Pending user TODOs this task should make easy:
+  - "Make the badge scroll only show the badges not given by rebirth or lvl 150";
+  - "Add badges in the collecting area and remove them from the Monster Hunt".
+- Rules: every hunt's badge exists; every badge has a way to be earned; no badge is given by two systems by mistake.
+- Simulator: a player kills the listed monsters / collects, and which badge they get and when. Plus the Python copy.
+
+### M. Teleporter (asked 2026-10-06)
+- File: `Teleporter.inc` (`CTeleporter::ReadConfig`, `Project.cpp:955`). Each entry is `TELEPORT_CASE <world> <x> <y> <z> <type> "<name>" "<picture>"`.
+- Add, move or rename spots; show each spot's area name with `loaders/area.js`; check the picture exists in the client.
+- Simulator: the teleport window's list and where the player lands, plus the Python copy.
 
 ## Deferred (needs in-game testing on the user's Windows PC)
 - Editing `AddVendorItem` rules (the simulator in `loaders/vendor-sim.js` is ready for a live preview).
