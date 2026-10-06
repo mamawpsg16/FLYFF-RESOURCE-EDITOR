@@ -2,7 +2,7 @@
 
 _Last updated 2026-10-06._
 
-> **Handoff (2026-10-06, late night) — START HERE:** **Add New NPC step 1 (shop NPC, reworks 1b + 1c + 1d) is built, NOT committed.** The user tested 1c in Brave: OK except the Model list and the Building tag, both reworked in 1d (below). Waiting for the user's test of 1d, then commit. Plans: `/home/kevin/.claude/plans/magical-spinning-knuth.md`, `/home/kevin/.claude/plans/flickering-shimmying-dahl.md`. Tests: `gjs -m tests/run-tests.js` 543 pass, `tests/run-ui.sh` 183 pass, `python3 tools/oracle_sim.py newnpc` (152 cases + 12 small structure files, JS = Python).
+> **Handoff (2026-10-06, late night) — START HERE:** **Add New NPC step 1 (shop NPC, reworks 1b + 1c + 1d) is committed (`7cbb9c9`) but NOT tested in game yet.** The user tested 1c in Brave: OK except the Model list and the Building tag, both reworked in 1d (below). Next: the in-game test (handoff §8 + the `[tag]` above the name and its minimap icon) on a test copy first, then the real folder after asking. Plans: `/home/kevin/.claude/plans/magical-spinning-knuth.md`, `/home/kevin/.claude/plans/flickering-shimmying-dahl.md`. Tests: `gjs -m tests/run-tests.js` 543 pass, `tests/run-ui.sh` 183 pass, `python3 tools/oracle_sim.py newnpc` (152 cases + 12 small structure files, JS = Python).
 >
 > **1d (user test feedback):**
 > - Model: a **Used by NPCs / Not used yet / Both** dropdown replaces the checkbox; a model not in the chosen list is cleared (no stale picture). A line under it lists the files: `.o3d`, animations, textures — all in Client/Model, or what is missing. Textures are read from the `.o3d` (`newNpcSim.o3dTextures`; a test copy uses `Client/ModelTexture.list` + `Client/Model.textures` from `tools/refresh-fixtures.sh`). Models of NPCs hidden in `b6abf414` are proven ("Soraya (until b6abf414)").
@@ -146,7 +146,7 @@ _Last updated 2026-10-06._
   - Not modelled: `RA_INN` regions (need the land height), caption timers, regions the server adds at run time, and the map window in other worlds (the world title names those).
   - `tools/refresh-fixtures.sh` and the UI harness also carry the region, string and continent files.
 
-- **Add New NPC, step 1** (2026-10-06, built, waiting for the user's test): plan `/home/kevin/.claude/plans/magical-spinning-knuth.md`.
+- **Add New NPC, step 1** (2026-10-06, committed `7cbb9c9`, NOT tested in game yet): plan `/home/kevin/.claude/plans/magical-spinning-knuth.md`.
   - `edit/npc-ops.js` (`newNpcPlan`, `buildRecord`, `insertPoint`), `validate/newnpc.js` (27 `NN_*` codes, handoff §6), `ui/new-npc.js`, `loaders/newnpc-sim.js`.
   - Core: `SourceFile` binary kind; the workspace keeps each map's `.dyo` as an editable file (`setMapFiles`, `refreshMaps`); string tables reload when a `.txt.txt` changes; save/backup/client sync handle files in sub-folders.
   - Findings: x/z ÷ 4 (`OLD_MPU`); insert at the final `FFFFFFFF`; the right-click popup lists menus by id (not AddMenu order) with a few special labels; V19 always opens it.
@@ -156,7 +156,7 @@ _Last updated 2026-10-06._
 ## Next (in this order, agreed with the user)
 
 **Order (agreed 2026-10-06; tasks H–M added that day):**
-1. Add New NPC step 1: built, waiting for the user's test (handoff at the top).
+1. Add New NPC step 1: committed (`7cbb9c9`), **not tested in game yet**. Do the in-game test (handoff §8) before calling it done; fix what it finds before starting H.
 2. **H. "Where is this item used?"**
 3. Add New NPC step 2 (exchange NPCs + new menus, Jeff's Weapon Pieces).
 4. Add New NPC step 3 (edit NPC menus + info boards, Guild Siege rules).
