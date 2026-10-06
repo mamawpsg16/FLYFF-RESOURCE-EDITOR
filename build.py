@@ -5,7 +5,7 @@ A page opened from disk (file://) cannot load <script type="module" src=...>,
 so the separate source files in src/ are inlined here in src/order.txt order.
 Standard library only.  Usage: python3 build.py
 """
-import base64, datetime, pathlib, re, subprocess, sys
+import json, base64, datetime, pathlib, re, subprocess, sys
 
 ROOT = pathlib.Path(__file__).resolve().parent
 SRC = ROOT / 'src'
@@ -13,26 +13,35 @@ OUT = ROOT / 'dist' / 'flyff-resource-editor.html'
 
 
 def build_info():
-    try:
-        rev = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=ROOT, capture_output=True, text=True).stdout.strip()
-    except OSError:
-        rev = ''
-    return f"build 1 · {datetime.date.today().isoformat()}" + (f" · {rev}" if rev else '')
+    """Version = number of commits (one more per commit); "+" = built from uncommitted changes."""
+    def git(*args):
+        try:
+            return subprocess.run(['git', *args], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+        except OSError:
+            return ''
+    count, rev = git('rev-list', '--count', 'HEAD'), git('rev-parse', '--short', 'HEAD')
+    dirty = bool(git('status', '--porcelain', '--', 'src', 'build.py'))
+    now = datetime.datetime.now()
+    days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    when = f"{days[now.weekday()]} {now.day} {months[now.month - 1]} {now.year}, {now:%H:%M}"   # e.g. Tue 6 Oct 2026, 08:20
+    return {'version': (count or '?') + ('+' if dirty else ''), 'when': when, 'rev': rev, 'dirty': dirty}
 
 
 def main():
     harness = '--harness' in sys.argv
     order = [l.strip() for l in (SRC / 'order.txt').read_text().splitlines() if l.strip() and not l.startswith('#')]
-    parts = [f'globalThis.FRE = globalThis.FRE || {{}}; FRE.BUILD_INFO = {build_info()!r};']
+    parts = [f'globalThis.FRE = globalThis.FRE || {{}}; FRE.BUILD_INFO = {json.dumps(build_info())};']
     for rel in order:
         code = (SRC / rel).read_text(encoding='utf-8')
         parts.append(f'// ---- {rel} ----\n{code}')
     if harness:  # test build: fake file system + scripted UI scenario (tests/ui-harness.js)
-        import json
-        fx = ROOT / 'test-data' / 'Resource'
+        fx = ROOT / 'test-data' / 'fixtures' / 'Resource'
         data = {f.name: base64.b64encode(f.read_bytes()).decode() for f in sorted(fx.iterdir()) if f.is_file()}
+        # map files keep their folder: "World/WdMadrigal/WdMadrigal.dyo"
+        data.update({f.relative_to(fx).as_posix(): base64.b64encode(f.read_bytes()).decode() for f in sorted(fx.glob('World/*/*.dyo'))})
         parts.append('FRE.HARNESS_FILES = ' + json.dumps(data) + ';')
-        tree = ROOT / 'test-data' / 'Client' / 'Client' / 'DonationShopTree.inc'
+        tree = ROOT / 'test-data' / 'fixtures' / 'Client' / 'Client' / 'DonationShopTree.inc'
         parts.append('FRE.HARNESS_TREE = ' + json.dumps(base64.b64encode(tree.read_bytes()).decode() if tree.exists() else None) + ';')
         parts.append((ROOT / 'tests' / 'ui-harness.js').read_text(encoding='utf-8'))
     js = '\n'.join(parts)

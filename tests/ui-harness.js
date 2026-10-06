@@ -41,12 +41,15 @@
 
   // ---- fake Resource folder from the fixtures embedded by build.py --harness
   const res = new FakeDir('Resource');
-  for (const [n, b64] of Object.entries(FRE.HARNESS_FILES)) {
+  for (const [path, b64] of Object.entries(FRE.HARNESS_FILES)) {
     const bin = atob(b64), u8 = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-    res.children.set(n, new FakeFile(n, u8));
+    const parts = path.split('/'), n = parts.pop();
+    let dir = res;
+    for (const p of parts) { if (!dir.children.has(p)) dir.children.set(p, new FakeDir(p)); dir = dir.children.get(p); }
+    dir.children.set(n, new FakeFile(n, u8));
   }
-  const original = new Map([...res.children].map(([n, f]) => [n, f.bytes]));
+  const original = new Map([...res.children].filter(([, f]) => f.kind === 'file').map(([n, f]) => [n, f.bytes]));
   const backups = new FakeDir('backups');
   // fake Client folder like the real one: character.inc / DonationShop.inc identical,
   // Spec_Item.txt with LF line endings, no loose character-etc.inc / character-school.inc
@@ -54,6 +57,7 @@
   const lfOnly = b => { const o = []; for (let i = 0; i < b.length; i++) if (!(b[i] === 13 && b[i + 1] === 10)) o.push(b[i]); return new Uint8Array(o); };
   for (const n of ['character.inc', 'DonationShop.inc', 'BattlePass.inc']) clientDir.children.set(n, new FakeFile(n, original.get(n).slice()));
   clientDir.children.set('Spec_Item.txt', new FakeFile('Spec_Item.txt', lfOnly(original.get('Spec_Item.txt'))));
+  clientDir.children.set('Exchange_Script.txt', new FakeFile('Exchange_Script.txt', lfOnly(original.get('Exchange_Script.txt'))));
   {                                       // Client/Theme: Battle Pass textures (names only)
     const th = new FakeDir('Theme');
     for (const n of ['BattlePass_New.tga', 'BattlePass_Fire.tga', 'BattlePass_Image0.tga']) th.children.set(n, new FakeFile(n, new Uint8Array(0)));
@@ -67,9 +71,15 @@
     clientDir.children.set('Client', sub);
   }
 
+  // the folder the user picks: FLYFF-V19-SOURCE with Server/Resource and Client (FRE.layout finds them)
+  const root = new FakeDir('FLYFF-V19-SOURCE');
+  const serverDir = new FakeDir('Server');
+  serverDir.children.set('Resource', res);
+  root.children.set('Server', serverDir);
+  root.children.set('Client', clientDir);
   FRE.fsa = Object.assign({}, FRE.fsa, {
     supported: () => true,
-    pickFolder: async id => (id === 'flyff-resource' ? res : id === 'flyff-client' ? clientDir : backups),
+    pickFolder: async id => (id === 'flyff-root' ? root : backups),
     remember: async () => {}, recall: async () => null,
   });
 
@@ -84,11 +94,33 @@
   const renderAllForTest = () => FRE.app.ctx.renderAll(false);
   const btnByText = (root, t) => [...root.querySelectorAll('button')].find(b => b.textContent.includes(t));
 
-  async function scenario() {
-    await waitFor(() => FRE.app.state && $('btn-load'), 'app init');
-    click($('btn-load'));
-    await waitFor(() => FRE.app.state.ws, 'workspace');
+  // [Change task] (when a task is open) then the task's card on the start screen
+  async function openTask(id) {
     const S = FRE.app.state;
+    if (S.task) {
+      click($('btn-change-task'));
+      await waitFor(() => !S.task || document.querySelector('.modal'), 'start screen');
+      if (S.task) { ok(false, `unsaved changes stopped the switch to ${id}`); return; }
+      ok(getComputedStyle($('btn-diag')).display === 'none', 'start screen: the problems badge is hidden');
+    }
+    click(document.querySelector(`.task-card[data-task="${id}"]`));
+    await waitFor(() => S.task === id && S.ws && !S.busy, 'task ' + id);
+  }
+
+  async function scenario() {
+    await waitFor(() => FRE.app.state && $('btn-root'), 'app init');
+    const S = FRE.app.state;
+    ok(document.body.classList.contains('start') && /What do you want to edit/.test($('editor').textContent), 'start screen first');
+    ok([...document.querySelectorAll('.task-card')].every(b => b.disabled), 'tasks wait for the folder');
+    click($('btn-root'));
+    await waitFor(() => S.layout, 'folder detected');
+    ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 4, 'real-files tag; 4 tasks to pick');
+    ok(!root.children.has('backups'), 'nothing created inside the source folder');
+    if (STOP === 'start') return;
+    await openTask('npc');
+    ok(!document.body.classList.contains('start') && /Task:\s*NPC Shops/.test($('mode-tabs').textContent), 'NPC Shops task open');
+    ok(S.client && S.client.dir === clientDir, 'Client copies attached automatically');
     ok(S.ws.items.rows.length === 8067, 'items loaded (8067)');
     ok(document.querySelectorAll('#list .npc').length === 6 && /Shops with editable items \(6\)/.test(document.querySelector('select.npc-filter').textContent), 'NPC list defaults to the 6 shops with editable items');
     ok(S.ws.diags.filter(d => d.code === 'C_NO_OPEN_BRACE').length === 6, '6 missing-brace warnings');
@@ -202,8 +234,6 @@
     ok(S.ws.dirtyFiles().length === 0, 'undo all: clean');
 
     // ---- Client sync + chip price edit (Spec_Item.txt dwReferValue1)
-    click($('btn-client-dir'));
-    await waitFor(() => S.client && S.client.files.size === 4, 'client folder');
     ok(/Client sync on/.test($('banners').textContent) && /Spec_Item.txt: same, LF/.test($('banners').textContent), 'banner shows the Client sync modes');
     const waf = [...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MaFl_Waforu'));
     click(waf);
@@ -221,7 +251,7 @@
     const srv = res.children.get('Spec_Item.txt').bytes, cli = clientDir.children.get('Spec_Item.txt').bytes;
     ok(FRE.bytes.bytesEqual(lfOnly(srv), cli), 'Client Spec_Item.txt == server Spec_Item.txt with LF');
     ok(!FRE.bytes.bytesEqual(cli, clientOriginal.get('Spec_Item.txt')) && cli.length === clientOriginal.get('Spec_Item.txt').length, 'Client copy changed by the same 2 digits');
-    ok(FRE.bytes.bytesEqual(clientDir.children.get('character.inc').bytes, clientOriginal.get('character.inc')), 'Client character.inc untouched (not edited)');
+    ok(FRE.bytes.bytesEqual(clientDir.children.get('character.inc').bytes, res.children.get('character.inc').bytes), 'Client character.inc == Server (synced by the first save)');
     const bk = [...backups.children.values()].pop();
     ok(bk.children.has('Client') && FRE.bytes.bytesEqual(bk.children.get('Client').children.get('Spec_Item.txt').bytes, clientOriginal.get('Spec_Item.txt')), 'backup holds the original Client copy');
     ok(S.ws.dirtyFiles().length === 0, 'clean after the synced save');
@@ -236,7 +266,7 @@
     document.body.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
 
     // ---- Donation Shop
-    click([...document.querySelectorAll('#mode-tabs button')].find(b => b.textContent.includes('Donation Shop')));
+    await openTask('donation');
     ok(S.mode === 'donation', 'Donation Shop mode');
     ok([...document.querySelectorAll('#list .group')].some(g => g.textContent === 'Weapon Skins'), 'categories follow the client tree');
     click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.startsWith('Consumables')));
@@ -266,7 +296,8 @@
     const keep = ed.scrollTop;
     renderAllForTest();
     ok(Math.abs(ed.scrollTop - keep) < 2, 'scroll position kept when the same view re-renders');
-    ok($('mode-tabs').textContent.startsWith('Editing:'), 'editor switch is labelled');
+    ok(/Task:\s*Donation Shop/.test($('mode-tabs').textContent) && $('btn-change-task'), 'task bar names the task, with Change task');
+    ok(!S.ws.isEditable('character.inc') && S.ws.isEditable('spec_item.txt') && !S.ws.available.npc.ok, 'Donation Shop task: NPC files not open for editing, Spec_Item.txt (chip prices) is');
     // focusing a price box in the last row must scroll the editor, never the page (user report)
     const lastIn = [...ed.querySelectorAll('input.num-input')].pop();
     ed.scrollTop = 0;
@@ -278,7 +309,7 @@
     lastIn.blur();
 
     // ---- Battle Pass
-    click([...document.querySelectorAll('#mode-tabs button')].find(b => b.textContent.includes('Battle Pass')));
+    await openTask('battlepass');
     ok(S.mode === 'battlepass', 'Battle Pass mode');
     ok(S.ws.clientTheme && S.ws.clientTheme.has('battlepass_new.tga'), 'Client/Theme texture names read');
     const bpText0 = S.ws.files.get('battlepass.inc').text;
@@ -336,7 +367,76 @@
     ok(FRE.bytes.bytesEqual(bpSrv, S.ws.files.get('battlepass.inc').bytes) && FRE.bytes.bytesEqual(bpSrv, bpCli), 'BattlePass.inc saved, Client copy identical');
     ok(!FRE.bytes.bytesEqual(bpSrv, original.get('BattlePass.inc')), 'file changed on disk');
     document.querySelectorAll('.modal-back').forEach(m => m.remove());
-    if (STOP === 'end') click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.startsWith('Season')));
+
+    // ---- Exchanges
+    await openTask('exchange');
+    ok(!S.ws.isEditable('spec_item.txt') && !S.ws.isEditable('character.inc') && S.ws.clientFileNames().join() === 'Exchange_Script.txt', 'Exchanges task: only Exchange_Script.txt is editable and synced');
+    ok(S.mode === 'exchange', 'Exchanges mode');
+    ok(!document.querySelector('#list-extra select') && /9 exchange menus in the game/.test($('list-extra').textContent), 'no filter: only the 9 menus players can really use');
+    ok(S.ws.moduleDiags.exchange.length === 0, 'hidden / unplaced menus are not checked (their old warnings are gone)');
+    ok(document.querySelectorAll('#list .npc').length === 9 && ![...document.querySelectorAll('#list .npc')].some(n => /Bles|Brooks/.test(n.textContent)), 'only in-game NPCs listed (no Bles, no Brooks)');
+    const exEd = () => $('editor');
+    click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MMI_COLLECT01')));
+    ok(/Collins/.test(exEd().querySelector('h2').textContent) && exEd().querySelectorAll('.ex-card').length === 8, 'Collins: 8 recipe cards');
+    ok(/In game:/.test(exEd().querySelector('.ex-card').textContent), 'each card shows the in-game row');
+    ok(/You get\s*Name Color Scroll \(3 Days\) ×1/.test(exEd().querySelector('.ex-get').textContent), 'card headline: what the player gets');
+    ok(/Rewards/.test(exEd().querySelectorAll('.ex-section-title')[0].textContent) && /Costs/.test(exEd().querySelectorAll('.ex-section-title')[1].textContent), 'rewards first, then costs');
+    ok([...exEd().querySelectorAll('.ex-npcs .tag')].some(t => /Collins.*on WdMadrigal/.test(t.textContent)), 'NPC chip: Collins on WdMadrigal');
+    if (STOP === 'exchange') return;
+    const card1 = () => exEd().querySelectorAll('.ex-card')[0];
+    const q1 = card1().querySelectorAll('.ex-section')[1].querySelector('input.num-input');
+    q1.value = '450'; q1.dispatchEvent(new Event('change'));
+    const s1 = S.ws.models.exchange.menus.find(m => m.name === 'MMI_COLLECT01').sets[0];
+    ok(s1.condition[0].num.value === 450 && s1.remove[0].num.value === 450, 'ingredient qty written to CONDITION and REMOVE');
+    click(btnByText(card1(), '+ Reward'));
+    search.value = 'II_SYS_SYS_SCR_AMPESS'; search.dispatchEvent(new Event('input'));
+    const plusEx = [...document.querySelectorAll('#item-list .item')].find(r => r.querySelector('.def').textContent === 'II_SYS_SYS_SCR_AMPESS').querySelector('button');
+    ok(!plusEx.disabled && /reward of recipe 1/.test(plusEx.title), '+ adds a reward to recipe 1');
+    click(plusEx);
+    ok(/Server uses/.test(card1().textContent) && [...card1().querySelectorAll('tr')].some(tr => /AMPESS/.test(tr.textContent) && [...tr.querySelectorAll('td')].some(td => td.textContent === '0%')), 'new reward after 100% gets chance 0 (kept by the server at 0%)');
+    click(btnByText(card1(), 'Spread evenly'));
+    ok(/sum 1,000,000 = 100%/.test(card1().textContent) && (card1().textContent.match(/50%/g) || []).length >= 2, 'spread evenly: 50% / 50%');
+    ok(/You get one of\s*Name Color Scroll \(3 Days\) ×1 50%\s*or\s*Scroll of Amplification ES \(S\) ×1 50%/.test(card1().querySelector('.ex-get').textContent), 'headline: one of two rewards, 50% each');
+    const bound = [...card1().querySelectorAll('tr')].find(tr => /AMPESS/.test(tr.textContent)).querySelector('input[type=checkbox]');
+    bound.checked = true; bound.dispatchEvent(new Event('change'));
+    const bound2 = [...card1().querySelectorAll('tr')].find(tr => /AMPESS/.test(tr.textContent)).querySelector('input[type=checkbox]');
+    bound2.checked = false; bound2.dispatchEvent(new Event('change'));
+    ok(/II_SYS_SYS_SCR_AMPESS\t1\t500000\r\n/.test(S.ws.files.get('exchange_script.txt').text), 'Bound on then off leaves no "0" flag behind');
+    ok(S.ws.newBlocking().length === 0, 'no blocking problems');
+    if (STOP === 'exrecipe') return;
+    click(btnByText(exEd().querySelectorAll('.ex-card')[7], 'Copy'));
+    ok(exEd().querySelectorAll('.ex-card').length === 9, 'copy: 9 recipes');
+    click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MMI_COLOSSEUM_REWARD_MIX')));
+    const mix0 = S.ws.models.exchange.menus.find(m => m.name === 'MMI_COLOSSEUM_REWARD_MIX');
+    const second = mix0.sets[1].pay[0].item.name;
+    click(exEd().querySelectorAll('.ex-card')[0].querySelector('button[title="Move down"]'));
+    await waitFor(() => document.querySelector('.modal') && /Korean comments/.test(document.querySelector('.modal').textContent), 'rebuild notice for a recipe with Korean comments');
+    click(btnByText(document.querySelector('.modal footer'), 'OK'));
+    ok(S.ws.models.exchange.menus.find(m => m.name === 'MMI_COLOSSEUM_REWARD_MIX').sets[0].pay[0].item.name === second, 'recipe moved down (Rambo, Korean comments rebuilt)');
+    click($('btn-change-task'));
+    await waitFor(() => document.querySelector('.modal') && /Unsaved changes/.test(document.querySelector('.modal').textContent), 'unsaved-changes question');
+    click(btnByText(document.querySelector('.modal footer'), 'Cancel'));
+    ok(S.task === 'exchange' && S.ws.dirtyFiles().length === 1, 'Cancel keeps the task and the edits');
+    click($('btn-save'));
+    await waitFor(() => btnByText(document, 'Back up and write'), 'review dialog (exchange)');
+    click(btnByText(document, 'Back up and write'));
+    await waitFor(() => [...document.querySelectorAll('.modal header')].some(h => /^Saved|failed/.test(h.textContent) && !/Client sync/.test(h.textContent)), 'save finished (exchange)');
+    const exSrv = res.children.get('Exchange_Script.txt').bytes, exCli = clientDir.children.get('Exchange_Script.txt').bytes;
+    ok(FRE.bytes.bytesEqual(exSrv, S.ws.files.get('exchange_script.txt').bytes), 'Exchange_Script.txt saved');
+    ok(/_exchange$/.test([...backups.children.keys()].pop()), 'backup folder is named after the task (..._exchange)');
+    ok(FRE.bytes.bytesEqual(exCli, lfOnly(exSrv)) && !FRE.bytes.bytesEqual(exCli, clientOriginal.get('Exchange_Script.txt')), 'Client copy got the same change, LF kept');
+    document.querySelectorAll('.modal-back').forEach(m => m.remove());
+
+    // folder detection: the test-data layout, and a wrong folder
+    const td = new FakeDir('test-data'), tdRes = new FakeDir('Resource');
+    tdRes.children.set('Masquerade.prj', new FakeFile('Masquerade.prj', new Uint8Array(0)));
+    td.children.set('Resource', tdRes); td.children.set('Client', new FakeDir('Client'));
+    const tl = await FRE.layout.detectLayout(td);
+    ok(tl.kind === 'test' && tl.res === tdRes && tl.backups && td.children.has('backups'), 'test-data -> Resource + Client, backups created in it');
+    let refused = false;
+    try { await FRE.layout.detectLayout(new FakeDir('Desktop')); } catch (e) { refused = /not the source folder/.test(e.message); }
+    ok(refused, 'a folder without Server/Resource is refused');
+    if (STOP === 'end') click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MMI_COLLECT01')));
   }
 
   document.addEventListener('DOMContentLoaded', () => scenario().catch(e => ok(false, 'exception: ' + e.message + ' ' + e.stack)).then(() => {

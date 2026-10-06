@@ -2,7 +2,14 @@
 
 _Last updated 2026-10-05._
 
-> **Handoff (2026-10-05):** Step D (Battle Pass) is built, user-tested in Brave on `test-data/` and committed. Next: apply the new season on the real `Server/Resource` (season 1 ended 2026-10-05 00:00), then **E. Exchanges**. Tests: `gjs -m tests/run-tests.js` (299 pass), `tests/run-ui.sh` (88 pass; the result box shows only failures). `gjs -m tools/bp-sim.js` replays a season change with a port of the server logic.
+> **Handoff (2026-10-06, end of session):** NOT committed yet: Step E (Exchanges), one folder / one task (start screen), Version label, "In game" Exchanges list (only the 9 menus players can use; hidden / unplaced menus not shown or checked), "You get" recipe cards, Bound-off removes the flag. The user ran the first Brave checklist on `test-data` (all 4 saves verified byte-exact). **Next session:** (1) the user runs the short checklist below; (2) on OK, commit (message: Exchanges editor + start screen + in-game list); (3) build the **exchange simulator** (port `CExchange::CheckCondition` / `IsFull` / `GetPayItemList` / `ResultExchange`; press "exchange" N times, show how often each reward drops); (4) **F. Monster drops**. Tests: `gjs -m tests/run-tests.js` (375 pass, reads `test-data/fixtures`), `tests/run-ui.sh` (124 pass). Reset the manual copy with `tools/refresh-fixtures.sh test-data`.
+>
+> **Short checklist (Brave, `dist/flyff-resource-editor.html`, folder `test-data`):**
+> 1. Top right shows `Version 6+ · …`; start screen shows TEST COPY.
+> 2. Exchanges: left list has exactly 9 entries (Collins; Pet Tamer, Cheirang; Card Master, Epie ×2; Rambo ×4; Nerupha), no dropdown, ⚠0.
+> 3. Each recipe card starts with a big "You get …" line, then Rewards, then Costs.
+> 4. Collins recipe 1: tick Bound on the 2nd reward, untick it, Save → the review shows the line ends in `500000` (no trailing `0`).
+> 5. Rambo (MMI_COLOSSEUM_REWARD_MIX) recipe 1: Move down → a notice about Korean comments → OK → Undo restores it.
 
 ## Done
 - **Build 1** (`1c785ce`): NPC shop editor (`character*.inc`). Add, remove, price and tab edits; byte-exact save with verified backup. Tested by the user in Brave on `test-data`.
@@ -50,16 +57,35 @@ _Last updated 2026-10-05._
   - Texture column hidden (all 50 rows use "" = the item's own icon); the file keeps the three "" per row because the server reads three tokens. "↺" became a "Change" button.
   - **Server issue (C++, not fixed here):** `CDPSrvr::OnDoBP` activates a pass whose season has already ended. The Donation Shop still sells it, so a player who uses it while no season runs loses the item for only the level-1 reward. Start the new season before that happens; a C++ end-date check would close it for good.
 
-## Next (in this order, agreed with the user)
+- **Step E** (built, waiting for the user's test): Exchange editor (`loaders/exchange.js`, `edit/exchange-ops.js`, `ui/exchange.js`).
+  - Loader: port of `CExchange::Load_Script` (`_Common/Exchange.cpp:32`).
+    - It is a bare `CScanner`: only `CScript::GetDefineNum` resolves names (unknown = -1, no log). A name in a number slot reads as 0.
+    - `PENYA` = `II_GOLD_SEED1` (gold). An optional 4th PAY value is the item flag: 2 = `binds` (`Item.h:132`), used by 38 lines.
+  - **`__NEW_EXCHANGE_V19` is ON** (`_Common/LodeConfig.h:18`, included by the WorldServer and Neuz `StdAfx.h`). The old roadmap said it was off. So:
+    - CONDITION is checked AND taken; REMOVE is ignored;
+    - a menu keeps at most 30 SETs (Collins had 30 in `f58e56ba`).
+    - Edits keep REMOVE equal to CONDITION while they match, like `f58e56ba`, `3099c822`, `15091d5f`.
+  - PAY chances are out of 1,000,000: the line that crosses 100% is cut and later lines are dropped; a total under 100% tops up the last line. The editor shows the chance the server really uses.
+  - The client loads its own copy and sends only the recipe's position (`WndControl.cpp:1980`, `CDPSrvr::OnExchange`), so Server and Client copies must match. The Client copy is the same text with LF (`eol` sync mode).
+  - Any NPC menu id without its own `case` opens the exchange window (`WndWorld.cpp:6470`).
+  - **Real file finding:** 12 old menus use `SET_SMELT` / `SET_ENCHANT_MOVE` (blocks from a newer server). This loader ends the menu at the first `}` inside them and reads the rest as junk "menus" (`PAY`, `}`, id -1). The three chains (`MMI_BEHEMOTHSMELTEVENT_TWOSWORD`, `MMI_CHRISTMASENCHANTEVENTMENU`, `MMI_SEAKINGLOOKCHANGEMENU`) also swallow `MMI_MAPLE_TRADE`, `MMI_EVENT_2012HAPPYMONEYMENU` and `MMI_SEAKINGMASKCHANGEMENU`: none of them is ever loaded (`EX_OUT_OF_STEP`, WARN). 285 recipes load in 72 + 3 menus; 24 more are read inside junk menus.
+  - Rules: `EX_FORMAT` (missing } = hang), `EX_UNDEF` (ingredient / reward: BLOCK), `EX_NO_ITEM` (reward: BLOCK, server crash in `GetProp()`), `EX_PACKMAX`, `EX_PAY_EMPTY` (BLOCK); `EX_PROB_OVER`, `EX_PROB_UNDER`, `EX_PAYNUM`, `EX_QTY`, `EX_SET_CAP`, `EX_DUP_MENU`, `EX_ROW_WIDE`, `EX_OUT_OF_STEP` (WARN); `EX_NO_NPC`, `EX_REMOVE_IGNORED` (INFO). Real file today: 3 `EX_OUT_OF_STEP` and 24 `EX_NO_NPC`.
+  - UI:
+    - Left: menus named by their NPCs (filter "Opened by an NPC" / "All menus"). Search covers menu names, NPC names and item names.
+    - One card per recipe: ingredients, rewards (qty, chance, "Server uses", Bound), "Gives n of m", "Spread evenly", and the in-game icon row (about 9 icons fit).
+    - Recipe actions: move up/down, copy, remove. A recipe with EUC-KR comments is rebuilt from its values (comments dropped); the editor asks first.
+  - `tools/oracle.py` reads the file as a balanced-brace tree; it agrees on all 72 in-step menus.
 
-### E. Exchanges (`Exchange_Script.txt`, `CExchange::Load_Script`, `_Common/Exchange.cpp:32`)
-- **Format:** `MMI_x { DESCRIPTION SET TID { RESULTMSG CONDITION REMOVE PAY n { II_x n prob [flag] } } }`.
-- **Server behaviour:**
-  - `__NEW_EXCHANGE_V19` is off, so `REMOVE` is used as written;
-  - the loader uses `GetDefineNum`, so an unknown name becomes -1 **silently** (`EX_UNDEF` BLOCK);
-  - PAY chances are out of 1,000,000: the server trims totals above it and errors on totals below it;
-  - `PAY n` must not exceed the number of reward lines.
-- **UI:** show which NPCs use each menu (Collins: `MMI_COLLECT01`). If feasible, show recipe names from `textClient.inc` + `textClient.txt.txt`.
+- **One folder, one task** (built 2026-10-06, waiting for the user's test):
+  - The start screen asks for ONE folder; `io/layout.js` finds the paths: `FLYFF-V19-SOURCE` → `Server/Resource` + `Client` (REAL); `test-data` → `Resource` + `Client` + `backups` (TEST). Nothing is created inside a real source folder; its backups folder is asked once and remembered.
+  - Then one task card: only that task's files are opened, shown and saved (`Workspace` `only`). The Client copies are attached automatically. "Change task" asks before dropping unsaved edits.
+  - The manual "Backup" snapshot button is gone (every save backs up first). Backup subfolders are named `<stamp>_<task>`.
+
+- **In game** (built 2026-10-06): `loaders/world.js` ports `CWorldMng::LoadScript` (World.inc), `ReadObj` / `CMover::Read` (.dyo NPC placement; every map file reads to its 0xFFFFFFFF end) and `CWorld::IsUsableDYO2` (SetOutput / SetLang; server language compiled in, `WorldServer.rc:137` = LANG_USA). The Exchanges list defaults to the **9 menus players can use** (Collins; Rambo's 4 Colosseum menus; Card Master + Epie ×2; Pet Tamer + Cheirang; Nerupha's mask menu). Each menu shows its NPCs with "on WdMadrigal" / "hidden: SetOutput( false )" / "not placed on any map".
+  - Recipe cards now lead with a big "You get …" line (with the server's chances), then Rewards, then Costs.
+  - Unticking Bound removes the flag value instead of writing `0`.
+
+## Next (in this order, agreed with the user)
 
 ### F. Monster drops (`propMoverEx.inc`)
 - **Loader:** port `LoadPropMoverEx`, including the `AI{}` sub-parser.
@@ -71,6 +97,7 @@ _Last updated 2026-10-05._
 ## Deferred (needs in-game testing on the user's Windows PC)
 - Editing `AddVendorItem` rules (the simulator in `loaders/vendor-sim.js` is ready for a live preview).
 - The first save against the real `Server/Resource`, then copy to `Client/`, restart, and check in-game.
+- An exchange in game after an edit (Server and Client copies saved together).
 - A new Battle Pass season in game: free track at login, kill points, buying the pass back-pays (the season-1 pass item reused).
 
 ## Known data findings (pre-existing, shown as warnings or info)

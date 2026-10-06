@@ -85,6 +85,13 @@
     SetImage(st) { st.sep('('); st.langScript('image'); },
     AddMenuLang(st) { st.sep('('); st.num('lang'); st.sep(','); st.num('menu'); st.sep(')'); },   // __NO_SUB_LANG
     AddMenu(st) { st.sep('('); st.num('menu'); st.sep(')'); },
+    // __CHIPI_DYO (Project.cpp:3540): SetLang( LANG_x ) adds a language; after ')' the server reads one more token
+    SetLang(st) {
+      st.sep('('); st.num('lang');
+      const t = st.sep(', or )');
+      if (t.text === ',') st.num('sub'); else st.sep(';');
+    },
+    SetOutput(st) { st.sep('('); st.tok('value'); st.sep(')'); },          // only "FALSE" (any case) changes it
     AddVenderSlot(st) { st.sep('('); st.num('slot'); st.sep(','); st.tok('title'); st.sep(')'); },
     AddVendorSlot(st) { st.sep('('); st.num('slot'); st.sep(','); st.langScript('title'); },
     AddVendorSlotLang(st) { st.sep('('); st.num('lang'); st.sep(','); st.num('slot'); st.sep(','); st.langScript('title'); },
@@ -132,7 +139,7 @@
         key: keyTok.text, keyRaw: keyTok.raw || keyTok.text, file: file.name,
         start: keyTok.start, keyEnd: keyTok.end, end: keyTok.end,
         statements: [], closed: false, missingBrace: false,
-        venderType: 0, menus: [], slotTitles: {}, name: null, nameKey: null,
+        venderType: 0, menus: [], slotTitles: {}, name: null, nameKey: null, output: true, langs: [],
       };
       const brace = script.getToken();           // assumed '{'
       npc.braceTok = brace;
@@ -156,6 +163,10 @@
           if (rec.cmd === 'SetName') { npc.name = rec.args.name.text; npc.nameKey = rec.args.name.stringKey || null; }
           if (rec.cmd === 'SetVenderType') npc.venderType = rec.args.type.value;
           if (rec.cmd === 'AddMenu') npc.menus.push(rec.args.menu.value);
+          // AddMenuLang counts only for the server's language (Project.cpp:3406; __NO_SUB_LANG)
+          if (rec.cmd === 'AddMenuLang' && rec.args.lang.value === FRE.world.SERVER_LANG) npc.menus.push(rec.args.menu.value);
+          if (rec.cmd === 'SetOutput' && String(rec.args.value.text).toUpperCase() === 'FALSE') npc.output = false;
+          if (rec.cmd === 'SetLang') npc.langs.push({ lang: rec.args.lang.value, sub: rec.args.sub ? rec.args.sub.value : 0 });
           if (rec.cmd === 'AddVendorSlot' || rec.cmd === 'AddVenderSlot') npc.slotTitles[rec.args.slot.value] = rec.args.title.text;
         }
       }

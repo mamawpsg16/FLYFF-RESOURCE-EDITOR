@@ -11,6 +11,7 @@
 
   const S = {
     ws: null, resDir: null, backupDir: null, client: null, createMissing: new Set(), mode: 'npc',
+    layout: null, pendingRoot: null, task: null, busy: false,
     queries: {}, items: [], filtered: [], rarity: new Set(), ik1: '', ik3: '', itemQuery: '',
     edited: new Set(), diagOpen: false,
   };
@@ -44,46 +45,87 @@
     },
   };
 
-  // ------------------------------------------------------------------ loading
-  async function pickResource() {
-    try {
-      const dir = await FRE.fsa.pickFolder('flyff-resource');
-      await loadFrom(dir);
-    } catch (e) { if (e.name !== 'AbortError') toast(e.message, 'bad'); }
+  // ------------------------------------------------------------------ folder + task
+  // The user picks ONE folder (FLYFF-V19-SOURCE, or test-data); FRE.layout finds Server/Resource,
+  // Client and backups in it. Then one task at a time: only that editor's files are shown and saved.
+  async function chooseRoot() {
+    try { await useRoot(await FRE.fsa.pickFolder('flyff-root')); }
+    catch (e) { if (e.name !== 'AbortError') toast(e.message, 'bad'); }
   }
 
-  async function loadFrom(dir) {
-    if (S.ws && S.ws.dirtyFiles().length && !confirm('Discard unsaved changes and load another folder?')) return;
+  async function useRoot(dir) {
     if (!(await FRE.fsa.ensurePermission(dir))) { toast('Permission to the folder was not granted.', 'bad'); return; }
-    const found = await FRE.fsa.findFiles(dir, FRE.Workspace.ALL_FILES);
-    for (const must of ['masquerade.prj', 'spec_item.txt']) {
-      if (!found.has(must)) {
-        toast(`"${dir.name}" does not look like Server/Resource (no ${must}). Nothing was loaded.`, 'bad');
-        return;
+    let layout;
+    try { layout = await FRE.layout.detectLayout(dir); } catch (e) { toast(e.message, 'bad'); return; }
+    S.layout = layout; S.pendingRoot = null;
+    if (layout.backups) S.backupDir = layout.backups;
+    else if (S.backupDir && S.backupKind === 'test') S.backupDir = null;     // never back up real files into a test folder
+    S.backupKind = layout.kind;
+    FRE.fsa.remember('root', dir);
+    renderAll(false);
+  }
+
+  async function loadTask(id) {
+    const L = S.layout;
+    if (!L || S.busy) return;
+    S.busy = true;
+    try {
+      const found = await FRE.fsa.findFiles(L.res, FRE.Workspace.ALL_FILES);
+      for (const must of ['masquerade.prj', 'spec_item.txt']) {
+        if (!found.has(must)) { toast(`${FRE.layout.describe(L).res} has no ${must}. Nothing was loaded.`, 'bad'); return; }
       }
+      const files = new Map();
+      for (const [lower, handle] of found) {
+        const { bytes, stamp } = await FRE.fsa.readHandle(handle);
+        files.set(lower, new FRE.SourceFile(handle.name, bytes, { handle, stamp }));
+      }
+      const t0 = performance.now();
+      S.ws = new FRE.Workspace(files, { only: id }).load();
+      S.resDir = L.res;
+      S.edited.clear();
+      S.client = null;
+      if (L.client) await loadClient(L.client);
+      if (S.ws.needsMaps()) await loadMaps(L.res);
+      S.mode = id; S.task = id;
+      $('list-search').value = S.queries[id] || '';
+      buildItems();
+      const m = modules().find(x => x.id === id);
+      if (S.ws.available[id].ok && m && m.onLoad) m.onLoad(ctx);
+      renderAll();
+      toast(`${m ? m.label : id}: loaded from ${FRE.layout.describe(L).res} in ${Math.round(performance.now() - t0)} ms`, 'ok');
+    } catch (e) { toast(e.message, 'bad'); }
+    finally { S.busy = false; }
+  }
+
+  // World/<map>/<map>.dyo for every map in World.inc: which NPCs stand in the game (read-only)
+  async function loadMaps(res) {
+    const world = await FRE.layout.child(res, 'World');
+    if (!world) return;
+    const dyo = new Map();
+    for (const w of S.ws.worldList()) {
+      if (dyo.has(w.name)) continue;
+      const dir = await FRE.layout.child(world, w.name);
+      const fh = dir && (await FRE.fsa.findFiles(dir, [w.name + '.dyo'])).get((w.name + '.dyo').toLowerCase());
+      if (fh) dyo.set(w.name, (await FRE.fsa.readHandle(fh)).bytes);
     }
-    const files = new Map();
-    for (const [lower, handle] of found) {
-      const { bytes, stamp } = await FRE.fsa.readHandle(handle);
-      files.set(lower, new FRE.SourceFile(handle.name, bytes, { handle, stamp }));
-    }
-    const t0 = performance.now();
-    S.ws = new FRE.Workspace(files).load();
-    S.resDir = dir;
-    S.edited.clear();
-    FRE.fsa.remember('resource', dir);
-    if (S.client) await loadClient(S.client.dir);
-    buildItems();
-    for (const m of modules()) if (S.ws.available[m.id] && S.ws.available[m.id].ok && m.onLoad) m.onLoad(ctx);
-    if (!S.ws.available[S.mode].ok) S.mode = (modules().find(m => S.ws.available[m.id].ok) || modules()[0]).id;
-    renderAll();
-    toast(`Loaded ${files.size} files from "${dir.name}" in ${Math.round(performance.now() - t0)} ms`, 'ok');
+    S.ws.setMapObjects(dyo);
+  }
+
+  // back to the start screen; unsaved edits are only dropped after asking
+  function changeTask() {
+    const leave = () => { S.task = null; S.ws = null; S.client = null; S.diagOpen = false; $('diag-panel').hidden = true; renderAll(false); };
+    const dirty = S.ws ? S.ws.dirtyFiles() : [];
+    if (!dirty.length) { leave(); return; }
+    modal({ title: 'Unsaved changes', body: h('div',
+      h('p', `${dirty.map(f => f.name).join(', ')} ${dirty.length > 1 ? 'have' : 'has'} changes that are not saved.`),
+      h('p.muted', 'To keep them, press Cancel and then Save.')),
+      buttons: [{ label: 'Cancel' }, { label: 'Discard changes', cls: 'danger', onClick: leave }] });
   }
 
   async function pickBackup() {
     try {
       const dir = await FRE.fsa.pickFolder('flyff-backups');
-      if (S.resDir && (await dir.isSameEntry(S.resDir))) { toast('Pick a folder outside Server/Resource for backups.', 'bad'); return false; }
+      if ((S.resDir && (await dir.isSameEntry(S.resDir))) || (S.layout && (await dir.isSameEntry(S.layout.root)))) { toast('Pick a folder outside the source folder for backups, e.g. FLYFF-RESOURCE-EDITOR/backups.', 'bad'); return false; }
       if (!(await FRE.fsa.ensurePermission(dir))) return false;
       S.backupDir = dir;
       FRE.fsa.remember('backup', dir);
@@ -124,21 +166,6 @@
     S.createMissing = new Set(clientNames().map(n => n.toLowerCase()).filter(n => !files.has(n)));   // offered, can be unticked
   }
 
-  async function pickClient() {
-    try {
-      const dir = await FRE.fsa.pickFolder('flyff-client');
-      if (S.resDir && (await dir.isSameEntry(S.resDir))) { toast('That is the Server/Resource folder. Pick the game\'s Client folder.', 'bad'); return false; }
-      if (!(await FRE.fsa.ensurePermission(dir))) return false;
-      const probe = await FRE.fsa.findFiles(dir, ['Spec_Item.txt', 'character.inc']);
-      if (!probe.size) { toast(`"${dir.name}" does not look like the Client folder (no Spec_Item.txt or character.inc).`, 'bad'); return false; }
-      if (S.ws && S.ws.dirtyFiles().length && !confirm('The Client copies are compared with the server files as they are on disk. Choose the Client folder now anyway?')) return false;
-      await loadClient(dir);
-      FRE.fsa.remember('client', dir);
-      renderAll(false);
-      return true;
-    } catch (e) { if (e.name !== 'AbortError') toast(e.message, 'bad'); return false; }
-  }
-
   // [{name, lower, mode, text}] for the client files of the loaded workspace
   function clientStatus() {
     if (!S.ws || !S.client) return [];
@@ -152,47 +179,78 @@
   function undo() { if (S.ws && S.ws.undo() !== null) renderAll(false); }
   function redo() { if (S.ws && S.ws.redo() !== null) renderAll(false); }
 
-  function setMode(id) {
-    S.mode = id;
-    $('list-search').value = S.queries[id] || '';
-    renderAll(false);
-  }
+  function setMode(id) { if (id !== S.task) loadTask(id); }
 
   // ------------------------------------------------------------------ rendering
   function renderAll(withItems = true) {
-    renderToolbar(); renderBanners(); renderModes(); renderList(); renderEditor();
+    document.body.classList.toggle('start', !S.task);
+    renderToolbar(); renderBanners(); renderModes();
+    if (!S.task) { renderStart(); return; }
+    renderList(); renderEditor();
     if (withItems) renderItemFilters();
     renderItems();
     if (S.diagOpen) renderDiagPanel();
   }
 
+  // toolbar while a task is open: its name, [Change task], which files (REAL / TEST)
   function renderModes() {
     const el = $('mode-tabs'); el.textContent = '';
-    el.appendChild(h('span.tb-label', { title: 'Which game file you are editing. Switching keeps your unsaved changes.' }, 'Editing:'));
-    for (const m of modules()) {
-      const av = S.ws ? S.ws.available[m.id] : { ok: false, missing: [] };
-      el.appendChild(h('button.mode' + (m.id === S.mode ? '.sel' : ''), {
-        disabled: !S.ws || !av.ok,
-        title: !S.ws ? 'Load a folder first' : av.ok ? (m.help || m.label) : `Not available: missing ${av.missing.join(', ')}`,
-        on: { click: () => setMode(m.id) },
-      }, m.label));
+    if (!S.task || !S.layout) return;
+    const m = modules().find(x => x.id === S.task), d = FRE.layout.describe(S.layout);
+    el.appendChild(h('span.tb-label', 'Task:'));
+    el.appendChild(h('span.task-name', m ? m.label : S.task));
+    el.appendChild(h('button', { id: 'btn-change-task', title: 'Back to the start screen to pick another task', on: { click: changeTask } }, 'Change task'));
+    el.appendChild(h('span.kind-tag.' + S.layout.kind, { title: `${d.res}${d.client ? ' + ' + d.client : ''}` }, `${d.label} · ${S.layout.root.name}`));
+  }
+
+  // start screen: 1. the folder, 2. the task
+  function renderStart() {
+    const el = $('editor'); el.className = ''; el.textContent = '';
+    FRE.ui.tooltip.hide();
+    const wrap = h('div.start-wrap', h('h2', 'What do you want to edit?'),
+      h('p.muted', 'Pick the source folder once, then one task. Only that task\'s files are opened, shown and saved. Nothing is written until you press Save and confirm.'));
+    wrap.appendChild(h('div.start-step', '1 · Folder'));
+    const L = S.layout;
+    if (!FRE.fsa.supported()) wrap.appendChild(h('div.folder-card', 'This browser cannot open folders. Use Chrome or Edge (in Brave: enable brave://flags/#file-system-access-api).'));
+    else if (L) {
+      const d = FRE.layout.describe(L);
+      wrap.appendChild(h('div.folder-card.' + L.kind,
+        h('div', h('b', L.root.name), h('span.kind-tag.' + L.kind, d.label)),
+        h('div.paths',
+          h('div', '✓ ', d.res),
+          h('div', d.client ? `✓ ${d.client}  (the game client's copies get the same change)` : '✗ no Client folder next to it: copy changed files to the client by hand'),
+          h('div', d.backups ? `✓ ${d.backups}  (a backup before every save)` : S.backupDir ? `✓ backups: ${S.backupDir.name}` : '• backups: asked at the first save (pick a folder outside the source, e.g. FLYFF-RESOURCE-EDITOR/backups)')),
+        L.kind === 'real' ? h('p.small', { style: 'color:var(--bad)' }, 'These are the real server files. Test on FLYFF-RESOURCE-EDITOR/test-data first.') : null,
+        h('button', { id: 'btn-root', on: { click: chooseRoot } }, 'Choose another folder')));
+    } else if (S.pendingRoot) {
+      wrap.appendChild(h('div.folder-card', h('p', `Last time: `, h('b', S.pendingRoot.name)),
+        h('div.row', { style: 'justify-content:flex-start;gap:8px' },
+          h('button.primary', { id: 'btn-allow', on: { click: () => useRoot(S.pendingRoot) } }, `Allow access to ${S.pendingRoot.name}`),
+          h('button', { id: 'btn-root', on: { click: chooseRoot } }, 'Choose another folder'))));
+    } else {
+      wrap.appendChild(h('div.folder-card', h('p', 'Pick ', h('code', 'FLYFF-V19-SOURCE'), ' (real files), or ', h('code', 'FLYFF-RESOURCE-EDITOR/test-data'), ' (test copy). The editor finds Server/Resource and Client inside it.'),
+        h('button.primary', { id: 'btn-root', on: { click: chooseRoot } }, 'Choose the source folder')));
     }
+    wrap.appendChild(h('div.start-step', '2 · Task'));
+    wrap.appendChild(h('div.task-grid', FRE.Workspace.MODULES.map(wm => {
+      const um = modules().find(x => x.id === wm.id);
+      return h('button.task-card', { 'data-task': wm.id, disabled: !L || S.busy, title: L ? '' : 'Choose the folder first', on: { click: () => loadTask(wm.id) } },
+        h('b', wm.label), h('span', um && um.help ? um.help.replace(/^[^:]+:\s*/, '').replace(/^./, c => c.toUpperCase()) : wm.required.join(', ')));
+    })));
+    el.appendChild(wrap);
   }
 
   function renderToolbar() {
     const ws = S.ws;
-    $('backup-name').textContent = S.backupDir ? S.backupDir.name : 'not set';
-    $('client-name').textContent = S.client ? S.client.dir.name : 'not set';
     $('btn-undo').disabled = !ws || !ws.history.length;
     $('btn-redo').disabled = !ws || !ws.redoStack.length;
     const dirty = ws ? ws.dirtyFiles() : [];
     $('btn-save').disabled = !dirty.length;
     $('btn-save').textContent = dirty.length ? `Save (${dirty.length})` : 'Save';
-    $('btn-backup').disabled = !ws;
     const fs = $('file-status'); fs.textContent = '';
     if (ws) {
       const shown = new Set(['spec_item.txt', 'propitem.txt.txt', ...FRE.Workspace.CORE_CLIENT.map(n => n.toLowerCase())]);
-      for (const m of FRE.Workspace.MODULES) m.editable.forEach(n => shown.add(n.toLowerCase()));
+      for (const m of FRE.Workspace.MODULES) if (ws.shown.has(m.id)) m.editable.forEach(n => shown.add(n.toLowerCase()));
       // compact: one summary chip; only files that need attention (changed, read-only) get their own chip
       const files = [...shown].map(l => ws.files.get(l)).filter(Boolean);
       const nd = FRE.DEFINE_FILES.filter(n => ws.files.has(n.toLowerCase())).length;
@@ -210,7 +268,7 @@
       const nw = ws.diags.filter(d => d.severity === 'WARN').length;
       const b = $('btn-diag');
       b.textContent = nb ? `⛔ ${nb}  ⚠ ${nw}` : `⚠ ${nw}`;
-      b.className = 'diag-badge' + (nb ? ' has-block' : nw ? ' has-warn' : '');
+      b.className = 'diag-badge task-only' + (nb ? ' has-block' : nw ? ' has-warn' : '');
     }
   }
 
@@ -223,14 +281,12 @@
     if (ws.missing.length) add('bad', `Missing files: ${ws.missing.join(', ')}`);
     for (const f of ws.files.values()) if (f.readOnly) add('bad', `🔒 ${f.name} is READ-ONLY: ${f.readOnlyReasons.join('; ')}`);
     if (ws.items.stopped) add('bad', `Spec_Item.txt: the server stops loading items at offset ${ws.items.stopped.start}; later items are missing.`);
-    if (S.resDir && S.resDir.name.toLowerCase() !== 'resource') add('info', `Editing folder "${S.resDir.name}" (a test copy?).`);
-    const mod = FRE.Workspace.MODULES.find(m => m.id === S.mode);
     if (S.client) {
       const st = clientStatus();
       add('info', `Client sync on (${S.client.dir.name}/): every save applies the same change to the client's copies. `,
         st.map(c => h('span.tag' + (c.mode === 'different' ? '.warn' : c.mode === 'missing' ? '.info' : ''), { title: c.text }, `${c.name}: ${c.mode === 'identical' ? 'same' : c.mode === 'eol' ? 'same, LF' : c.mode === 'missing' ? 'no loose copy' : 'differs'}`)),
         ' Restart the WorldServer to apply.');
-    } else add('info', `Only Server/Resource is edited. The game client reads its own copy of ${mod ? [...new Set([...FRE.Workspace.CORE_CLIENT, ...mod.client])].join(', ') : 'these files'}: choose the Client folder (toolbar) to update it on every save, or copy the changed files by hand. Restart the WorldServer to apply.`);
+    } else add('warn', `No Client folder next to ${S.resDir ? S.resDir.name : 'the server files'}: the game client reads its own copy of ${ws.clientFileNames().join(', ') || 'these files'}. Copy the changed files to it by hand. Restart the WorldServer to apply.`);
   }
 
   function renderList() {
@@ -431,22 +487,12 @@
     renderAll(false);
   }
 
-  async function onBackup() {
-    if (!S.ws) return;
-    if (!S.backupDir && !(await pickBackup())) return;
-    if (!(await FRE.fsa.ensurePermission(S.backupDir))) return;
-    try { const name = await FRE.save.snapshot(S.ws, S.backupDir); toast(`Snapshot written: ${S.backupDir.name}/${name}`, 'ok'); }
-    catch (e) { toast('Backup failed: ' + e.message, 'bad'); }
-  }
-
   // ------------------------------------------------------------------ init
   async function init() {
-    $('version').textContent = FRE.BUILD_INFO || 'dev';
-    $('btn-load').onclick = pickResource;
-    $('btn-backup-dir').onclick = pickBackup;
-    $('btn-client-dir').onclick = pickClient;
+    const B = FRE.BUILD_INFO || {};
+    $('version').textContent = B.version ? `Version ${B.version} · ${B.when}` : 'Version: dev';
+    $('version').title = B.version ? `Built ${B.when} from commit ${B.rev || '?'}${B.dirty ? ' plus changes not committed yet (the "+")' : ''}.\nThe version goes up by one with every commit. If this is older than expected, reload the page (F5).` : '';
     $('btn-save').onclick = onSave;
-    $('btn-backup').onclick = onBackup;
     $('btn-undo').onclick = undo;
     $('btn-redo').onclick = redo;
     $('btn-diag').onclick = () => { S.diagOpen = !S.diagOpen; renderDiagPanel(); };
@@ -468,23 +514,17 @@
     });
     window.addEventListener('beforeunload', e => { if (S.ws && S.ws.dirtyFiles().length) { e.preventDefault(); e.returnValue = ''; } });
     FRE.ui.tooltip.init(() => S.ws);
-    renderModes();
-    renderBanners();
-    if (!FRE.fsa.supported()) { $('btn-load').disabled = true; return; }
-    const last = await FRE.fsa.recall('resource');
-    if (last) {
-      const btn = $('btn-reopen');
-      btn.hidden = false; btn.textContent = `Reopen "${last.name}"`;
-      btn.onclick = async () => { try { await loadFrom(last); btn.hidden = true; } catch (e) { toast(e.message, 'bad'); } };
-    }
-    const cl = await FRE.fsa.recall('client');
-    if (cl && (await FRE.fsa.ensurePermission(cl, false))) { S.client = { dir: cl, files: new Map() }; renderToolbar(); }
-    else if (cl) { $('client-name').textContent = `${cl.name} (click to re-allow)`; $('btn-client-dir').onclick = async () => { if (await FRE.fsa.ensurePermission(cl)) { await loadClient(cl); $('btn-client-dir').onclick = pickClient; renderAll(false); } else pickClient(); }; }
+    renderAll(false);
+    if (!FRE.fsa.supported()) return;
     const bk = await FRE.fsa.recall('backup');
-    if (bk && (await FRE.fsa.ensurePermission(bk, false))) { S.backupDir = bk; renderToolbar(); }
-    else if (bk) { $('backup-name').textContent = `${bk.name} (click to re-allow)`; $('btn-backup-dir').onclick = async () => { if (await FRE.fsa.ensurePermission(bk)) { S.backupDir = bk; $('btn-backup-dir').onclick = pickBackup; renderToolbar(); } else pickBackup(); }; }
+    if (bk && (await FRE.fsa.ensurePermission(bk, false))) { S.backupDir = bk; S.backupKind = 'real'; }
+    const root = await FRE.fsa.recall('root');
+    if (root) {
+      if (await FRE.fsa.ensurePermission(root, false)) await useRoot(root);       // still allowed: no click needed
+      else { S.pendingRoot = root; renderAll(false); }
+    }
   }
 
-  FRE.app = { init, state: S, ctx, setMode };
+  FRE.app = { init, state: S, ctx, setMode, loadTask, changeTask, useRoot };
   if (typeof document !== 'undefined') document.addEventListener('DOMContentLoaded', init);
 })(globalThis.FRE = globalThis.FRE || {});

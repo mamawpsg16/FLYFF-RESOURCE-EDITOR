@@ -9,11 +9,13 @@ loaders/textclient.js
 loaders/item-tooltip.js
 loaders/specitem.js
 loaders/propmover.js
+loaders/world.js
 loaders/character.js
 loaders/vendor-sim.js
 loaders/donation.js
 loaders/donation-tree.js
 loaders/battlepass.js
+loaders/exchange.js
 validate/help.js
 validate/character.js
 core/diff.js
@@ -22,9 +24,11 @@ edit/shop-ops.js
 edit/donation-ops.js
 edit/item-ops.js
 edit/battlepass-ops.js
+edit/exchange-ops.js
 core/workspace.js
 core/client-sync.js
 io/fsa.js
+io/layout.js
 io/save.js
 ui/dom.js
 ui/common.js
@@ -33,4 +37,5 @@ ui/chip-price.js
 ui/npc-shops.js
 ui/donation.js
 ui/battlepass.js
+ui/exchange.js
 ui/app.js

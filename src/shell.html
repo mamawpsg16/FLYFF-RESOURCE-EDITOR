@@ -9,24 +9,17 @@
 /*STYLES*/
 </style>
 </head>
-<body>
+<body class="start">
 <header id="toolbar">
-  <div class="brand">FLYFF Resource Editor <span class="muted" id="version"></span></div>
-  <div class="tb-group">
-    <button id="btn-load" class="primary">Load Folder</button>
-    <button id="btn-reopen" hidden>Reopen last folder</button>
-    <button id="btn-backup-dir" title="Folder where backups are written before every save">Backup folder: <b id="backup-name">not set</b></button>
-    <button id="btn-client-dir" title="The game client's Client/ folder: every save also applies the same change to its own copies">Client folder: <b id="client-name">not set</b></button>
-  </div>
-  <div class="tb-group">
+  <div id="mode-tabs" class="tb-group task-bar"></div>
+  <div class="tb-group task-only">
     <button id="btn-undo" title="Undo (Ctrl+Z)" disabled>Undo</button>
     <button id="btn-redo" title="Redo (Ctrl+Y)" disabled>Redo</button>
-    <button id="btn-save" class="primary" title="Save (Ctrl+S)" disabled>Save</button>
-    <button id="btn-backup" title="Snapshot all loaded files into the backup folder" disabled>Backup</button>
+    <button id="btn-save" class="primary" title="Save (Ctrl+S): backs up the current files first, then writes" disabled>Save</button>
   </div>
-  <div id="mode-tabs" class="tb-group modes"></div>
-  <div id="file-status" class="tb-files"></div>
-  <button id="btn-diag" class="diag-badge" title="Problems">0</button>
+  <div id="file-status" class="tb-files task-only"></div>
+  <button id="btn-diag" class="diag-badge task-only" title="Problems in this task's files: click to list them">0</button>
+  <span id="version" class="version muted"></span>
 </header>
 <div id="banners"></div>
 <main id="layout">
@@ -38,11 +31,7 @@
     <div id="list" class="list"></div>
   </aside>
   <section id="center">
-    <div id="editor" class="empty-state">
-      <h2>FLYFF Resource Editor</h2>
-      <p>Click <b>Load Folder</b> and pick <code>FLYFF-V19-SOURCE/Server/Resource</code><br>(or a test copy such as <code>test-data/Resource</code>).</p>
-      <p class="muted">Works in Chrome and Edge. Nothing is written until you press Save and confirm the changes.</p>
-    </div>
+    <div id="editor"></div>
     <div id="diag-panel" hidden></div>
   </section>
   <aside id="right">

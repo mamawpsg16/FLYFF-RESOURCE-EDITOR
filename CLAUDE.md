@@ -7,7 +7,7 @@ The user is a web developer learning C++. When server behaviour matters, explain
 ## Hard rules
 - **`../FLYFF-V19-SOURCE` is reference-only.** Never modify, build, or commit anything there. Before and after work, check `git -C ../FLYFF-V19-SOURCE status` is clean.
 - **The real data folder is `../FLYFF-V19-SOURCE/Server/Resource/`.** There is no top-level `Resource/`. `Client/` holds copies the game client reads.
-- **Never write to the real `Server/Resource` without asking first.** Test on `test-data/Resource/` (git-ignored copies; the refresh command is in README).
+- **Never write to the real `Server/Resource` without asking first.** The user tests in the browser on `test-data/` (git-ignored copies). Automated tests read `test-data/fixtures/` only. Refresh either with `tools/refresh-fixtures.sh [test-data]`.
 - **Base the work on what is committed in `../FLYFF-V19-SOURCE`.** Its commits are the user's own changes, and all of them were tested in game, even when the message doesn't say "Verified in game".
   - Before designing a loader, edit or warning, search `git -C ../FLYFF-V19-SOURCE log` (messages and diffs) for that file or system, and follow the way it was done there.
   - Cite the commit hash in code comments and docs. Only the parts a commit message calls "not yet tested" are unproven; say so when relying on them.
@@ -34,7 +34,8 @@ The user is a web developer learning C++. When server behaviour matters, explain
 - **Custom systems:**
   - `DonationShop.inc`: prices are each item's `dwReferValue1`. It is LF (its header comment says CRLF). Categories must be leaves of the client-only `Client/Client/DonationShopTree.inc`. Never list Nexus Shield / Icecrown Purple Shield: buying them crashed the server (`ae345504`).
   - `BattlePass.inc`: on a duplicate level or monster the first wins; values are clamped to 1–10000. LF (its header says CRLF). A season = end date + nType on the pass AND every reward row; the pass item is reused (`2f783090`). Monster prices follow level bands × rank (`c0a828d7`, `3b8e8410`).
-  - `Exchange_Script.txt`: an unknown name becomes -1 silently.
+  - **Which NPCs are in the game:** placed in a map `.dyo` file (`World/<map>/<map>.dyo`, maps from `World.inc`) AND shown by `CWorld::IsUsableDYO2` (`SetOutput` / `SetLang` in `character.inc`). The WorldServer's language is compiled in: `WorldServer.rc:137` `IDS_LANG "1"` = LANG_USA. Ported in `loaders/world.js`; skip commented lines (the real loader does).
+  - `Exchange_Script.txt`: a bare `CScanner`, so an unknown name becomes -1 silently (`GetDefineNum`). `__NEW_EXCHANGE_V19` is ON (`LodeConfig.h`): CONDITION is checked and taken, REMOVE is ignored, at most 30 SETs per menu. PAY chances are out of 1,000,000. The client sends only the recipe's position, so the Client copy (LF) must match. `SET_SMELT` / `SET_ENCHANT_MOVE` put the loader out of step (see ROADMAP).
 
 ## Layout
 ```
@@ -43,16 +44,17 @@ src/core/           bytes, num, sourcefile (byte model + round-trip gate), lexer
                     diff (Myers), workspace (data-module registry, apply/applyGroup/undo, newBlocking),
                     client-sync (Client/ copy modes: identical / eol / missing / different)
 src/loaders/        defines, strings (*.txt.txt), textclient (TID_ texts), item-tooltip (MakeToolTipText port),
-                    specitem, propmover (monster name/level/rank), character, vendor-sim (shop contents), donation,
-                    donation-tree (client category tree), battlepass
+                    specitem, propmover (monster name/level/rank), world (maps, .dyo NPC placement, SetOutput/SetLang), character, vendor-sim (shop contents), donation,
+                    donation-tree (client category tree), battlepass, exchange
 src/validate/       help.js (text for every diagnostic code), character.js
-src/edit/           text-ops (shared row/statement splices), shop-ops, donation-ops, item-ops (Spec_Item chip price), battlepass-ops
-src/io/             fsa (File System Access), save (conflict check -> verified backup -> write+verify -> restore on failure;
+src/edit/           text-ops (shared row/statement splices), shop-ops, donation-ops, item-ops (Spec_Item chip price), battlepass-ops, exchange-ops
+src/io/             fsa (File System Access), layout (finds Server/Resource + Client + backups in the ONE picked folder), save (conflict check -> verified backup -> write+verify -> restore on failure;
                     Server files, then the same change in the Client/ copies)
 src/ui/             dom, common (FRE.ui registry + helpers), tooltip (item hover), chip-price (shared price input),
-                    npc-shops, donation, battlepass, app (shell: modes, item DB, problems, save)
+                    npc-shops, donation, battlepass, exchange, app (shell: modes, item DB, problems, save)
 tests/              run-tests.js (gjs core suite), ui-harness.js + run-ui.sh (headless Firefox, fake FS), gjs-env.js
 tools/oracle.py     independent Python reference (differential tests)
+tools/refresh-fixtures.sh  copies the real files into test-data/fixtures (tests) or test-data (manual)
 docs/               INVESTIGATION.md, DESIGN.md, ROADMAP.md (what's next)
 ```
 
@@ -62,6 +64,8 @@ docs/               INVESTIGATION.md, DESIGN.md, ROADMAP.md (what's next)
 3. A UI module in `src/ui/<name>.js` pushed to `FRE.ui.modules` (`renderList`, `renderEditor`, `addTarget`, `locate`).
 4. Help text for every new diagnostic code in `validate/help.js` (a test enforces this).
 5. Add every new file to `src/order.txt`.
+
+**One task at a time:** the start screen picks one folder (`io/layout.js`) and one task. `new Workspace(files, { only: id })` shows, validates and lets you edit only that module (plus Spec_Item.txt for `editsSpec` tasks); modules in its `uses` are parsed as read-only context. Backups go to `<backups>/<stamp>_<task>/`.
 
 **Diagnostics:** `BLOCK` / `WARN` / `INFO`, each with a stable `key` without offsets. Saving is blocked only by **new** BLOCKs (`Workspace.newBlocking()`); pre-existing problems are shown but don't block.
 

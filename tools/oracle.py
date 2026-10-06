@@ -226,6 +226,55 @@ def battlepass(root, path):
             'eol': 'crlf' if b'\r\n' in raw else 'lf'}
 
 
+def exchange(path):
+    """Exchange_Script.txt as a nested-brace tree (balanced braces, NOT the server's
+    token loop): every top-level `NAME { ... }`, its SET blocks and their lines."""
+    raw = open(path, 'rb').read()
+    ts = tokens(raw)
+
+    def block(k):
+        # ts[k] == b'{' -> (list of items, index after the matching '}'); an item is a token or a sub-block
+        out, k = [], k + 1
+        while k < len(ts) and ts[k] != b'}':
+            if ts[k] == b'{':
+                sub, k = block(k)
+                out.append(sub)
+            else:
+                out.append(ts[k]); k += 1
+        return out, k + 1
+
+    menus, k = [], 0
+    while k < len(ts):
+        name = ts[k].decode('latin-1')
+        body, k = block(k + 1)
+        sets, other = [], []
+        for i, x in enumerate(body):
+            if isinstance(x, bytes) and x.startswith(b'SET') and i + 2 < len(body) and isinstance(body[i + 2], list):
+                if x != b'SET':
+                    other.append(x.decode())
+                    continue
+                parts = body[i + 2]
+                st = {'cond': [], 'pay': [], 'paynum': None}
+                for j, y in enumerate(parts):
+                    if y == b'CONDITION':
+                        lst = parts[j + 1]
+                        st['cond'] = [[lst[q].decode(), int(lst[q + 1])] for q in range(0, len(lst), 2)]
+                    if y == b'PAY':
+                        st['paynum'] = int(parts[j + 1])
+                        lst = parts[j + 2]
+                        q, rows = 0, []
+                        while q < len(lst):
+                            row = [lst[q].decode(), int(lst[q + 1]), int(lst[q + 2])]
+                            q += 3
+                            if q < len(lst) and lst[q][:1].isdigit():
+                                row.append(int(lst[q])); q += 1
+                            rows.append(row)
+                        st['pay'] = rows
+                sets.append(st)
+        menus.append({'name': name, 'sets': sets, 'unknown': sorted(set(other))})
+    return {'menus': menus, 'eol': 'crlf' if b'\r\n' in raw else 'lf'}
+
+
 def main(root):
     res = {}
     spec = values(tokens(open(os.path.join(root, 'Spec_Item.txt'), 'rb').read()))
@@ -256,6 +305,9 @@ def main(root):
     bp = os.path.join(root, 'BattlePass.inc')
     if os.path.exists(bp):
         res['battlepass'] = battlepass(root, bp)
+    ex = os.path.join(root, 'Exchange_Script.txt')
+    if os.path.exists(ex):
+        res['exchange'] = exchange(ex)
     shops, empty = vendor_sim(root)
     res['vendor'] = shops
     res['vendor_empty_rules'] = empty

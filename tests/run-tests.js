@@ -1,5 +1,6 @@
 // Core test suite (no browser needed):   gjs -m tests/run-tests.js
-// - reads fixtures from test-data/Resource (copies, see README)
+// - reads fixtures from test-data/fixtures (copies made by tools/refresh-fixtures.sh; never
+//   test-data/Resource, which you edit by hand in the browser)
 // - reads the real ../FLYFF-V19-SOURCE/Server/Resource READ-ONLY for the
 //   round-trip test; nothing is ever written anywhere.
 import GLib from 'gi://GLib';
@@ -7,7 +8,7 @@ import System from 'system';
 import { FRE, ROOT, readBytes, listDir, loadFolder, openSource, exists } from './gjs-env.js';
 import { bpServer } from './bp-server.js';
 
-const FIXTURES = ROOT + '/test-data/Resource';
+const FIXTURES = ROOT + '/test-data/fixtures/Resource';
 const REAL = ROOT + '/../FLYFF-V19-SOURCE/Server/Resource';
 let pass = 0, fail = 0;
 function ok(cond, name, detail = '') {
@@ -418,14 +419,14 @@ section('donation shop');
   const dd = W.moduleDiags.donation;
   eq(dd.filter(d => d.code === 'DS_NO_PRICE').length, 9, '9 shields have no donate-chip price');
   eq(dd.filter(d => d.code === 'DS_CRASH').length, 0, 'the two crash shields are not listed (ae345504)');
-  const TREE = ROOT + '/test-data/Client/Client/DonationShopTree.inc';
+  const TREE = ROOT + '/test-data/fixtures/Client/Client/DonationShopTree.inc';
   if (exists(TREE)) {
     const tree = FRE.donationTree.loadTree(openSource({ name: 'DonationShopTree.inc', path: TREE }));
     eq(tree.leaves.length, 20, 'tree: 20 leaf categories');
     eq(tree.pathOf('shields').join(' > '), 'All Items > Weapon Skins > Shields', 'tree: path of Shields (case-insensitive)');
     ok(m.categories.every(c => tree.isLeaf(c)), 'every category in the file is a leaf in the client tree');
     ok(!tree.isLeaf('Fashion') && !tree.isLeaf('All Items'), 'parents are not leaves');
-  } else print('   (skipped tree: test-data/Client/Client/DonationShopTree.inc not found)');
+  } else print('   (skipped tree: test-data/fixtures/Client/Client/DonationShopTree.inc not found)');
 }
 
 const ds = w => w.files.get('donationshop.inc');
@@ -466,7 +467,7 @@ editCase('donation: missing closing brace', w => {
   ok(w.newBlocking().some(d => d.code === 'DS_BRACES'), 'no closing } -> DS_BRACES');
 });
 editCase('donation: category not in the client tree', w => {
-  const TREE = ROOT + '/test-data/Client/Client/DonationShopTree.inc';
+  const TREE = ROOT + '/test-data/fixtures/Client/Client/DonationShopTree.inc';
   if (!exists(TREE)) return;
   w.setDonationTree(FRE.donationTree.loadTree(openSource({ name: 'DonationShopTree.inc', path: TREE })));
   eq(w.diags.filter(d => d.code === 'DS_NO_LEAF').length, 0, 'no DS_NO_LEAF with the real tree');
@@ -712,6 +713,195 @@ editCase('battle pass: textures checked against Client/Theme', w => {
 });
 
 // ---------------------------------------------------------------- mutations: each rule must fire as a NEW block
+section('exchange');
+{
+  const m = W.models.exchange, X = FRE.exchange;
+  const [okp, out] = GLib.spawn_command_line_sync(`python3 ${ROOT}/tools/oracle.py ${FIXTURES}`);
+  const o = JSON.parse(new TextDecoder().decode(out)).exchange;
+  eq(o.eol, 'crlf', 'Exchange_Script.txt is CRLF');
+  const loaded = m.menus.filter(x => !x.isJunk);
+  eq(m.menus.reduce((a, x) => a + x.sets.length, 0), 309, '309 SET blocks read');
+  eq(loaded.reduce((a, x) => a + x.sets.length, 0), 285, '285 of them in real menus (24 are read inside junk menus, id -1)');
+  eq(o.menus.reduce((a, x) => a + x.sets.length, 0), 309, 'oracle: 309 recipes');
+  // menus the server reads in step: same recipes, lines, chances and flags as the brace-tree read
+  const byName = new Map(loaded.map(x => [x.name, x]));
+  const lost = new Set(loaded.flatMap(x => (x.lost || []).map(y => y.name)));
+  let compared = 0; const mism = [];
+  for (const om of o.menus) {
+    if (om.unknown.length || lost.has(om.name)) continue;
+    const jm = byName.get(om.name);
+    if (!jm) { mism.push('missing ' + om.name); continue; }
+    const js = jm.sets.map(st => ({ cond: st.condition.map(l => [l.item.name, l.num.value]), pay: st.pay.map(l => [l.item.name, l.num.value, l.prob.value, ...(l.flag ? [l.flag.value] : [])]), paynum: st.payNum && st.payNum.value }));
+    if (JSON.stringify(js) !== JSON.stringify(om.sets)) mism.push(om.name);
+    compared++;
+  }
+  ok(!mism.length && compared === 72, `oracle agrees: recipes of all ${compared} in-step menus`, mism.slice(0, 3).join(' | '));
+  // menus with SET_SMELT / SET_ENCHANT_MOVE: the first of each run starts an out-of-step chain, the rest are lost
+  const unknown = o.menus.filter(x => x.unknown.length).map(x => x.name);
+  const heads = loaded.filter(x => x.unknownSets.length).map(x => x.name);
+  eq(JSON.stringify(heads), JSON.stringify(['MMI_BEHEMOTHSMELTEVENT_TWOSWORD', 'MMI_CHRISTMASENCHANTEVENTMENU', 'MMI_SEAKINGLOOKCHANGEMENU']), 'three out-of-step chains');
+  ok(unknown.every(n => heads.includes(n) || lost.has(n)), 'every menu with an unknown SET_ block is a chain head or lost');
+  ok(['MMI_MAPLE_TRADE', 'MMI_EVENT_2012HAPPYMONEYMENU', 'MMI_SEAKINGMASKCHANGEMENU'].every(n => lost.has(n) && !byName.has(n)), 'normal menus swallowed by a chain are lost (never loaded)');
+  const codes = {}; for (const d of [...W.moduleDiags.exchange].sort((a, b) => a.code < b.code ? 1 : -1)) codes[d.code] = (codes[d.code] || 0) + 1;
+  eq(JSON.stringify(codes), JSON.stringify({ EX_OUT_OF_STEP: 3, EX_NO_NPC: 24 }), 'real file: 3 out-of-step chains, 24 menus no NPC opens');
+  const col = byName.get('MMI_COLLECT01');
+  eq(col.sets.length, 8, "Collins: 8 recipes (15091d5f)");
+  ok(W.npcsByMenu().get(col.mmi.value).some(n => /Collins/.test(n)), 'Collins opens MMI_COLLECT01');
+  ok(col.sets.every(st => X.sameList(st.condition, st.remove)), 'Collins: REMOVE == CONDITION in every recipe');
+
+  // PAY: running sum out of 1,000,000 (Load_Script)
+  const P = (...ps) => X.effectivePay(ps.map((p, i) => ({ item: { name: 'I' + i }, prob: { value: p } })));
+  const probs = r => r.lines.map(x => x.prob).join(',');
+  eq(probs(P(1000000)), '1000000', 'exact 100%');
+  eq(probs(P(600000, 600000, 5)), '600000,400000', 'over: the crossing line is cut, later lines dropped');
+  eq(probs(P(500000, 500000, 7)), '500000,500000', 'exactly 100% then more: later lines dropped');
+  eq(probs(P(300000, 200000)), '300000,700000', 'under: the last line gets the rest');
+  ok(P().crash, 'empty PAY: crash (vecPayItem[-1])');
+  eq(X.rewardsGiven({ payNum: { value: 0 }, paid: P(500000, 500000) }), 2, 'PAY 0 gives every line');
+  eq(X.rewardsGiven({ payNum: { value: 5 }, paid: P(500000, 500000) }), 2, 'PAY 5 with 2 lines gives 2');
+
+  // small files through the same loader
+  const D = W.defines.defines;
+  const load = t => { const f = new FRE.SourceFile('Exchange_Script.txt', FRE.bytes.binaryStringToBytes(t)); const mm = X.loadExchange(f, { defines: D }); return { m: mm, d: X.validateExchange(mm, { items: W.items.items, npcsByMenu: null, packMax: it => FRE.specItem.get(it, 'dwPackMax') }) }; };
+  const set = (pay = 'II_SYS_SYS_SCR_HOLY 1 1000000', cond = 'II_SYS_SYS_SCR_SCRAPTOPAZ 5') => `SET TID_GAME_COLLECT_COND01 { CONDITION { ${cond} } PAY 1 { ${pay} } }\n`;
+  let r = load(`MMI_COLLECT01 {\n${set().repeat(31)}}\n`);
+  eq(r.m.menus[0].sets.filter(x => !x.dropped).length, 30, '31 SETs: 30 kept');
+  ok(r.d.some(d => d.code === 'EX_SET_CAP'), '31 SETs -> EX_SET_CAP');
+  r = load(`MMI_COLLECT01 { ${set()} }\nMMI_COLLECT01 { ${set('II_SYS_SYS_SCR_AMPESS 1 1000000')} }\n`);
+  eq(r.m.byId.get(D.get('MMI_COLLECT01')).sets[0].pay[0].item.name, 'II_SYS_SYS_SCR_HOLY', 'duplicate menu: the first wins');
+  ok(r.d.some(d => d.code === 'EX_DUP_MENU'), 'duplicate menu -> EX_DUP_MENU');
+  r = load(`MMI_COLLECT01 { ${set('II_SYS_SYS_SCR_HOLY 1 1000000 2', 'PENYA 1000')} }`);
+  const s0 = r.m.menus[0].sets[0];
+  ok(s0.condition[0].item.penya && s0.condition[0].item.value === D.get('II_GOLD_SEED1'), 'PENYA = II_GOLD_SEED1');
+  eq(s0.pay[0].flag.value, 2, 'optional 4th PAY value = flag');
+  eq(r.d.length, 0, 'clean small file: no problems');
+  r = load(`MMI_COLLECT01 { ${set('II_NOPE 1 1000000')} }`);
+  ok(r.d.some(d => d.code === 'EX_UNDEF' && d.severity === 'BLOCK'), 'undefined reward -> EX_UNDEF BLOCK');
+  eq(r.m.menus[0].sets[0].pay[0].item.value, -1, 'GetDefineNum: unknown name -> -1');
+  r = load(`MMI_COLLECT01 { SET TID_GAME_COLLECT_COND01 { CONDITION { II_SYS_SYS_SCR_SCRAPTOPAZ 5 } PAY 1 { } } }`);
+  ok(r.d.some(d => d.code === 'EX_PAY_EMPTY'), 'empty PAY -> EX_PAY_EMPTY');
+  r = load(`MMI_COLLECT01 { ${set('II_SYS_SYS_SCR_HOLY 1 900000 II_SYS_SYS_SCR_AMPESS 1 300000')} `);
+  ok(r.d.some(d => d.code === 'EX_FORMAT' && d.severity === 'BLOCK'), 'missing } -> EX_FORMAT BLOCK (server hangs)');
+  ok(r.d.some(d => d.code === 'EX_PROB_OVER'), '120% -> EX_PROB_OVER');
+  r = load(`MMI_COLLECT01 { SET_SMELT TID_GAME_COLLECT_COND01 { CONDITION { II_SYS_SYS_SCR_SCRAPTOPAZ 1 } PAY 1 { II_SYS_SYS_SCR_HOLY 1 1000000 } } }\nMMI_EVENT_MAY { ${set()} }`);
+  ok(r.d.some(d => d.code === 'EX_OUT_OF_STEP' && /MMI_EVENT_MAY/.test(d.message)), 'SET_SMELT swallows the next menu');
+}
+
+const exf = w => w.files.get('exchange_script.txt');
+const exm = (w, name) => w.models.exchange.menus.find(x => x.name === name && !x.isJunk);
+const XO = FRE.exchangeOps;
+editCase('exchange: ingredient qty mirrors REMOVE, one undo', w => {
+  const f = exf(w), before = f.serialize();
+  const st = exm(w, 'MMI_COLLECT01').sets[0];
+  w.apply('exchange_script.txt', XO.setIngredientQty(st, st.condition[0], 450), 'qty');
+  const st2 = exm(w, 'MMI_COLLECT01').sets[0];
+  eq(st2.condition[0].num.value, 450, 'CONDITION changed');
+  eq(st2.remove[0].num.value, 450, 'REMOVE mirrored');
+  eq(changedLines(f).length, 4, 'two lines changed');
+  eq((f.text.match(/\r\n/g) || []).length, (f.text.match(/\n/g) || []).length, 'CRLF kept');
+  w.undo();
+  ok(B.bytesEqual(f.serialize(), before), 'undo restores identical bytes');
+});
+editCase('exchange: add / remove ingredient and reward', w => {
+  const f = exf(w), before = f.serialize();
+  let st = exm(w, 'MMI_COLLECT01').sets[1];
+  w.apply('exchange_script.txt', XO.addIngredient(f.text, st, 'II_SYS_SYS_SCR_SCRAPDIAMOND', 3), 'add ing');
+  st = exm(w, 'MMI_COLLECT01').sets[1];
+  eq(st.condition.length, 6, 'ingredient added');
+  ok(FRE.exchange.sameList(st.condition, st.remove), 'REMOVE still equals CONDITION');
+  eq(changedLines(f).length, 2, 'two lines added');
+  w.apply('exchange_script.txt', XO.addReward(f.text, st, 'II_SYS_SYS_SCR_AMPESS', 2, 500000), 'add pay');
+  st = exm(w, 'MMI_COLLECT01').sets[1];
+  ok(w.moduleDiags.exchange.some(d => d.code === 'EX_PROB_OVER'), '150% -> EX_PROB_OVER');
+  w.apply('exchange_script.txt', XO.evenChances(st), 'even');
+  st = exm(w, 'MMI_COLLECT01').sets[1];
+  eq(st.pay.map(l => l.prob.value).join(','), '500000,500000', 'spread evenly');
+  ok(!w.moduleDiags.exchange.some(d => d.code.startsWith('EX_PROB')), 'no chance warning after spreading');
+  w.apply('exchange_script.txt', XO.removeReward(f.text, st, st.pay[1]), 'rm pay');
+  st = exm(w, 'MMI_COLLECT01').sets[1];
+  throws(() => XO.removeReward(f.text, st, st.pay[0]), 'last reward cannot be removed');
+  w.apply('exchange_script.txt', XO.removeIngredient(f.text, st, st.condition[5]), 'rm ing');
+  st = exm(w, 'MMI_COLLECT01').sets[1];
+  eq(st.condition.length, 5, 'ingredient removed');
+  eq(w.newBlocking().length, 0, 'no new blocking problems');
+  for (let i = 0; i < 5; i++) w.undo();
+  ok(B.bytesEqual(f.serialize(), before), 'five undos restore identical bytes');
+});
+editCase('exchange: copy, move and remove a recipe', w => {
+  const f = exf(w), before = f.serialize();
+  let col = exm(w, 'MMI_COLLECT01');
+  const c = XO.copySet(f.text, col.sets[7]);
+  ok(!c.rebuilt, 'Collins recipe is ASCII: copied as is');
+  w.apply('exchange_script.txt', c.splices, 'copy');
+  col = exm(w, 'MMI_COLLECT01');
+  eq(col.sets.length, 9, 'copied: 9 recipes');
+  w.apply('exchange_script.txt', XO.moveSet(f.text, col, col.sets[0], 1).splices, 'move');
+  col = exm(w, 'MMI_COLLECT01');
+  eq(col.sets[0].pay[0].item.name, 'II_SYS_SYS_SCR_CHATCOLOR_3D', 'moved down: recipe 2 is now first');
+  eq(col.sets[1].pay[0].item.name, 'II_SYS_SYS_SCR_NAMECOLOR_3D', 'moved down: recipe 1 is now second');
+  w.apply('exchange_script.txt', XO.removeSet(f.text, col.sets[8]), 'remove');
+  eq(exm(w, 'MMI_COLLECT01').sets.length, 8, 'removed');
+  eq(w.newBlocking().length, 0, 'no new blocking problems');
+  w.undo(); w.undo(); w.undo();
+  ok(B.bytesEqual(f.serialize(), before), 'undo restores identical bytes');
+  // a recipe with EUC-KR comments is rebuilt from its values (comments dropped)
+  const may = exm(w, 'MMI_EVENT_MAY');
+  const cm = XO.copySet(f.text, may.sets[0]);
+  ok(cm.rebuilt, 'non-ASCII recipe is rebuilt');
+  w.apply('exchange_script.txt', cm.splices, 'copy may');
+  const m2 = exm(w, 'MMI_EVENT_MAY');
+  const vals = st => JSON.stringify([st.text.name, st.resultMsg.map(x => x.name), st.condition.map(l => [l.item.name, l.num.value]), st.remove.map(l => [l.item.name, l.num.value]), st.pay.map(l => [l.item.name, l.num.value, l.prob.value]), st.payNum.value]);
+  eq(vals(m2.sets[1]), vals(m2.sets[0]), 'rebuilt copy has the same values');
+});
+
+section('one task at a time (Workspace only)');
+{
+  const files = () => { const m = new Map(); for (const [k, e] of loadFolder(FIXTURES)) m.set(k, openSource(e)); return m; };
+  const ex = new FRE.Workspace(files(), { only: 'exchange' }).load();
+  ok(ex.available.exchange.ok && !ex.shown.has('npc') && ex.available.battlepass.off && ex.available.donation.off, 'exchange task: only Exchanges (NPC files read as context)');
+  ok(ex.chars && ex.npcsByMenu().get(ex.defines.defines.get('MMI_COLLECT01')).some(n => /Collins/.test(n)), 'exchange task still knows which NPC opens each menu');
+  ok(ex.diags.every(d => d.module === 'exchange'), 'exchange task: only exchange problems shown');
+  ok(!ex.isEditable('spec_item.txt') && !ex.isEditable('character.inc') && ex.isEditable('exchange_script.txt'), 'exchange task: only Exchange_Script.txt editable');
+  eq(ex.clientFileNames().join(), 'Exchange_Script.txt', 'exchange task: Client sync only for Exchange_Script.txt');
+  const np = new FRE.Workspace(files(), { only: 'npc' }).load();
+  ok(np.isEditable('spec_item.txt') && np.isEditable('character.inc') && !np.isEditable('exchange_script.txt'), 'NPC task: character*.inc and Spec_Item.txt (chip prices) editable');
+  ok(np.clientFileNames().includes('Spec_Item.txt') && np.clientFileNames().includes('character.inc'), 'NPC task: syncs Spec_Item.txt and character.inc');
+  const bp = new FRE.Workspace(files(), { only: 'battlepass' }).load();
+  ok(!bp.isEditable('spec_item.txt') && bp.diags.every(d => d.module === 'battlepass'), 'Battle Pass task: no Spec_Item edits or item problems');
+  throws(() => new FRE.Workspace(files(), { only: 'nope' }), 'unknown task refused');
+}
+
+section('maps: which NPCs stand in the game (World.inc + .dyo + SetOutput/SetLang)');
+{
+  const w = W.worldList();
+  ok(w.length > 40 && w.some(x => x.name === 'WdMadrigal'), 'World.inc: maps read (WdMadrigal included)');
+  const dyo = new Map();
+  for (const x of w) {
+    const p = `${FIXTURES}/World/${x.name}/${x.name}.dyo`;
+    if (!dyo.has(x.name) && exists(p)) dyo.set(x.name, readBytes(p));
+  }
+  const ends = [...dyo].map(([n, b]) => [n, FRE.world.readDyo(b)]);
+  const clean = ends.filter(([, r]) => r.end === 'eof').length;
+  ok(clean >= ends.length - 2, `every map file reads to its 0xFFFFFFFF end marker (${clean}/${ends.length}; 2 files start with junk and hold nothing)`);
+  eq(ends.find(([n]) => n === 'WdMadrigal')[1].movers.length, 364, 'WdMadrigal: 364 NPCs placed');
+  const ex = new FRE.Workspace((() => { const m = new Map(); for (const [k, e] of loadFolder(FIXTURES)) m.set(k, openSource(e)); return m; })(), { only: 'exchange' }).load();
+  ex.setMapObjects(dyo);
+  const npc = key => ex.chars.byKey.get(key.toLowerCase())[0];
+  ok(FRE.world.npcStatus(npc('MaFl_COLINSE'), ex.placed).inGame, 'Collins: on WdMadrigal and shown');
+  ok(FRE.world.npcStatus(npc('MaFl_OLDCHAMPION'), ex.placed).inGame, 'Rambo: in game (his SetOutput( false ) is commented out)');
+  eq(FRE.world.npcStatus(npc('MaFl_HANGAWI'), ex.placed).why, 'hidden: SetOutput( false )', 'Hangawi: SetOutput( false ), SetLang commented out -> hidden');
+  ok(!FRE.world.npcShown(npc('NPC_CHRISTMASRUBI')), 'Ruby: only SetLang( LANG_SPA ) -> hidden on a LANG_USA server (IsUsableDYO2 returns !bOutput)');
+  eq(FRE.world.npcStatus(npc('MaFl_May'), ex.placed).why, 'not placed on any map', 'Bles (MMI_EVENT_MAY): on no map');
+  const live = ex.models.exchange.menus.filter(m => !m.isJunk && m.sets.length && (ex.npcInfoByMenu().get(m.mmi.value) || []).some(x => x.inGame)).map(m => m.name).sort();
+  eq(live.join(), 'MMI_COLLECT01,MMI_COLOSSEUM_REWARD_MIX,MMI_COLOSSEUM_REWARD_WEAPON_1,MMI_COLOSSEUM_REWARD_WEAPON_2,MMI_COLOSSEUM_REWARD_WEAPON_3,MMI_EXCHANGE_ARMORCARD,MMI_EXCHANGE_WEAPONCARD,MMI_PET_RES01,MMI_SEAKINGMASKCHANGEMENU_1', '9 exchange menus players can really use');
+  const S = FRE.lexer.Script;
+  const one = t => { const files = new Map([['character.inc', new FRE.SourceFile('character.inc', FRE.bytes.binaryStringToBytes(t))]]); return FRE.character.loadCharacters(files, { defines: W.defines.defines, strings: new Map() }).npcs[0]; };
+  const a = one('X {\n SetOutput( false );\n SetLang( LANG_KOR );\n}\n');
+  ok(a.output === false && a.langs.length === 1 && a.langs[0].lang === 0, 'SetOutput / SetLang parsed');
+  const b = one('X {\n AddMenuLang( LANG_USA, MMI_COLLECT01 );\n AddMenuLang( LANG_KOR, MMI_EVENT_MAY );\n}\n');
+  eq(b.menus.join(), String(W.defines.defines.get('MMI_COLLECT01')), 'AddMenuLang counts only for the server language (LANG_USA)');
+}
+
 section('mutations');
 function mutation(name, code, mutate) {
   editCase(name, w => {

@@ -71,7 +71,7 @@
     step(`Disk contents unchanged since load${targets.length ? ' (Server and Client)' : ''}.`);
 
     // 2. backup the current disk bytes, verified
-    const folder = await FRE.fsa.newFolder(backupDir, stampName());
+    const folder = await FRE.fsa.newFolder(backupDir, stampName() + (ws.only ? '_' + ws.only : ''));   // e.g. 2026-10-06_08-10-00_exchange
     report.backupFolder = folder.name;
     for (const f of dirty) await FRE.fsa.newFile(folder, f.name, onDisk.get(f));
     const existing = targets.filter(t => t.client);

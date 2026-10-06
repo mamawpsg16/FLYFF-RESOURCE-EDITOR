@@ -14,13 +14,13 @@
   const CORE_EDITABLE = ['Spec_Item.txt'];
   const CORE_CLIENT = ['Spec_Item.txt'];
   // Read when present, never required (context only).
-  const OPTIONAL = ['Exchange_Script.txt', 'textClient.inc', 'textClient.txt.txt'];
+  const OPTIONAL = ['textClient.inc', 'textClient.txt.txt', 'World.inc'];
 
   // id, files it needs, files it may write, files the game client also reads,
   // parse(ws) -> model, validate(ws, model) -> diagnostics
   const MODULES = [
     {
-      id: 'npc', label: 'NPC Shops',
+      id: 'npc', label: 'NPC Shops', editsSpec: true,
       required: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt'],
       editable: ['character.inc', 'character-etc.inc', 'character-school.inc'],
       client: ['character.inc', 'character-etc.inc', 'character-school.inc'],
@@ -36,7 +36,7 @@
       },
     },
     {
-      id: 'donation', label: 'Donation Shop',
+      id: 'donation', label: 'Donation Shop', editsSpec: true,
       required: ['DonationShop.inc'], editable: ['DonationShop.inc'], client: ['DonationShop.inc'],
       parse(ws) {
         return FRE.donation.loadDonation(ws.files.get('donationshop.inc'), { defines: ws.defines.defines, strings: ws.strings.map });
@@ -57,13 +57,31 @@
         return FRE.battlePass.validateBattlePass(model, { items: ws.items.items, movers: ws.movers.movers, defines: ws.defines.defines, now: ws.now ? ws.now() : new Date(), theme: ws.clientTheme });
       },
     },
+    {
+      // Exchange_Script.txt (CExchange::Load_Script). The NPC files tell which NPCs open each menu.
+      id: 'exchange', label: 'Exchanges',
+      required: ['Exchange_Script.txt'], editable: ['Exchange_Script.txt'], client: ['Exchange_Script.txt'],
+      deps: ['character.inc', 'character-etc.inc', 'character-school.inc'],
+      uses: ['npc'],         // the NPC files are read (not edited) to name the NPCs that open each menu
+      maps: true,            // reads World/*/*.dyo to tell which of those NPCs stand in the game
+      parse(ws) {
+        return FRE.exchange.loadExchange(ws.files.get('exchange_script.txt'), { defines: ws.defines.defines });
+      },
+      validate(ws, model) {
+        return FRE.exchange.validateExchange(model, { items: ws.items.items, npcsByMenu: ws.npcsByMenu(), packMax: it => FRE.specItem.get(it, 'dwPackMax'),
+          live: ws.placed ? m => ws.isLiveMenu(m) : null });
+      },
+    },
   ];
   const ALL_FILES = [...new Set([...CORE, ...MODULES.flatMap(m => m.required), ...OPTIONAL])];
 
   class Workspace {
     // files: Map lowercase name -> SourceFile
-    constructor(files) {
+    // opts.only: one task (module id). Only that module is shown, validated and editable;
+    // the modules it `uses` are parsed as read-only context. Without it: every module.
+    constructor(files, opts = {}) {
       this.files = files;
+      this.only = opts.only || null;
       this.history = [];      // lowercase file names, in edit order (for global undo)
       this.redoStack = [];
       this.missing = CORE.filter(n => !files.has(n.toLowerCase()));
@@ -73,12 +91,17 @@
       this.editable = new Set();
       this.donationTree = null;
       this.clientTheme = null;      // lowercase file names in Client/Theme (Battle Pass textures), when the Client folder is chosen
+      this.placed = null;           // lowercase NPC key -> [map names] from World/*/*.dyo (null: not read)
+      const task = this.only ? MODULES.find(m => m.id === this.only) : null;
+      if (this.only && !task) throw new Error(`unknown task ${this.only}`);
+      this.active = new Set(task ? [task.id, ...(task.uses || [])] : MODULES.map(m => m.id));
+      this.shown = new Set(task ? [task.id] : MODULES.map(m => m.id));
       for (const m of MODULES) {
         const miss = m.required.filter(n => !files.has(n.toLowerCase()));
-        this.available[m.id] = miss.length ? { ok: false, missing: miss } : { ok: true };
-        if (!miss.length) m.editable.forEach(n => this.editable.add(n.toLowerCase()));
+        this.available[m.id] = !this.active.has(m.id) ? { ok: false, missing: [], off: true } : miss.length ? { ok: false, missing: miss } : { ok: true };
+        if (!miss.length && this.shown.has(m.id)) m.editable.forEach(n => this.editable.add(n.toLowerCase()));
       }
-      CORE_EDITABLE.forEach(n => { if (files.has(n.toLowerCase())) this.editable.add(n.toLowerCase()); });
+      if (!task || task.editsSpec) CORE_EDITABLE.forEach(n => { if (files.has(n.toLowerCase())) this.editable.add(n.toLowerCase()); });
     }
 
     load() {
@@ -108,11 +131,13 @@
       if (lowerName === 'spec_item.txt') { this.loadItems(); lowerName = undefined; }   // every module reads items
       for (const m of MODULES) {
         if (!this.available[m.id].ok) continue;
-        if (lowerName && !m.required.some(n => n.toLowerCase() === lowerName)) continue;
+        if (lowerName && ![...m.required, ...(m.deps || [])].some(n => n.toLowerCase() === lowerName)) continue;
         this.models[m.id] = m.parse(this);
-        this.moduleDiags[m.id] = m.validate(this, this.models[m.id]);
+        if (this.shown.has(m.id)) this.moduleDiags[m.id] = m.validate(this, this.models[m.id]);
       }
-      this.diags = [...Object.values(this.moduleDiags).flat(), ...this.itemDiags];
+      // Spec_Item problems matter only to tasks that can change Spec_Item.txt
+      const specDiags = [...this.shown].some(id => MODULES.find(m => m.id === id).editsSpec) ? this.itemDiags : [];
+      this.diags = [...Object.values(this.moduleDiags).flat(), ...specDiags];
     }
 
     // Client/Client/DonationShopTree.inc (client-only; read from the Client folder when chosen)
@@ -126,6 +151,42 @@
       this.clientTheme = names ? new Set([...names].map(n => n.toLowerCase())) : null;
       if (this.available.battlepass && this.available.battlepass.ok) this.reparse('battlepass.inc');
     }
+
+    // exchange menu id -> names of the NPCs with AddMenu(id) (null without the NPC files)
+    npcsByMenu() {
+      const by = this.npcInfoByMenu();
+      return by && new Map([...by].map(([id, list]) => [id, list.map(x => x.name)]));
+    }
+    // exchange menu id -> [{ npc, name, key, inGame, maps, why }] (FRE.world.npcStatus)
+    npcInfoByMenu() {
+      if (!this.available.npc || !this.available.npc.ok || !this.chars) return null;
+      const m = new Map();
+      for (const npc of this.chars.npcs) for (const id of npc.menus) {
+        if (!m.has(id)) m.set(id, []);
+        m.get(id).push(Object.assign({ npc, name: npc.name || npc.key, key: npc.key }, FRE.world.npcStatus(npc, this.placed)));
+      }
+      return m;
+    }
+    // An exchange menu players can use: it has recipes, and an NPC with it stands in the game.
+    isLiveMenu(m) {
+      if (!m.sets.length) return false;
+      const by = this.npcInfoByMenu();
+      return !!by && (by.get(m.mmi.value) || []).some(x => x.inGame);
+    }
+    // The maps the server loads (World.inc), for the app to read their .dyo files
+    worldList() { return FRE.world.readWorldList(this.files.get('world.inc'), this.defines.defines); }
+    // dyo: Map map name -> bytes of World/<name>/<name>.dyo
+    setMapObjects(dyo) {
+      const placed = new Map();
+      for (const [name, bytes] of dyo) for (const key of FRE.world.readDyo(bytes).movers) {
+        const k = key.toLowerCase();
+        if (!placed.has(k)) placed.set(k, []);
+        if (!placed.get(k).includes(name)) placed.get(k).push(name);
+      }
+      this.placed = placed;
+      for (const m of MODULES) if (m.maps && this.available[m.id].ok) this.reparse(m.required[0].toLowerCase());
+    }
+    needsMaps() { return MODULES.some(m => m.maps && this.shown.has(m.id) && this.available[m.id].ok); }
 
     textOf(name) { return (this.files.get(String(name).toLowerCase()) || { text: '' }).text; }
     moduleOfFile(name) { const l = String(name).toLowerCase(); return MODULES.find(m => m.required.some(n => n.toLowerCase() === l)) || null; }
@@ -185,7 +246,9 @@
 
     // Files the game client also reads (it has its own copies in Client/).
     clientFileNames() {
-      return [...new Set([...CORE_CLIENT, ...MODULES.filter(m => this.available[m.id].ok).flatMap(m => m.client)])];
+      const own = MODULES.filter(m => this.available[m.id].ok && this.shown.has(m.id));
+      const spec = !this.only || own.some(m => m.editsSpec) ? CORE_CLIENT : [];
+      return [...new Set([...spec, ...own.flatMap(m => m.client)])];
     }
 
     // Changed files that the game client also reads (must be copied to Client/).
