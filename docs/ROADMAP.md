@@ -155,20 +155,21 @@ _Last updated 2026-10-06._
 
 ## Next (in this order, agreed with the user)
 
-**Order (agreed 2026-10-06; tasks S, V and H–M added that day):**
+**Order (agreed 2026-10-06; tasks S, V, C and H–M added that day):**
 1. Add New NPC step 1: committed (`7cbb9c9`), **not tested in game yet**. Do the in-game test (handoff §8) before calling it done; fix what it finds before starting S.
 2. **S. Shops: everything editable** (asked 2026-10-06: "the idea is we're able to edit everything in a shop").
 3. **V. Save History** (asked 2026-10-06: undo saved work per task without git).
 4. **H. "Where is this item from / used?"** (every way to get an item: shops, exchanges, monster drops, boxes, rewards, quests).
-5. Add New NPC step 2 (exchange NPCs + new menus, Jeff's Weapon Pieces).
-6. Add New NPC step 3 (edit NPC menus + info boards, Guild Siege rules).
-7. **I. Rates & Buffs** (server rates, level-up gifts, rebirth tiers, guild buff, server buff, couple; buff descriptions written from the stats).
-8. F. Monster drops (the Rates calculator then shows real drop chances).
-9. **J. Random boxes.**
-10. **K. Upgrade rates.**
-11. **L. Monster Hunt + Badges + Collecting.**
-12. G. Item set effects and weapon effects.
-13. **M. Teleporter.**
+5. **C. GM Commands list** (every GM command, searchable, by category, with plain-English descriptions).
+6. Add New NPC step 2 (exchange NPCs + new menus, Jeff's Weapon Pieces).
+7. Add New NPC step 3 (edit NPC menus + info boards, Guild Siege rules).
+8. **I. Rates & Buffs** (server rates, level-up gifts, rebirth tiers, guild buff, server buff, couple; buff descriptions written from the stats).
+9. F. Monster drops: add / remove / change what each monster drops (the Rates calculator then shows real drop chances).
+10. **J. Random boxes.**
+11. **K. Upgrade rates.**
+12. **L. Monster Hunt + Badges + Collecting.**
+13. G. Item set effects and weapon effects.
+14. **M. Teleporter.**
 
 The user may move tasks (e.g. L earlier if the badge TODOs become urgent). Sections H–M below are leads from a first look, not finished investigations: read the C++ named there before designing anything.
 
@@ -188,11 +189,47 @@ The user may move tasks (e.g. L earlier if the badge TODOs become urgent). Secti
   - Simulator + Python copy, as for every task.
 
 ### F. Monster drops (`propMoverEx.inc`)
-- **Loader:** port `LoadPropMoverEx`, including the `AI{}` sub-parser.
-- **Validation:**
-  - an `MI_` id out of range → the server hangs at startup (BLOCK);
-  - `DropItem` chance is out of 3,000,000,000; 518 lines exceed INT_MAX (warn, show the effective %);
-  - `DropKind` rarity = monster level −5 … −2.
+**For players' words (asked 2026-10-06: "add or remove the items dropped by a monster"):** pick a monster and see everything it drops, with the real chance. Then:
+- **add** an item to its drops (item picker, chance, quantity);
+- **remove** a drop;
+- **change** a drop's chance or quantity;
+- change its Penya drop (min–max) and how many items it can drop at most per kill (`Maxitem`).
+
+Example of the monster view:
+```
+Mushpang (lv 15, Flaris)   drops up to 2 items per kill
+  Twinkle Stone        10%     ×1     [✏️] [✖]
+  Scroll of Awakening  0.5%    ×1     [✏️] [✖]
+  + random lv 10–13 items (DropKind)
+  Penya: 6–9 (× server rate 10)
+  [+ Add a drop]
+```
+- Also the reverse, from an item: "which monsters drop this?" (shared with task H). Bulk actions: add one item to several monsters, or remove it from all.
+- History sentences (task V): `Mushpang: added Scroll of Awakening as a drop (0.5%)`, `Mushpang: changed the chance of Twinkle Stone from 10% to 5%`, `Mushpang: removed Scroll of Awakening from its drops`.
+
+**Loader:** port `LoadPropMoverEx` (`_Common/Project.cpp:2978`), including the `AI{}` sub-parser. `propMoverEx.inc` is UTF-8 without BOM, CRLF; raw bytes for the server.
+- `DropItem( II_X, chance, level, count )`: the chance is out of 3,000,000,000 (`CDropItemGenerator::GetAt`, `Project.cpp:184`, `xRandom( 3000000000 )`).
+- `DropKind( IK3, a, b )`: `a` and `b` are ignored; rarity = monster level −5 … −2.
+- `DropGold( min, max )`, `Maxitem = n`.
+- Unknown words (`DDropGold`, `AddSummonMonster`) are silently skipped by the loader.
+
+**Edits:**
+- Statement splices inside the monster's `{ }` block. A new line copies the indent and EOL of a neighbouring `DropItem`.
+- Show chances as % in the editor; files always get the plain number.
+- The chance box allows at most 2,147,483,647, which the server can actually reach.
+
+**Validation:**
+- an `MI_` id out of range → the server hangs at startup (BLOCK: `continue` inside a do-while);
+- an unknown `MI_` → the drops land on mover 0 (BLOCK);
+- an unknown `II_` → drop of item 0 + error log (BLOCK);
+- `DropItem` chance > 2,147,483,647: `atoi` caps it, so `3000000000` is 71.6%, not 100%. 518 lines today (WARN; show the effective %);
+- a monster's block appearing twice: drops are appended from both blocks (WARN).
+
+**Simulator:** port the kill → drop path (`CMover` drop code around `Mover.cpp:8604`: `m_DropItemGenerator.GetAt`, `Maxitem`, the item / gold / event rates and the unique mode) with the server's `xRandom`:
+- "kill this monster N times": how often each item drops, and the Penya;
+- uses the server rates from task I when that is built (`Event.lua` "Server Rates" today ×10 drop).
+
+Python copy, as for every task.
 
 ### G. Item set effects and weapon effects (asked 2026-10-06)
 - What the bonuses of an item set (wearing N pieces) and a weapon's effects give a character, edited in the app.
@@ -272,6 +309,35 @@ The user may move tasks (e.g. L earlier if the badge TODOs become urgent). Secti
 6. **Tests + Python copy** (the project rule):
    - histories: undo an old save while keeping later ones; two tasks on `Spec_Item.txt`; a same-line collision; an outside edit; an NPC added then undone; undo of an undo;
    - planted bugs in the Python copy must be caught.
+
+### C. GM Commands list (asked 2026-10-06)
+**For players' words:** every GM command in one searchable page, grouped by category (Item & Inventory, Guild Siege, Monster / NPC, Teleport, Server, Moderation, Events, Custom…). Each command shows:
+- the name and short alias, e.g. `/createitem` (`/ci`);
+- who can use it: Player / GM 1 / GM 2 / GM 3 / Admin (`AUTH_GENERAL`, `AUTH_GAMEMASTER`, `AUTH_GAMEMASTER2`, `AUTH_GAMEMASTER3`, `AUTH_ADMINISTRATOR`);
+- what it does, in plain English;
+- how to type it, with an example;
+- a **Copy** button.
+
+Example:
+```
+🔍 [ siege          ]   Category: [ All ▾ ]   Who: [ All ▾ ]
+Guild Siege
+  /GCOpen (/gcopen)   GM 3   Opens Guild Combat (it must be closed)     [Copy]
+  /GCClose (/gcclose) GM 3   Closes Guild Combat now or queues a close   [Copy]
+```
+
+**Where the data comes from:**
+- **Live, read-only from the C++:** `Source/Source/_Interface/FuncTextCmd.cpp`, the `ON_TEXTCMDFUNC( handler, "name", "alias", "kor name", "kor alias", TCM_SERVER|TCM_CLIENT|TCM_BOTH, AUTH_*, "description" )` table. 257 entries today: 165 AUTH_ADMINISTRATOR, 36 AUTH_GAMEMASTER3, 11 AUTH_GAMEMASTER2, 5 AUTH_GAMEMASTER, 40 AUTH_GENERAL. Its descriptions are mostly Korean.
+- Respect the `#ifdef` / `#if __VER` blocks around entries: only commands compiled into the WorldServer / Neuz builds count (same feature defines as `VersionCommon.h` + `CustomCommon.h`). Show the line number.
+- **English descriptions and categories:** from the guides repo's `GM_COMMANDS_MASTER_LIST.md`, which has 17 categories with one-line descriptions and links to deep-dive guides (CREATEITEM, CREATENPC, LEVEL, RITEM). That list is out of date: it says 235 commands; the C++ has 257 now. Bundle a copy into the editor at build time.
+- A command in the C++ but not in the master list shows its Korean description and "not described yet", so new commands (e.g. `/weather`, `4f268007`) never go missing.
+- Offer to append missing ones to the master list text (the guides repo is the user's; ask first).
+
+**Handy links from other tasks:**
+- in Add New NPC / "Where each NPC stands", show `/te` to go there;
+- in item views, show `/createitem <id>` to get the item for an in-game test.
+
+**Simulator:** not applicable (reference page). Tests: the parse of the table (count, the `#ifdef` handling) checked by an independent Python reader of the same file.
 
 ### H. "Where is this item from / used?" (asked 2026-10-06; widened the same day: "where can it be dropped or obtained")
 **For players' words:** pick any item and see every way a player can GET it, and where it is USED. Example:
