@@ -66,5 +66,5 @@ grindTo(s2, cy, 3, 'MI_KINGSTER01', now); flush(cy);
 for (const p of all) print('   ' + status(p, now));
 
 chapter('Rewards each player owns at the end');
-for (const p of all) print(`   ${p.name} (${p.got.length}): ${p.got.join(', ') || 'none'}`);
+for (const p of all) print(`   ${p.name} (${p.got.length}): ${p.got.map(g => g.text).join(', ') || 'none'}`);
 print(`\n(file in memory only: ${f.dirty ? 'changed, never saved' : 'unchanged'})`);

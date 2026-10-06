@@ -91,5 +91,18 @@
     } catch (e) { return null; }
   }
 
-  FRE.fsa = { supported, pickFolder, ensurePermission, findFiles, readHandle, writeHandle, writeVerified, newFolder, newFile, remember, recall };
+  // Every backup copy of one file: each subfolder of the backups folder that holds it
+  // (`<stamp>_<task>/` from io/save.js), oldest first. Read only.
+  async function backupCopies(dir, fileName) {
+    const out = [];
+    for await (const [name, handle] of dir.entries()) {
+      if (handle.kind !== 'directory') continue;
+      const found = await findFiles(handle, [fileName]);
+      const fh = found.get(fileName.toLowerCase());
+      if (fh) out.push({ stamp: name, bytes: (await readHandle(fh)).bytes });
+    }
+    return out.sort((a, b) => (a.stamp < b.stamp ? -1 : a.stamp > b.stamp ? 1 : 0));
+  }
+
+  FRE.fsa = { supported, pickFolder, ensurePermission, findFiles, readHandle, writeHandle, writeVerified, newFolder, newFile, remember, recall, backupCopies };
 })(globalThis.FRE = globalThis.FRE || {});

@@ -1,8 +1,8 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-05._
+_Last updated 2026-10-06._
 
-> **Handoff (2026-10-06, end of session):** Committed `11966b4` (Exchanges editor, one-folder start screen, in-game NPC detection; user-tested in Brave, all checks OK). **Next session:** (1) the **exchange simulator** (port `CExchange::CheckCondition` / `IsFull` / `GetPayItemList` / `ResultExchange`; press "exchange" N times, show how often each reward drops, ingredients taken, full-bag refusals); (2) a **Donation Shop simulator** (the buy flow); (3) **F. Monster drops**, with its drop simulator. Rule (CLAUDE.md): every task has a simulator of the in-game behaviour. Tests: `gjs -m tests/run-tests.js` (375 pass, reads `test-data/fixtures`), `tests/run-ui.sh` (124 pass). Reset the manual copy with `tools/refresh-fixtures.sh test-data` (it still holds test edits: Collins recipe 1 Golden Axe, BP season 2, Lui Blessedness, AMPESS price 25).
+> **Handoff (2026-10-06, end of session):** Committed after the user's test in Brave: the exchange simulator ("Try it"), the independent Python copies of the simulators (`tools/oracle_sim.py`), Battle Pass Past seasons (+ pop-up, "Use this whole ladder", ↑ / ↓, ✕ on any level, total on top), the Exchanges wording, and the Undo (n) / scroll / badge fixes. **Next session:** (1) **where each NPC stands**: area names players know (Flaris, Saint Morning, Darkon 1/2/3, Elliun, Valley of the Risen, Shaduwar …) in every task, from the C++ that names the area at a position, plus the NPC positions in the `.dyo` files; (2) a **Donation Shop simulator** (the buy flow) + its Python copy; (3) **F. Monster drops**, with both copies. Rule (CLAUDE.md): every task has a JS simulator AND an independent Python copy, and the tests require them to agree. Tests: `gjs -m tests/run-tests.js` (457 pass, about 90 s, reads `test-data/fixtures`), `tests/run-ui.sh` (147 pass). Reset the manual copy with `tools/refresh-fixtures.sh test-data` (leave `test-data/backups`: Past seasons reads it).
 
 ## Done
 - **Build 1** (`1c785ce`): NPC shop editor (`character*.inc`). Add, remove, price and tab edits; byte-exact save with verified backup. Tested by the user in Brave on `test-data`.
@@ -78,7 +78,47 @@ _Last updated 2026-10-05._
   - Recipe cards now lead with a big "You get …" line (with the server's chances), then Rewards, then Costs.
   - Unticking Bound removes the flag value instead of writing `0`.
 
+- **Exchange simulator** (2026-10-06, user-tested): `loaders/exchange-sim.js` (`FRE.exchangeSim`), `tools/exchange-sim.js`, and a **Try it** button on every recipe card.
+  - Ports `CDPSrvr::OnExchange` → `CExchange::ResultExchange` (`_Common/Exchange.cpp:434`): CheckCondition + `CMover::GetItemNum`, GetPayItemList + `xRandom` (the server's LCG), IsFull + `GetEmptyCount`, `RemoveItemA` / `RemoveAllItem`, `CreateItem` → `CItemContainer::IsFull` / `Add`; and the client's `CWndDialogEvent::ReceiveResult` (Collins' chat line, `15091d5f`) and the row dimming (`WndControl.cpp:1973`). No commit changes `Exchange.cpp`.
+  - Try it: press OK N times with the same fresh bag (how often each reward comes out) or one bag that keeps the rewards (runs out, fills up); shows refusals, items taken, lost rewards and what the player reads.
+  - `gjs -m tools/exchange-sim.js` runs all 75 recipes of the 9 live menus: every one works, observed chances match the server's (Card Master 60/40).
+  - In-game findings (tests assert each):
+    - The reward roll happens BEFORE the bag check; a full bag takes nothing.
+    - The bag check wants at least one EMPTY slot every time, even when the reward would stack (Collins' Scroll of Holy with 1 free slot: the 2nd exchange is refused). A stack the exchange uses up counts as empty.
+    - It counts a reward as `qty / dwPackMax` slots, rounded down, so 3 small rewards (`PAY 0`) with 1 free slot pass the check and 2 are LOST (the server only logs an error). No live recipe hits this.
+    - `PENYA` is gold only; Perin items do not count.
+    - Any item in a trade / private shop, or stranded in a locked bag slot (expired Bag Expansion), makes every ingredient count 0: every exchange is refused.
+    - Ingredients are counted and taken from equipped items too.
+    - Ingredient quantity -1 (`=`) passes the check and takes EVERY one the player has (`RemoveAllItem`); the `EX_QTY` text now says so.
+    - Collins' success line names the first reward of the CLIENT copy, not the one rolled; with Server and Client copies out of step the player gets one recipe and reads another.
+  - Not modelled: Perin auto-convert in `AddGold` (only above 2,000,000,000 Penya), campus points, logs.
+
+- **Independent copies** (2026-10-06): `tools/oracle_sim.py`, Python written from the C++ without reading the JS simulators.
+  - `exchange`: its own `Load_Script` token loop, Spec_Item reading and bag model. 1,436 cases: for each of the 285 loaded recipes, exact ingredients, one short, double stock with a full bag, a bag stocked for 3 pressed 5 times, 1,500 presses for the rates; plus 10 small scripts for the edge cases. JS and Python agree on every result, roll, reward, lost reward and end bag.
+  - `battlepass`: its own `LoadBattlePass` (clamps, first wins), `BattlePassConfigTime`, OnJoin, OnDied, AddBPUpdate, GiveBattlePassReward, OnDoBP. One timeline (7 players, 2 seasons, the season edit done by Python on the text vs the editor's `newSeasonPlan`), 44 steps, every player state agrees.
+  - `core/xrandom.js`: the server's `xRand` / `xRandom(n)` / `xRandom(min, max)` (`_Common/xUtil.cpp`), shared by both JS simulators. `tests/bp-server.js` used its own 31-bit generator before (same range, different rolls).
+  - `tests/bp-server.js` now ports OnDoBP's bag checks (1 empty slot to activate with no pass running; one empty slot per reward to pay back earlier levels; the pass is not used up when refused) and mails a reward when the bag is full.
+  - Planted-bug check: 10 one-line bugs planted in the Python copy, one at a time; the tests now catch all 10. Five were missed at first because no case reached them, and cases were added: exact points at a level's cost; a roll exactly on a chance boundary (the seed is chosen so the first roll is 400,000); a bound reward next to an unbound stack in a full bag; back-pay with exactly enough free slots; a Battle Pass reward with a full bag (mailed).
+  - Finding: with a nearly full bag, a bound reward (flag 2) cannot join an unbound stack of the same item, so it needs its own slot and can be LOST when a recipe gives several rewards.
+  - Finding: one award of many points raises at most one level; the rest is banked and each later award raises one more level (`AddBPUpdate`).
+
+- **After the user's test of Try it** (2026-10-06, user-tested):
+  - Editor: picking an item (+ Ingredient / + Reward / Change) no longer scrolls to the top (the view key ignores `pick`; Battle Pass too). The "edited" badge rides on the undo entry, so Undo removes it. **Undo (n) / Redo (n)** count the edits of the whole task; the tooltip names the next step and its NPC / menu. Try it re-runs on every change.
+  - Exchanges wording: cards are "Exchange N", named by their reward. The top button says "Remove <reward>" and removes the whole exchange (rewards and costs); the row ✕ removes one reward or cost.
+  - **Battle Pass: Past seasons** (4th view): every season found in the backup copies of BattlePass.inc (`fsa.backupCopies`, `battlePass.seasonHistory`: key = login pass nType + end date, last copy's ladder), newest first, with a "now" comparison per level.
+    - **+** adds a past reward as the next level (`addReward`).
+    - **Use this whole ladder…** (`battlePassOps.restoreLadder`, preview, one undo step) gives the current season that season's costs, rewards and quantities; its number, end date and monsters stay.
+    - **↑ / ↓** on the ladder swap rewards between levels; costs stay (`swapRewards`).
+    - Tested through the Battle Pass simulator: after "Use this whole ladder" a buyer gets exactly the old season's reward at every level.
+    - Seasons from before the first save through the editor are in no backup.
+    - After the user's test: the current season has no card there (it is edited in Reward ladder); cards start closed; **+** opens a pop-up (a new top level, or instead of level N, with qty and cost editable) and a message says what changed; "BP4" / "BP5" replaced by plain words.
+    - Reward ladder: the total ("146,000 points to reach level 50") is on top and follows every cost edit; **✕ on any level** (`removeLevel`: the levels above move down one with their rewards and costs, no gap), checked through the simulator.
+
 ## Next (in this order, agreed with the user)
+
+### Where each NPC stands (asked 2026-10-06)
+- In every task, show the area of each NPC in names players use (Flaris, Saint Morning, Darkon 1/2/3, Elliun, Valley of the Risen, Shaduwar …), so the user knows where to go to test in game.
+- First find in the C++ how the game names the area at a position (continent / region data), port it, and use the NPC positions read from the `.dyo` files (`loaders/world.js`).
 
 ### F. Monster drops (`propMoverEx.inc`)
 - **Loader:** port `LoadPropMoverEx`, including the `AI{}` sub-parser.

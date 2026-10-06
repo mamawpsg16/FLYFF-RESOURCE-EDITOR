@@ -330,7 +330,7 @@
     ok(S.ws.models.battlepass.rows.BP4.every(r => r.type.value === 2), 'all rewards moved to season 2');
 
     click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.startsWith('Reward ladder')));
-    ok(/Levels \(50\)/.test($('editor').textContent) && /Reaching level 50 takes 146,000 points/.test($('editor').textContent), 'ladder: 50 levels, 146,000 points to the top');
+    ok(/Levels \(50\)/.test($('editor').textContent) && /146,000 points to reach level 50/.test($('editor').querySelector('.bp-total').textContent), 'ladder: 50 levels, 146,000 points to the top');
     search.value = 'II_CHP_RED'; search.dispatchEvent(new Event('input'));
     const plus3 = [...document.querySelectorAll('#item-list .item')].find(r => r.querySelector('.def').textContent === 'II_CHP_RED').querySelector('button');
     ok(!plus3.disabled && /level 51/.test(plus3.title), '+ adds level 51');
@@ -368,6 +368,53 @@
     ok(!FRE.bytes.bytesEqual(bpSrv, original.get('BattlePass.inc')), 'file changed on disk');
     document.querySelectorAll('.modal-back').forEach(m => m.remove());
 
+    // Past seasons: the save above backed up season 1; season 2 (current) is edited in Reward ladder
+    click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.startsWith('Past seasons')));
+    await waitFor(() => $('editor').querySelectorAll('details.bp-season').length >= 1, 'past seasons read from the backups');
+    const seasons = () => [...$('editor').querySelectorAll('details.bp-season')];
+    ok(!seasons().some(d => /current/.test(d.querySelector('summary').textContent)), 'the current season has no card here');
+    const s1card = () => seasons().find(d => /Season 1\b/.test(d.querySelector('summary').textContent));
+    ok(s1card() && !s1card().open && /ended/.test(s1card().querySelector('summary').textContent) && s1card().querySelectorAll('tr').length === 51, 'season 1 from the backup: closed, ended, 50 levels');
+    s1card().open = true;
+    const past5 = [...s1card().querySelectorAll('tr')][5];
+    const pastName = past5.querySelector('td:nth-child(2)').textContent;
+    click(past5.querySelector('button'));
+    await waitFor(() => document.querySelector('.modal') && /Copy a reward from season 1 into season 2/.test(document.querySelector('.modal header').textContent), '+ opens the pop-up');
+    const plm = document.querySelector('.modal');
+    const whereSel = plm.querySelector('select'); whereSel.value = '3'; whereSel.dispatchEvent(new Event('change'));
+    ok(/Before/.test(plm.textContent) && /After/.test(plm.textContent) && btnByText(plm.querySelector('footer'), 'Replace level 3'), 'pop-up shows level 3 before / after; the button says "Replace level 3"');
+    const qtyIn = [...plm.querySelectorAll('label')].find(l => /Quantity/.test(l.textContent)).querySelector('input');
+    qtyIn.value = '4'; qtyIn.dispatchEvent(new Event('change'));
+    if (STOP === 'bpplace') return;
+    click(btnByText(plm.querySelector('footer'), 'Replace level 3'));
+    const lvOf = n => S.ws.models.battlepass.ladder.get(n);
+    ok(lvOf(3).qty.value === 4 && pastName.includes(S.ws.itemInfo(S.ws.itemById(lvOf(3).id)).name), 'level 3 now has the past reward x4');
+    ok(/Season 2, level 3: 4x/.test($('toasts').textContent), 'a message says what was added and where');
+    if (STOP === 'bphistory') return;
+    click(btnByText(s1card(), 'Use this whole ladder'));
+    await waitFor(() => document.querySelector('.modal') && /Use season 1's ladder/.test(document.querySelector('.modal header').textContent), 'use-ladder preview');
+    ok(/level \d+: removed/.test(document.querySelector('.modal').textContent), 'preview lists the changes (extra levels removed)');
+    click(btnByText(document.querySelector('.modal footer'), 'Use this ladder'));
+    ok(S.ws.models.battlepass.ladder.size === 50 && S.ws.models.battlepass.pass.type.value === 2, 'ladder back to season 1\'s 50 levels, still season 2');
+    click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.startsWith('Reward ladder')));
+    const bpTotal = () => $('editor').querySelector('.bp-total').textContent;
+    ok(/146,000 points to reach level 50/.test(bpTotal()), 'total on top: 146,000 points to reach level 50');
+    const ladRow = n => [...$('editor').querySelectorAll('table.items tr')].find(tr => tr.querySelector('td') && tr.querySelector('td').textContent === String(n));
+    const costIn = ladRow(1).querySelectorAll('input.num-input')[1];
+    costIn.value = '3000'; costIn.dispatchEvent(new Event('change'));
+    ok(/147,000 points to reach level 50/.test(bpTotal()), 'a cost change updates the total');
+    const [i2, i3, c2] = [lvOf(2).define, lvOf(3).define, lvOf(2).points.value];
+    click([...ladRow(2).querySelectorAll('button')].find(b => b.textContent === '↓'));
+    ok(lvOf(2).define === i3 && lvOf(3).define === i2 && lvOf(2).points.value === c2, '↓ on level 2 swaps the rewards of levels 2 and 3; the cost stays');
+    const i6 = lvOf(6).define;
+    click([...ladRow(5).querySelectorAll('button')].find(b => b.textContent === '✕'));
+    await waitFor(() => document.querySelector('.modal') && /Remove level 5/.test(document.querySelector('.modal header').textContent), 'remove-level confirmation');
+    click(btnByText(document.querySelector('.modal footer'), 'Remove level 5'));
+    ok(S.ws.models.battlepass.ladder.size === 49 && lvOf(5).define === i6 && !S.ws.diags.some(d => d.code === 'BP_LEVEL_GAP'), '✕ on level 5: 49 levels, old level 6 is now 5, no gap');
+    while (!$('btn-undo').disabled) click($('btn-undo'));
+    ok(S.ws.dirtyFiles().length === 0, 'undo all: the saved file again');
+    document.querySelectorAll('.modal-back').forEach(m => m.remove());
+
     // ---- Exchanges
     await openTask('exchange');
     ok(!S.ws.isEditable('spec_item.txt') && !S.ws.isEditable('character.inc') && S.ws.clientFileNames().join() === 'Exchange_Script.txt', 'Exchanges task: only Exchange_Script.txt is editable and synced');
@@ -379,19 +426,49 @@
     click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MMI_COLLECT01')));
     ok(/Collins/.test(exEd().querySelector('h2').textContent) && exEd().querySelectorAll('.ex-card').length === 8, 'Collins: 8 recipe cards');
     ok(/In game:/.test(exEd().querySelector('.ex-card').textContent), 'each card shows the in-game row');
+    ok(btnByText(exEd().querySelector('.ex-card'), 'Remove Name Color Scroll (3 Days)') && /Exchange 1/.test(exEd().querySelector('.ex-label').textContent), 'the card is named by its reward: "Exchange 1", "Remove Name Color Scroll (3 Days)"');
     ok(/You get\s*Name Color Scroll \(3 Days\) ×1/.test(exEd().querySelector('.ex-get').textContent), 'card headline: what the player gets');
     ok(/Rewards/.test(exEd().querySelectorAll('.ex-section-title')[0].textContent) && /Costs/.test(exEd().querySelectorAll('.ex-section-title')[1].textContent), 'rewards first, then costs');
     ok([...exEd().querySelectorAll('.ex-npcs .tag')].some(t => /Collins.*on WdMadrigal/.test(t.textContent)), 'NPC chip: Collins on WdMadrigal');
     if (STOP === 'exchange') return;
+    // Try it: the exchange simulator (loaders/exchange-sim.js) on Collins recipe 8 (Scroll of Holy x5)
+    click(btnByText(exEd().querySelectorAll('.ex-card')[7], 'Try it'));
+    await waitFor(() => document.querySelector('.modal .ex-try-out table'), 'Try it results');
+    ok(/^Try: Scroll of Holy \(Collins, exchange 8\)$/.test(document.querySelector('.modal header').textContent), 'Try it title names the reward, the NPC and the position');
+    const tryM = () => document.querySelector('.modal');
+    ok(/1,000 exchanged/.test(tryM().textContent) && /Scroll of Holy ×5/.test(tryM().textContent) && /100\.00%/.test(tryM().textContent), 'Try it: 1,000 presses, all exchanged, Scroll of Holy x5 100%');
+    ok(/Exchange complete! You received Scroll of Holy x5\./.test(tryM().textContent), 'Try it: Collins chat line shown');
+    const sel = tryM().querySelector('.ex-try select'); sel.value = 'keep'; sel.dispatchEvent(new Event('change'));
+    const freeIn = [...tryM().querySelectorAll('.ex-try label')].find(l => /Empty bag slots/.test(l.textContent)).querySelector('input');
+    freeIn.value = '1'; freeIn.dispatchEvent(new Event('change'));          // runs again by itself (no Run click)
+    ok(/refused: bag full/.test(tryM().textContent) && /at least one EMPTY bag slot/.test(tryM().textContent), 'Try it: one bag + 1 empty slot -> refused, bag full (IsFull wants an empty slot)');
+    if (STOP === 'exsim') return;
+    document.querySelectorAll('.modal-back').forEach(m => m.remove());
     const card1 = () => exEd().querySelectorAll('.ex-card')[0];
     const q1 = card1().querySelectorAll('.ex-section')[1].querySelector('input.num-input');
     q1.value = '450'; q1.dispatchEvent(new Event('change'));
     const s1 = S.ws.models.exchange.menus.find(m => m.name === 'MMI_COLLECT01').sets[0];
     ok(s1.condition[0].num.value === 450 && s1.remove[0].num.value === 450, 'ingredient qty written to CONDITION and REMOVE');
+    const colBadge = () => /edited/.test([...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MMI_COLLECT01')).textContent);
+    ok(colBadge(), 'edit: Collins gets the "edited" badge');
+    ok(/^Undo \(\d+\)$/.test($('btn-undo').textContent) && /MMI_COLLECT01/.test($('btn-undo').title), 'Undo shows how many edits the task has, and its tooltip names the step and the menu');
+    click($('btn-undo'));
+    ok(!colBadge(), 'undo the only edit: the badge goes away');
+    click($('btn-redo'));
+    ok(colBadge() && S.ws.models.exchange.menus.find(m => m.name === 'MMI_COLLECT01').sets[0].condition[0].num.value === 450, 'redo: the edit and its badge come back');
+    // picking an item for a lower recipe keeps the editor where it is
+    const exE = exEd(), card8 = () => exE.querySelectorAll('.ex-card')[7];
+    exE.scrollTop = card8().offsetTop;
+    const before = exE.scrollTop;
+    click(btnByText(card8(), '+ Ingredient'));
+    ok(before > 200 && Math.abs(exE.scrollTop - before) < 2 && /Pick an item/.test(card8().textContent), '+ Ingredient on recipe 8: no jump to the top (the button says "Pick an item")');
+    click(btnByText(card8(), 'Pick an item →'));
+    ok(Math.abs(exE.scrollTop - before) < 2, 'cancel the pick: still in place');
+    exE.scrollTop = 0;
     click(btnByText(card1(), '+ Reward'));
     search.value = 'II_SYS_SYS_SCR_AMPESS'; search.dispatchEvent(new Event('input'));
     const plusEx = [...document.querySelectorAll('#item-list .item')].find(r => r.querySelector('.def').textContent === 'II_SYS_SYS_SCR_AMPESS').querySelector('button');
-    ok(!plusEx.disabled && /reward of recipe 1/.test(plusEx.title), '+ adds a reward to recipe 1');
+    ok(!plusEx.disabled && /reward of exchange 1/.test(plusEx.title), '+ adds a reward to exchange 1');
     click(plusEx);
     ok(/Server uses/.test(card1().textContent) && [...card1().querySelectorAll('tr')].some(tr => /AMPESS/.test(tr.textContent) && [...tr.querySelectorAll('td')].some(td => td.textContent === '0%')), 'new reward after 100% gets chance 0 (kept by the server at 0%)');
     click(btnByText(card1(), 'Spread evenly'));

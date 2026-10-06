@@ -1,13 +1,16 @@
-// Battle Pass module (BattlePass.inc, commit cc73ccdd). Three views:
+// Battle Pass module (BattlePass.inc, commit cc73ccdd). Four views:
 //   Season         - the pass item and its end date, "Start new season"
 //   Reward ladder  - BP4: one reward per level, the points to reach the next level
 //   Monster points - BP5: points per kill, priced by the file's level bands
+//   Past seasons   - the seasons found in the backup copies of the file (every save makes one)
 (function (FRE) {
   'use strict';
   const { h, fmt, modal, numInput } = FRE.dom;
   const { diagTags, diagRow, itemCell } = FRE.ui;
   const FILE = 'battlepass.inc';
   const st = { view: 'season', mfilter: 'listed', pick: null };
+  // Past seasons: read from the backups folder each time the view is opened (a save adds a copy)
+  const hist = { list: null, loading: false, error: null, key: null };
 
   const model = ctx => ctx.ws.models.battlepass;
   const movers = ctx => ctx.ws.movers.movers;
@@ -59,29 +62,31 @@
     help: 'Battle Pass: season end date, the reward ladder and the points each monster pays (BattlePass.inc)',
     st,
 
-    onLoad() { st.view = 'season'; st.mfilter = 'listed'; st.pick = null; },
+    onLoad() { st.view = 'season'; st.mfilter = 'listed'; st.pick = null; hist.list = null; hist.error = null; },
 
     renderList(el, ctx) {
       const m = model(ctx), diags = bpDiags(ctx).filter(d => d.severity !== 'INFO');
       const inBlock = b => diags.filter(d => (b === 'BP1' ? [...m.rows.BP1] : m.rows[b]).some(r => r.start === d.start) || (b === 'BP1' && !d.start)).length;
       const entry = (view, label, n, bad, sub) => el.appendChild(h('div.npc' + (st.view === view ? '.sel' : ''),
-        { on: { click: () => { st.view = view; st.pick = null; ctx.renderAll(false); } } },
+        { on: { click: () => { st.view = view; st.pick = null; if (view === 'history') hist.list = null; ctx.renderAll(false); } } },
         h('div.n', h('span', label), h('span', ctx.edited.has('bp|' + view) ? h('span.tag.edit', 'edited') : null,
           bad ? h('span.tag.warn', '⚠' + bad) : null, n !== null ? h('span.count', String(n)) : null)),
         sub ? h('div.k', sub) : null));
       const p = m.pass, e = p && BP().seasonEnd(p.time.value);
       entry('season', 'Season', null, inBlock('BP1'), e ? `${e.date <= new Date() ? 'ended · ' : ''}last day ${BP().dayText(addDays(e.date, -1))}` : 'no season');
-      entry('ladder', 'Reward ladder', ladderRows(m).length, inBlock('BP4'), 'BP4 · one reward per level');
-      entry('monsters', 'Monster points', shownRows(ctx).length, inBlock('BP5'), 'BP5 · points per kill');
+      entry('ladder', 'Reward ladder', ladderRows(m).length, inBlock('BP4'), p ? `season ${p.type.value} (current) · one reward per level` : 'one reward per level');
+      entry('monsters', 'Monster points', shownRows(ctx).length, inBlock('BP5'), 'points per kill');
+      entry('history', 'Past seasons', hist.list ? hist.list.filter(x => !x.current).length : null, 0, 'seasons in the backups · reuse their rewards');
     },
 
     renderEditor(el, ctx) {
       const f = ctx.ws.files.get(FILE);
       el.appendChild(h('div.npc-title', h('h2', 'Battle Pass'),
-        h('span.def', st.view === 'season' ? 'Season' : st.view === 'ladder' ? 'Reward ladder' : 'Monster points'),
+        h('span.def', { season: 'Season', ladder: model(ctx).pass ? `Season ${model(ctx).pass.type.value} ladder (the current season)` : 'Reward ladder', monsters: 'Monster points', history: 'Past seasons' }[st.view]),
         h('span.line', f.name), canEdit(ctx) ? null : h('span.tag.bad', 'read-only')));
       if (st.view === 'season') season(el, ctx);
       else if (st.view === 'ladder') ladder(el, ctx);
+      else if (st.view === 'history') history(el, ctx);
       else monsters(el, ctx);
     },
 
@@ -194,9 +199,11 @@
   // ---------------------------------------------------------------- Reward ladder
   function ladder(el, ctx) {
     const ws = ctx.ws, m = model(ctx), rows = ladderRows(m), edit_ = canEdit(ctx);
-    el.appendChild(h('p.muted.small', 'Each level gives its reward when a player reaches it (level 1 when they join); rewards are paid only to players who bought the pass. ',
+    el.appendChild(h('p.muted.small', `This is the current season's ladder${m.pass ? ` (season ${m.pass.type.value})` : ''}; older seasons are under "Past seasons". `,
+      'Each level gives its reward when a player reaches it (level 1 when they join); rewards are paid only to players who bought the pass. ',
       '"Cost" is the points needed to go from that level to the next one, at most 10,000. ',
       'Use + in the item list on the right to add the next level, or "Change" on a row and then + to pick its new reward. ',
+      '↑ / ↓ swap two levels\' rewards (the costs stay). ✕ removes a level: the levels above move down one, with their rewards and costs. ',
       'The window shows each reward with the item\'s own icon.'));
     const tb = h('table.items.bp', h('tr', h('th.num', 'Level'), h('th', 'Reward'), h('th.num', 'Qty'), h('th.num', 'Cost to next level'),
       h('th.num', 'Points to reach'), h('th', ''), h('th', 'Line')));
@@ -208,20 +215,168 @@
       if (r !== last) total += Math.min(Math.max(r.points.value, 1), BP().MAX_BPOINTS);
       const pick = h('button', { disabled: !edit_, title: 'Change this reward: click, then + on an item in the list on the right',
         on: { click: () => { st.pick = st.pick === lv ? null : lv; ctx.renderAll(true); } } }, st.pick === lv ? 'Pick an item →' : 'Change');
-      // only the last level can go: a gap would stop players at that level
-      const rm = r !== last ? null : h('button.icon.danger', { disabled: !edit_, title: `Remove level ${lv}`,
-        on: { click: () => edit(ctx, text => O().removeReward(text, model(ctx), r), `remove level ${lv}`) } }, '✕');
+      // ↑ / ↓: swap rewards (item, quantity) with the next level; each level keeps its cost
+      const i = rows.indexOf(r);
+      const mv = (o, sym, title) => h('button.icon', { disabled: !edit_ || !o, title,
+        on: { click: () => edit(ctx, text => O().swapRewards(text, r, o), `swap rewards of levels ${lv} and ${o.level.value}`) } }, sym);
+      const up = mv(rows[i - 1], '↑', `Swap this reward with level ${lv - 1}'s (the costs stay)`);
+      const down = mv(rows[i + 1], '↓', `Swap this reward with level ${lv + 1}'s (the costs stay)`);
+      const rm = h('button.icon.danger', { disabled: !edit_, title: r === last ? `Remove level ${lv}` : `Remove level ${lv}: levels ${lv + 1}-${last.level.value} move down one (with their rewards and costs)`,
+        on: { click: () => removeLevel(ctx, r, last) } }, '✕');
       tb.appendChild(h('tr' + (st.pick === lv ? '.changed' : ''), h('td.num', String(lv)), itemCell(info, r.define),
         h('td.num', numInput({ value: r.qty.value, min: 1, disabled: !edit_, onCommit: v => v && edit(ctx, () => O().setRewardValue(r, 'qty', v), `level ${lv} quantity`) })),
         h('td.num', r === last ? h('span.muted', { title: 'There is no next level: this cost is never used' }, `(${fmt(r.points.value)} unused)`)
           : numInput({ value: r.points.value, min: 1, max: BP().MAX_BPOINTS, disabled: !edit_, onCommit: v => v && edit(ctx, () => O().setRewardValue(r, 'points', v), `level ${lv} cost`) })),
         h('td.num', fmt(reach)),
-        h('td', pick, ' ', rm, ' ', diagTags(rowDiags(ctx, r))), lineCell(ctx, r)));
+        h('td.nowrap', up, down, ' ', pick, ' ', rm, ' ', diagTags(rowDiags(ctx, r))), lineCell(ctx, r)));
     });
+    // the total on top: what reaching the top level costs (every level's cost but the top one's)
+    if (last) el.appendChild(h('div.bp-total', h('span.bp-total-n', fmt(total)), ` points to reach level ${last.level.value}`,
+      h('span.muted', ` · ${rows.length} levels · the top level's cost is never used`)));
     el.appendChild(h('h3', `Levels (${rows.length})`));
     el.appendChild(tb);
-    if (last) el.appendChild(h('p', `Reaching level ${last.level.value} takes ${fmt(total)} points.`));
     problems(el, ctx, d => m.rows.BP4.some(r => r.start === d.start) || d.code === 'BP_LEVEL_GAP' || d.code === 'BP_TYPE');
+  }
+
+  // a ladder edit made from another view; true when it went into the undo history
+  function editAndTell(ctx, make, label) {
+    const n = ctx.ws.history.length;
+    ctx.edit(FILE, make, label, 'bp|ladder');
+    return ctx.ws.history.length > n;
+  }
+
+  function removeLevel(ctx, r, last) {
+    const lv = r.level.value, f = ctx.ws.files.get(FILE);
+    if (r === last) { edit(ctx, text => O().removeReward(text, model(ctx), r), `remove level ${lv}`); return; }
+    let splices;
+    try { splices = O().removeLevel(f.text, model(ctx), r); } catch (e) { FRE.dom.toast(e.message, 'bad'); return; }
+    modal({ title: `Remove level ${lv}`, wide: true, body: h('div',
+      h('p', `Level ${lv}'s reward goes. Levels ${lv + 1}-${last.level.value} move down one, each with its reward and its cost, so the ladder ends at level ${last.level.value - 1}.`),
+      h('h3', 'Lines that change'), FRE.ui.renderDiff(f, f.text, f.preview(splices))),
+      buttons: [{ label: 'Cancel' }, { label: `Remove level ${lv}`, cls: 'primary danger', onClick: () => edit(ctx, () => splices, `remove level ${lv}`) }] });
+  }
+
+  // + on a past reward: where it goes (a new top level, or instead of an existing level), with
+  // its quantity and cost editable before it is written
+  function placeDialog(ctx, s, p) {
+    const ws = ctx.ws, rows = ladderRows(model(ctx)), last = rows[rows.length - 1];
+    const cur = model(ctx).pass.type.value, top = last ? last.level.value : 0, next = top + 1;
+    const nameOf = (id, define) => { const it = ws.itemById(id); return it ? ws.itemInfo(it).name : define; };
+    const name = nameOf(p.id, p.define);
+    const pts = n => `${fmt(n)} points to the next level`;
+    const v = { level: null, qty: p.qty, points: p.points };
+    const now = h('div.bp-place-now');
+    const okText = () => (v.level === null ? `Add as level ${next}` : `Replace level ${v.level}`);
+    const showNow = () => {
+      now.textContent = '';
+      const r = v.level === null ? null : rows.find(x => x.level.value === v.level);
+      const lv = v.level === null ? next : v.level;
+      const isTop = v.level === null || v.level === top;
+      now.appendChild(h('table.items.bp-place-diff',
+        h('tr', h('th', `Season ${cur}, level ${lv}`), h('th', 'Reward'), h('th.num', 'Points to the next level')),
+        h('tr', h('td.muted', 'Before'), r ? h('td', `${fmt(r.qty.value)}x ${nameOf(r.id, r.define)}`) : h('td.muted', '(no level yet)'), h('td.num', r ? fmt(r.points.value) : '')),
+        h('tr', h('td', h('b', 'After')), h('td', h('b', `${fmt(v.qty)}x ${name}`)), h('td.num', h('b', fmt(v.points))))));
+      if (v.level === null && last) now.appendChild(h('p.muted.small', `Level ${top} stops being the top level, so its ${pts(last.points.value)} start to count.`));
+      else if (isTop) now.appendChild(h('p.muted.small', `Level ${lv} is the top level: its points to the next level are never used.`));
+      const ok = document.getElementById('bp-place-ok');
+      if (ok) ok.textContent = okText();
+    };
+    const where = h('select', { on: { change: e => { v.level = e.target.value === 'new' ? null : +e.target.value; showNow(); } } },
+      h('option', { value: 'new' }, `As a new level ${next} (after level ${top})`),
+      rows.map(r => h('option', { value: r.level.value }, `Replace level ${r.level.value} (has ${fmt(r.qty.value)}x ${nameOf(r.id, r.define)} now)`)));
+    showNow();
+    modal({ title: `Copy a reward from season ${s.type} into season ${cur}`, wide: true, body: h('div.bp-place',
+      h('p', `From season ${s.type}, level ${p.level}: `, h('b', `${fmt(p.qty)}x ${name}`), `, ${pts(p.points)}.`),
+      h('div.row.ex-tools', h('label', `Where in season ${cur}: `, where)),
+      h('div.row.ex-tools',
+        h('label', 'Quantity ', numInput({ value: v.qty, min: 1, onCommit: x => { if (x) { v.qty = x; showNow(); } } })),
+        h('label', 'Points to the next level ', numInput({ value: v.points, min: 1, max: BP().MAX_BPOINTS, onCommit: x => { if (x) { v.points = x; showNow(); } } }))),
+      now),
+      buttons: [{ label: 'Cancel' }, { label: okText(), id: 'bp-place-ok', cls: 'primary', onClick: () => {
+        const lv = v.level === null ? next : v.level;
+        const done = editAndTell(ctx, text => O().placeReward(text, model(ctx), { define: p.define, qty: v.qty, points: v.points, level: v.level }),
+          `${name} from season ${s.type}${v.level === null ? ` as new level ${lv}` : ` on level ${lv}`}`);
+        if (done) FRE.dom.toast(`Season ${cur}, level ${lv}${v.level === null ? ' (new)' : ''}: ${fmt(v.qty)}x ${name}, ${pts(v.points)}. See "Reward ladder"; nothing is written until Save.`, 'ok');
+      } }] });
+  }
+
+  // ---------------------------------------------------------------- Past seasons
+  // "2026-10-06_08-40-20_battlepass" -> "Tue 06 Oct 2026 08:40"
+  function stampText(stamp) {
+    if (stamp === NOW) return 'the editor now';
+    const m = /^(\d{4})-(\d\d)-(\d\d)_(\d\d)-(\d\d)/.exec(stamp);
+    return m ? `${BP().dayText(new Date(+m[1], m[2] - 1, +m[3]))} ${m[4]}:${m[5]}` : stamp;
+  }
+  const NOW = '~now';               // sorts after every backup folder name
+  function loadHistory(ctx) {
+    if (hist.loading) return;
+    hist.loading = true; hist.error = null;
+    ctx.backupsOf(FRE.battlePass.FILE).then(copies => {
+      const entries = (copies || []).map(c => ({ stamp: c.stamp, file: new FRE.SourceFile(`${c.stamp}/${FRE.battlePass.FILE}`, c.bytes) }));
+      entries.push({ stamp: NOW, file: ctx.ws.files.get(FILE) });       // the file as it is in the editor (edits included)
+      hist.list = BP().seasonHistory(entries, { defines: ctx.ws.defines.defines, strings: ctx.ws.strings.map }, model(ctx));
+      hist.key = ctx.backupKey; hist.copies = copies ? copies.length : 0;
+    }).catch(e => { hist.error = String(e && e.message || e); hist.list = []; })
+      .finally(() => { hist.loading = false; ctx.renderAll(false); });
+  }
+
+  function history(el, ctx) {
+    const ws = ctx.ws, edit_ = canEdit(ctx), m = model(ctx), defines = ws.defines.defines;
+    el.appendChild(h('p.muted.small', 'Every save through this editor first copies BattlePass.inc into the backups folder, so an old season shows up here after the save that replaces it. ',
+      'One card per season found in the copies, newest first; seasons from before the first save are in no copy. The current season is edited in "Reward ladder". ',
+      '+ puts a past reward on the current season (pick the level, quantity and cost); "Use this whole ladder" copies them all. Nothing is written to disk until you press Save.'));
+    if (!ctx.backupKey) { el.appendChild(h('p', 'No backups folder yet: it is asked at the first save, and the history starts there.')); return; }
+    if (!hist.list) { el.appendChild(h('p.muted', 'Reading the backups…')); loadHistory(ctx); return; }
+    if (hist.error) el.appendChild(h('p.warn-text', 'Could not read the backups: ' + hist.error));
+    el.appendChild(h('div.row', { style: 'justify-content:flex-start' },
+      h('span.muted.small', { style: 'flex:0 0 auto' }, `${hist.copies} backup cop${hist.copies === 1 ? 'y' : 'ies'} of BattlePass.inc in ${ctx.backupKey}/`),
+      h('button', { style: 'flex:0 0 auto', on: { click: () => { hist.list = null; ctx.renderAll(false); } } }, 'Read again')));
+    const now = new Map(ladderRows(m).map(r => [r.level.value, r]));
+    const curType = m.pass ? m.pass.type.value : null;
+    const past = hist.list.filter(x => !x.current);
+    if (!past.length) el.appendChild(h('p', 'No past season in the backups yet. When a save replaces a season (for example after "Start new season"), the old one shows up here.'));
+    past.forEach((s, k) => {
+      const ended = !s.end || s.end <= new Date();
+      const where = s.first === NOW ? 'the current file (each backup holds the file from before a save)'
+        : `in ${s.copies - (s.last === NOW ? 1 : 0)} backup cop${s.copies - (s.last === NOW ? 1 : 0) === 1 ? 'y' : 'ies'} from ${stampText(s.first)}${s.last === NOW ? ' and the current file' : ''}`;
+      const tb = h('table.items.bp', h('tr', h('th.num', 'Level'), h('th', 'Reward'), h('th.num', 'Qty'), h('th.num', 'Cost to next level'), h('th', 'Now'), h('th', '')));
+      for (const p of s.ladder) {
+        const it = ws.itemById(p.id), info = it ? ws.itemInfo(it) : null, r = now.get(p.level);
+        const same = r && r.define === p.define && r.qty.value === p.qty && r.points.value === p.points;
+        const cmp = s.current ? '' : !r ? h('span.tag.info', 'not in the current ladder')
+          : same ? h('span.muted', 'same') : h('span.warn-text', `now ${r.qty.value}x ${r.define}, cost ${fmt(r.points.value)}`);
+        const known = defines.has(p.define);
+        const add = s.current ? null : h('button.icon', { disabled: !edit_ || !known || !m.pass,
+          title: known ? `Add to the current season: pick the level, quantity and cost` : `${p.define} is not #defined any more`,
+          on: { click: () => placeDialog(ctx, s, p) } }, '+');
+        tb.appendChild(h('tr', h('td.num', String(p.level)), itemCell(info, p.define), h('td.num', fmt(p.qty)), h('td.num', fmt(p.points)), h('td', cmp), h('td', add)));
+      }
+      const useAll = s.current ? null : h('button', { disabled: !edit_ || !m.pass, title: 'Make the current ladder equal to this one (costs, rewards, quantities); one undo step',
+        on: { click: () => useLadder(ctx, s) } }, 'Use this whole ladder…');
+      const reach = s.ladder.slice(0, -1).reduce((a, p) => a + Math.min(Math.max(p.points, 1), BP().MAX_BPOINTS), 0);
+      el.appendChild(h('details.bp-season', {},
+        h('summary', h('b', `Season ${s.type}`), ' ',
+          h('span.tag.' + (s.current ? 'ok' : ended ? 'warn' : 'info'), s.current ? 'current' : ended ? 'ended' : 'not current'),
+          h('span.muted', ` · last day ${s.end ? BP().dayText(addDays(s.end, -1)) : '(no valid date)'} · ${s.ladder.length} levels, ${fmt(reach)} points to the top · ${s.monsters} monsters · ${where}`),
+          s.type === curType && !s.current ? h('span.muted', ' (same season number, other end date)') : null),
+        h('div.row', { style: 'justify-content:flex-start;margin:6px 0' }, useAll),
+        tb));
+    });
+  }
+
+  function useLadder(ctx, s) {
+    const f = ctx.ws.files.get(FILE);
+    let plan;
+    try { plan = O().restoreLadder(f.text, model(ctx), s.ladder, ctx.ws.defines.defines); } catch (e) { FRE.dom.toast(e.message, 'bad'); return; }
+    if (!plan.changes.length) { FRE.dom.toast(`The current ladder is already the same as season ${s.type}'s.`, 'ok'); return; }
+    modal({ title: `Use season ${s.type}'s ladder`, wide: true, body: h('div',
+      h('p', `The current season (${model(ctx).pass.type.value}) gets season ${s.type}'s costs, rewards and quantities. Its season number, end date and monsters stay.`),
+      h('ul.small', plan.changes.map(c => h('li', c))),
+      h('h3', 'Lines that change'), FRE.ui.renderDiff(f, f.text, f.preview(plan.splices))),
+      buttons: [{ label: 'Cancel' }, { label: 'Use this ladder', cls: 'primary', onClick: () => {
+        if (editAndTell(ctx, () => plan.splices, `use season ${s.type}'s ladder`))
+          FRE.dom.toast(`Season ${model(ctx).pass.type.value} now has season ${s.type}'s ladder (${plan.changes.length} change${plan.changes.length === 1 ? '' : 's'}). Nothing is written until Save.`, 'ok');
+      } }] });
   }
 
   // ---------------------------------------------------------------- Monster points

@@ -227,5 +227,34 @@
     return out;
   }
 
-  FRE.battlePass = { loadBattlePass, validateBattlePass, isMonster, seasonEnd, ymd, dayText, whenText, band, BANDS, FILE, MAX_BPOINTS };
+  // Past seasons from backup copies of BattlePass.inc (every save backs the file up first).
+  // entries: [{ stamp, file: SourceFile }] oldest first; current: the editor's model.
+  // A season = the login pass's (lowest item id) nType + nTime. Per season the LAST copy's
+  // ladder is kept (first row per level, that season's nType). Newest season first.
+  function seasonHistory(entries, ctx, current) {
+    const byKey = new Map();
+    const keyOf = p => `${p.type.value}|${p.time.value}`;
+    const ladderOf = (m, text) => {
+      const type = m.pass.type.value;
+      return [...m.ladder.values()].filter(r => r.type.value === type).sort((a, b) => a.level.value - b.level.value).map(r => ({
+        level: r.level.value, points: r.points.value, define: text.slice(r.item.start, r.item.end), id: r.id, qty: r.qty.value,
+        logo: r.logo.text, rarity: r.rarity.text, icon: r.icon.text }));
+    };
+    for (const e of entries) {
+      let m;
+      try { m = loadBattlePass(e.file, ctx); } catch (err) { continue; }
+      if (!m.pass) continue;
+      const k = keyOf(m.pass);
+      const s = byKey.get(k) || { key: k, type: m.pass.type.value, time: m.pass.time.value, first: e.stamp, copies: 0 };
+      Object.assign(s, { last: e.stamp, ladder: ladderOf(m, e.file.text), monsters: m.monsters.size });
+      s.copies++;
+      byKey.set(k, s);
+    }
+    const curKey = current && current.pass ? keyOf(current.pass) : null;
+    const list = [...byKey.values()];
+    for (const s of list) { s.current = s.key === curKey; const e = seasonEnd(s.time); s.end = e ? e.date : null; }
+    return list.sort((a, b) => (a.last < b.last ? 1 : a.last > b.last ? -1 : b.type - a.type));
+  }
+
+  FRE.battlePass = { loadBattlePass, seasonHistory, validateBattlePass, isMonster, seasonEnd, ymd, dayText, whenText, band, BANDS, FILE, MAX_BPOINTS };
 })(globalThis.FRE = globalThis.FRE || {});

@@ -227,7 +227,10 @@
           else if (!l.item.penya && !items.get(l.item.value >>> 0)) add(Object.assign({ code: 'EX_NO_ITEM', severity: 'WARN', key: `EX_NO_ITEM|${key}|cond|${l.item.name}`,
             message: `${label}: ingredient ${l.item.name} is not an item in Spec_Item.txt: the recipe can never be done, and the window draws no icon` }, lAt));
           if (l.num.value <= 0) add(Object.assign({ code: 'EX_QTY', severity: 'WARN', key: `EX_QTY|${key}|cond|${l.item.name}`,
-            message: `${label}: ingredient ${l.item.name} needs ${l.num.value}: the check always passes and nothing is taken` }, lAt));
+            message: l.num.value === -1
+              // RemoveItemA( id, -1 ) is RemoveAllItem (MoverParam.cpp:3966)
+              ? `${label}: ingredient ${l.item.name} needs -1: the check always passes and the exchange takes EVERY ${l.item.name} the player has`
+              : `${label}: ingredient ${l.item.name} needs ${l.num.value}: the check always passes and nothing is taken` }, lAt));
         }
         if (s.pay.length === 0 || (s.paid && s.paid.crash)) add(Object.assign({ code: 'EX_PAY_EMPTY', severity: 'BLOCK', key: `EX_PAY_EMPTY|${key}`,
           message: s.payBlocks.length

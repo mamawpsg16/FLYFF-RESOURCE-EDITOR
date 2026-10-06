@@ -21,16 +21,20 @@ The user is a web developer learning C++. When server behaviour matters, explain
   - The simulator is a port of the named C++ functions (cite file:line and commits), with no guessing; anything not modelled is listed at the top of the file.
   - It runs headless (gjs) on `test-data/fixtures`. The core tests use it to prove each edit does in game what the user asked; a `tools/<name>-sim.js` lets the user (and you) replay it by hand.
   - Where it helps, the editor shows the result too ("what players see", "You get …").
-  - A new task is not done until its simulator and its tests exist.
+  - **Every simulator has a second, independent copy in Python** (`tools/oracle_sim.py <task>`, or `tools/oracle.py` for NPC shops), written straight from the C++ without reading the JS copy. The Python copy makes its own test cases (bags, seeds, timelines, small scripts), runs them, and prints cases + results as JSON. `tests/run-tests.js` runs the same cases through the JS copy and requires identical results (every roll, item and state).
+    - Both copies use the server's random generator (`core/xrandom.js` / `Rand`: `xRand`, `xRandom(n)`, `xRandom(min, max)` from `_Common/xUtil.cpp`), so the same seed gives the same rolls.
+    - Plant a bug in the Python copy (a `<` for `<=`) and check a test fails. If none does, add a case that reaches that branch.
+    - Limit: both copies are written by Claude, so they catch copying slips, not a shared misreading of the C++.
+  - A new task is not done until its simulator, its independent copy and their tests exist.
   - Status:
 
-    | Task | Simulator | Status |
-    |---|---|---|
-    | NPC Shops | `loaders/vendor-sim.js` (ProcessRegenItem / shop contents) | done, matches the Python oracle for all 594 NPCs |
-    | Battle Pass | `tests/bp-server.js`, `tools/bp-sim.js` (OnJoin, OnDied, AddBPUpdate, GiveBattlePassReward, OnDoBP) | done |
-    | Exchanges | load-time PAY math only (`effectivePay`, `rewardsGiven`) | **missing:** CheckCondition / IsFull / GetPayItemList / ResultExchange (next) |
-    | Donation Shop | none | **missing:** the buy flow (price = dwReferValue1, chip check, the crash items) |
-    | Monster drops (F) | — | build with the editor |
+    | Task | Simulator (JS) | Independent copy (Python) | Status |
+    |---|---|---|---|
+    | NPC Shops | `loaders/vendor-sim.js` (ProcessRegenItem / shop contents) | `tools/oracle.py` `vendor_sim` | done, all 594 NPCs agree |
+    | Battle Pass | `tests/bp-server.js`, `tools/bp-sim.js` (OnJoin, OnDied, AddBPUpdate, GiveBattlePassReward, OnDoBP) | `tools/oracle_sim.py battlepass` (a 2-season timeline, 7 players) | done, every step agrees |
+    | Exchanges | `loaders/exchange-sim.js`, `tools/exchange-sim.js`, "Try it" on each recipe (ResultExchange, CheckCondition, GetPayItemList, IsFull, RemoveItemA, CreateItem, ReceiveResult) | `tools/oracle_sim.py exchange` (1,436 cases) | done, every case agrees |
+    | Donation Shop | none | none | **missing:** the buy flow (price = dwReferValue1, chip check, the crash items) |
+    | Monster drops (F) | — | — | build both with the editor |
 - **Commas are for display only** (`FRE.num`). The server tokenizer splits on `,`, so files always get plain digits.
 
 ## Key facts about this server (details in docs/INVESTIGATION.md)
@@ -50,16 +54,17 @@ The user is a web developer learning C++. When server behaviour matters, explain
   - `BattlePass.inc`: on a duplicate level or monster the first wins; values are clamped to 1–10000. LF (its header says CRLF). A season = end date + nType on the pass AND every reward row; the pass item is reused (`2f783090`). Monster prices follow level bands × rank (`c0a828d7`, `3b8e8410`).
   - **Which NPCs are in the game:** placed in a map `.dyo` file (`World/<map>/<map>.dyo`, maps from `World.inc`) AND shown by `CWorld::IsUsableDYO2` (`SetOutput` / `SetLang` in `character.inc`). The WorldServer's language is compiled in: `WorldServer.rc:137` `IDS_LANG "1"` = LANG_USA. Ported in `loaders/world.js`; skip commented lines (the real loader does).
   - `Exchange_Script.txt`: a bare `CScanner`, so an unknown name becomes -1 silently (`GetDefineNum`). `__NEW_EXCHANGE_V19` is ON (`LodeConfig.h`): CONDITION is checked and taken, REMOVE is ignored, at most 30 SETs per menu. PAY chances are out of 1,000,000. The client sends only the recipe's position, so the Client copy (LF) must match. `SET_SMELT` / `SET_ENCHANT_MOVE` put the loader out of step (see ROADMAP).
+    - In game (`exchange-sim.js`): the roll happens before the bag check; the bag check wants at least one EMPTY slot even when the reward would stack, and counts a reward smaller than a full stack as 0 slots, so a recipe giving several rewards can lose some (the server only logs it). Penya means gold only (not Perin). Any item in a trade / private shop or a locked bag slot makes every ingredient count 0. Ingredient quantity -1 takes every one the player has.
 
 ## Layout
 ```
 src/order.txt       load/build order (classic scripts sharing globalThis.FRE)
-src/core/           bytes, num, sourcefile (byte model + round-trip gate), lexer (CScanner/CScript port),
+src/core/           bytes, num, xrandom (the server's xRand / xRandom), sourcefile (byte model + round-trip gate), lexer (CScanner/CScript port),
                     diff (Myers), workspace (data-module registry, apply/applyGroup/undo, newBlocking),
                     client-sync (Client/ copy modes: identical / eol / missing / different)
 src/loaders/        defines, strings (*.txt.txt), textclient (TID_ texts), item-tooltip (MakeToolTipText port),
                     specitem, propmover (monster name/level/rank), world (maps, .dyo NPC placement, SetOutput/SetLang), character, vendor-sim (shop contents), donation,
-                    donation-tree (client category tree), battlepass, exchange
+                    donation-tree (client category tree), battlepass, exchange, exchange-sim (pressing OK in the exchange window)
 src/validate/       help.js (text for every diagnostic code), character.js
 src/edit/           text-ops (shared row/statement splices), shop-ops, donation-ops, item-ops (Spec_Item chip price), battlepass-ops, exchange-ops
 src/io/             fsa (File System Access), layout (finds Server/Resource + Client + backups in the ONE picked folder), save (conflict check -> verified backup -> write+verify -> restore on failure;
@@ -69,6 +74,8 @@ src/ui/             dom, common (FRE.ui registry + helpers), tooltip (item hover
 tests/              run-tests.js (gjs core suite), ui-harness.js + run-ui.sh (headless Firefox, fake FS), gjs-env.js
 tools/oracle.py     independent Python reference (differential tests)
 tools/refresh-fixtures.sh  copies the real files into test-data/fixtures (tests) or test-data (manual)
+tools/bp-sim.js, tools/exchange-sim.js  replay the in-game behaviour by hand (gjs -m tools/<name>-sim.js)
+tools/oracle_sim.py independent Python copies of the simulators (differential tests)
 docs/               INVESTIGATION.md, DESIGN.md, ROADMAP.md (what's next)
 ```
 

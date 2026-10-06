@@ -1,6 +1,7 @@
 # Build/load order of the source files (classic scripts sharing globalThis.FRE)
 core/bytes.js
 core/num.js
+core/xrandom.js
 core/sourcefile.js
 core/lexer.js
 loaders/defines.js
@@ -16,6 +17,7 @@ loaders/donation.js
 loaders/donation-tree.js
 loaders/battlepass.js
 loaders/exchange.js
+loaders/exchange-sim.js
 validate/help.js
 validate/character.js
 core/diff.js

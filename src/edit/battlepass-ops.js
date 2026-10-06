@@ -79,6 +79,85 @@
     return T.removeRow(text, row);
   }
 
+  // Remove any level of the current season without leaving a gap: its row goes, and every
+  // level above moves down one (each keeps its reward and its cost).
+  function removeLevel(text, model, row) {
+    const type = row.type.value, lv = row.level.value;
+    const out = [...T.removeRow(text, row)];
+    for (const r of model.rows.BP4) if (r !== row && r.type.value === type && r.level.value > lv) out.push(...T.replaceSpan(r.level, r.level.value - 1));
+    return out;
+  }
+
+  // A reward put on the current season: as a new top level (level null) or on an existing
+  // level (its reward, quantity and cost replaced). -> splices
+  function placeReward(text, model, { define, qty, points, level }) {
+    T.checkDefine(define);
+    if (level === null || level === undefined) return addReward(text, model, define, qty, points).splices;
+    const type = model.pass ? model.pass.type.value : null;
+    const r = model.rows.BP4.find(x => x.type.value === type && x.level.value === level);
+    if (!r) throw new Error(`the current season has no level ${level}`);
+    const out = [];
+    if (text.slice(r.item.start, r.item.end) !== define) out.push(...T.replaceSpan(r.item, define));
+    if (r.qty.value !== qty) out.push(...T.replaceSpan(r.qty, amount(qty, 'quantity', 1, 2147483647)));
+    if (r.points.value !== points) out.push(...T.replaceSpan(r.points, amount(points, 'points')));
+    return out;
+  }
+
+  // ↑ / ↓ on the ladder: two levels swap rewards (item, quantity, textures); each keeps its cost
+  function swapRewards(text, a, b) {
+    const out = [];
+    for (const k of ['item', 'qty', 'logo', 'rarity', 'icon']) {
+      const ta = text.slice(a[k].start, a[k].end), tb = text.slice(b[k].start, b[k].end);
+      if (ta !== tb) out.push(...T.replaceSpan(a[k], tb), ...T.replaceSpan(b[k], ta));
+    }
+    return out;
+  }
+
+  // Make the current season's ladder equal to a past one (FRE.battlePass.seasonHistory):
+  // levels in both get only their differing values replaced, levels the current season lacks
+  // are added after its top kept row (in order), current levels above the past top are removed.
+  // nType, the end date and the monsters stay. -> { splices, changes: [text] }
+  function restoreLadder(text, model, past, defines) {
+    if (!model.pass) throw new Error('BattlePass.inc has no BPItem row');
+    const type = model.pass.type.value;
+    const cur = new Map();
+    for (const r of model.rows.BP4) if (r.type.value === type && !cur.has(r.level.value)) cur.set(r.level.value, r);
+    for (const p of past) { T.checkDefine(p.define); if (!defines.has(p.define)) throw new Error(`level ${p.level}: ${p.define} is not #defined any more`); }
+    const top = past.reduce((m, p) => Math.max(m, p.level), 0);
+    const splices = [], changes = [], missing = [];
+    const quoted = v => `"${v}"`;
+    for (const p of past) {
+      const r = cur.get(p.level);
+      if (!r) { missing.push(p); continue; }
+      const was = [];
+      if (r.points.value !== p.points) { splices.push(...T.replaceSpan(r.points, amount(p.points, 'points'))); was.push(`cost ${r.points.value} -> ${p.points}`); }
+      const item = text.slice(r.item.start, r.item.end);
+      if (item !== p.define) { splices.push(...T.replaceSpan(r.item, p.define)); was.push(`${item} -> ${p.define}`); }
+      if (r.qty.value !== p.qty) { splices.push(...T.replaceSpan(r.qty, amount(p.qty, 'quantity', 1, 2147483647))); was.push(`qty ${r.qty.value} -> ${p.qty}`); }
+      for (const k of ['logo', 'rarity', 'icon']) if (r[k].text !== p[k]) { splices.push(...T.replaceSpan(r[k], quoted(p[k]))); was.push(`${k} "${r[k].text}" -> "${p[k]}"`); }
+      if (was.length) changes.push(`level ${p.level}: ${was.join(', ')}`);
+    }
+    const kept = [...cur.values()].filter(r => r.level.value <= top).sort((a, b) => a.level.value - b.level.value);
+    const anchor = kept[kept.length - 1] || null;
+    const sample = anchor || [...cur.values()][0] || model.rows.BP4[0] || null;
+    for (const p of missing) {
+      const vals = ['BPReward', String(type), String(p.level), String(p.points), p.define, String(p.qty), quoted(p.logo), quoted(p.rarity), quoted(p.icon)];
+      const row = sample ? rowLike(text, [kwTok(sample), sample.type, sample.level, sample.points, sample.item, sample.qty, sample.logo, sample.rarity, sample.icon], vals) : vals.join('\t');
+      if (anchor) splices.push(...T.insertRowAfter(text, anchor, row));
+      else {
+        const block = (model.blocks.BP4 || [])[0];
+        if (!block) throw new Error('BattlePass.inc has no BP4 block');
+        splices.push(...T.insertRowBelowLine(text, block.open.start, row));
+      }
+      changes.push(`level ${p.level}: added (${p.qty}x ${p.define}, cost ${p.points})`);
+    }
+    for (const r of [...cur.values()].filter(r => r.level.value > top).sort((a, b) => a.level.value - b.level.value)) {
+      splices.push(...T.removeRow(text, r));
+      changes.push(`level ${r.level.value}: removed`);
+    }
+    return { splices, changes };
+  }
+
   // --- monsters -------------------------------------------------------------
   function setMonsterPoints(row, min, max) {
     amount(min, 'min points'); amount(max, 'max points');
@@ -123,7 +202,7 @@
   }
 
   FRE.battlePassOps = {
-    setEndDate, newSeasonPlan, setRewardValue, setRewardItem, setRewardTexture, addReward, removeReward,
+    setEndDate, newSeasonPlan, setRewardValue, setRewardItem, setRewardTexture, addReward, removeReward, removeLevel, placeReward, swapRewards, restoreLadder,
     setMonsterPoints, repriceMonster, addMonster, addMonstersAtBand, removeMonster, removeMonsters, monsterComment,
   };
 })(globalThis.FRE = globalThis.FRE || {});

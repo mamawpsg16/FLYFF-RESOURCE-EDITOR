@@ -245,3 +245,13 @@ body.start #layout { grid-template-columns: 1fr; }
 .task-card:hover:not(:disabled) { background: var(--panel-2); }
 .task-bar { align-items: center; }
 .task-bar .task-name { font-weight: 600; }
+.ex-try .ex-tools label input.num-input { width: 90px; }
+.ex-try-out { margin-top: 10px; }
+.ex-try-msg { margin: 6px 0; padding: 6px 8px; border-left: 3px solid var(--line); background: var(--panel-2); }
+.bp-season { margin: 10px 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.bp-season summary { cursor: pointer; padding: 4px 0; }
+.bp-total { margin: 6px 0 10px; font-size: 15px; }
+.bp-total-n { font-size: 24px; font-weight: 600; margin-right: 4px; }
+.bp-place .ex-tools label input.num-input { width: 90px; }
+.bp-place-now p { margin: 10px 0 0; }
+.bp-place-diff { margin-top: 10px; }

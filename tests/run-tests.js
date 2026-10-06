@@ -854,6 +854,379 @@ editCase('exchange: copy, move and remove a recipe', w => {
   eq(vals(m2.sets[1]), vals(m2.sets[0]), 'rebuilt copy has the same values');
 });
 
+// ---------------------------------------------------------------- exchange simulator
+// src/loaders/exchange-sim.js copies CExchange::ResultExchange and what it calls (CheckCondition,
+// GetPayItemList + xRandom, IsFull, RemoveItemA, CreateItem -> CItemContainer::Add) and the
+// client's CWndDialogEvent::ReceiveResult (15091d5f).
+section('exchange simulator (pressing OK in the exchange window)');
+const XS = FRE.exchangeSim;
+const xsEnv = w => XS.envFromWorkspace(w);
+const xsTable = text => XS.serverTable(FRE.exchange.loadExchange(new FRE.SourceFile('Exchange_Script.txt', FRE.bytes.binaryStringToBytes(text)), { defines: W.defines.defines }));
+const xsId = n => W.defines.defines.get(n) >>> 0;
+{
+  const env = xsEnv(W), D = W.defines.defines;
+  const TOPAZ = xsId('II_SYS_SYS_SCR_SCRAPTOPAZ'), HOLY = xsId('II_SYS_SYS_SCR_HOLY'), AMP = xsId('II_SYS_SYS_SCR_AMPESS'), BLESS = xsId('II_SYS_SYS_SCR_BLESSEDNESS');
+  const PET = D.get('MMI_PET_RES01');
+  // one recipe in a menu that is not Collins (Collins has its own chat-line replies)
+  const one = (pay, { cond = 'II_SYS_SYS_SCR_SCRAPTOPAZ 5', n = 1, msg = '' } = {}) =>
+    xsTable(`MMI_PET_RES01 { SET TID_GAME_COLLECT_COND01 { ${msg} CONDITION { ${cond} } PAY ${n} { ${pay} } } }`);
+  const stub = vals => { let i = 0; return { random: () => vals[i++] }; };
+  const fresh = () => XS.rng(1);
+
+  // xRand / xRandom
+  const r0 = XS.rng(0);
+  eq([r0.rand(), r0.rand(), r0.rand()].join(), '12345,3554416254,2802067423', 'xRand: g_next = g_next * 1103515245 + 12345 (32-bit)');
+  eq(XS.rng(0).random(1000000), 12345, 'xRandom(n) = xRand() % n');
+
+  // GetPayItemList
+  const two = one('II_SYS_SYS_SCR_HOLY 1 300000 II_SYS_SYS_SCR_AMPESS 1 700000').find(PET).sets[0];
+  eq(XS.payList(two, stub([299999]))[0].id, HOLY, 'roll 299,999 < 300,000 -> first line');
+  eq(XS.payList(two, stub([300000]))[0].id, AMP, 'roll 300,000 -> second line (nRandom < nSumProb is strict)');
+  const two2 = one('II_SYS_SYS_SCR_HOLY 1 300000 II_SYS_SYS_SCR_AMPESS 1 700000', { n: 2 }).find(PET).sets[0];
+  eq(XS.payList(two2, stub([0, 5])).map(x => x.id).join(), `${HOLY},${AMP}`, 'PAY 2: the picked line is taken out, then a new roll over the 700,000 left');
+  const all = one('II_SYS_SYS_SCR_HOLY 1 333334 II_SYS_SYS_SCR_AMPESS 1 333333 II_SYS_SYS_SCR_BLESSEDNESS 1 333333', { n: 0 }).find(PET).sets[0];
+  eq(XS.payList(all, fresh()).length, 3, 'PAY 0 gives every line');
+  {
+    const t = one('II_SYS_SYS_SCR_HOLY 1 250000 II_SYS_SYS_SCR_AMPESS 1 750000'), r = fresh();
+    let holy = 0; const N = 200000;
+    for (let i = 0; i < N; i++) if (XS.payList(t.find(PET).sets[0], r)[0].id === HOLY) holy++;
+    ok(Math.abs(holy / N - 0.25) < 0.005, 'PAY 1 over 200,000 rolls: 25% / 75% as written', `${holy / N}`);
+  }
+
+  // CheckCondition
+  const t5 = one('II_SYS_SYS_SCR_HOLY 1 1000000');
+  let p = XS.player({ items: [{ id: TOPAZ, num: 4 }] });
+  let res = XS.resultExchange(env, t5, p, PET, 0, fresh());
+  eq(res.result, 'CONDITION_FAILED', '4 of 5 Topaz -> CONDITION_FAILED');
+  eq(XS.countOf(p, TOPAZ), 4, 'nothing is taken on a failed check');
+  eq(res.texts[0], 'In order to exchange items, you need Topaz Piece x5.', 'no RESULTMSG: the server sends TID_EXCHANGE_FAIL per missing item');
+  eq(XS.clientReply(env, t5, PET, 0, res).box, null, 'no RESULTMSG pair: no message box');
+  eq(XS.resultExchange(env, t5, p, PET, 1, fresh()).result, 'FAILED', 'a recipe position the server does not have -> FAILED');
+  p = XS.player({ items: [{ id: TOPAZ, num: 5 }, { id: AMP, num: 1, busy: true }] });
+  res = XS.resultExchange(env, t5, p, PET, 0, fresh());
+  ok(res.result === 'CONDITION_FAILED' && res.missing[0].have === 0, 'any item in a trade / private shop: GetItemNum counts 0 of everything');
+  p = XS.player({ items: [{ id: TOPAZ, num: 5 }] }); p.slots[200] = { id: AMP, num: 1, flag: 0, charged: 1 };
+  eq(XS.resultExchange(env, t5, p, PET, 0, fresh()).result, 'CONDITION_FAILED', 'an item stranded in a locked bag slot (expired Bag Expansion) blocks every exchange');
+  p = XS.player({ equip: [{ id: TOPAZ, num: 5 }] });
+  res = XS.resultExchange(env, t5, p, PET, 0, fresh());
+  ok(res.result === 'SUCCESS' && !p.equip[0], 'GetItemNum and RemoveItemA include the equipment slots');
+  const tp = one('II_SYS_SYS_SCR_HOLY 1 1000000', { cond: 'PENYA 1000' });
+  eq(XS.resultExchange(env, tp, XS.player({ gold: 999, items: [{ id: xsId('II_SYS_SYS_SCR_PERIN'), num: 5 }] }), PET, 0, fresh()).result, 'CONDITION_FAILED', 'PENYA: only gold counts, Perin items do not');
+  p = XS.player({ gold: 1500 });
+  eq(XS.resultExchange(env, tp, p, PET, 0, fresh()).result, 'SUCCESS', 'PENYA 1000 with 1,500 gold -> SUCCESS');
+  eq(p.gold, 500, 'PENYA: 1,000 gold taken');
+  const tAll = one('II_SYS_SYS_SCR_HOLY 1 1000000', { cond: 'II_SYS_SYS_SCR_SCRAPTOPAZ =' });
+  p = XS.player({ items: [{ id: TOPAZ, num: 7 }] });
+  res = XS.resultExchange(env, tAll, p, PET, 0, fresh());
+  ok(res.result === 'SUCCESS' && XS.countOf(p, TOPAZ) === 0 && res.taken[0].num === 7, 'ingredient quantity -1 (=): the check passes and RemoveAllItem takes ALL of them');
+
+  // IsFull
+  p = XS.stockedPlayer(env, t5.find(PET).sets[0], { free: 0 });
+  eq(XS.resultExchange(env, t5, p, PET, 0, fresh()).result, 'SUCCESS', '0 free slots, but the Topaz stack is used up: that slot counts as free');
+  p = XS.player({ unlocked: 2, items: [{ id: TOPAZ, num: 10 }, { id: XS.FILLER, num: 1 }] });
+  res = XS.resultExchange(env, t5, p, PET, 0, fresh());
+  eq(res.result, 'INVENTORY_FAILED', '0 free slots and the stack stays -> INVENTORY_FAILED');
+  eq(XS.countOf(p, TOPAZ), 10, 'INVENTORY_FAILED takes nothing');
+  eq(XS.clientReply(env, t5, PET, 0, res).box, 'Inventory is full. Please make room and try again.', 'full bag: TID_GAME_LACKSPACE box');
+  p = XS.stockedPlayer(env, all, { free: 0 });
+  res = XS.resultExchange(env, one('II_SYS_SYS_SCR_HOLY 1 333334 II_SYS_SYS_SCR_AMPESS 1 333333 II_SYS_SYS_SCR_BLESSEDNESS 1 333333', { n: 0 }), p, PET, 0, fresh());
+  ok(res.result === 'SUCCESS' && res.given.length === 1 && res.lost.length === 2,
+    'IsFull counts qty / dwPackMax = 0 slots for a small reward: 3 rewards, 1 free slot -> passes, 2 rewards LOST', JSON.stringify([res.result, res.given.length, res.lost.length]));
+
+  // RemoveItemA / CreateItem
+  const tBig = one('II_SYS_SYS_SCR_HOLY 1 1000000', { cond: 'II_SYS_SYS_SCR_SCRAPTOPAZ 40000' });
+  p = XS.player({ items: [1, 2, 3, 4, 5].map(() => ({ id: TOPAZ, num: 9999 })) });
+  res = XS.resultExchange(env, tBig, p, PET, 0, fresh());
+  ok(res.result === 'SUCCESS' && XS.countOf(p, TOPAZ) === 49995 - 40000, '40,000 taken in 0x7fff chunks: 9,995 left', String(XS.countOf(p, TOPAZ)));
+  const holyStacks = q => q.slots.filter(x => x && x.id === HOLY).length;
+  p = XS.player({ items: [{ id: TOPAZ, num: 5 }, { id: HOLY, num: 5, charged: 1 }] });
+  XS.resultExchange(env, t5, p, PET, 0, fresh());
+  ok(holyStacks(p) === 1 && XS.countOf(p, HOLY) === 6, 'a reward stacks with the same item (same flag and bCharged)');
+  p = XS.player({ items: [{ id: TOPAZ, num: 5 }, { id: HOLY, num: 5, charged: 1 }] });
+  XS.resultExchange(env, one('II_SYS_SYS_SCR_HOLY 1 1000000 2'), p, PET, 0, fresh());
+  eq(holyStacks(p), 2, 'a bound reward (flag 2) does not stack with unbound ones');
+
+  // client
+  const rowP = XS.player({ items: [{ id: TOPAZ, num: 4 }] });
+  eq(XS.rowView(env, tp.find(PET).sets[0], rowP).cond[0].dim, true, 'window row: the Penya icon is always dimmed (Penya is never in the bag)');
+  eq(XS.rowView(env, t5.find(PET).sets[0], rowP).cond[0].dim, true, 'window row: 4 of 5 Topaz -> dimmed');
+
+  // the real file
+  const real = XS.serverTable(W.models.exchange);
+  const COL = D.get('MMI_COLLECT01');
+  res = XS.resultExchange(env, real, XS.stockedPlayer(env, real.find(COL).sets[0], { free: 1 }), COL, 0, fresh());
+  eq(XS.clientReply(env, real, COL, 0, res).chat.join(), 'Exchange complete! You received Name Color Scroll (3 Days) x1.', 'Collins: one green chat line (15091d5f)');
+  res = XS.resultExchange(env, real, XS.player(), COL, 0, fresh());
+  eq(XS.clientReply(env, real, COL, 0, res).chat.join(), 'You do not have the required Pieces.', 'Collins: missing pieces -> one red chat line, no box');
+  res = XS.resultExchange(env, real, XS.stockedPlayer(env, real.find(PET).sets[0], { free: 1 }), PET, 0, fresh());
+  eq(XS.clientReply(env, real, PET, 0, res).box, 'You have received a Scroll of Pet Revival(S Class)', 'Pet Tamer: RESULTMSG pair -> message box');
+  const card = XS.run(env, real, D.get('MMI_EXCHANGE_WEAPONCARD'), 0, { tries: 20000, seed: 3 });
+  const up = card.given.find(g => g.line.prob === 400000);
+  ok(up && Math.abs(up.seenPct - 40) < 1, 'Card Master: Fire Card (C) comes out about 40% of the time', up && up.seenPct.toFixed(2));
+  const one1 = XS.run(env, real, COL, 7, { tries: 3, mode: 'keep', stock: 10, free: 1 });
+  ok(one1.results.SUCCESS === 1 && one1.results.INVENTORY_FAILED === 2,
+    'IsFull wants one EMPTY slot every time: with 1 free slot the first Holy stack fills it and the next exchanges are refused, though they would stack', JSON.stringify(one1.results));
+  const keep = XS.run(env, real, COL, 7, { tries: 12, mode: 'keep', stock: 10, free: 2 });
+  ok(keep.results.SUCCESS === 10 && keep.results.CONDITION_FAILED === 2, 'one bag with ingredients for 10 and 2 free slots: 10 exchanges, then CONDITION_FAILED', JSON.stringify(keep.results));
+  ok(XS.countOf(keep.end, xsId('II_SYS_SYS_SCR_HOLY')) === 50 && keep.end.slots.filter(x => x && x.id === xsId('II_SYS_SYS_SCR_HOLY')).length === 1, 'the 10 x 5 Scrolls of Holy pile up in one stack');
+  const full = XS.run(env, real, COL, 7, { tries: 3, mode: 'keep', stock: 10, free: 0 });
+  eq(full.results.INVENTORY_FAILED, 3, 'no free slot and no stack used up -> INVENTORY_FAILED, even though the Holy scrolls would stack');
+}
+editCase('exchange simulator: an ingredient edit changes what the server takes', w => {
+  const st = exm(w, 'MMI_COLLECT01').sets[0];
+  w.apply('exchange_script.txt', XO.setIngredientQty(st, st.condition[0], 450), 'qty');
+  const env = xsEnv(w), t = XS.serverTable(w.models.exchange), COL = w.defines.defines.get('MMI_COLLECT01');
+  const TOPAZ = xsId('II_SYS_SYS_SCR_SCRAPTOPAZ');
+  const p = XS.stockedPlayer(env, t.find(COL).sets[0], { free: 1 });
+  XS.removeItemA(p, TOPAZ, 1);
+  eq(XS.resultExchange(env, t, p, COL, 0, XS.rng(1)).result, 'CONDITION_FAILED', 'after the edit: 449 Topaz -> CONDITION_FAILED');
+  p.slots[p.slots.findIndex(x => x && x.id === TOPAZ)].num += 1;
+  const res = XS.resultExchange(env, t, p, COL, 0, XS.rng(1));
+  ok(res.result === 'SUCCESS' && res.taken.find(x => x.id === TOPAZ).num === 450, 'after the edit: 450 Topaz -> SUCCESS, 450 taken');
+});
+editCase('exchange simulator: a chance edit changes how often each reward comes out', w => {
+  const f = exf(w);
+  let st = exm(w, 'MMI_COLLECT01').sets[1];
+  w.apply('exchange_script.txt', XO.addReward(f.text, st, 'II_SYS_SYS_SCR_AMPESS', 2, 500000), 'add pay');
+  st = exm(w, 'MMI_COLLECT01').sets[1];
+  w.apply('exchange_script.txt', XO.evenChances(st), 'even');
+  const env = xsEnv(w), t = XS.serverTable(w.models.exchange), COL = w.defines.defines.get('MMI_COLLECT01');
+  const r = XS.run(env, t, COL, 1, { tries: 20000, seed: 5 });
+  ok(r.given.length === 2 && r.given.every(g => Math.abs(g.seenPct - 50) < 1.5), 'spread evenly: each reward about 50%', r.given.map(g => g.seenPct.toFixed(1)).join('/'));
+  ok(r.given.find(g => g.line.id === xsId('II_SYS_SYS_SCR_AMPESS')).qty === r.given.find(g => g.line.id === xsId('II_SYS_SYS_SCR_AMPESS')).times * 2, 'the new reward gives 2 each time');
+});
+editCase('exchange simulator: Server and Client copies out of step', w => {
+  const client = XS.serverTable(w.models.exchange);       // the Client copy, not saved again
+  const f = exf(w), env = xsEnv(w), COL = w.defines.defines.get('MMI_COLLECT01');
+  const col = exm(w, 'MMI_COLLECT01');
+  w.apply('exchange_script.txt', XO.moveSet(f.text, col, col.sets[0], 1).splices, 'move');   // only the server copy changes
+  const server = XS.serverTable(w.models.exchange);
+  // the player clicks the first row of THEIR window (Name Color); the client sends position 0
+  const p = XS.stockedPlayer(env, server.find(COL).sets[0], { free: 1 });
+  const res = XS.resultExchange(env, server, p, COL, 0, XS.rng(1));
+  eq(res.given[0].id, xsId('II_SYS_SYS_SCR_CHATCOLOR_3D'), 'the server gives what sits at that position in ITS copy (Chat/Shout Color)');
+  eq(XS.clientReply(env, client, COL, 0, res).chat.join(), 'Exchange complete! You received Name Color Scroll (3 Days) x1.', 'while the chat line names the client copy\'s reward');
+});
+section('exchange simulator: every recipe players can use');
+{
+  const ex = new FRE.Workspace((() => { const m = new Map(); for (const [k, e] of loadFolder(FIXTURES)) m.set(k, openSource(e)); return m; })(), { only: 'exchange' }).load();
+  const dyo = new Map();
+  for (const x of ex.worldList()) { const p = `${FIXTURES}/World/${x.name}/${x.name}.dyo`; if (!dyo.has(x.name) && exists(p)) dyo.set(x.name, readBytes(p)); }
+  ex.setMapObjects(dyo);
+  const env = xsEnv(ex), t = XS.serverTable(ex.models.exchange);
+  const live = ex.models.exchange.menus.filter(m => !m.isJunk && m.sets.length && (ex.npcInfoByMenu().get(m.mmi.value) || []).some(x => x.inGame));
+  let n = 0, bad = [], lose = [];
+  for (const m of live) t.find(m.mmi.value).sets.forEach((s, i) => {
+    n++;
+    const r = XS.run(env, t, m.mmi.value, i, { tries: 200, free: 1 });
+    if (r.results.SUCCESS !== 200) bad.push(`${m.name} ${i + 1}`);
+    const r0 = XS.run(env, t, m.mmi.value, i, { tries: 200, free: 0 });
+    if (r0.lost) lose.push(`${m.name} ${i + 1}`);
+  });
+  ok(n > 60, `${n} live recipes simulated`);
+  eq(bad.join(), '', 'every live recipe succeeds with exact ingredients and 1 free slot');
+  eq(lose.join(), '', 'no live recipe loses rewards, even with 0 free slots');
+}
+
+// The same cases through the independent Python copy (tools/oracle_sim.py, written from the
+// C++ without reading exchange-sim.js): every result, roll, reward and end bag must match.
+section('exchange simulator: JS and Python copies agree');
+{
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ROOT}/tools/oracle_sim.py exchange ${FIXTURES}`);
+  const ora = JSON.parse(new TextDecoder().decode(out));
+  const env = xsEnv(W), real = XS.serverTable(W.models.exchange);
+  eq(ora.gold, xsId('II_GOLD_SEED1'), 'both copies: PENYA = II_GOLD_SEED1');
+  const build = bag => {
+    const p = XS.player({ gold: bag.gold, unlocked: bag.unlocked });
+    for (const [k, v] of Object.entries(bag.slots || {})) p.slots[+k] = { id: v[0], num: v[1], flag: v[2], charged: v[3], busy: v[4] };
+    for (const [k, v] of Object.entries(bag.equip || {})) p.equip[+k] = { id: v[0], num: v[1], flag: v[2], charged: v[3], busy: v[4] };
+    for (let i = 0, left = bag.fill || 0; i < XS.MAX_INVENTORY && left > 0; i++) if (!p.slots[i]) { p.slots[i] = { id: XS.FILLER, num: 1, flag: 0, charged: 0, busy: false }; left--; }
+    return p;
+  };
+  const dump = p => {
+    const all = [...p.slots, ...p.equip];
+    return { gold: p.gold, fill: all.filter(x => x && x.id === XS.FILLER).length,
+      items: all.map((x, i) => x && x.id !== XS.FILLER ? [i, x.id, x.num, x.flag] : null).filter(Boolean) };
+  };
+  let agree = 0;
+  const bad = [];
+  for (const c of ora.cases) {
+    const t = c.script ? XS.serverTable(FRE.exchange.loadExchange(new FRE.SourceFile('Exchange_Script.txt', FRE.bytes.binaryStringToBytes(c.script)), { defines: W.defines.defines })) : real;
+    const m = t.find(c.mmi), set = m && m.sets[c.set];
+    const r = FRE.xRandom.rng(c.seed);
+    let p = build(c.bag);
+    const counts = {}, lines = set ? set.pay.map(() => [0, 0]) : [], trace = [];
+    for (let k = 0; k < c.tries; k++) {
+      if (c.mode === 'same') p = build(c.bag);
+      const res = XS.resultExchange(env, t, p, c.mmi, c.set, r);
+      counts[res.result] = (counts[res.result] || 0) + 1;
+      const gi = res.given.map(x => set.pay.indexOf(x)), li = res.lost.map(x => set.pay.indexOf(x));
+      gi.forEach(j => lines[j][0]++); li.forEach(j => lines[j][1]++);
+      if (c.tries <= 20) trace.push([res.result, gi, li]);
+      if (res.result === 'CRASH') break;
+    }
+    const mine = { counts, lines, trace, end: dump(p) };
+    const norm = o => JSON.stringify({ counts: Object.keys(o.counts).sort().map(k => [k, o.counts[k]]), lines: o.lines, trace: o.trace, end: o.end });
+    if (norm(mine) === norm(c.expect)) agree++;
+    else bad.push(`${c.name} ${m ? m.name : c.mmi} #${c.set + 1}: JS ${norm(mine).slice(0, 300)} | PY ${norm(c.expect).slice(0, 300)}`);
+  }
+  ok(ora.cases.length > 1400, `${ora.cases.length} cases from the Python copy`);
+  eq(agree, ora.cases.length, `JS and Python agree on every case (results, rolls, rewards, lost rewards, end bag)`);
+  for (const b of bad.slice(0, 5)) print('   ' + b);
+}
+
+// The same season timeline through the independent Python copy (tools/oracle_sim.py, written
+// from the C++ without reading bp-server.js): every player's state after every step must match.
+// The new season is Python's own text edit there, and the editor's newSeasonPlan here.
+section('battle pass simulator: JS and Python copies agree');
+{
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ROOT}/tools/oracle_sim.py battlepass ${FIXTURES}`);
+  const ora = JSON.parse(new TextDecoder().decode(out));
+  const w = freshWorkspace(), S = bpServer(FRE, w, 7), D = w.defines.defines;
+  const names = ['Ana', 'Ben', 'Cy', 'Dee', 'Eve', 'Fay', 'Gus', 'Hal'];
+  const P = Object.fromEntries(names.map(n => [n, S.player(n)]));
+  let cfg = S.config(w.models.battlepass), now = null, agree = 0;
+  const bad = [];
+  const snap = p => ({ level: p.level, points: p.points, type: p.type, enable: p.enable, end: p.end / 1000,
+    got: p.got.map(g => [g.level, g.id >>> 0, g.qty, g.where]), pass: p.passItems, free: p.free, refused: p.refused, kills: p.kills === undefined ? null : p.kills, last: p.last === undefined ? null : p.last });
+  for (const e of ora.steps) {
+    const [, who, what, a, b] = e.step;
+    if (e.now) now = new Date(e.now * 1000);
+    if (what === 'season') {
+      const plan = FRE.battlePassOps.newSeasonPlan(w.models.battlepass, a);
+      w.apply('battlepass.inc', plan.splices, 'season');
+      cfg = S.config(w.models.battlepass);
+      const mine = [...cfg.passes.values()].map(r => [r.type.value, r.time.value]);
+      if (JSON.stringify(mine) === JSON.stringify(e.pass)) agree++; else bad.push(`season edit: JS ${JSON.stringify(mine)} PY ${JSON.stringify(e.pass)}`);
+      continue;
+    }
+    const list = who === '*' ? names : [who];
+    for (const n of list) {
+      const p = P[n];
+      if (what === 'login') S.login(cfg, p, now);
+      else if (what === 'give') p.passItems += a;
+      else if (what === 'free') p.free = a;
+      else if (what === 'use') S.usePass(cfg, p, now);
+      else if (what === 'grind') p.kills = S.grindTo(cfg, p, a, b, now);
+      else if (what === 'points') {          // an exact award at the level-cost boundary
+        const r = cfg.ladder.get(p.level);
+        const n = typeof a === 'number' ? a : (r ? cfg.cost(r) : 1) - (a === 'cost-1' ? 1 : 0);
+        p.last = n;
+        S.addPoints(cfg, p, n, now);
+      }
+    }
+    const mine = Object.fromEntries(list.map(n => [n, snap(P[n])]));
+    const theirs = Object.fromEntries(list.map(n => { const q = e.players[n]; return [n, { level: q.level, points: q.points, type: q.type, enable: q.enable, end: q.end, got: q.got, pass: q.pass, free: q.free, refused: q.refused, kills: q.kills === undefined ? null : q.kills, last: q.last === undefined ? null : q.last }]; }));
+    if (JSON.stringify(mine) === JSON.stringify(theirs)) agree++;
+    else bad.push(`${e.step.join(' ')}: JS ${JSON.stringify(mine).slice(0, 400)} | PY ${JSON.stringify(theirs).slice(0, 400)}`);
+  }
+  eq(agree, ora.steps.length, `JS and Python agree after every one of the ${ora.steps.length} steps (2 seasons, back-pay, full bag, level cap)`);
+  for (const x of bad.slice(0, 4)) print('   ' + x);
+  const fay = P.Fay;
+  ok(fay.level === 50 && fay.got.length === 50, `level cap: Fay stops at level 50 with all 50 rewards (${ora.top})`);
+  ok(P.Dee.refused >= 1 && P.Eve.refused === 1, 'refusals: back-pay without enough free slots (Dee), no pass running and a full bag (Eve)');
+  ok(P.Hal.refused === 0 && P.Hal.got.length === 4 && P.Hal.got[3].where === 'mail', 'back-pay with exactly enough free slots works; the next reward, with a full bag, is mailed (Hal)');
+}
+
+// Past seasons (backup copies) and reusing their rewards; every edit is checked through the
+// Battle Pass simulator (tests/bp-server.js): what a buyer receives per level.
+section('battle pass: past seasons, swap and restore');
+const bpRewards = (w, upTo) => {           // a buyer grinding to `upTo` on the current file: the reward of every level
+  const S = bpServer(FRE, w, 3), cfg = S.config(w.models.battlepass), p = S.player('T');
+  const now = new Date(BP_NOW);
+  S.login(cfg, p, now); p.passItems = 1; S.usePass(cfg, p, now);
+  for (let lv = p.level; lv < upTo; lv++) S.addPoints(cfg, p, cfg.cost(cfg.ladder.get(p.level)), now);
+  return p.got.map(g => `${g.level}:${g.qty}x${g.id}`);
+};
+const BP_NOW = new Date(2026, 9, 10).getTime();
+editCase('battle pass: past seasons from backup copies', w => {
+  const f = bpf(w), D = w.defines.defines, ctx = { defines: D, strings: w.strings.map };
+  const season1 = new FRE.SourceFile('2026-10-01_10-00-00_battlepass/BattlePass.inc', f.serialize());
+  const s1Ladder = FRE.battlePass.seasonHistory([{ stamp: 'a', file: season1 }], ctx, null)[0].ladder;
+  w.apply('battlepass.inc', FRE.battlePassOps.newSeasonPlan(w.models.battlepass, 20261109).splices, 'season 2');
+  const l3 = w.models.battlepass.ladder.get(3);
+  w.apply('battlepass.inc', FRE.battlePassOps.setRewardItem(l3, 'II_SYS_SYS_SCR_AMPESS'), 'level 3');
+  const season2 = new FRE.SourceFile('2026-10-07_10-00-00_battlepass/BattlePass.inc', f.serialize());
+  const list = FRE.battlePass.seasonHistory([{ stamp: '2026-10-01_10-00-00_battlepass', file: season1 }, { stamp: '2026-10-05_09-00-00_battlepass', file: season1 },
+    { stamp: '2026-10-07_10-00-00_battlepass', file: season2 }], ctx, w.models.battlepass);
+  eq(list.map(s => `${s.type}|${s.time}|${s.copies}|${s.current}`).join(' '), '2|20261109|1|true 1|20261005|2|false', 'two seasons, newest first; season 1 seen in 2 copies; season 2 is current');
+  eq(list[1].ladder.length, 50, 'season 1: 50 levels');
+  eq(list[1].ladder[2].define, s1Ladder[2].define, 'season 1 level 3 keeps its old reward');
+  eq(list[0].ladder[2].define, 'II_SYS_SYS_SCR_AMPESS', 'season 2 level 3: the changed reward');
+});
+editCase('battle pass: swap rewards (costs stay), checked through the simulator', w => {
+  const f = bpf(w), before = f.serialize();
+  w.apply('battlepass.inc', FRE.battlePassOps.newSeasonPlan(w.models.battlepass, 20261109).splices, 'season 2');
+  const r0 = bpRewards(w, 5);
+  const L = lv => w.models.battlepass.ladder.get(lv);
+  const [c2, c3] = [L(2).points.value, L(3).points.value];
+  w.apply('battlepass.inc', FRE.battlePassOps.swapRewards(f.text, L(2), L(3)), 'swap');
+  eq(`${L(2).points.value},${L(3).points.value}`, `${c2},${c3}`, 'costs stay with their level');
+  const r1 = bpRewards(w, 5);
+  eq(r1[1].split(':')[1], r0[2].split(':')[1], 'simulator: level 2 now pays level 3\'s old reward');
+  eq(r1[2].split(':')[1], r0[1].split(':')[1], 'simulator: level 3 now pays level 2\'s old reward');
+  w.undo(); w.undo();
+  ok(B.bytesEqual(f.serialize(), before), 'undo restores identical bytes');
+});
+editCase('battle pass: use a past ladder / add a past reward, checked through the simulator', w => {
+  const f = bpf(w), D = w.defines.defines, ctx = { defines: D, strings: w.strings.map };
+  const past = FRE.battlePass.seasonHistory([{ stamp: 'a', file: new FRE.SourceFile('BattlePass.inc', f.serialize()) }], ctx, null)[0];
+  w.apply('battlepass.inc', FRE.battlePassOps.newSeasonPlan(w.models.battlepass, 20261109).splices, 'season 2');
+  const s1 = bpRewards(w, 50);
+  // season 2 drifts: a reward, a cost, a quantity, and an extra level 51
+  const L = lv => w.models.battlepass.ladder.get(lv);
+  w.apply('battlepass.inc', FRE.battlePassOps.setRewardItem(L(4), 'II_SYS_SYS_SCR_AMPESS'), 'r');
+  w.apply('battlepass.inc', FRE.battlePassOps.setRewardValue(L(7), 'points', 1234), 'c');
+  w.apply('battlepass.inc', FRE.battlePassOps.setRewardValue(L(9), 'qty', 77), 'q');
+  w.apply('battlepass.inc', FRE.battlePassOps.addReward(f.text, w.models.battlepass, 'II_CHP_RED', 5, 900).splices, 'add 51');
+  ok(bpRewards(w, 51).join() !== s1.join(), 'season 2 now pays differently');
+  const plan = FRE.battlePassOps.restoreLadder(f.text, w.models.battlepass, past.ladder, D);
+  eq(plan.changes.length, 4, 'restore: 4 changes (3 values, level 51 removed)');
+  w.apply('battlepass.inc', plan.splices, 'restore');
+  eq(bpRewards(w, 51).join(), s1.join(), 'simulator: after "Use this whole ladder", a buyer gets exactly season 1\'s rewards at every level');
+  eq(FRE.battlePassOps.restoreLadder(f.text, w.models.battlepass, past.ladder, D).changes.length, 0, 'restoring again changes nothing');
+  ok(w.models.battlepass.rows.BP4.every(r => r.type.value === 2) && w.models.battlepass.pass.time.value === 20261109, 'season number and end date untouched');
+  // + on a past reward: the next level, same item / quantity / cost
+  const p5 = past.ladder[4];
+  w.apply('battlepass.inc', FRE.battlePassOps.addReward(f.text, w.models.battlepass, p5.define, p5.qty, p5.points).splices, '+');
+  const l51 = L(51);
+  ok(l51 && l51.define === p5.define && l51.qty.value === p5.qty && l51.points.value === p5.points && l51.type.value === 2, '+ adds level 51 with the past reward, quantity and cost');
+  eq(bpRewards(w, 51).pop(), `51:${p5.qty}x${p5.id}`, 'simulator: level 51 pays it');
+  eq(w.newBlocking().length, 0, 'no new blocking problems');
+});
+
+editCase('battle pass: remove a middle level (levels above move down), checked through the simulator', w => {
+  const f = bpf(w), before = f.serialize();
+  w.apply('battlepass.inc', FRE.battlePassOps.newSeasonPlan(w.models.battlepass, 20261109).splices, 'season 2');   // season 1 has ended
+  const r0 = bpRewards(w, 50);
+  const L = lv => w.models.battlepass.ladder.get(lv);
+  const cost6 = L(6).points.value;
+  w.apply('battlepass.inc', FRE.battlePassOps.removeLevel(f.text, w.models.battlepass, L(5)), 'rm 5');
+  const m = w.models.battlepass, own = [...m.ladder.values()].filter(r => r.type.value === m.pass.type.value);
+  eq(own.length, 49, '49 levels left');
+  ok(own.every((r, i, a) => a.some(x => x.level.value === i + 1)), 'levels 1-49, no gap');
+  ok(!w.diags.some(d => d.code === 'BP_LEVEL_GAP'), 'no BP_LEVEL_GAP');
+  eq(L(5).points.value, cost6, 'old level 6 (with its cost) is now level 5');
+  const r1 = bpRewards(w, 49);
+  eq(r1[4].split(':')[1], r0[5].split(':')[1], 'simulator: level 5 pays the old level 6 reward');
+  eq(r1[48].split(':')[1], r0[49].split(':')[1], 'simulator: level 49 pays the old top reward');
+  eq(w.newBlocking().length, 0, 'no new blocking problems');
+  w.undo(); w.undo();
+  ok(B.bytesEqual(f.serialize(), before), 'undo restores identical bytes');
+});
+editCase('battle pass: put a past reward on a level, checked through the simulator', w => {
+  const f = bpf(w);
+  w.apply('battlepass.inc', FRE.battlePassOps.newSeasonPlan(w.models.battlepass, 20261109).splices, 'season 2');
+  const L = lv => w.models.battlepass.ladder.get(lv);
+  w.apply('battlepass.inc', FRE.battlePassOps.placeReward(f.text, w.models.battlepass, { define: 'II_SYS_SYS_SCR_AMPESS', qty: 4, points: 1500, level: 7 }), 'on 7');
+  ok(L(7).define === 'II_SYS_SYS_SCR_AMPESS' && L(7).qty.value === 4 && L(7).points.value === 1500, 'level 7: reward, quantity and cost replaced');
+  eq(bpRewards(w, 7)[6], `7:4x${xsId('II_SYS_SYS_SCR_AMPESS')}`, 'simulator: level 7 pays 4x the new reward');
+  w.apply('battlepass.inc', FRE.battlePassOps.placeReward(f.text, w.models.battlepass, { define: 'II_CHP_RED', qty: 9, points: 800, level: null }), 'new');
+  ok(L(51) && L(51).define === 'II_CHP_RED' && L(51).qty.value === 9, 'level null: a new level 51');
+  eq(bpRewards(w, 51).pop(), `51:9x${xsId('II_CHP_RED')}`, 'simulator: level 51 pays it');
+  throws(() => FRE.battlePassOps.placeReward(f.text, w.models.battlepass, { define: 'II_CHP_RED', qty: 1, points: 1, level: 99 }), 'no level 99: refused');
+});
+
 section('one task at a time (Workspace only)');
 {
   const files = () => { const m = new Map(); for (const [k, e] of loadFolder(FIXTURES)) m.set(k, openSource(e)); return m; };

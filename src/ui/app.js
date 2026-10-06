@@ -13,7 +13,7 @@
     ws: null, resDir: null, backupDir: null, client: null, createMissing: new Set(), mode: 'npc',
     layout: null, pendingRoot: null, task: null, busy: false,
     queries: {}, items: [], filtered: [], rarity: new Set(), ik1: '', ik3: '', itemQuery: '',
-    edited: new Set(), diagOpen: false,
+    diagOpen: false,
   };
   const modules = () => FRE.ui.modules;
   const active = () => modules().find(m => m.id === S.mode) || modules()[0];
@@ -22,8 +22,12 @@
   const ctx = {
     get ws() { return S.ws; },
     get query() { return S.queries[S.mode] || ''; },
-    get edited() { return S.edited; },
+    // list badges: the keys of the edits still in the undo history, so Undo removes a badge and Redo brings it back
+    get edited() { return new Set(S.ws ? S.ws.history.flatMap(e => e.tags || []) : []); },
     renderAll: (withItems) => renderAll(withItems),
+    // [{ stamp, bytes }] of every backup copy of a file, or null when no backups folder is known
+    backupsOf: name => (S.backupDir ? FRE.fsa.backupCopies(S.backupDir, name) : Promise.resolve(null)),
+    get backupKey() { return S.backupDir ? S.backupDir.name : null; },
     renderList: () => renderList(),
     // Apply an edit op: make(text) -> splices. `key` marks what was edited (list badges).
     edit(lowerFile, make, label, key) {
@@ -31,7 +35,7 @@
       try {
         const splices = make(f.text);
         S.ws.apply(lowerFile, splices, label);
-        if (key) S.edited.add(key);
+        tagLast(key ? [key] : [], label);
       } catch (e) { toast(e.message, 'bad'); }
       renderAll(false);
     },
@@ -39,7 +43,7 @@
     editGroup(make, label, keys = []) {
       try {
         S.ws.applyGroup(make(), label);
-        keys.forEach(k => S.edited.add(k));
+        tagLast(keys, label);
       } catch (e) { toast(e.message, 'bad'); }
       renderAll(false);
     },
@@ -82,7 +86,6 @@
       const t0 = performance.now();
       S.ws = new FRE.Workspace(files, { only: id }).load();
       S.resDir = L.res;
-      S.edited.clear();
       S.client = null;
       if (L.client) await loadClient(L.client);
       if (S.ws.needsMaps()) await loadMaps(L.res);
@@ -182,6 +185,16 @@
   function setMode(id) { if (id !== S.task) loadTask(id); }
 
   // ------------------------------------------------------------------ rendering
+  // the edit just applied (last undo entry): its label and the list keys it marks as edited
+  function tagLast(keys, label) {
+    const e = S.ws.history[S.ws.history.length - 1];
+    if (!e) return;
+    if (keys.length) e.tags = (e.tags || []).concat(keys);
+    if (label) e.label = label;
+  }
+  // "recipe 1 qty (MMI_COLLECT01)" for the Undo / Redo tooltips
+  const stepText = e => e ? `${e.label || 'edit'}${e.tags && e.tags.length ? ` (${[...new Set(e.tags.map(t => t.slice(t.indexOf('|') + 1)))].join(', ')})` : ''}` : '';
+
   function renderAll(withItems = true) {
     document.body.classList.toggle('start', !S.task);
     renderToolbar(); renderBanners(); renderModes();
@@ -242,8 +255,14 @@
 
   function renderToolbar() {
     const ws = S.ws;
-    $('btn-undo').disabled = !ws || !ws.history.length;
-    $('btn-redo').disabled = !ws || !ws.redoStack.length;
+    // counts cover the whole task (every NPC / menu); the tooltip names the step and where it is
+    const nU = ws ? ws.history.length : 0, nR = ws ? ws.redoStack.length : 0;
+    $('btn-undo').disabled = !nU;
+    $('btn-redo').disabled = !nR;
+    $('btn-undo').textContent = nU ? `Undo (${nU})` : 'Undo';
+    $('btn-redo').textContent = nR ? `Redo (${nR})` : 'Redo';
+    $('btn-undo').title = nU ? `Undo (Ctrl+Z): ${stepText(ws.history[nU - 1])}. ${nU} edit${nU > 1 ? 's' : ''} in this task can be undone.` : 'Undo (Ctrl+Z)';
+    $('btn-redo').title = nR ? `Redo (Ctrl+Y): ${stepText(ws.redoStack[nR - 1])}` : 'Redo (Ctrl+Y)';
     const dirty = ws ? ws.dirtyFiles() : [];
     $('btn-save').disabled = !dirty.length;
     $('btn-save').textContent = dirty.length ? `Save (${dirty.length})` : 'Save';
@@ -300,12 +319,13 @@
   }
 
   // Re-rendering the same view (after an edit) keeps the scroll position; a new view starts at the top.
+  // A module's `pick` (an item being picked for a row) is not a new view.
   let lastView = null;
   function renderEditor() {
     const el = $('editor');
     if (!S.ws) return;
     FRE.ui.tooltip.hide();                       // its element is about to be replaced
-    const m = active(), view = S.mode + '|' + JSON.stringify(m.st || {});
+    const m = active(), view = S.mode + '|' + JSON.stringify(m.st || {}, (k, v) => k === 'pick' ? undefined : v);
     const top = view === lastView ? el.scrollTop : 0;
     lastView = view;
     el.className = ''; el.textContent = '';
@@ -476,7 +496,6 @@
       .catch(e => ({ ok: false, steps: [String(e && e.message || e)] }));
     if (!report.ok) log.appendChild(h('div', { style: 'color:var(--bad)' }, '\nNot saved: ' + (report.steps[report.steps.length - 1] || '')));
     else {
-      S.edited.clear();
       for (const c of report.client || []) S.client.files.set(c.lower, new FRE.SourceFile(c.name, c.bytes, { handle: c.handle }));
       const synced = new Set((report.client || []).map(c => c.lower));
       const left = client.filter(n => !synced.has(n.toLowerCase()));

@@ -99,7 +99,7 @@
       'Make them add up to exactly 1,000,000 so the chances are the ones you wrote.'],
     EX_PAYNUM: ['PAY n is how many different rewards one exchange gives. n above the number of lines gives all of them (and logs an error); n = 0 also gives every line.',
       'Set it between 1 and the number of reward lines.'],
-    EX_QTY: ['A quantity of 0 or less. As an ingredient the check always passes and nothing is taken, so the reward is free.', 'Use a quantity of at least 1.'],
+    EX_QTY: ['A quantity of 0 or less. As an ingredient the check always passes and nothing is taken, so the reward is free - except -1 (or =), which takes every one of that item the player has.', 'Use a quantity of at least 1.'],
     EX_SET_CAP: ['A menu keeps at most 30 recipes (__NEW_EXCHANGE_V19). The ones after the 30th are dropped without a message.', 'Move the extra recipes to another menu, or remove some.'],
     EX_DUP_MENU: ['The same menu appears twice. The server keeps the FIRST block (std::map insert) and ignores this one.', 'Merge the two blocks or remove one.'],
     EX_ROW_WIDE: ['The exchange window draws each recipe as one row of icons: ingredients, an arrow, then rewards. About 9 icons fit; more are drawn past the window\'s edge.',
