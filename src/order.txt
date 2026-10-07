@@ -50,6 +50,7 @@ ui/shop-rules.js
 ui/npc-shops.js
 ui/combo.js
 ui/tga.js
+ui/npc-place.js
 ui/new-npc.js
 ui/menu-form.js
 ui/npc-edit.js

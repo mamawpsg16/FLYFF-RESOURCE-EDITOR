@@ -342,7 +342,7 @@
         h('button.primary', { id: 'btn-root', on: { click: chooseRoot } }, 'Choose the source folder')));
     }
     wrap.appendChild(h('div.start-step', '2 · Task'));
-    wrap.appendChild(h('div.task-grid', FRE.Workspace.MODULES.map(wm => {
+    wrap.appendChild(h('div.task-grid', FRE.Workspace.MODULES.filter(wm => !wm.hidden).map(wm => {
       const um = modules().find(x => x.id === wm.id);
       return h('button.task-card', { 'data-task': wm.id, disabled: !L || S.busy, title: L ? '' : 'Choose the folder first', on: { click: () => loadTask(wm.id) } },
         h('b', wm.label), h('span', um && um.help ? um.help.replace(/^[^:]+:\s*/, '').replace(/^./, c => c.toUpperCase()) : wm.required.join(', ')));
@@ -548,7 +548,9 @@
 
   function locate(d) {
     const dm = S.ws.moduleOfFile(d.file || '');
-    const m = dm && modules().find(x => x.id === dm.id);
+    // a file of a module this task only checks (Exchange_Script.txt in NPC Shops): the task's own view shows it
+    const id = dm && (S.ws.shown.has(dm.id) ? dm.id : S.task);
+    const m = id && modules().find(x => x.id === id);
     if (!m || !m.locate || !m.locate(d, ctx)) return;
     S.mode = m.id;
     renderAll(false);

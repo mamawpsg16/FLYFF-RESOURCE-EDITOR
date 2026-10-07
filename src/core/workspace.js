@@ -33,6 +33,7 @@
       client: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'defineNeuz.h', 'etc.inc', 'etc.txt.txt',
         'defineText.h', 'textClient.inc', 'textClient.txt.txt', 'Exchange_Script.txt'],
       uses: ['exchange'],    // the menus' recipes (read here; a new menu's recipes are written with it)
+      alsoValidates: ['exchange'],   // exchanges are edited here (the ⇄ tabs), so their checks show here too
       maps: true,            // reads World/*/ to show where each NPC stands
       editsMaps: true,       // a new NPC is a new record in World/<map>/<map>.dyo (Server + Client copies)
       parse(ws) {
@@ -73,7 +74,8 @@
     },
     {
       // Exchange_Script.txt (CExchange::Load_Script). The NPC files tell which NPCs open each menu.
-      id: 'exchange', label: 'Exchanges',
+      // Not a start-screen task since 2026-10-07 (the user: exchanges belong to their NPC): edited in NPC Shops' ⇄ tabs.
+      id: 'exchange', label: 'Exchanges', hidden: true,
       required: ['Exchange_Script.txt'], editable: ['Exchange_Script.txt'], client: ['Exchange_Script.txt'],
       deps: ['character.inc', 'character-etc.inc', 'character-school.inc'],
       uses: ['npc'],         // the NPC files are read (not edited) to name the NPCs that open each menu
@@ -116,6 +118,7 @@
       if (this.only && !task) throw new Error(`unknown task ${this.only}`);
       this.active = new Set(task ? [task.id, ...(task.uses || [])] : MODULES.map(m => m.id));
       this.shown = new Set(task ? [task.id] : MODULES.map(m => m.id));
+      this.validated = new Set([...this.shown, ...(task && task.alsoValidates || [])]);
       for (const m of MODULES) {
         const miss = m.required.filter(n => !files.has(n.toLowerCase()));
         this.available[m.id] = !this.active.has(m.id) ? { ok: false, missing: [], off: true } : miss.length ? { ok: false, missing: miss } : { ok: true };
@@ -155,7 +158,7 @@
         if (!this.available[m.id].ok) continue;
         if (lowerName && ![...m.required, ...(m.deps || [])].some(n => n.toLowerCase() === lowerName)) continue;
         this.models[m.id] = m.parse(this);
-        if (this.shown.has(m.id)) this.moduleDiags[m.id] = m.validate(this, this.models[m.id]);
+        if (this.validated.has(m.id)) this.moduleDiags[m.id] = m.validate(this, this.models[m.id]);
       }
       // Spec_Item problems matter only to tasks that can change Spec_Item.txt
       const specDiags = [...this.shown].some(id => MODULES.find(m => m.id === id).editsSpec) ? this.itemDiags : [];

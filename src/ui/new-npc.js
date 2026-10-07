@@ -20,25 +20,7 @@
       x: null, y: null, z: null, angle: 0, menus: ['MMI_TRADE'], tabs: [blankTab(0)] };
   }
 
-  // Proven models: an NPC players can see uses it, and mdlDyna.inc has it. "Julia — like Juria, Is"
-  function provenModels(ws) {
-    const mdl = SIM().modelNames(ws);
-    const by = new Map();
-    for (const p of SIM().visibleNpcs(ws)) {
-      if (!by.has(p.model)) by.set(p.model, []);
-      const n = p.npc.name || p.key;
-      if (!by.get(p.model).includes(n)) by.get(p.model).push(n);
-    }
-    // NPCs players saw until a proven commit hid them: "Soraya (until b6abf414)"
-    for (const [id, list] of SIM().seenBefore(ws)) {
-      if (!by.has(id)) by.set(id, []);
-      for (const b of list) by.get(id).push(`${b.name} (until ${b.commit})`);
-    }
-    return [...by].map(([id, npcs]) => ({ id, define: ws.defines.byValue('MI_', id), npcs,
-      name: ws.movers && ws.movers.movers.get(id) ? ws.movers.movers.get(id).name : '' }))
-      .filter(m => m.define && (!mdl || mdl.has(m.define)))
-      .sort((a, b) => (a.name || a.define).localeCompare(b.name || b.define));
-  }
+  const provenModels = ws => FRE.ui.npcPlace.provenModels(ws);
   // Menus: { define, id, label, count of visible NPCs using it }
   function menuList(ws, all) {
     const count = new Map();
@@ -126,17 +108,10 @@
     const ws = ctx.ws;
     if (!ws.mapFiles.size || !ws.area) { toast('The map files (World/) were not read, so an NPC cannot be placed.', 'bad'); return; }
     if (!form) form = defaults(ws);
-    let modelView = 'used';          // 'used': models a visible NPC uses; 'unused': models no NPC uses yet (every file in Client/Model); 'all'
+    const place = { modelView: 'used', cache: {} };   // model list view ('used' / 'unused' / 'all') + lists read once (ui/npc-place.js)
+    let where = null;
     let touched = false;             // the checks show once the user has typed something
     let menuView = 'top';            // 'top': ticked + the 16 most used; 'used': every menu a visible NPC uses; 'all': also unused ones
-    const models = provenModels(ws);
-    const unused = SIM().unusedCompleteModels(ws);
-    // a portrait picture per model: the SetImage file of a visible NPC with that model
-    const modelPic = new Map();
-    for (const p of SIM().visibleNpcs(ws)) {
-      const img = p.npc.statements.find(r => r.cmd === 'SetImage' && r.args.image);
-      if (img && !modelPic.has(p.model)) modelPic.set(p.model, img.args.image.text);
-    }
     const images = [];
     for (const n of ws.chars.npcs) for (const r of n.statements) if (r.cmd === 'SetImage' && r.args.image && r.args.image.stringKey)
       if (!images.some(i => i.key === r.args.image.stringKey)) images.push({ key: r.args.image.stringKey, file: r.args.image.text, npc: n.name || n.key });
@@ -146,11 +121,9 @@
       .filter((s, i, a) => a.findIndex(x => x.v === s.v) === i);
     const freeTags = SIM().freeStructureIds(ws);
     const tagFiles = ['defineneuz.h', 'etc.inc', 'etc.txt.txt'].every(n => ws.isEditable(n));
-    const regions = SIM().regions(ws);
-    const visible = SIM().visibleNpcs(ws).map(p => ({ p, w: SIM().whereAt(ws, p.map, p.x, p.z) }));
 
     const body = h('div.newnpc');
-    const problems = h('div.nn-problems'), preview = h('div.nn-preview'), whereNow = h('div.nn-where');
+    const problems = h('div.nn-problems'), preview = h('div.nn-preview');
     let createBtn = null;
 
     const num = v => (v === '' || v === null || v === undefined ? null : Number(v));
@@ -165,26 +138,6 @@
     const label = FRE.ui.fieldLabel;
     const row = (text, req, ...el) => h('div.nn-row', label(text, req), ...el);
     const note = t => h('span.muted.small', t);
-    const region = () => regions.find(r => r.value === form.region) || regions[0];
-
-    // "Files: Mvr_MaFlJuria.o3d, 9 animations, 2 textures — all in Client/Model"; the .o3d is read once to list its textures
-    const reading = new Set();
-    function modelFiles() {
-      const e = form.model && SIM().modelEntries(ws) && SIM().modelEntries(ws).get(form.model);
-      if (!e || !ws.clientModels) return null;
-      const o3d = `Mvr_${e.name}.o3d`, lo = o3d.toLowerCase();
-      const tex = ws.modelTextures.get(lo);
-      if (!tex && ws.clientTextures && ws.clientModels.has(lo) && !reading.has(lo)) {
-        reading.add(lo);
-        ctx.clientFile('Model/' + o3d).then(b => { if (b) { ws.addModelTextures(o3d, SIM().o3dTextures(b)); ws.reparse('character.inc'); render(); } }).catch(() => {});
-      }
-      const miss = SIM().missingModelFiles(ws, form.model) || [];
-      // every Mvr_*.o3d of the client names at least one texture: none listed means a stale or broken Model.textures index
-      const texText = !ws.clientTextures ? 'textures not checked (no Model/Texture list)' : !tex ? 'textures: reading…'
-        : tex.length ? `${tex.length} texture${tex.length === 1 ? '' : 's'}` : 'no textures listed (re-run tools/refresh-fixtures.sh)';
-      return h('span.small' + (miss.length ? '.bad' : '.muted'), `Files: ${o3d}, ${e.anis.length} animation${e.anis.length === 1 ? '' : 's'}, ${texText} — ` +
-        (miss.length ? `missing: ${miss.join(', ')}` : 'all in Client/Model'));
-    }
 
     function render() {
       body.textContent = '';
@@ -192,29 +145,7 @@
       body.appendChild(h('h3', 'NPC'));
       body.appendChild(row('Key', true, input('key', { el: { placeholder: 'MaFl_Lumi', maxLength: 31 } }), note('Internal name, unique, never shown. Letters, digits, _ (31 max). Style: MaFl_ = Madrigal Flaris, MaSa_ = Saint Morning, MaDa_ = Darkon.')));
       body.appendChild(row('Name', true, input('name', { el: { placeholder: 'Lumi', maxLength: 63 } }), note('Shown above the NPC\'s head.')));
-      const used = models.map(m => ({ v: m.define, label: `${m.name || m.define} — like ${m.npcs.slice(0, 3).join(', ')}${m.npcs.length > 3 ? ', …' : ''}`,
-        find: m.define + ' ' + m.npcs.join(' '), group: modelView === 'all' ? 'Used by NPCs in the game' : null }));
-      const fresh = unused.map(m => ({ v: m.define, label: `${m.name || m.define} (${m.define})`, find: m.define, group: modelView === 'all' ? 'Not used yet — files complete, test it first' : null }));
-      const modelOpts = modelView === 'used' ? used : modelView === 'unused' ? fresh : [...used, ...fresh];
-      const curModel = ws.defines.defines.get(form.model);
-      const noClient = 'Needs the Client folder (its Model files or Model.list are checked)';
-      body.appendChild(row('Model', true, h('div.nn-col',
-        h('div.nn-row', combo(form.model, modelOpts, v => { form.model = v; render(); }, modelView === 'unused' ? 'Search a model no NPC uses yet' : 'Search a model or an NPC that uses it'),
-          h('select.nn-modelview', { title: 'Which models the list shows', on: { change: e => {
-            modelView = e.target.value;
-            // the picked model stays only if the new list has it (else its picture would stay with nothing shown)
-            const now = modelView === 'used' ? used : modelView === 'unused' ? fresh : [...used, ...fresh];
-            if (!now.some(o => o.v === form.model)) form.model = '';
-            render();
-          } } },
-            h('option', { value: 'used', selected: modelView === 'used' }, `Used by NPCs (${used.length})`),
-            h('option', { value: 'unused', selected: modelView === 'unused', disabled: !ws.clientModels, title: ws.clientModels ? '' : noClient },
-              ws.clientModels ? `Not used yet (${fresh.length})` : 'Not used yet (needs the Client folder)'),
-            h('option', { value: 'all', selected: modelView === 'all', disabled: !ws.clientModels, title: ws.clientModels ? '' : noClient }, 'Both'))),
-        modelView !== 'used' ? h('span.muted.small', 'Not used yet: no NPC players see has this body; every .o3d, .ani and texture file is in Client/Model. Check it on the test server first.') : null,
-        modelFiles()),
-        FRE.tga.picture(ctx, modelPic.get(curModel)),
-        note('What the NPC looks like. The picture is the portrait of an NPC with this body, when there is one.')));
+      body.appendChild(FRE.ui.npcPlace.modelField(ctx, form, place, { cache: place.cache, rerender: render, changed: refresh, picked: () => { touched = true; } }));
       const imgFile = form.image ? (images.find(i => i.key === form.image) || {}).file : null;
       body.appendChild(row('Portrait', false, combo(form.image || '', [{ v: '', label: '(none)' }, ...images.map(i => ({ v: i.key, label: `${i.npc} — ${i.file}` }))], v => { form.image = v || null; render(); }, 'Search an NPC'),
         FRE.tga.picture(ctx, imgFile, '.small'),
@@ -247,25 +178,8 @@
 
       // --- where
       body.appendChild(h('h3', 'Where'));
-      const groups = [...new Set(regions.map(r => r.group))];
-      const regionOpts = groups.flatMap(g => regions.filter(r => r.group === g).sort((a, b) => g === groups[0] ? 0 : a.label.localeCompare(b.label))
-        .map(r => ({ v: r.value, group: g, find: r.map, label: `${r.label} · ${r.npcs ? `${r.npcs} NPC${r.npcs === 1 ? '' : 's'}` : '0 NPCs yet — type /position'}` })));
-      body.appendChild(row('Region', true, combo(form.region, regionOpts, v => { form.region = v; form.map = region().map; form.nextTo = null; render(); }, 'Search a town, region or dungeon'),
-        note('Places as players read them on the map window; dungeons by their in-game name.')));
-      const r = region();
-      const near = visible.filter(v => v.p.map === r.map && (!v.w || v.w.place === r.place || r.group !== groups[0]))
-        .sort((a, b) => (a.p.npc.name || a.p.key).localeCompare(b.p.npc.name || b.p.key));
-      // the chosen neighbour stays shown until a different x / y / z is typed (form.nextTo = its key)
-      body.appendChild(row('Next to', false, near.length ? combo(form.nextTo || '', near.map(o => ({ v: o.p.key, label: `${o.p.npc.name || o.p.key}${o.w && o.w.caption ? ' — ' + o.w.caption : ''}`, find: o.p.key })), v => {
-        const p = near.find(o => o.p.key === v).p;
-        Object.assign(form, { nextTo: v, map: p.map, x: Math.round((p.x + 6) * 10) / 10, y: Math.round(p.y * 10) / 10, z: Math.round(p.z * 10) / 10, angle: Math.round(p.angle * 10) / 10 });
-        render();
-      }, `Search the ${near.length} NPCs players see here`) : h('span.muted', 'No NPC stands here yet: type the spot in /position.'),
-        note('Fills the spot: 6 steps to that NPC\'s side, same height and facing.')));
-      body.appendChild(row('/position', true, input('x', { number: true, el: { placeholder: 'x', type: 'number', step: 'any' } }), input('y', { number: true, el: { placeholder: 'y (height)', type: 'number', step: 'any' } }),
-        input('z', { number: true, el: { placeholder: 'z', type: 'number', step: 'any' } }), note('In game: stand on the spot, type /position, copy x y z.')));
-      body.appendChild(whereNow);
-      body.appendChild(row('Facing', true, input('angle', { number: true, el: { type: 'number', step: 'any', min: 0, max: 359.9 } }), note('Degrees, 0-359.9. "Next to" copies the neighbour\'s.')));
+      where = FRE.ui.npcPlace.whereFields(ctx, form, { cache: place.cache, rerender: () => { touched = true; render(); }, changed: () => { touched = true; refresh(); } });
+      where.rows.forEach(r => body.appendChild(r));
 
       // --- menus
       body.appendChild(h('h3', 'Right-click menus'));
@@ -320,15 +234,7 @@
     }
 
     function refresh() {
-      // where a player reads this spot
-      whereNow.textContent = '';
-      const ok = [form.x, form.z].every(v => typeof v === 'number' && Number.isFinite(v));
-      if (ok) {
-        const w = SIM().whereAt(ws, form.map, form.x, form.z);
-        const r = region();
-        if (w) whereNow.append(...[h('span.muted', 'Players will read here: '), h('b', w.label), w.te ? h('span.def', ' · ' + w.te) : null,
-          r && w.place !== r.place ? h('span.tag.warn', ` not in ${r.label}`) : null].filter(Boolean));
-      }
+      if (where) where.refreshWhere();
       const diags = FRE.validateNewNpc(ws, form);
       problems.textContent = '';
       const blocks = diags.filter(d => d.severity === 'BLOCK');

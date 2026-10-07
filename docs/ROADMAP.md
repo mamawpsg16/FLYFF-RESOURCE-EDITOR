@@ -1,7 +1,22 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-07 (task S part 2: rule rows editable, players pay / get back; handoff on top)._
+_Last updated 2026-10-07 (task S part 3: move NPC / change model; exchanges folded into NPC Shops; handoff on top)._
 
+> **Handoff (2026-10-07, afternoon) — START HERE: S part 3 + the user's part-2 feedback are built, NOT committed, waiting for the user's Brave test.** S part 2 + "+ Menu" were user-tested and committed (`376f694`, not pushed). Plan: `/home/kevin/.claude/plans/kind-riding-bonbon.md`. Next after the OK: S part 4 (Donation Shop categories).
+> - **Exchanges live in NPC Shops** (the user: "put it in NPC Shops… just add a filter"). The Exchanges task is gone from the start screen (`MODULES` entry `hidden: true`). New list filter **"NPCs with exchanges"** (in-game NPCs that open an exchange menu); picking one opens its first ⇄ tab. Exchange checks (EX_*) run in NPC Shops (`alsoValidates`); clicking one opens the NPC's ⇄ tab. A ⇄ tab says "Also opened by …" when other NPCs share the menu. "Open in Exchanges" removed. An exchange edit marks its NPCs "edited".
+> - **✎ dialogs say "Edit …"** (the user: "so I know what I'm doing"): "Edit name: Lui", "Edit tab 1 name: Poster (Lui)", "Edit rules text: Guild Rules", button **Apply changes**. In CLAUDE.md "UI standards".
+> - **📍 Change position / model** next to the name of every placed NPC: Spot list (when it stands in several places), the + NPC Where fields (Region on its own map, Next to, /position, Facing, "Players will read here"), the + NPC Model picker, "Change the model on all N spots". Writes only the record's facing / x / y / z / model bytes, in place (the `b6abf414` way), Server + Client, one undo step. Same map only (the user's choice). Old warnings of the current spot stay hidden until something changes. INVESTIGATION §1.14.
+> - The + NPC form now uses the same shared fields (`ui/npc-place.js`): no visible change.
+> - Simulator: `gjs -m tools/npcmove-sim.js MaFl_Postbox spot=7 x=+6 model=MI_MAFL_JURIA!`. Python copy `oracle_sim.py npcmove` (391 cases). Tests: core 718, UI harness 267 (new stage `npcmove`).
+>
+> **User's test:** `python3 build.py`, reload, pick `test-data` (no refresh).
+> 1. Start screen: 3 tasks (no Exchanges). NPC Shops → filter "NPCs with exchanges" → Collins: opens on his ⇄ tab; change a chance; Undo.
+> 2. Lui → ✎ on Guild Rules: title "Edit rules text: Guild Rules", button "Apply changes". ✎ on the name: "Edit name: Lui".
+> 3. Peach → "📍 Change position / model" (next to the name): "No change"; pick "Next to" another NPC → preview; Apply; the Where line changes; Undo.
+> 4. Postbox → spot 7 → pick a model, tick "all 11 spots" → Apply → Undo.
+> 5. Save once and look at the backup (`World/WdMadrigal/WdMadrigal.dyo`, Server + Client).
+> In game later (Windows): the NPC stands at the new spot / with the new body.
+>
 > **Handoff (2026-10-07, late night) — START HERE: S part 2 + "+ Menu" (Shop / Exchange / Rules text) are built, NOT committed, waiting for the user's Brave test and OK.** Plan: `/home/kevin/.claude/plans/read-claude-md-and-the-wobbly-shore.md`.
 > - **+ Menu** (NPC Shops) opens three big choices (the user: "a trade that sells something, an exchange list like Collins, or the Rules like in GS"):
 >   - **Shop:** Trade + a first tab.
@@ -325,7 +340,7 @@ Python copy, as for every task.
 **Widened 2026-10-07** (the user, testing Peach in Brave: "can't we edit an existing NPC… adding tab, renaming tab… even renaming npc", "move NPC / change model", "Donation Shop: add a new category"): S = everything about an existing NPC + its shop. Parts:
 1. Name, tabs, menus: **built 2026-10-07**, committed `1a59e97`.
 2. Rule rows editable + what players pay / get back: **built 2026-10-07** (handoff above).
-3. Move NPC / change model (a same-length splice of its `.dyo` record; reuse the new-NPC form's spot and model pickers).
+3. Move NPC / change model: **built 2026-10-07** (same map, one spot at a time, model on all spots optional; handoff above).
 4. Donation Shop categories: add / rename / move / remove groups and leaves of `Client/Client/DonationShopTree.inc` (+ the rows in DonationShop.inc), simulator of the tree and keyword match.
 Also built in part 1: the item list's own categories (Pets › Raised / Pickup / Buff…).
 

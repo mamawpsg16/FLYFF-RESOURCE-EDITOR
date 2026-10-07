@@ -19,6 +19,9 @@
 (function (FRE) {
   'use strict';
   const RECORD = 200;
+  // Byte offsets in a record, counted from its type DWORD (CObj::Read, Obj.cpp:474: the object part starts at 4).
+  // Moving an existing NPC rewrites only these (b6abf414 moved MaFl_Angel this way, same file length).
+  const FIELD = { angle: 4, x: 20, y: 24, z: 28, model: 48 };
   const ID_PREFIX = 'IDS_CHARACTER_INC_';
 
   // The highest IDS_CHARACTER_INC_ number in the three NPC files and in every loaded string table.
@@ -70,13 +73,13 @@
   function buildRecord({ angle, x, y, z, model, key }) {
     const b = new Uint8Array(RECORD), dv = new DataView(b.buffer);
     dv.setUint32(0, 5, true);                                   // OT_MOVER
-    dv.setFloat32(4, angle, true);
-    dv.setFloat32(20, x / FRE.world.OLD_MPU, true);             // CObj::Read multiplies x and z by OLD_MPU
-    dv.setFloat32(24, y, true);
-    dv.setFloat32(28, z / FRE.world.OLD_MPU, true);
+    dv.setFloat32(FIELD.angle, angle, true);
+    dv.setFloat32(FIELD.x, x / FRE.world.OLD_MPU, true);        // CObj::Read multiplies x and z by OLD_MPU
+    dv.setFloat32(FIELD.y, y, true);
+    dv.setFloat32(FIELD.z, z / FRE.world.OLD_MPU, true);
     for (const o of [32, 36, 40]) dv.setFloat32(o, 1, true);    // scale
     dv.setUint32(44, 5, true);                                  // m_dwType
-    dv.setUint32(48, model >>> 0, true);                        // m_dwIndex = MI_ id
+    dv.setUint32(FIELD.model, model >>> 0, true);               // m_dwIndex = MI_ id
     dv.setUint32(52, 0xFFFFFFFF, true);                         // motion
     dv.setUint32(56, 0, true);                                  // AI interface
     dv.setUint32(60, 2, true);                                  // AI 2
@@ -164,5 +167,5 @@
     };
   }
 
-  FRE.npcOps = { appendSplice, newNpcPlan, newTagPlan, tagText, tagDefine, lastEtcId, buildRecord, insertPoint, blockText, newStrings, lastStringId, idsKey, RECORD };
+  FRE.npcOps = { FIELD, appendSplice, newNpcPlan, newTagPlan, tagText, tagDefine, lastEtcId, buildRecord, insertPoint, blockText, newStrings, lastStringId, idsKey, RECORD };
 })(globalThis.FRE = globalThis.FRE || {});

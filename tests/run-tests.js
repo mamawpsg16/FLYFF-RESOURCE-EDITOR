@@ -1948,6 +1948,71 @@ section('rules windows: + Menu → Rules text (the npc-board client change; JS a
   throws(() => O.boardPlan(w, { npcKey: 'MaFl_Peach', name: 'MMI_X_RULES', label: 'Rules', text: 'café' }), 'a character the client can\'t show is refused');
 }
 
+section('move an NPC / change its model: same-length .dyo rewrite (JS and Python copies agree)');
+{
+  const w = new FRE.Workspace(fixtureFiles(), { only: 'npc' }).load();
+  const { dyoFiles, worldFiles } = loadWorldFiles(FIXTURES, w);
+  w.setMapFiles(dyoFiles, worldFiles);
+  const E = FRE.npcEditOps;
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} npcmove ${FIXTURES}`);
+  const py = JSON.parse(new TextDecoder().decode(out));
+  ok(py.cases.length > 380, `Python moved / re-modelled ${py.cases.length} cases (every placed NPC once)`);
+  const sha = b => GLib.compute_checksum_for_bytes(GLib.ChecksumType.SHA1, b);
+  const npcOf = key => { const l = w.chars.byKey.get(key.toLowerCase()); return l && l[l.length - 1]; };
+  const before = new Map([...w.mapFiles].map(([m, lower]) => [m, w.files.get(lower).serialize()]));
+  let bad = 0;
+  for (const { case: c, changed, back } of py.cases) {
+    const npc = npcOf(c.key);
+    const all = npc ? E.placementsOf(w, npc) : [];
+    const spot = all.findIndex(p => p.map === c.map && all.filter(q => q.map === c.map).indexOf(p) === c.n);
+    let why = null;
+    try {
+      const to = Object.assign({}, c.move || {}, c.model ? { model: c.model } : {});
+      const plan = E.placePlan(w, npc, spot, to, c.all ? all.map((_, i) => i) : [spot]);
+      if (plan.parts.length) w.applyGroup(plan.parts, c.name);
+      const js = {};
+      for (const [m, lower] of w.mapFiles) {
+        const b = w.files.get(lower).serialize(), a = before.get(m);
+        if (FRE.bytes.bytesEqual(a, b)) continue;
+        let n = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++;
+        js[m] = { sha: sha(b), size: b.length, bytes: n };
+      }
+      const now = E.placementsOf(w, npc);
+      const jsBack = now.map(p => ({ map: p.map, n: now.filter(q => q.map === p.map).indexOf(p), x: p.x, y: p.y, z: p.z, angle: p.angle, model: p.model }));
+      if (JSON.stringify(js) !== JSON.stringify(changed)) why = `files JS ${JSON.stringify(js)} vs Python ${JSON.stringify(changed)}`;
+      else if (JSON.stringify(jsBack) !== JSON.stringify(back)) why = `read back JS ${JSON.stringify(jsBack)} vs Python ${JSON.stringify(back)}`;
+      if (plan.parts.length) w.undo();
+    } catch (e) { why = e.message; }
+    if (why && bad++ < 3) ok(false, `case "${c.name}"`, why);
+  }
+  eq(bad, 0, `${py.cases.length} moves / model changes: same bytes and same read-back as the Python copy`);
+  ok([...w.mapFiles].every(([m, lower]) => FRE.bytes.bytesEqual(w.files.get(lower).serialize(), before.get(m))), 'after every undo the map files are the originals');
+
+  // the op itself: one spot moves, the model can go on all spots, nothing else changes
+  const pb = npcOf('MaFl_Postbox'), spots = E.placementsOf(w, pb);
+  eq(spots.length, 11, 'Postbox stands in 11 places');
+  const juria = 'MI_MAFL_JURIA';
+  const plan = E.placePlan(w, pb, 6, { x: spots[6].x + 6, model: juria }, spots.map((_, i) => i));
+  eq(plan.changes.filter(c => c.field === 'x').map(c => c.spot).join(), '6', 'the position changes on the chosen spot only');
+  eq(plan.changes.filter(c => c.field === 'model').length, spots.every(p => p.model === w.defines.defines.get(juria)) ? 0 : 11, 'the model goes on all 11 spots');
+  ok(plan.parts.every(p => p.splices.every(sp => sp.end - sp.start === 4 && sp.insert.length === 4)), 'every splice rewrites 4 bytes in place (same file size)');
+  eq(E.placePlan(w, pb, 0, { x: spots[0].x, y: spots[0].y, z: spots[0].z, angle: spots[0].angle }).changes.length, 0, 'the same spot: no change, nothing written');
+  throws(() => E.placePlan(w, pb, 0, { model: 'II_SYS_SYS_SCR_AWAKE' }), 'an II_ name is refused as a model');
+  throws(() => E.placePlan(w, pb, 99, { x: 1 }), 'a spot that does not exist is refused');
+  // checks: the moved NPC does not overlap itself; a spot next to another NPC warns
+  const peach = npcOf('MaFl_Peach'), pp = E.placementsOf(w, peach)[0];
+  const diags = [], add = (code, severity, field, message) => diags.push({ code, severity, message });
+  FRE.validateNpcSpot(w, w.files.get(pp.file), { x: pp.x + 0.5, y: pp.y, z: pp.z, angle: pp.angle }, add, pp.at);
+  ok(!diags.some(d => d.code === 'NN_OVERLAP' && /MaFl_Peach/i.test(d.message || '')), 'its own record is skipped (half a step from where it stands)');
+  const other = FRE.world.readDyo(w.files.get(pp.file).serialize()).placements.find(p => p.key.toLowerCase() !== 'mafl_peach');
+  diags.length = 0;
+  FRE.validateNpcSpot(w, w.files.get(pp.file), { x: other.x + 1, y: other.y, z: other.z, angle: 0 }, add, pp.at);
+  ok(diags.some(d => d.code === 'NN_OVERLAP'), `a spot 1 step from another NPC (${other.key}): overlap warning`);
+  diags.length = 0;
+  FRE.validateNpcSpot(w, w.files.get(pp.file), { x: pp.x, y: pp.y, z: pp.z, angle: 400 }, add, pp.at);
+  ok(diags.some(d => d.code === 'NN_POS' && d.severity === 'BLOCK'), 'facing 400 is blocked');
+}
+
 section('item list categories (loaders/item-category.js)');
 {
   const w = new FRE.Workspace(fixtureFiles(), { only: 'npc' }).load();

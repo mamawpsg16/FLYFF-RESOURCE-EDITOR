@@ -78,5 +78,12 @@
     return [requiredNote(), h('h3', 'Checks'), h('p.muted.small', `⛔ must be fixed before ${action} · ⚠ only a warning`), checks, h('h3', previewTitle), preview];
   }
 
-  FRE.ui = { modules: [], pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell, whereLine, whereText, copyText, fieldLabel, requiredNote, formFooter };
+  // The edit pencil, coloured (the user, 2026-10-07): every ✎ button uses it. size in px.
+  function pencil(size = 14) {
+    const s = h('span.pencil', { 'aria-hidden': 'true' });
+    s.innerHTML = `<svg viewBox="0 0 24 24" width="${size}" height="${size}"><path fill="#f4b400" d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75z"/>` +
+      '<path fill="#e8710a" d="M20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75z"/><path fill="#5f6368" d="M3 21h3.75L3 17.25z"/></svg>';
+    return s;
+  }
+  FRE.ui = { modules: [], pencil, pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell, whereLine, whereText, copyText, fieldLabel, requiredNote, formFooter };
 })(globalThis.FRE = globalThis.FRE || {});

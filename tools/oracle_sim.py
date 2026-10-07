@@ -3090,6 +3090,151 @@ def bd_run(root):
     return dict(parsed=parsed, specs=specs)
 
 
+# ---------------------------------------------------------------------------------------------
+# npcmove: an existing NPC moved on its map and / or given another body (task S part 3), from the C++:
+#   CWorld::LoadObject (WorldFile.cpp:297): ReadObj (CreateObj.cpp:761) until it returns NULL, for each
+#     map of World.inc (CWorldMng::LoadScript). A record starts with its type DWORD.
+#   CObj::Read (Obj.cpp:474): m_fAngle, vAxis[3], m_vPos[3], m_vScale[3], m_dwType, m_dwIndex, dwMotion,
+#     dwAIInterface, dwAI2 (4 bytes each), then m_vPos.x and .z *= OLD_MPU (4).
+#   CMover::Read (Mover.cpp:3365): m_szName[64], szDialogFile[32], m_szCharacterKey[32], belligerence, extra flag.
+#   SetIndex( NULL, m_dwIndex ): the body is the MI_ id in m_dwIndex.
+# A move writes m_fAngle and m_vPos (x and z / 4) of ONE record; a model change writes m_dwIndex of the
+# chosen records. The file keeps its length (b6abf414 rewrote MaFl_Angel's record the same way).
+# A spot is (map, n): the n-th record of that key in that map (keys match without case, like the loader's
+# character lookup). Not modelled: what the client draws (only the bytes and what the server reads back).
+# ---------------------------------------------------------------------------------------------
+NV_ANGLE, NV_POS, NV_INDEX, NV_KEY = 4, 20, 48, 160
+
+
+def nv_maps(root):
+    """World.inc maps in file order (first time each name appears) -> [(name, path of its .dyo)]"""
+    idx = area_files(root)
+    D = defines(root)
+    S = area_strings(idx)
+    W = area_worlds(open(idx['world.inc'], 'rb').read(), D, S)
+    out, seen = [], set()
+    for wid in W:
+        name = W[wid]['file']
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        rel = f'world/{name}/{name}.dyo'.lower()
+        if rel in idx:
+            out.append((name, idx[rel]))
+    return out, D
+
+
+def nv_records(b):
+    """ReadObj loop over a .dyo: [(offset of the type DWORD, key)] of the OT_MOVER records with a key"""
+    out, i, n = [], 0, len(b)
+    while i + 4 <= n:
+        t = struct.unpack_from('<I', b, i)[0]
+        if t in (OT_OBJ, OT_ITEM, OT_SHIP):
+            i += 4 + 60
+        elif t == OT_MOVER:
+            if i + 200 > n:
+                break
+            key = b[i + NV_KEY:i + NV_KEY + 32].split(b'\0')[0].decode('latin-1')
+            if key:
+                out.append((i, key))
+            i += 200
+        elif t == OT_CTRL:
+            v = struct.unpack_from('<I', b, i + 64)[0]
+            i += 68 + (CTRL_ELEM if v == 0x80000000 else (88 + CTRL_ELEM - 152 if v == 0x90000000 else CTRL_ELEM - 40))
+        else:
+            break
+    return out
+
+
+def nv_read(b, at):
+    """what the server reads back from one record: x, y, z (x and z * OLD_MPU), angle, model"""
+    angle = struct.unpack_from('<f', b, at + NV_ANGLE)[0]
+    x, y, z = struct.unpack_from('<3f', b, at + NV_POS)
+    model = struct.unpack_from('<I', b, at + NV_INDEX)[0]
+    return dict(x=x * OLD_MPU, y=y, z=z * OLD_MPU, angle=angle, model=model)
+
+
+def nv_spots(maps, key):
+    """[(map, n, offset)] of every record of `key`, maps in World.inc order"""
+    out = []
+    for name, data in maps:
+        n = 0
+        for at, k in nv_records(data):
+            if k.lower() == key.lower():
+                out.append((name, n, at))
+                n += 1
+    return out
+
+
+def nv_apply(files, maps_order, case, D):
+    """apply one case to `files` (map name -> bytearray); -> list of changed byte offsets per map"""
+    maps = [(m, files[m]) for m in maps_order]
+    spots = nv_spots(maps, case['key'])
+    target = [s for s in spots if s[0] == case['map'] and s[1] == case['n']][0]
+    mv = case.get('move') or {}
+    model = D.get(case['model']) if case.get('model') else None
+    for name, n, at in spots:
+        b = files[name]
+        if (name, n) == (target[0], target[1]):
+            for field, off in (('angle', NV_ANGLE), ('x', NV_POS), ('y', NV_POS + 4), ('z', NV_POS + 8)):
+                if field in mv:
+                    v = mv[field] / OLD_MPU if field in ('x', 'z') else mv[field]
+                    struct.pack_into('<f', b, at + off, v)
+        if model is not None and (case.get('all') or (name, n) == (target[0], target[1])):
+            struct.pack_into('<I', b, at + NV_INDEX, model)
+
+
+def nv_run(root):
+    import hashlib
+    maps, D = nv_maps(root)
+    orig = {name: open(path, 'rb').read() for name, path in maps}
+    order = [name for name, _ in maps]
+    every = [(name, at, k) for name in order for at, k in nv_records(orig[name])]
+    # models: two bodies NPCs use (MI_ ids found in records), for model changes
+    bodies = sorted({nv_read(orig[name], at)['model'] for name, at, _ in every})
+    mi = {v: k for k, v in D.items() if k.startswith('MI_')}
+    other = [mi[v] for v in bodies if v in mi]
+    cases = []
+    def spot_of(key, which=0):
+        sp = nv_spots([(m, orig[m]) for m in order], key)
+        return sp[which] if which < len(sp) else None
+    def cur(key, which=0):
+        m, n, at = spot_of(key, which)
+        return m, n, nv_read(orig[m], at)
+    m, n, r = cur('MaFl_Peach')
+    cases.append(dict(name='Peach 10.25 east, 3.5 north', key='MaFl_Peach', map=m, n=n, move=dict(x=r['x'] + 10.25, z=r['z'] - 3.5)))
+    cases.append(dict(name='Peach faces 90, 1.5 higher', key='MaFl_Peach', map=m, n=n, move=dict(angle=90.0, y=r['y'] + 1.5)))
+    cases.append(dict(name='Peach unchanged', key='MaFl_Peach', map=m, n=n, move=dict(x=r['x'], y=r['y'], z=r['z'], angle=r['angle'])))
+    cases.append(dict(name='Peach gets another body', key='MaFl_Peach', map=m, n=n, model=[d for d in other if D[d] != r['model']][0]))
+    cases.append(dict(name='Peach negative and tiny', key='MaFl_Peach', map=m, n=n, move=dict(x=-12.345, z=0.001, y=-3.75, angle=359.9)))
+    sp = nv_spots([(mm, orig[mm]) for mm in order], 'MaFl_Postbox')
+    m7, n7, at7 = sp[6]
+    r7 = nv_read(orig[m7], at7)
+    cases.append(dict(name='Postbox spot 7 moved + model on all spots', key='mafl_postbox', map=m7, n=n7,
+                      move=dict(x=r7['x'] + 6, z=r7['z'] + 6), model=other[0], all=True))
+    cases.append(dict(name='Postbox spot 7 model only', key='MaFl_Postbox', map=m7, n=n7, model=other[-1]))
+    # every placed NPC (first record of each key): 1.5 east and facing + 10
+    seen = set()
+    for name, at, k in every:
+        if k.lower() in seen:
+            continue
+        seen.add(k.lower())
+        ms, ns, rs = cur(k)
+        cases.append(dict(name='every NPC: ' + k, key=k, map=ms, n=ns, move=dict(x=rs['x'] + 1.5, angle=(rs['angle'] + 10) % 360)))
+    out = []
+    for c in cases:
+        files = {mm: bytearray(orig[mm]) for mm in order}
+        nv_apply(files, order, c, D)
+        changed = {}
+        for mm in order:
+            if files[mm] != orig[mm]:
+                a, b = orig[mm], files[mm]
+                changed[mm] = dict(sha=hashlib.sha1(bytes(b)).hexdigest(), size=len(b), bytes=sum(1 for i in range(len(a)) if a[i] != b[i]))
+        back = [dict(map=mm, n=nn, **nv_read(files[mm], at)) for mm, nn, at in nv_spots([(x, bytes(files[x])) for x in order], c['key'])]
+        out.append(dict(case=c, changed=changed, back=back))
+    return dict(cases=out, records=len(every))
+
+
 
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
@@ -3110,6 +3255,8 @@ if __name__ == '__main__':
         print(json.dumps(sh_run(root)))
     elif what == 'board':
         print(json.dumps(bd_run(root)))
+    elif what == 'npcmove':
+        print(json.dumps(nv_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model
         for f in sorted(os.listdir(root)):
             if f.lower().startswith('mvr_') and f.lower().endswith('.o3d'):

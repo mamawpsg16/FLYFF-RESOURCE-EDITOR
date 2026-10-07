@@ -272,12 +272,14 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
 .where-short { color: var(--accent); }
 .ex-npc { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
 .ex-npc .where { margin-top: 0; }
+.where-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+button.place-edit { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 13px; }
 .ex-npc { flex-basis: 100%; }
 
 /* + New NPC (ui/new-npc.js) */
 .newnpc h3 { margin: 14px 0 6px; }
 .nn-row { display: flex; gap: 8px; align-items: center; margin: 4px 0; flex-wrap: wrap; }
-.nn-label { width: 90px; color: var(--muted); font-size: 12px; }
+.nn-label { min-width: 90px; white-space: nowrap; color: var(--muted); font-size: 12px; }
 .nn-row input:not([type=checkbox]):not([type=radio]) { min-width: 120px; }
 .nn-row textarea { flex: 1; min-width: 320px; font-family: monospace; font-size: 12px; }
 .nn-menus { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px 12px; }
@@ -352,3 +354,7 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
 .board-body { padding: 10px 12px; white-space: pre-wrap; font-size: 13px; line-height: 1.45; max-height: 340px; overflow-y: auto; }
 .board-tools > * { flex: none; }
 .board-tools input[type=color] { width: 44px; height: 26px; padding: 0; }
+
+/* the coloured edit pencil (FRE.ui.pencil) */
+.pencil { display: inline-flex; vertical-align: middle; }
+button.edit-btn { display: inline-flex; align-items: center; padding: 4px 8px; }

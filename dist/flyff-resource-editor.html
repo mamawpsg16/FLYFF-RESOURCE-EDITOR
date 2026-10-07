@@ -280,12 +280,14 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
 .where-short { color: var(--accent); }
 .ex-npc { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
 .ex-npc .where { margin-top: 0; }
+.where-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+button.place-edit { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 13px; }
 .ex-npc { flex-basis: 100%; }
 
 /* + New NPC (ui/new-npc.js) */
 .newnpc h3 { margin: 14px 0 6px; }
 .nn-row { display: flex; gap: 8px; align-items: center; margin: 4px 0; flex-wrap: wrap; }
-.nn-label { width: 90px; color: var(--muted); font-size: 12px; }
+.nn-label { min-width: 90px; white-space: nowrap; color: var(--muted); font-size: 12px; }
 .nn-row input:not([type=checkbox]):not([type=radio]) { min-width: 120px; }
 .nn-row textarea { flex: 1; min-width: 320px; font-family: monospace; font-size: 12px; }
 .nn-menus { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px 12px; }
@@ -361,6 +363,10 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
 .board-tools > * { flex: none; }
 .board-tools input[type=color] { width: 44px; height: 26px; padding: 0; }
 
+/* the coloured edit pencil (FRE.ui.pencil) */
+.pencil { display: inline-flex; vertical-align: middle; }
+button.edit-btn { display: inline-flex; align-items: center; padding: 4px 8px; }
+
 </style>
 </head>
 <body class="start">
@@ -416,7 +422,7 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when": "Wed 7 Oct 2026, 16:05", "rev": "92c620d", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "31+", "when": "Wed 7 Oct 2026, 17:21", "rev": "376f694", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -5215,6 +5221,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
 (function (FRE) {
   'use strict';
   const RECORD = 200;
+  // Byte offsets in a record, counted from its type DWORD (CObj::Read, Obj.cpp:474: the object part starts at 4).
+  // Moving an existing NPC rewrites only these (b6abf414 moved MaFl_Angel this way, same file length).
+  const FIELD = { angle: 4, x: 20, y: 24, z: 28, model: 48 };
   const ID_PREFIX = 'IDS_CHARACTER_INC_';
 
   // The highest IDS_CHARACTER_INC_ number in the three NPC files and in every loaded string table.
@@ -5266,13 +5275,13 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
   function buildRecord({ angle, x, y, z, model, key }) {
     const b = new Uint8Array(RECORD), dv = new DataView(b.buffer);
     dv.setUint32(0, 5, true);                                   // OT_MOVER
-    dv.setFloat32(4, angle, true);
-    dv.setFloat32(20, x / FRE.world.OLD_MPU, true);             // CObj::Read multiplies x and z by OLD_MPU
-    dv.setFloat32(24, y, true);
-    dv.setFloat32(28, z / FRE.world.OLD_MPU, true);
+    dv.setFloat32(FIELD.angle, angle, true);
+    dv.setFloat32(FIELD.x, x / FRE.world.OLD_MPU, true);        // CObj::Read multiplies x and z by OLD_MPU
+    dv.setFloat32(FIELD.y, y, true);
+    dv.setFloat32(FIELD.z, z / FRE.world.OLD_MPU, true);
     for (const o of [32, 36, 40]) dv.setFloat32(o, 1, true);    // scale
     dv.setUint32(44, 5, true);                                  // m_dwType
-    dv.setUint32(48, model >>> 0, true);                        // m_dwIndex = MI_ id
+    dv.setUint32(FIELD.model, model >>> 0, true);               // m_dwIndex = MI_ id
     dv.setUint32(52, 0xFFFFFFFF, true);                         // motion
     dv.setUint32(56, 0, true);                                  // AI interface
     dv.setUint32(60, 2, true);                                  // AI 2
@@ -5360,7 +5369,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
     };
   }
 
-  FRE.npcOps = { appendSplice, newNpcPlan, newTagPlan, tagText, tagDefine, lastEtcId, buildRecord, insertPoint, blockText, newStrings, lastStringId, idsKey, RECORD };
+  FRE.npcOps = { FIELD, appendSplice, newNpcPlan, newTagPlan, tagText, tagDefine, lastEtcId, buildRecord, insertPoint, blockText, newStrings, lastStringId, idsKey, RECORD };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- edit/npcedit-ops.js ----
@@ -5516,7 +5525,59 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
     return recs.flatMap(rec => T.removeRow(f.text, rec));
   }
 
-  FRE.npcEditOps = { keyUses, canEditTexts, renameNpc, renameTab, nextSlot, addTab, removableTab, removeTab, addMenu, removeMenu, namedSlots, slotRec, nameRec };
+  // ---------------------------------------------------------------- where it stands, its model (task S part 3)
+  // An NPC's spots: every OT_MOVER record with its key in a map the server loads (CWorld::LoadObject,
+  // WorldFile.cpp:297). The key match ignores case, like ws.placed. -> [{ map, file, at, x, y, z, angle, model }]
+  function placementsOf(ws, npc) {
+    const out = [], k = npc.key.toLowerCase();
+    for (const [map, lower] of ws.mapFiles) {
+      const f = ws.files.get(lower);
+      for (const p of FRE.world.readDyo(f.serialize()).placements)
+        if (p.key.toLowerCase() === k) out.push(Object.assign({ map, file: lower }, p));
+    }
+    return out;
+  }
+
+  const f32 = v => { const b = new Uint8Array(4); new DataView(b.buffer).setFloat32(0, v, true); return b; };
+  const u32 = v => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v >>> 0, true); return b; };
+
+  // The record bytes a spot / model change rewrites, same length (b6abf414 moved MaFl_Angel's record in place).
+  // spot: index into placementsOf(ws, npc), the one that moves; to: { x, y, z, angle } (in /position units) and / or
+  // model: 'MI_X'; modelSpots: the spots that get the model (default: only `spot`).
+  // -> { parts: [{ file, splices }], changes: [{ spot, field, from, to }] } ; throws on what cannot be done
+  function placePlan(ws, npc, spot, to, modelSpots = [spot]) {
+    const all = placementsOf(ws, npc);
+    if (!all.length) throw new Error(`${npc.key} stands on no map the server loads`);
+    const F = FRE.npcOps.FIELD, MPU = FRE.world.OLD_MPU;
+    let model = null;
+    if (to.model !== undefined && to.model !== null) {
+      model = ws.defines.defines.get(to.model);
+      if (model === undefined || !/^MI_/.test(to.model)) throw new Error(`${to.model} is not an MI_ model`);
+    }
+    const byFile = new Map(), changes = [];
+    for (const i of [...new Set([spot, ...modelSpots])].sort((a, b) => a - b)) {
+      const p = all[i];
+      if (!p) throw new Error(`spot ${i + 1} does not exist`);
+      const f = ws.files.get(p.file);
+      if (!ws.isEditable(p.file)) throw new Error(`${f.name} is read-only`);
+      const bytes = f.serialize();
+      const want = [];
+      if (i === spot) for (const k of ['angle', 'x', 'y', 'z']) if (to[k] !== undefined && to[k] !== null)
+        want.push([k, f32(k === 'x' || k === 'z' ? to[k] / MPU : to[k])]);
+      if (model !== null && modelSpots.includes(i)) want.push(['model', u32(model)]);
+      for (const [k, b] of want) {
+        const at = p.at + F[k];
+        if (b.every((v, j) => bytes[at + j] === v)) continue;          // same bytes: nothing to write
+        if (!byFile.has(p.file)) byFile.set(p.file, []);
+        byFile.get(p.file).push({ start: at, end: at + 4, insert: FRE.bytes.bytesToBinaryString(b) });
+        changes.push({ spot: i, field: k, from: k === 'model' ? p.model : p[k], to: k === 'model' ? model : to[k] });
+      }
+    }
+    const parts = [...byFile].map(([file, splices]) => ({ file, splices: splices.sort((a, b) => a.start - b.start) }));
+    return { parts, changes };
+  }
+
+  FRE.npcEditOps = { placementsOf, placePlan, keyUses, canEditTexts, renameNpc, renameTab, nextSlot, addTab, removableTab, removeTab, addMenu, removeMenu, namedSlots, slotRec, nameRec };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- edit/menu-ops.js ----
@@ -5748,6 +5809,37 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
     return null;
   }
 
+  // The model checks, shared by + NPC and "Edit where / model" (an existing NPC).
+  function checkModel(ws, define, add) {
+    const D = ws.defines.defines;
+    const model = D.get(define);
+    if (!define) add('NN_MODEL', 'BLOCK', 'model', 'Pick a model.');
+    else if (model === undefined || !/^MI_/.test(String(define))) add('NN_MODEL', 'BLOCK', 'model', `Model ${define} is not in defineObj.h.`);
+    else if (ws.movers && !ws.movers.movers.has(model)) add('NN_MODEL', 'BLOCK', 'model', `Model ${define} (${model}) has no row in propMover.txt: the server cannot create it.`);
+    else if (FRE.newNpcSim.modelNames(ws) && !FRE.newNpcSim.modelNames(ws).has(define)) add('NN_MODEL', 'BLOCK', 'model', `Model ${define} has no entry in mdlDyna.inc: the game has no 3D model for it.`);
+    else if ((FRE.newNpcSim.missingModelFiles(ws, define) || []).length)
+      add('NN_MODEL_FILES', 'BLOCK', 'model', `Model ${define} is missing ${FRE.newNpcSim.missingModelFiles(ws, define).join(', ')} in Client/Model: the game cannot draw, colour or animate it.`);
+    else if (ws.mapFiles.size && !FRE.newNpcSim.provenModels(ws).has(model)) add('NN_MODEL_UNPROVEN', 'WARN', 'model', `No NPC players can see uses ${define}: not seen in game yet, check it on the test server first.`);
+  }
+
+  // The spot checks (x, y, z, angle on the map in `file`), shared by + NPC and "Edit where / model".
+  // skipAt: the record offset of the NPC being moved (it does not overlap itself).
+  function checkSpot(ws, file, form, add, skipAt = null) {
+    const nums = ['x', 'y', 'z', 'angle'];
+    const bad = nums.filter(k => typeof form[k] !== 'number' || !Number.isFinite(form[k]));
+    if (bad.length) add('NN_POS', 'BLOCK', 'position', `${bad.join(', ')} must be numbers (copy them from /position in game).`);
+    else if (form.angle < 0 || form.angle >= 360) add('NN_POS', 'BLOCK', 'position', `Angle ${form.angle} must be 0 or more and under 360.`);
+    if (!bad.length) {
+      const near = FRE.world.readDyo(file.serialize()).placements.filter(p => p.at !== skipAt);
+      const close = near.find(p => Math.hypot(p.x - form.x, p.z - form.z) < FRE.world.OLD_MPU);
+      if (close) add('NN_OVERLAP', 'WARN', 'position', `${close.key} stands less than 4 units away: the two NPCs overlap.`);
+      let best = null;
+      for (const p of near) { const d = Math.hypot(p.x - form.x, p.z - form.z); if (!best || d < best.d) best = { p, d }; }
+      if (best && Math.abs(best.p.y - form.y) > 30)
+        add('NN_HEIGHT', 'WARN', 'position', `Height ${form.y} is ${Math.round(Math.abs(best.p.y - form.y))} away from the nearest NPC (${best.p.key}, ${best.p.y.toFixed(1)}): it may float or be under the ground. Check y with /position.`);
+    }
+  }
+
   // -> [{ code, severity, field, message }]
   function checkNewNpc(ws, form) {
     const out = [];
@@ -5780,14 +5872,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
     if (!menus.length) add('NN_NO_MENU', 'WARN', 'menus', 'No menu is ticked: right-clicking the NPC does nothing.');
     if (menus.includes('MMI_DIALOG')) add('NN_DIALOG', 'WARN', 'menus', 'Dialog needs a C++ dialog script (WorldDialog.dll); without one the menu does nothing.');
 
-    const model = D.get(form.model);
-    if (!form.model) add('NN_MODEL', 'BLOCK', 'model', 'Pick a model.');
-    else if (model === undefined || !/^MI_/.test(String(form.model))) add('NN_MODEL', 'BLOCK', 'model', `Model ${form.model} is not in defineObj.h.`);
-    else if (ws.movers && !ws.movers.movers.has(model)) add('NN_MODEL', 'BLOCK', 'model', `Model ${form.model} (${model}) has no row in propMover.txt: the server cannot create it.`);
-    else if (FRE.newNpcSim.modelNames(ws) && !FRE.newNpcSim.modelNames(ws).has(form.model)) add('NN_MODEL', 'BLOCK', 'model', `Model ${form.model} has no entry in mdlDyna.inc: the game has no 3D model for it.`);
-    else if ((FRE.newNpcSim.missingModelFiles(ws, form.model) || []).length)
-      add('NN_MODEL_FILES', 'BLOCK', 'model', `Model ${form.model} is missing ${FRE.newNpcSim.missingModelFiles(ws, form.model).join(', ')} in Client/Model: the game cannot draw, colour or animate it.`);
-    else if (ws.mapFiles.size && !FRE.newNpcSim.provenModels(ws).has(model)) add('NN_MODEL_UNPROVEN', 'WARN', 'model', `No NPC players can see uses ${form.model}: not seen in game yet, check it on the test server first.`);
+    checkModel(ws, form.model, add);
     if (form.image && !ws.strings.map.has(form.image)) add('NN_IMAGE', 'WARN', 'image', `Portrait ${form.image} is not a known text key: the dialog shows no picture.`);
     if (form.structure && !D.has(form.structure)) add('NN_STRUCTURE', 'BLOCK', 'structure', `${form.structure} is not defined: the server uses 0.`);
     if (form.newTag !== null && form.newTag !== undefined) {
@@ -5868,23 +5953,13 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
     if (!file) add('NN_MAP', 'BLOCK', 'map', `Map ${form.map} has no .dyo file in World/.`);
     else if (BLOCKED_MAPS.has(lowerMap) || FRE.npcOps.insertPoint(file.serialize()) === null)
       add('NN_MAP', 'BLOCK', 'map', `Map ${form.map}: the server does not read this map's objects to the end marker, so a new NPC there would not appear. Pick another map.`);
-    const nums = ['x', 'y', 'z', 'angle'];
-    const bad = nums.filter(k => typeof form[k] !== 'number' || !Number.isFinite(form[k]));
-    if (bad.length) add('NN_POS', 'BLOCK', 'position', `${bad.join(', ')} must be numbers (copy them from /position in game).`);
-    else if (form.angle < 0 || form.angle >= 360) add('NN_POS', 'BLOCK', 'position', `Angle ${form.angle} must be 0 or more and under 360.`);
-    if (file && !bad.length) {
-      const near = FRE.world.readDyo(file.serialize()).placements;
-      const close = near.find(p => Math.hypot(p.x - form.x, p.z - form.z) < FRE.world.OLD_MPU);
-      if (close) add('NN_OVERLAP', 'WARN', 'position', `${close.key} stands less than 4 units away: the two NPCs overlap.`);
-      let best = null;
-      for (const p of near) { const d = Math.hypot(p.x - form.x, p.z - form.z); if (!best || d < best.d) best = { p, d }; }
-      if (best && Math.abs(best.p.y - form.y) > 30)
-        add('NN_HEIGHT', 'WARN', 'position', `Height ${form.y} is ${Math.round(Math.abs(best.p.y - form.y))} away from the nearest NPC (${best.p.key}, ${best.p.y.toFixed(1)}): it may float or be under the ground. Check y with /position.`);
-    }
+    if (file) checkSpot(ws, file, form, add);
     return out;
   }
 
   FRE.validateNewNpc = checkNewNpc;
+  FRE.validateNpcModel = checkModel;
+  FRE.validateNpcSpot = checkSpot;
   FRE.newNpcText = textProblem;
 })(globalThis.FRE = globalThis.FRE || {});
 
@@ -6349,6 +6424,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
       client: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'defineNeuz.h', 'etc.inc', 'etc.txt.txt',
         'defineText.h', 'textClient.inc', 'textClient.txt.txt', 'Exchange_Script.txt'],
       uses: ['exchange'],    // the menus' recipes (read here; a new menu's recipes are written with it)
+      alsoValidates: ['exchange'],   // exchanges are edited here (the ⇄ tabs), so their checks show here too
       maps: true,            // reads World/*/ to show where each NPC stands
       editsMaps: true,       // a new NPC is a new record in World/<map>/<map>.dyo (Server + Client copies)
       parse(ws) {
@@ -6389,7 +6465,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
     },
     {
       // Exchange_Script.txt (CExchange::Load_Script). The NPC files tell which NPCs open each menu.
-      id: 'exchange', label: 'Exchanges',
+      // Not a start-screen task since 2026-10-07 (the user: exchanges belong to their NPC): edited in NPC Shops' ⇄ tabs.
+      id: 'exchange', label: 'Exchanges', hidden: true,
       required: ['Exchange_Script.txt'], editable: ['Exchange_Script.txt'], client: ['Exchange_Script.txt'],
       deps: ['character.inc', 'character-etc.inc', 'character-school.inc'],
       uses: ['npc'],         // the NPC files are read (not edited) to name the NPCs that open each menu
@@ -6432,6 +6509,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
       if (this.only && !task) throw new Error(`unknown task ${this.only}`);
       this.active = new Set(task ? [task.id, ...(task.uses || [])] : MODULES.map(m => m.id));
       this.shown = new Set(task ? [task.id] : MODULES.map(m => m.id));
+      this.validated = new Set([...this.shown, ...(task && task.alsoValidates || [])]);
       for (const m of MODULES) {
         const miss = m.required.filter(n => !files.has(n.toLowerCase()));
         this.available[m.id] = !this.active.has(m.id) ? { ok: false, missing: [], off: true } : miss.length ? { ok: false, missing: miss } : { ok: true };
@@ -6471,7 +6549,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
         if (!this.available[m.id].ok) continue;
         if (lowerName && ![...m.required, ...(m.deps || [])].some(n => n.toLowerCase() === lowerName)) continue;
         this.models[m.id] = m.parse(this);
-        if (this.shown.has(m.id)) this.moduleDiags[m.id] = m.validate(this, this.models[m.id]);
+        if (this.validated.has(m.id)) this.moduleDiags[m.id] = m.validate(this, this.models[m.id]);
       }
       // Spec_Item problems matter only to tasks that can change Spec_Item.txt
       const specDiags = [...this.shown].some(id => MODULES.find(m => m.id === id).editsSpec) ? this.itemDiags : [];
@@ -7416,7 +7494,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
     return [requiredNote(), h('h3', 'Checks'), h('p.muted.small', `⛔ must be fixed before ${action} · ⚠ only a warning`), checks, h('h3', previewTitle), preview];
   }
 
-  FRE.ui = { modules: [], pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell, whereLine, whereText, copyText, fieldLabel, requiredNote, formFooter };
+  // The edit pencil, coloured (the user, 2026-10-07): every ✎ button uses it. size in px.
+  function pencil(size = 14) {
+    const s = h('span.pencil', { 'aria-hidden': 'true' });
+    s.innerHTML = `<svg viewBox="0 0 24 24" width="${size}" height="${size}"><path fill="#f4b400" d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75z"/>` +
+      '<path fill="#e8710a" d="M20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75z"/><path fill="#5f6368" d="M3 21h3.75L3 17.25z"/></svg>';
+    return s;
+  }
+  FRE.ui = { modules: [], pencil, pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell, whereLine, whereText, copyText, fieldLabel, requiredNote, formFooter };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/tooltip.js ----
@@ -7594,17 +7679,26 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
   const npcId = npc => `${npc.file}|${npc.key}`;
   const isShopNpc = npc => npc.statements.some(r => FRE.character.shopEntry(r)) || npc.venderType > 0;
   const selNpc = ctx => (ctx.ws && st.sel ? ctx.ws.chars.npcs.find(n => npcId(n) === st.sel) : null) || null;
+  // The exchange menus an NPC opens (names, in its AddMenu order, once each), with their Exchange_Script.txt menu.
+  const exMenuOf = (ws, m) => (ws.models.exchange && ws.models.exchange.menus.find(x => x.name === m && !x.isJunk)) || null;
+  const exMenusOf = (ws, npc) => [...new Set(npc.menus.map(v => ws.defines.byValue('MMI_', v) || String(v)))]
+    .filter(m => ws.exchangeMenus.has(m) && exMenuOf(ws, m));
+  // the "NPCs with exchanges" filter: NPCs players can use (on a map, shown) that open at least one exchange menu
+  let listWs = null;
+  const hasExchanges = npc => !!listWs && exMenusOf(listWs, npc).length > 0
+    && (!listWs.placed || FRE.world.npcStatus(npc, listWs.placed).inGame !== false);
   const TYPES = [{ v: 0, label: 'Penya shop' }, { v: 1, label: 'Red Chip shop' }, { v: 2, label: 'Donate Chip shop' }];
   // NPC list filter: which NPCs to list
   // editable = has fixed items (AddShopItem / AddVenderItem2). Rule items are editable too (ui/shop-rules.js),
   // but listing every rule shop here would hide the few shops with hand-set prices.
   const hasEditable = npc => npc.statements.some(r => { const e = FRE.character.shopEntry(r); return e && e.kind !== 'generated'; });
   const SHOW = [
-    { v: 'editable', label: 'Shops with fixed items', test: hasEditable },
+    { v: 'editable', label: 'Shops with hand-picked items', test: hasEditable },
     { v: 'shops', label: 'All shops', test: isShopNpc },
     { v: 'penya', label: 'Penya shops', test: n => isShopNpc(n) && FRE.shopOps.shopType(n.venderType) === 0 },
     { v: 'red', label: 'Red Chip shops', test: n => FRE.shopOps.shopType(n.venderType) === 1 },
     { v: 'donate', label: 'Donate Chip shops', test: n => FRE.shopOps.shopType(n.venderType) === 2 },
+    { v: 'exchange', label: 'NPCs with exchanges', test: hasExchanges },
     { v: 'all', label: 'All NPCs', test: () => true },
   ];
   // hover text of a right-click menu: what a click does, in plain words (newNpcSim.rightClick / opensOf)
@@ -7620,6 +7714,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
       : 'Opens its own window.');
     return `${what}${x && x.when ? ` Only if: ${x.when}.` : ''}`;
   }
+  // the tab an NPC opens on: its first exchange under the "NPCs with exchanges" filter, else shop tab 1
+  const firstTab = (ws, npc) => { const ex = st.show === 'exchange' ? exMenusOf(ws, npc) : []; return ex.length ? 'ex:' + ex[0] : 0; };
   const showTest = () => (SHOW.find(o => o.v === st.show) || SHOW[0]).test;
 
   function edit(ctx, npc, make, label) {
@@ -7634,15 +7730,28 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
     el.appendChild(h('div.row.ex-tools', { style: 'margin:8px 0' },
       h('span', h('b', label), h('span.def', ' ' + menu.name), h('span.muted', ` · ${Math.min(menu.sets.length, 30)} exchange${menu.sets.length === 1 ? '' : 's'} in the window`)),
       editable && menu.closed && FRE.ui.menuForm ? h('button.small', { title: 'Add exchanges to this menu', on: { click: () => FRE.ui.menuForm.openNewExchanges(ctx, menu) } }, '+ New exchange') : null,
-      h('button.small', { title: 'The same menu in the Exchanges task (asks to save first when there are unsaved edits)', on: { click: () => ctx.openTask('exchange', c => {
-        const mod = FRE.ui.modules.find(x => x.id === 'exchange');
-        if (mod) { mod.st.menu = menu.name; mod.st.pick = null; }
-        c.setQuery('');
-      }) } }, 'Open in Exchanges'),
       editable ? null : h('span.tag.bad', 'read-only')));
+    // the same menu id on other NPCs: they open the same window, so an edit here changes theirs too
+    const others = ((ws.npcInfoByMenu() || new Map()).get(menu.mmi.value) || []).filter(x => x.npc !== npc && x.inGame !== false);
+    const otherNames = [...new Set(others.map(x => x.name))];
+    if (otherNames.length) el.appendChild(h('p.small.warn.ex-shared', `Also opened by ${otherNames.join(', ')}: they show the same window, so a change here changes theirs too.`));
     el.appendChild(h('p.muted.small', `What players see after right-click ${npc.name || npc.key} → ${label}. Chances are in percent; changing one moves the others so they always add up to 100%. Try it presses OK in the game's exchange window.`));
     if (!menu.sets.length) el.appendChild(h('p.muted', 'No exchange yet: the window opens empty. Press + New exchange.'));
     xv.cards(ctx, menu).forEach(c => el.appendChild(c));
+  }
+
+  // "Change position / model" (map-pin icon) next to the name: where it stands and its body (task S part 3)
+  const PIN = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="#ea4335" d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7z"/><circle cx="12" cy="9" r="2.6" fill="#fff"/></svg>';
+  function placeButton(ctx, npc) {
+    const ws = ctx.ws;
+    if (!ws.placed) return null;
+    const spots = FRE.npcEditOps.placementsOf(ws, npc);
+    if (!spots.length || !spots.every(p => ws.isEditable(p.file))) return null;
+    const b = h('button.place-edit', { title: `Move ${npc.name || npc.key} or change its model (its map record, Server + Client)${spots.length > 1 ? `; it stands in ${spots.length} places` : ''}`,
+      on: { click: () => FRE.ui.npcEdit.editPlace(ctx, npc) } });
+    b.innerHTML = PIN;
+    b.appendChild(h('span', 'Change position / model'));
+    return b;
   }
 
   function shopTypeSelect(ctx, npc, canEdit) {
@@ -7759,8 +7868,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
     st, npcId,
 
     onLoad(ctx) {
+      listWs = ctx.ws;
       const first = ctx.ws.chars.npcs.find(showTest()) || ctx.ws.chars.npcs.find(isShopNpc);
-      st.sel = first ? npcId(first) : null; st.tab = 0;
+      st.sel = first ? npcId(first) : null; st.tab = first ? firstTab(ctx.ws, first) : 0;
     },
 
     isListed: npc => showTest()(npc),
@@ -7773,14 +7883,16 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
     },
 
     listExtra(ctx) {
+      listWs = ctx.ws;
       const npcs = ctx.ws ? ctx.ws.chars.npcs : [];
-      return h('select.npc-filter', { title: 'Which NPCs to list', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
+      return h('select.npc-filter', { title: 'Which NPCs to list. Hand-picked items: a shop where at least one item was added one by one (with a price you can set), not only every item of a type (auto)', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
         SHOW.map(o => ({ o, n: npcs.filter(o.test).length }))
           .filter(x => x.n > 0 || x.o.v === st.show)            // e.g. no Donate Chip NPC since 7d7df4f9: option hidden
           .map(({ o, n }) => h('option', { value: o.v, selected: o.v === st.show }, `${o.label} (${n})`)));
     },
 
     renderList(el, ctx) {
+      listWs = ctx.ws;
       const q = ctx.query.toLowerCase();
       const diagBy = new Map();
       for (const d of ctx.ws.diags) if (d.npcKey && d.severity !== 'INFO') {
@@ -7796,10 +7908,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
         if (q && !label.toLowerCase().includes(q) && !npc.key.toLowerCase().includes(q)) continue;
         const id = npcId(npc), dg = diagBy.get(id);
         shown++;
-        el.appendChild(h('div.npc' + (id === st.sel ? '.sel' : ''), { on: { click: () => { st.sel = id; st.tab = 0; if (FRE.ui.exchangeView) FRE.ui.exchangeView.clearPick(); ctx.renderAll(false); } } },
+        el.appendChild(h('div.npc' + (id === st.sel ? '.sel' : ''), { on: { click: () => { st.sel = id; st.tab = firstTab(ctx.ws, npc); if (FRE.ui.exchangeView) FRE.ui.exchangeView.clearPick(); ctx.renderAll(false); } } },
           h('div.n', h('span', label),
             h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : null,
-              ctx.edited.has('npc|' + id) ? h('span.tag.edit', 'edited') : null,
+              ctx.edited.has('npc|' + id) || exMenusOf(ctx.ws, npc).some(m => ctx.edited.has('ex|' + m)) ? h('span.tag.edit', 'edited') : null,
               dg && dg.b ? h('span.tag.bad', '⛔' + dg.b) : dg && dg.w ? h('span.tag.warn', '⚠' + dg.w) : null)),
           h('div.k', `${npc.key} · ${npc.file}`),
           ctx.ws.area ? h('div.k.where-short', FRE.ui.whereText(ctx.ws.whereOf(npc.key))) : null));
@@ -7821,14 +7933,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
 
       const E = FRE.npcEditOps, canTexts = E.canEditTexts(ws, npc);
       el.appendChild(h('div.npc-title', h('h2', npc.name || npc.key),
-        canTexts ? h('button.icon', { title: 'Rename this NPC (the name players see; the key stays)', on: { click: () => FRE.ui.npcEdit.renameNpc(ctx, npc) } }, '✎') : null,
+        canTexts ? h('button.icon.edit-btn', { title: 'Edit the name (the name players see; the key stays)', on: { click: () => FRE.ui.npcEdit.renameNpc(ctx, npc) } }, FRE.ui.pencil()) : null,
+        placeButton(ctx, npc),
         h('span.def', npc.key),
         h('span.line', `${npc.file}:${f.lineOf(npc.start) + 1}`),
         shopTypeSelect(ctx, npc, canEdit),
         canEdit ? null : h('span.tag.bad', 'read-only')));
       if (ws.placed) {
         const status = FRE.world.npcStatus(npc, ws.placed);
-        el.appendChild(h('div', FRE.ui.whereLine(ws.whereOf(npc.key)),
+        el.appendChild(h('div.where-row', FRE.ui.whereLine(ws.whereOf(npc.key)),
           status.inGame === false && status.maps.length ? h('span.tag.warn', { title: 'CWorld::IsUsableDYO2: the WorldServer does not load this NPC' }, status.why) : null));
       }
       // a NPC made with "+ New NPC": what the game will load (loaders/newnpc-sim.js)
@@ -7839,10 +7952,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
       }
       const menus = npc.menus.map(v => D.byValue('MMI_', v) || String(v));
       // exchange menus: the label players read + how many exchanges; each has its own tab next to the shop tabs
-      const exModel = ws.models.exchange;
-      const exMenu = m => (exModel && exModel.menus.find(x => x.name === m && !x.isJunk)) || null;
+      const exMenu = m => exMenuOf(ws, m);
       const labelOf = m => { const id = D.defines.get(m); const t = id === undefined || !ws.texts ? null : ws.texts.byId.get(FRE.newNpcSim.TID_MMI_DIALOG + id); return t ? t.text : pretty(m); };
-      const exNames = FRE.ui.exchangeView ? [...new Set(menus.filter(m => ws.exchangeMenus.has(m) && exMenu(m)))] : [];
+      const exNames = FRE.ui.exchangeView ? exMenusOf(ws, npc) : [];
       const showTab = t => { if (FRE.ui.exchangeView) FRE.ui.exchangeView.clearPick(); st.tab = t; ctx.renderAll(false); };
       if (typeof st.tab === 'string' && !exNames.includes(st.tab.slice(3))) st.tab = 0;
       const ownMenu = new Set(npc.statements.filter(r => r.cmd === 'AddMenu').map(r => r.args.menu.value));
@@ -7854,7 +7966,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
       el.appendChild(h('div.menus', h('span.menus-label', { title: 'What players see when they right-click this NPC.' }, 'Right-click menu:'), order.map(i => {
         const m = menus[i], x = rc.get(npc.menus[i]);
         const label = (x && x.label) || pretty(m);
-        if (x && x.opens && x.opens.board) return h('span.tag.exch-wrap', h('button.tag.board', { title: menuHelp(m, x), on: { click: () => FRE.ui.menuChooser.boardForm(ctx, npc, { id: npc.menus[i], name: m }) } }, `${label} ✎`), rmMenu(i, m));
+        if (x && x.opens && x.opens.board) return h('span.tag.exch-wrap', h('button.tag.board', { title: menuHelp(m, x), on: { click: () => FRE.ui.menuChooser.boardForm(ctx, npc, { id: npc.menus[i], name: m }) } }, label, ' ', FRE.ui.pencil(12)), rmMenu(i, m));
         if (!exNames.includes(m)) return h('span.tag', { title: menuHelp(m, x) }, label, rmMenu(i, m));
         const n = Math.min(exMenu(m).sets.length, 30);
         return h('span.tag.exch-wrap', h('button.tag.exch', { title: `Swap items for other items (${n}). Click to edit.`,
@@ -7875,7 +7987,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
         tabs.appendChild(h('button' + (sel ? '.sel' : '') + (named(t) ? (FRE.ui.npcEdit.isPlaceholder(npc.slotTitles[t]) ? '.placeholder' : '') : '.unnamed'),
           { title: named(t) ? `Tab ${t + 1} (slot ${t} in the file)` : 'No AddVendorSlot: the game shows no such tab, so these items are invisible', on: { click: () => showTab(t) } },
           named(t) ? '' : '⚠ ', tabLabel(t), h('span.count', n ? `(${n})` : ''),
-          sel && named(t) && canTexts ? h('span.tab-edit', { title: 'Rename this tab', on: { click: e => { e.stopPropagation(); FRE.ui.npcEdit.renameTab(ctx, npc, t); } } }, ' ✎') : null));
+          sel && named(t) && canTexts ? h('span.tab-edit', { title: 'Edit this tab\'s name', on: { click: e => { e.stopPropagation(); FRE.ui.npcEdit.renameTab(ctx, npc, t); } } }, ' ', FRE.ui.pencil(12)) : null));
       }
       if (canTexts && E.nextSlot(npc) !== null) {
         tabs.appendChild(h('button.add-tab', { title: `Add tab ${E.nextSlot(npc) + 1}: a name players see in the shop window (AddVendorSlot, the d11123ac way)`,
@@ -7982,6 +8094,17 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
     },
 
     locate(d, ctx) {
+      if (d.module === 'exchange') {           // an exchange problem: the first NPC players use that opens the menu, on its ⇄ tab
+        const ex = ctx.ws.models.exchange;
+        const m = ex && ex.menus.find(x => d.start >= x.start && d.start < Math.max(x.end, x.start + 1));
+        const users = m ? ((ctx.ws.npcInfoByMenu() || new Map()).get(m.mmi.value) || []) : [];
+        const u = users.find(x => x.inGame) || users[0];
+        if (!u || !exMenusOf(ctx.ws, u.npc).includes(m.name)) return false;
+        st.sel = npcId(u.npc); st.tab = 'ex:' + m.name;
+        if (!showTest()(u.npc)) st.show = 'exchange';
+        if (FRE.ui.exchangeView) FRE.ui.exchangeView.clearPick();
+        return true;
+      }
       const npc = d.npcKey && ctx.ws.chars.npcs.find(n => n.key === d.npcKey && n.file === d.file);
       if (!npc) return false;
       st.sel = npcId(npc);
@@ -8126,6 +8249,162 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
   FRE.tga = { decode, picture };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- ui/npc-place.js ----
+// The "Where" and "Model" fields of an NPC form, shared by "+ New NPC" (ui/new-npc.js) and
+// "Edit where / model" of an existing NPC (ui/npc-edit.js). Names are the ones players read
+// (regions, NPC names); the spot is what /position prints in game.
+//   form:  { region, map, x, y, z, angle, nextTo, model }
+//   opts:  { rerender() — build the form again; changed() — re-run checks and preview only;
+//            onlyMap — offer only this map's regions (a move stays on its map); skipAt — the record being moved;
+//            cache — an object kept while the dialog is open (model lists are read once) }
+(function (FRE) {
+  'use strict';
+  const { h } = FRE.dom;
+  const SIM = () => FRE.newNpcSim;
+  const note = t => h('span.muted.small', t);
+  const row = (text, req, ...el) => h('div.nn-row', FRE.ui.fieldLabel(text, req), ...el);
+
+  function cached(ws, cache) {
+    if (cache.ws === ws) return cache;
+    Object.assign(cache, { ws, regions: SIM().regions(ws), visible: SIM().visibleNpcs(ws).map(p => ({ p, w: SIM().whereAt(ws, p.map, p.x, p.z) })) });
+    return cache;
+  }
+  const regionOf = (c, form) => c.regions.find(r => r.value === form.region) || c.regions[0];
+
+  // The region a spot is in (for an existing NPC: its own place), or null.
+  function regionAt(ws, map, x, z, cache = {}) {
+    const c = cached(ws, cache), w = SIM().whereAt(ws, map, x, z);
+    const same = c.regions.filter(r => r.map === map);
+    return (w && same.find(r => r.place === w.place)) || same[0] || null;
+  }
+
+  // -> { rows: [elements], whereNow, refreshWhere() }
+  function whereFields(ctx, form, opts) {
+    const ws = ctx.ws, c = cached(ws, opts.cache || {});
+    let regions = opts.onlyMap ? c.regions.filter(r => r.map === opts.onlyMap) : c.regions;
+    // a map that takes no new record (npcOps.insertPoint) has no region entry; an NPC already on it can still move
+    if (!regions.length && opts.onlyMap) regions = [{ value: `${opts.onlyMap}|${opts.onlyMap}`, map: opts.onlyMap, place: opts.onlyMap, label: opts.onlyMap, group: opts.onlyMap, npcs: 0 }];
+    const whereNow = h('div.nn-where');
+    // shown to 2 decimals (a map file holds 6930.6767578125); the form keeps the exact value until something is typed
+    const shown = v => (v === null || v === undefined ? '' : Number.isFinite(v) ? Math.round(v * 100) / 100 : v);
+    const typed = (field, attrs) => h('input', Object.assign({ value: shown(form[field]), type: 'number', step: 'any',
+      on: { input: e => { form[field] = e.target.value === '' ? null : Number(e.target.value);
+        if (['x', 'y', 'z'].includes(field)) form.nextTo = null;          // a typed spot is no longer "next to" that NPC
+        opts.changed(); } } }, attrs));
+    const rows = [];
+    const groups = [...new Set(regions.map(r => r.group))];
+    const regionOpts = groups.flatMap(g => regions.filter(r => r.group === g).sort((a, b) => g === groups[0] ? 0 : a.label.localeCompare(b.label))
+      .map(r => ({ v: r.value, group: g, find: r.map, label: `${r.label} · ${r.npcs ? `${r.npcs} NPC${r.npcs === 1 ? '' : 's'}` : '0 NPCs yet — type /position'}` })));
+    const pick = (value, options, onPick, placeholder) => FRE.ui.combo({ options, value, placeholder, onPick: v => { onPick(v); opts.rerender(); } });
+    rows.push(row('Region', true, pick(form.region, regionOpts, v => { form.region = v; form.map = regionOf({ regions }, form).map; form.nextTo = null; }, 'Search a town, region or dungeon'),
+      note(opts.onlyMap ? `Places on this NPC's map (${opts.onlyMap}) as players read them on the map window.` : 'Places as players read them on the map window; dungeons by their in-game name.')));
+    const r = regionOf({ regions }, form);
+    const near = c.visible.filter(v => v.p.map === r.map && v.p.at !== opts.skipAt && (!v.w || v.w.place === r.place || r.group !== groups[0]))
+      .sort((a, b) => (a.p.npc.name || a.p.key).localeCompare(b.p.npc.name || b.p.key));
+    // the chosen neighbour stays shown until a different x / y / z is typed (form.nextTo = its key)
+    rows.push(row('Next to', false, near.length ? pick(form.nextTo || '', near.map(o => ({ v: o.p.key, label: `${o.p.npc.name || o.p.key}${o.w && o.w.caption ? ' — ' + o.w.caption : ''}`, find: o.p.key })), v => {
+      const p = near.find(o => o.p.key === v).p;
+      Object.assign(form, { nextTo: v, map: p.map, x: Math.round((p.x + 6) * 10) / 10, y: Math.round(p.y * 10) / 10, z: Math.round(p.z * 10) / 10, angle: Math.round(p.angle * 10) / 10 });
+    }, `Search the ${near.length} NPCs players see here`) : h('span.muted', 'No NPC stands here yet: type the spot in /position.'),
+      note('Fills the spot: 6 steps to that NPC\'s side, same height and facing.')));
+    rows.push(row('/position', true, typed('x', { placeholder: 'x' }), typed('y', { placeholder: 'y (height)' }), typed('z', { placeholder: 'z' }),
+      note('In game: stand on the spot, type /position, copy x y z.')));
+    rows.push(whereNow);
+    rows.push(row('Facing', true, typed('angle', { min: 0, max: 359.9 }), note('Degrees, 0-359.9. "Next to" copies the neighbour\'s.')));
+
+    function refreshWhere() {
+      whereNow.textContent = '';
+      if (![form.x, form.z].every(v => typeof v === 'number' && Number.isFinite(v))) return;
+      const w = SIM().whereAt(ws, form.map, form.x, form.z);
+      const rr = regionOf({ regions }, form);
+      if (w) whereNow.append(...[h('span.muted', 'Players will read here: '), h('b', w.label), w.te ? h('span.def', ' · ' + w.te) : null,
+        rr && w.place !== rr.place ? h('span.tag.warn', ` not in ${rr.label}`) : null].filter(Boolean));
+    }
+    return { rows, whereNow, refreshWhere };
+  }
+
+  // Models an NPC players can see uses (and mdlDyna.inc has): "Julia — like Juria, Is"
+  function provenModels(ws) {
+    const mdl = SIM().modelNames(ws);
+    const by = new Map();
+    for (const p of SIM().visibleNpcs(ws)) {
+      if (!by.has(p.model)) by.set(p.model, []);
+      const n = p.npc.name || p.key;
+      if (!by.get(p.model).includes(n)) by.get(p.model).push(n);
+    }
+    // NPCs players saw until a proven commit hid them: "Soraya (until b6abf414)"
+    for (const [id, list] of SIM().seenBefore(ws)) {
+      if (!by.has(id)) by.set(id, []);
+      for (const b of list) by.get(id).push(`${b.name} (until ${b.commit})`);
+    }
+    return [...by].map(([id, npcs]) => ({ id, define: ws.defines.byValue('MI_', id), npcs,
+      name: ws.movers && ws.movers.movers.get(id) ? ws.movers.movers.get(id).name : '' }))
+      .filter(m => m.define && (!mdl || mdl.has(m.define)))
+      .sort((a, b) => (a.name || a.define).localeCompare(b.name || b.define));
+  }
+
+  // The model picker: Used by NPCs / Not used yet / Both, the files line, a portrait picture.
+  // state: { modelView } kept by the caller. -> element
+  function modelField(ctx, form, state, opts) {
+    const ws = ctx.ws, c = opts.cache || {};
+    if (c.modelWs !== ws) {
+      c.modelWs = ws;
+      c.models = provenModels(ws);
+      c.unused = SIM().unusedCompleteModels(ws);
+      c.modelPic = new Map();     // a portrait per model: the SetImage file of a visible NPC with that model
+      for (const p of SIM().visibleNpcs(ws)) {
+        const img = p.npc.statements.find(r => r.cmd === 'SetImage' && r.args.image);
+        if (img && !c.modelPic.has(p.model)) c.modelPic.set(p.model, img.args.image.text);
+      }
+      c.reading = new Set();
+    }
+    const view = state.modelView || 'used';
+    const used = c.models.map(m => ({ v: m.define, label: `${m.name || m.define} — like ${m.npcs.slice(0, 3).join(', ')}${m.npcs.length > 3 ? ', …' : ''}`,
+      find: m.define + ' ' + m.npcs.join(' '), group: view === 'all' ? 'Used by NPCs in the game' : null }));
+    const fresh = c.unused.map(m => ({ v: m.define, label: `${m.name || m.define} (${m.define})`, find: m.define, group: view === 'all' ? 'Not used yet — files complete, test it first' : null }));
+    const listOf = v => v === 'used' ? used : v === 'unused' ? fresh : [...used, ...fresh];
+    const noClient = 'Needs the Client folder (its Model files or Model.list are checked)';
+
+    // "Files: Mvr_MaFlJuria.o3d, 9 animations, 2 textures — all in Client/Model"; the .o3d is read once to list its textures
+    function files() {
+      const e = form.model && SIM().modelEntries(ws) && SIM().modelEntries(ws).get(form.model);
+      if (!e || !ws.clientModels) return null;
+      const o3d = `Mvr_${e.name}.o3d`, lo = o3d.toLowerCase();
+      const tex = ws.modelTextures.get(lo);
+      if (!tex && ws.clientTextures && ws.clientModels.has(lo) && !c.reading.has(lo)) {
+        c.reading.add(lo);
+        ctx.clientFile('Model/' + o3d).then(b => { if (b) { ws.addModelTextures(o3d, SIM().o3dTextures(b)); ws.reparse('character.inc'); opts.rerender(); } }).catch(() => {});
+      }
+      const miss = SIM().missingModelFiles(ws, form.model) || [];
+      // every Mvr_*.o3d of the client names at least one texture: none listed means a stale or broken Model.textures index
+      const texText = !ws.clientTextures ? 'textures not checked (no Model/Texture list)' : !tex ? 'textures: reading…'
+        : tex.length ? `${tex.length} texture${tex.length === 1 ? '' : 's'}` : 'no textures listed (re-run tools/refresh-fixtures.sh)';
+      return h('span.small' + (miss.length ? '.bad' : '.muted'), `Files: ${o3d}, ${e.anis.length} animation${e.anis.length === 1 ? '' : 's'}, ${texText} — ` +
+        (miss.length ? `missing: ${miss.join(', ')}` : 'all in Client/Model'));
+    }
+
+    return row('Model', true, h('div.nn-col',
+      h('div.nn-row', FRE.ui.combo({ options: listOf(view), value: form.model, placeholder: view === 'unused' ? 'Search a model no NPC uses yet' : 'Search a model or an NPC that uses it',
+        onPick: v => { form.model = v; if (opts.picked) opts.picked(); opts.rerender(); } }),
+        h('select.nn-modelview', { title: 'Which models the list shows', on: { change: e => {
+          state.modelView = e.target.value;
+          // the picked model stays only if the new list has it (else its picture would stay with nothing shown)
+          if (!listOf(state.modelView).some(o => o.v === form.model)) form.model = opts.keepModel || '';
+          opts.rerender();
+        } } },
+          h('option', { value: 'used', selected: view === 'used' }, `Used by NPCs (${used.length})`),
+          h('option', { value: 'unused', selected: view === 'unused', disabled: !ws.clientModels, title: ws.clientModels ? '' : noClient },
+            ws.clientModels ? `Not used yet (${fresh.length})` : 'Not used yet (needs the Client folder)'),
+          h('option', { value: 'all', selected: view === 'all', disabled: !ws.clientModels, title: ws.clientModels ? '' : noClient }, 'Both'))),
+      view !== 'used' ? h('span.muted.small', 'Not used yet: no NPC players see has this body; every .o3d, .ani and texture file is in Client/Model. Check it on the test server first.') : null,
+      files()),
+      FRE.tga.picture(ctx, c.modelPic.get(ws.defines.defines.get(form.model))),
+      note(opts.note || 'What the NPC looks like. The picture is the portrait of an NPC with this body, when there is one.'));
+  }
+
+  FRE.ui.npcPlace = { whereFields, modelField, provenModels, regionAt };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- ui/new-npc.js ----
 // "+ New NPC" in the NPC Shops task (docs/HANDOFF-ADD-NPC.md). One form: who, where, menus, shop.
 // Every change re-runs the rules (validate/newnpc.js) and the preview of the exact text and bytes
@@ -8149,25 +8428,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
       x: null, y: null, z: null, angle: 0, menus: ['MMI_TRADE'], tabs: [blankTab(0)] };
   }
 
-  // Proven models: an NPC players can see uses it, and mdlDyna.inc has it. "Julia — like Juria, Is"
-  function provenModels(ws) {
-    const mdl = SIM().modelNames(ws);
-    const by = new Map();
-    for (const p of SIM().visibleNpcs(ws)) {
-      if (!by.has(p.model)) by.set(p.model, []);
-      const n = p.npc.name || p.key;
-      if (!by.get(p.model).includes(n)) by.get(p.model).push(n);
-    }
-    // NPCs players saw until a proven commit hid them: "Soraya (until b6abf414)"
-    for (const [id, list] of SIM().seenBefore(ws)) {
-      if (!by.has(id)) by.set(id, []);
-      for (const b of list) by.get(id).push(`${b.name} (until ${b.commit})`);
-    }
-    return [...by].map(([id, npcs]) => ({ id, define: ws.defines.byValue('MI_', id), npcs,
-      name: ws.movers && ws.movers.movers.get(id) ? ws.movers.movers.get(id).name : '' }))
-      .filter(m => m.define && (!mdl || mdl.has(m.define)))
-      .sort((a, b) => (a.name || a.define).localeCompare(b.name || b.define));
-  }
+  const provenModels = ws => FRE.ui.npcPlace.provenModels(ws);
   // Menus: { define, id, label, count of visible NPCs using it }
   function menuList(ws, all) {
     const count = new Map();
@@ -8255,17 +8516,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
     const ws = ctx.ws;
     if (!ws.mapFiles.size || !ws.area) { toast('The map files (World/) were not read, so an NPC cannot be placed.', 'bad'); return; }
     if (!form) form = defaults(ws);
-    let modelView = 'used';          // 'used': models a visible NPC uses; 'unused': models no NPC uses yet (every file in Client/Model); 'all'
+    const place = { modelView: 'used', cache: {} };   // model list view ('used' / 'unused' / 'all') + lists read once (ui/npc-place.js)
+    let where = null;
     let touched = false;             // the checks show once the user has typed something
     let menuView = 'top';            // 'top': ticked + the 16 most used; 'used': every menu a visible NPC uses; 'all': also unused ones
-    const models = provenModels(ws);
-    const unused = SIM().unusedCompleteModels(ws);
-    // a portrait picture per model: the SetImage file of a visible NPC with that model
-    const modelPic = new Map();
-    for (const p of SIM().visibleNpcs(ws)) {
-      const img = p.npc.statements.find(r => r.cmd === 'SetImage' && r.args.image);
-      if (img && !modelPic.has(p.model)) modelPic.set(p.model, img.args.image.text);
-    }
     const images = [];
     for (const n of ws.chars.npcs) for (const r of n.statements) if (r.cmd === 'SetImage' && r.args.image && r.args.image.stringKey)
       if (!images.some(i => i.key === r.args.image.stringKey)) images.push({ key: r.args.image.stringKey, file: r.args.image.text, npc: n.name || n.key });
@@ -8275,11 +8529,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
       .filter((s, i, a) => a.findIndex(x => x.v === s.v) === i);
     const freeTags = SIM().freeStructureIds(ws);
     const tagFiles = ['defineneuz.h', 'etc.inc', 'etc.txt.txt'].every(n => ws.isEditable(n));
-    const regions = SIM().regions(ws);
-    const visible = SIM().visibleNpcs(ws).map(p => ({ p, w: SIM().whereAt(ws, p.map, p.x, p.z) }));
 
     const body = h('div.newnpc');
-    const problems = h('div.nn-problems'), preview = h('div.nn-preview'), whereNow = h('div.nn-where');
+    const problems = h('div.nn-problems'), preview = h('div.nn-preview');
     let createBtn = null;
 
     const num = v => (v === '' || v === null || v === undefined ? null : Number(v));
@@ -8294,26 +8546,6 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
     const label = FRE.ui.fieldLabel;
     const row = (text, req, ...el) => h('div.nn-row', label(text, req), ...el);
     const note = t => h('span.muted.small', t);
-    const region = () => regions.find(r => r.value === form.region) || regions[0];
-
-    // "Files: Mvr_MaFlJuria.o3d, 9 animations, 2 textures — all in Client/Model"; the .o3d is read once to list its textures
-    const reading = new Set();
-    function modelFiles() {
-      const e = form.model && SIM().modelEntries(ws) && SIM().modelEntries(ws).get(form.model);
-      if (!e || !ws.clientModels) return null;
-      const o3d = `Mvr_${e.name}.o3d`, lo = o3d.toLowerCase();
-      const tex = ws.modelTextures.get(lo);
-      if (!tex && ws.clientTextures && ws.clientModels.has(lo) && !reading.has(lo)) {
-        reading.add(lo);
-        ctx.clientFile('Model/' + o3d).then(b => { if (b) { ws.addModelTextures(o3d, SIM().o3dTextures(b)); ws.reparse('character.inc'); render(); } }).catch(() => {});
-      }
-      const miss = SIM().missingModelFiles(ws, form.model) || [];
-      // every Mvr_*.o3d of the client names at least one texture: none listed means a stale or broken Model.textures index
-      const texText = !ws.clientTextures ? 'textures not checked (no Model/Texture list)' : !tex ? 'textures: reading…'
-        : tex.length ? `${tex.length} texture${tex.length === 1 ? '' : 's'}` : 'no textures listed (re-run tools/refresh-fixtures.sh)';
-      return h('span.small' + (miss.length ? '.bad' : '.muted'), `Files: ${o3d}, ${e.anis.length} animation${e.anis.length === 1 ? '' : 's'}, ${texText} — ` +
-        (miss.length ? `missing: ${miss.join(', ')}` : 'all in Client/Model'));
-    }
 
     function render() {
       body.textContent = '';
@@ -8321,29 +8553,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
       body.appendChild(h('h3', 'NPC'));
       body.appendChild(row('Key', true, input('key', { el: { placeholder: 'MaFl_Lumi', maxLength: 31 } }), note('Internal name, unique, never shown. Letters, digits, _ (31 max). Style: MaFl_ = Madrigal Flaris, MaSa_ = Saint Morning, MaDa_ = Darkon.')));
       body.appendChild(row('Name', true, input('name', { el: { placeholder: 'Lumi', maxLength: 63 } }), note('Shown above the NPC\'s head.')));
-      const used = models.map(m => ({ v: m.define, label: `${m.name || m.define} — like ${m.npcs.slice(0, 3).join(', ')}${m.npcs.length > 3 ? ', …' : ''}`,
-        find: m.define + ' ' + m.npcs.join(' '), group: modelView === 'all' ? 'Used by NPCs in the game' : null }));
-      const fresh = unused.map(m => ({ v: m.define, label: `${m.name || m.define} (${m.define})`, find: m.define, group: modelView === 'all' ? 'Not used yet — files complete, test it first' : null }));
-      const modelOpts = modelView === 'used' ? used : modelView === 'unused' ? fresh : [...used, ...fresh];
-      const curModel = ws.defines.defines.get(form.model);
-      const noClient = 'Needs the Client folder (its Model files or Model.list are checked)';
-      body.appendChild(row('Model', true, h('div.nn-col',
-        h('div.nn-row', combo(form.model, modelOpts, v => { form.model = v; render(); }, modelView === 'unused' ? 'Search a model no NPC uses yet' : 'Search a model or an NPC that uses it'),
-          h('select.nn-modelview', { title: 'Which models the list shows', on: { change: e => {
-            modelView = e.target.value;
-            // the picked model stays only if the new list has it (else its picture would stay with nothing shown)
-            const now = modelView === 'used' ? used : modelView === 'unused' ? fresh : [...used, ...fresh];
-            if (!now.some(o => o.v === form.model)) form.model = '';
-            render();
-          } } },
-            h('option', { value: 'used', selected: modelView === 'used' }, `Used by NPCs (${used.length})`),
-            h('option', { value: 'unused', selected: modelView === 'unused', disabled: !ws.clientModels, title: ws.clientModels ? '' : noClient },
-              ws.clientModels ? `Not used yet (${fresh.length})` : 'Not used yet (needs the Client folder)'),
-            h('option', { value: 'all', selected: modelView === 'all', disabled: !ws.clientModels, title: ws.clientModels ? '' : noClient }, 'Both'))),
-        modelView !== 'used' ? h('span.muted.small', 'Not used yet: no NPC players see has this body; every .o3d, .ani and texture file is in Client/Model. Check it on the test server first.') : null,
-        modelFiles()),
-        FRE.tga.picture(ctx, modelPic.get(curModel)),
-        note('What the NPC looks like. The picture is the portrait of an NPC with this body, when there is one.')));
+      body.appendChild(FRE.ui.npcPlace.modelField(ctx, form, place, { cache: place.cache, rerender: render, changed: refresh, picked: () => { touched = true; } }));
       const imgFile = form.image ? (images.find(i => i.key === form.image) || {}).file : null;
       body.appendChild(row('Portrait', false, combo(form.image || '', [{ v: '', label: '(none)' }, ...images.map(i => ({ v: i.key, label: `${i.npc} — ${i.file}` }))], v => { form.image = v || null; render(); }, 'Search an NPC'),
         FRE.tga.picture(ctx, imgFile, '.small'),
@@ -8376,25 +8586,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
 
       // --- where
       body.appendChild(h('h3', 'Where'));
-      const groups = [...new Set(regions.map(r => r.group))];
-      const regionOpts = groups.flatMap(g => regions.filter(r => r.group === g).sort((a, b) => g === groups[0] ? 0 : a.label.localeCompare(b.label))
-        .map(r => ({ v: r.value, group: g, find: r.map, label: `${r.label} · ${r.npcs ? `${r.npcs} NPC${r.npcs === 1 ? '' : 's'}` : '0 NPCs yet — type /position'}` })));
-      body.appendChild(row('Region', true, combo(form.region, regionOpts, v => { form.region = v; form.map = region().map; form.nextTo = null; render(); }, 'Search a town, region or dungeon'),
-        note('Places as players read them on the map window; dungeons by their in-game name.')));
-      const r = region();
-      const near = visible.filter(v => v.p.map === r.map && (!v.w || v.w.place === r.place || r.group !== groups[0]))
-        .sort((a, b) => (a.p.npc.name || a.p.key).localeCompare(b.p.npc.name || b.p.key));
-      // the chosen neighbour stays shown until a different x / y / z is typed (form.nextTo = its key)
-      body.appendChild(row('Next to', false, near.length ? combo(form.nextTo || '', near.map(o => ({ v: o.p.key, label: `${o.p.npc.name || o.p.key}${o.w && o.w.caption ? ' — ' + o.w.caption : ''}`, find: o.p.key })), v => {
-        const p = near.find(o => o.p.key === v).p;
-        Object.assign(form, { nextTo: v, map: p.map, x: Math.round((p.x + 6) * 10) / 10, y: Math.round(p.y * 10) / 10, z: Math.round(p.z * 10) / 10, angle: Math.round(p.angle * 10) / 10 });
-        render();
-      }, `Search the ${near.length} NPCs players see here`) : h('span.muted', 'No NPC stands here yet: type the spot in /position.'),
-        note('Fills the spot: 6 steps to that NPC\'s side, same height and facing.')));
-      body.appendChild(row('/position', true, input('x', { number: true, el: { placeholder: 'x', type: 'number', step: 'any' } }), input('y', { number: true, el: { placeholder: 'y (height)', type: 'number', step: 'any' } }),
-        input('z', { number: true, el: { placeholder: 'z', type: 'number', step: 'any' } }), note('In game: stand on the spot, type /position, copy x y z.')));
-      body.appendChild(whereNow);
-      body.appendChild(row('Facing', true, input('angle', { number: true, el: { type: 'number', step: 'any', min: 0, max: 359.9 } }), note('Degrees, 0-359.9. "Next to" copies the neighbour\'s.')));
+      where = FRE.ui.npcPlace.whereFields(ctx, form, { cache: place.cache, rerender: () => { touched = true; render(); }, changed: () => { touched = true; refresh(); } });
+      where.rows.forEach(r => body.appendChild(r));
 
       // --- menus
       body.appendChild(h('h3', 'Right-click menus'));
@@ -8449,15 +8642,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
     }
 
     function refresh() {
-      // where a player reads this spot
-      whereNow.textContent = '';
-      const ok = [form.x, form.z].every(v => typeof v === 'number' && Number.isFinite(v));
-      if (ok) {
-        const w = SIM().whereAt(ws, form.map, form.x, form.z);
-        const r = region();
-        if (w) whereNow.append(...[h('span.muted', 'Players will read here: '), h('b', w.label), w.te ? h('span.def', ' · ' + w.te) : null,
-          r && w.place !== r.place ? h('span.tag.warn', ` not in ${r.label}`) : null].filter(Boolean));
-      }
+      if (where) where.refreshWhere();
       const diags = FRE.validateNewNpc(ws, form);
       problems.textContent = '';
       const blocks = diags.filter(d => d.severity === 'BLOCK');
@@ -8799,7 +8984,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
   }
 
   // One text box + checks + "what will be written". plan(text, everywhere) -> { parts, how, others }
-  function textDialog(ctx, npc, { title, label, value, tok, action, describe, plan }) {
+  function textDialog(ctx, npc, { title, label, value, tok, action, describe, plan, what }) {
     const ws = ctx.ws;
     let text = value || '', everywhere = false, timer = null;
     const others = tok && tok.stringKey ? O().keyUses(ws, tok.stringKey).filter(u => (u.rec.args.name || u.rec.args.title || u.rec.args.image) !== tok) : [];
@@ -8838,7 +9023,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
       { label: 'Cancel' },
       { label: action, cls: 'primary', onClick: () => {
         if (FRE.newNpcText(text) || (value && text === value && !everywhere)) return false;
-        ctx.editGroup(() => plan(text, everywhere).parts, `${title}: ${text}`, ['npc|' + npcId(npc)]);
+        ctx.editGroup(() => plan(text, everywhere).parts, `${what || title}: ${text}`, ['npc|' + npcId(npc)]);
       } },
     ] });
     btn = m.el.querySelector('footer button.primary');
@@ -8850,7 +9035,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
   function renameNpc(ctx, npc) {
     const rec = O().nameRec(npc);
     return textDialog(ctx, npc, {
-      title: `Rename ${npc.name || npc.key}`, label: 'Name players see', value: npc.name || '', tok: rec && rec.args.name, action: 'Rename',
+      title: `Edit name: ${npc.name || npc.key}`, label: 'Name players see', value: npc.name || '', tok: rec && rec.args.name, action: 'Apply changes', what: `Rename ${npc.name || npc.key}`,
       describe: t => `Above the NPC's head and in its windows: "${t}". The key ${npc.key} stays the same (scripts and maps use it).`,
       plan: (t, all) => O().renameNpc(ctx.ws, npc, t, all),
     });
@@ -8860,7 +9045,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
     const rec = O().slotRec(npc, slot);
     const removable = O().removableTab(npc);
     const m = textDialog(ctx, npc, {
-      title: `Rename tab ${slot + 1} of ${npc.name || npc.key}`, label: 'Tab name players see', value: npc.slotTitles[slot] || '', tok: rec && rec.args.title, action: 'Rename',
+      title: `Edit tab ${slot + 1} name: ${npc.slotTitles[slot] || ''} (${npc.name || npc.key})`, label: 'Tab name players see', value: npc.slotTitles[slot] || '', tok: rec && rec.args.title, action: 'Apply changes', what: `Rename tab ${slot + 1} of ${npc.name || npc.key}`,
       describe: t => `In the shop window (right-click → Trade), tab ${slot + 1} reads "${t}".`,
       plan: (t, all) => O().renameTab(ctx.ws, npc, slot, t, all),
     });
@@ -8875,7 +9060,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
   function addTab(ctx, npc, after) {
     const slot = O().nextSlot(npc);
     return textDialog(ctx, npc, {
-      title: `+ Tab for ${npc.name || npc.key}`, label: `Name of tab ${slot + 1}`, value: '', tok: null, action: 'Add tab',
+      title: `+ Tab for ${npc.name || npc.key}`, label: `Name of tab ${slot + 1}`, value: '', tok: null, action: 'Add tab', what: `+ Tab for ${npc.name || npc.key}`,
       describe: t => `The shop window gets a tab "${t}" at position ${slot + 1}. Add items to it with + in the item list.`,
       plan: t => { const r = O().addTab(ctx.ws, npc, t); if (after) after(r.slot); return r; },
     });
@@ -8928,7 +9113,96 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
     ] });
   }
 
-  FRE.ui.npcEdit = { renameNpc, renameTab, addTab, addMenu, removeMenu, isPlaceholder };
+  // ✎ next to "Where:": move the NPC on its map and / or change its model (task S part 3). Same-length rewrite of
+  // its .dyo record (npcEditOps.placePlan), Server + Client. One spot at a time; the model can go on all spots.
+  function editPlace(ctx, npc, spotIndex = 0) {
+    const ws = ctx.ws;
+    const spots = O().placementsOf(ws, npc);
+    if (!spots.length) { FRE.dom.toast(`${npc.name || npc.key} stands on no map the server loads.`, 'bad'); return; }
+    const name = npc.name || npc.key;
+    const modelName = id => { const d = ws.defines.byValue('MI_', id); const mv = ws.movers && ws.movers.movers.get(id); return (mv && mv.name) || d || String(id); };
+    const spotText = (p, i) => {
+      const w = FRE.newNpcSim.whereAt(ws, p.map, p.x, p.z);
+      return `${i + 1} · ${w ? w.label : p.map} · /position ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`;
+    };
+    const place = { modelView: 'used', cache: {} };
+    let k = Math.min(spotIndex, spots.length - 1), form, allSpots = false, where = null, btn = null;
+    function start() {
+      const p = spots[k], r = FRE.ui.npcPlace.regionAt(ws, p.map, p.x, p.z, place.cache);
+      // the record's own floats, so an untouched field writes nothing
+      form = { region: r ? r.value : `${p.map}|${p.map}`, map: p.map, x: p.x, y: p.y, z: p.z, angle: p.angle, nextTo: null, model: ws.defines.byValue('MI_', p.model) || '' };
+    }
+    start();
+    const body = h('div.newnpc'), checks = h('div.nn-problems'), preview = h('div.nn-preview');
+    const to = () => ({ x: form.x, y: form.y, z: form.z, angle: form.angle, model: form.model || null });
+    const modelSpots = () => allSpots ? spots.map((_, i) => i) : [k];
+
+    function render() {
+      body.textContent = '';
+      if (spots.length > 1) {
+        body.appendChild(h('div.nn-row', FRE.ui.fieldLabel('Spot', true), h('select', { on: { change: e => { k = Number(e.target.value); start(); render(); } } },
+          spots.map((p, i) => h('option', { value: i, selected: i === k }, spotText(p, i)))),
+          h('span.muted.small', `${name} stands in ${spots.length} places (one record each). Pick the one to change.`)));
+      }
+      body.appendChild(h('h3', 'Where'));
+      where = FRE.ui.npcPlace.whereFields(ctx, form, { cache: place.cache, onlyMap: spots[k].map, skipAt: spots[k].at, rerender: render, changed: refresh });
+      where.rows.forEach(r => body.appendChild(r));
+      body.appendChild(h('h3', 'Model'));
+      body.appendChild(FRE.ui.npcPlace.modelField(ctx, form, place, { cache: place.cache, rerender: render, changed: refresh,
+        keepModel: ws.defines.byValue('MI_', spots[k].model), note: `What the NPC looks like. Now: ${modelName(spots[k].model)}.` }));
+      if (spots.length > 1) body.appendChild(h('label.nn-row.small', h('input', { type: 'checkbox', checked: allSpots, on: { change: e => { allSpots = e.target.checked; refresh(); } } }),
+        ` Change the model on all ${spots.length} spots (the position changes only on spot ${k + 1})`));
+      body.append(...FRE.ui.formFooter({ checks, action: 'Apply changes', previewTitle: 'What players will see / what will be written', preview }));
+      refresh();
+    }
+
+    function refresh() {
+      if (where) where.refreshWhere();
+      checks.textContent = ''; preview.textContent = '';
+      const diags = [];
+      const add = (code, severity, field, message) => diags.push({ code, severity, field, message, key: `${code}|${field}`, module: 'npc' });
+      FRE.validateNpcSpot(ws, ws.files.get(spots[k].file), form, add, spots[k].at);
+      if (form.model !== ws.defines.byValue('MI_', spots[k].model)) FRE.validateNpcModel(ws, form.model, add);
+      const blocked = diags.some(d => d.severity === 'BLOCK');
+      let plan = null;
+      if (!blocked) { try { plan = O().placePlan(ws, npc, k, to(), modelSpots()); } catch (e) { add('NN_POS', 'BLOCK', 'position', e.message); } }
+      if (plan && !plan.changes.length) checks.appendChild(h('div.muted', 'No change.'));   // the spot as it is today: no old warnings
+      else {
+        diags.forEach(d => checks.appendChild(FRE.ui.diagRow(d)));
+        if (plan && !diags.length) checks.appendChild(h('div.ok', '✓ No problem found.'));
+      }
+      if (btn) btn.disabled = !plan || !plan.changes.length;
+      if (!plan) { preview.appendChild(h('p.muted', 'Fix the ⛔ problems to see what changes.')); return; }
+      if (!plan.changes.length) return;
+      const fmtv = (c, v) => c.field === 'model' ? modelName(v) : c.field === 'angle' ? `${Math.round(v * 10) / 10}°` : String(Math.round(v * 10) / 10);
+      const label = { x: 'x', y: 'height (y)', z: 'z', angle: 'facing', model: 'model' };
+      preview.appendChild(h('ul.plan.small', plan.changes.map(c => h('li', `${spots.length > 1 ? `Spot ${c.spot + 1}: ` : ''}${label[c.field]} ${fmtv(c, c.from)} → ${fmtv(c, c.to)}`))));
+      const w = FRE.newNpcSim.whereAt(ws, form.map, form.x, form.z);
+      if (w && plan.changes.some(c => c.field !== 'model')) preview.appendChild(h('p.small', `Players will find ${name} at ${w.label}${w.te ? ` (GM: ${w.te})` : ''}.`));
+      for (const part of plan.parts) {
+        const sf = ws.files.get(part.file);
+        preview.appendChild(h('div.muted.small', `${sf.dir ? sf.dir + '/' : ''}${sf.name} (Server + Client): ${part.splices.length * 4} bytes rewritten in place, same file size — ` +
+          part.splices.map(s => `offset ${s.start}`).join(', ')));
+      }
+    }
+
+    const m = FRE.dom.modal({ title: `Change position / model: ${name}`, body, wide: true, buttons: [
+      { label: 'Cancel' },
+      { label: 'Apply changes', cls: 'primary', onClick: () => {
+        if (btn && btn.disabled) return false;
+        let plan;
+        try { plan = O().placePlan(ws, npc, k, to(), modelSpots()); } catch (e) { FRE.dom.toast(e.message, 'bad'); return false; }
+        const moved = plan.changes.some(c => c.field !== 'model'), remodel = plan.changes.some(c => c.field === 'model');
+        ctx.editGroup(() => O().placePlan(ws, npc, k, to(), modelSpots()).parts,
+          `${name}: ${[moved ? 'moved' : null, remodel ? `model ${modelName(ws.defines.defines.get(form.model))}` : null].filter(Boolean).join(', ')}`, ['npc|' + npcId(npc)]);
+      } },
+    ] });
+    btn = m.el.querySelector('footer button.primary');
+    render();
+    return m;
+  }
+
+  FRE.ui.npcEdit = { editPlace, renameNpc, renameTab, addTab, addMenu, removeMenu, isPlaceholder };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/menu-chooser.js ----
@@ -9068,10 +9342,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
     const body = h('div',
       h('label.nn-row', FRE.ui.fieldLabel('Name in the right-click menu', true), labelIn), nameLine,
       h('div.nn-row', FRE.ui.fieldLabel('Text', true), h('div', { style: 'flex:1' }, tools, area)),
-      FRE.ui.formFooter({ checks, action: menu ? 'Save' : 'Create', previewTitle: 'What players will see / what will be written', preview: prev }));
-    const m = FRE.dom.modal({ title: opts.title || (menu ? `Rules text: ${oldLabel || menu.name}` : `Rules text for ${npc.name || npc.key}`), body, wide: true, buttons: [
+      FRE.ui.formFooter({ checks, action: menu ? 'Apply changes' : 'Create', previewTitle: 'What players will see / what will be written', preview: prev }));
+    const m = FRE.dom.modal({ title: opts.title || (menu ? `Edit rules text: ${oldLabel || menu.name}` : `New rules text for ${npc.name || npc.key}`), body, wide: true, buttons: [
       ...(opts.back ? [{ label: '← Back', onClick: opts.back }] : []), { label: 'Cancel' },
-      { label: menu ? 'Save' : 'Create', cls: 'primary', onClick: () => {
+      { label: menu ? 'Apply changes' : 'Create', cls: 'primary', onClick: () => {
         if (btn && btn.disabled) return false;
         ctx.editGroup(() => plan().parts, `${npc.name || npc.key}: rules text "${label}" ${menu ? 'changed' : 'added'}`, ['npc|' + npcId(npc)]);
       } },
@@ -10424,7 +10698,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
         h('button.primary', { id: 'btn-root', on: { click: chooseRoot } }, 'Choose the source folder')));
     }
     wrap.appendChild(h('div.start-step', '2 · Task'));
-    wrap.appendChild(h('div.task-grid', FRE.Workspace.MODULES.map(wm => {
+    wrap.appendChild(h('div.task-grid', FRE.Workspace.MODULES.filter(wm => !wm.hidden).map(wm => {
       const um = modules().find(x => x.id === wm.id);
       return h('button.task-card', { 'data-task': wm.id, disabled: !L || S.busy, title: L ? '' : 'Choose the folder first', on: { click: () => loadTask(wm.id) } },
         h('b', wm.label), h('span', um && um.help ? um.help.replace(/^[^:]+:\s*/, '').replace(/^./, c => c.toUpperCase()) : wm.required.join(', ')));
@@ -10630,7 +10904,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when
 
   function locate(d) {
     const dm = S.ws.moduleOfFile(d.file || '');
-    const m = dm && modules().find(x => x.id === dm.id);
+    // a file of a module this task only checks (Exchange_Script.txt in NPC Shops): the task's own view shows it
+    const id = dm && (S.ws.shown.has(dm.id) ? dm.id : S.task);
+    const m = id && modules().find(x => x.id === id);
     if (!m || !m.locate || !m.locate(d, ctx)) return;
     S.mode = m.id;
     renderAll(false);

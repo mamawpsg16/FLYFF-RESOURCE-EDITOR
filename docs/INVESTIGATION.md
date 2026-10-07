@@ -274,6 +274,16 @@ Startup order (`OpenProject`):
 - Plus the new client-only file `Client/Client/NpcBoard_<id>.inc` (ASCII, CRLF like `GuildCombatTEXT_1_USA.inc`).
 - `io/save.js` creates it in the Client folder (backup manifest: `created`, so restore deletes it).
 
+### 1.14 Moving an NPC / changing its model (added 2026-10-07, task S part 3, `edit/npcedit-ops.js` `placePlan`, `ui/npc-place.js`)
+
+**Where the game reads it.** `CWorld::LoadObject` (`_Common/WorldFile.cpp:297`) calls `ReadObj` (`CreateObj.cpp:761`) until it returns NULL. An NPC record is the type DWORD (5), then `CObj::Read` (`Obj.cpp:474`): `m_fAngle`, `vAxis[3]`, `m_vPos[3]`, `m_vScale[3]`, `m_dwType`, `m_dwIndex`, motion, AI, AI2 (4 bytes each); `m_vPos.x` / `.z` are multiplied by `OLD_MPU` (4). Then `CMover::Read` (`Mover.cpp:3365`): name[64], dialog[32], key[32], belligerence, extra flag. Offsets from the type DWORD: facing 4, x 20, y 24, z 28, model (`m_dwIndex`, the `MI_` id given to `SetIndex`) 48, key 160.
+
+**The edit.** Only those 4-byte fields are rewritten, in place; the file keeps its size. `b6abf414` moved MaFl_Angel's record the same way (Server + Client). One spot moves at a time (14 NPCs stand in several places: Postbox 11, Helper_ver12 10…); a model change can go on every spot. The client reads its own `.dyo` too: `LoadObject` copies each keyed NPC's position into its character for the Quest Helper (`__QUEST_HELPER`), so the Client copy is changed with the Server one (client sync: identical `.dyo` copies).
+
+**Checks** (shared with + NPC, `validate/newnpc.js` `checkSpot` / `checkModel`): numbers, facing 0-359.9, overlap (< 4 units; the NPC's own record is skipped), height far from the nearest NPC, model defined / in propMover / in mdlDyna / files in Client/Model / used by a visible NPC. A move stays on its map (the user, 2026-10-07: "same map only"; moving to another map would remove and insert records, which no commit has done yet).
+
+**Simulator:** `tools/npcmove-sim.js MaFl_Postbox spot=7 x=+6 model=MI_MAFL_JURIA!`; Python copy `oracle_sim.py npcmove` (391 cases: Peach moves, unchanged, negative / tiny values, another body, Postbox spot 7 + all spots, and every placed NPC moved once): same bytes and same read-back.
+
 ## Phase 2: Encoding and line-ending forensics (all 15,299 files, raw bytes)
 
 **Method:** Python read every file as bytes. For each one it checked:

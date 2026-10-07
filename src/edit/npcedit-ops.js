@@ -150,5 +150,57 @@
     return recs.flatMap(rec => T.removeRow(f.text, rec));
   }
 
-  FRE.npcEditOps = { keyUses, canEditTexts, renameNpc, renameTab, nextSlot, addTab, removableTab, removeTab, addMenu, removeMenu, namedSlots, slotRec, nameRec };
+  // ---------------------------------------------------------------- where it stands, its model (task S part 3)
+  // An NPC's spots: every OT_MOVER record with its key in a map the server loads (CWorld::LoadObject,
+  // WorldFile.cpp:297). The key match ignores case, like ws.placed. -> [{ map, file, at, x, y, z, angle, model }]
+  function placementsOf(ws, npc) {
+    const out = [], k = npc.key.toLowerCase();
+    for (const [map, lower] of ws.mapFiles) {
+      const f = ws.files.get(lower);
+      for (const p of FRE.world.readDyo(f.serialize()).placements)
+        if (p.key.toLowerCase() === k) out.push(Object.assign({ map, file: lower }, p));
+    }
+    return out;
+  }
+
+  const f32 = v => { const b = new Uint8Array(4); new DataView(b.buffer).setFloat32(0, v, true); return b; };
+  const u32 = v => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v >>> 0, true); return b; };
+
+  // The record bytes a spot / model change rewrites, same length (b6abf414 moved MaFl_Angel's record in place).
+  // spot: index into placementsOf(ws, npc), the one that moves; to: { x, y, z, angle } (in /position units) and / or
+  // model: 'MI_X'; modelSpots: the spots that get the model (default: only `spot`).
+  // -> { parts: [{ file, splices }], changes: [{ spot, field, from, to }] } ; throws on what cannot be done
+  function placePlan(ws, npc, spot, to, modelSpots = [spot]) {
+    const all = placementsOf(ws, npc);
+    if (!all.length) throw new Error(`${npc.key} stands on no map the server loads`);
+    const F = FRE.npcOps.FIELD, MPU = FRE.world.OLD_MPU;
+    let model = null;
+    if (to.model !== undefined && to.model !== null) {
+      model = ws.defines.defines.get(to.model);
+      if (model === undefined || !/^MI_/.test(to.model)) throw new Error(`${to.model} is not an MI_ model`);
+    }
+    const byFile = new Map(), changes = [];
+    for (const i of [...new Set([spot, ...modelSpots])].sort((a, b) => a - b)) {
+      const p = all[i];
+      if (!p) throw new Error(`spot ${i + 1} does not exist`);
+      const f = ws.files.get(p.file);
+      if (!ws.isEditable(p.file)) throw new Error(`${f.name} is read-only`);
+      const bytes = f.serialize();
+      const want = [];
+      if (i === spot) for (const k of ['angle', 'x', 'y', 'z']) if (to[k] !== undefined && to[k] !== null)
+        want.push([k, f32(k === 'x' || k === 'z' ? to[k] / MPU : to[k])]);
+      if (model !== null && modelSpots.includes(i)) want.push(['model', u32(model)]);
+      for (const [k, b] of want) {
+        const at = p.at + F[k];
+        if (b.every((v, j) => bytes[at + j] === v)) continue;          // same bytes: nothing to write
+        if (!byFile.has(p.file)) byFile.set(p.file, []);
+        byFile.get(p.file).push({ start: at, end: at + 4, insert: FRE.bytes.bytesToBinaryString(b) });
+        changes.push({ spot: i, field: k, from: k === 'model' ? p.model : p[k], to: k === 'model' ? model : to[k] });
+      }
+    }
+    const parts = [...byFile].map(([file, splices]) => ({ file, splices: splices.sort((a, b) => a.start - b.start) }));
+    return { parts, changes };
+  }
+
+  FRE.npcEditOps = { placementsOf, placePlan, keyUses, canEditTexts, renameNpc, renameTab, nextSlot, addTab, removableTab, removeTab, addMenu, removeMenu, namedSlots, slotRec, nameRec };
 })(globalThis.FRE = globalThis.FRE || {});

@@ -134,10 +134,10 @@
     const body = h('div',
       h('label.nn-row', FRE.ui.fieldLabel('Name in the right-click menu', true), labelIn), nameLine,
       h('div.nn-row', FRE.ui.fieldLabel('Text', true), h('div', { style: 'flex:1' }, tools, area)),
-      FRE.ui.formFooter({ checks, action: menu ? 'Save' : 'Create', previewTitle: 'What players will see / what will be written', preview: prev }));
-    const m = FRE.dom.modal({ title: opts.title || (menu ? `Rules text: ${oldLabel || menu.name}` : `Rules text for ${npc.name || npc.key}`), body, wide: true, buttons: [
+      FRE.ui.formFooter({ checks, action: menu ? 'Apply changes' : 'Create', previewTitle: 'What players will see / what will be written', preview: prev }));
+    const m = FRE.dom.modal({ title: opts.title || (menu ? `Edit rules text: ${oldLabel || menu.name}` : `New rules text for ${npc.name || npc.key}`), body, wide: true, buttons: [
       ...(opts.back ? [{ label: '← Back', onClick: opts.back }] : []), { label: 'Cancel' },
-      { label: menu ? 'Save' : 'Create', cls: 'primary', onClick: () => {
+      { label: menu ? 'Apply changes' : 'Create', cls: 'primary', onClick: () => {
         if (btn && btn.disabled) return false;
         ctx.editGroup(() => plan().parts, `${npc.name || npc.key}: rules text "${label}" ${menu ? 'changed' : 'added'}`, ['npc|' + npcId(npc)]);
       } },

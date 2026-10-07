@@ -20,6 +20,37 @@
     return null;
   }
 
+  // The model checks, shared by + NPC and "Edit where / model" (an existing NPC).
+  function checkModel(ws, define, add) {
+    const D = ws.defines.defines;
+    const model = D.get(define);
+    if (!define) add('NN_MODEL', 'BLOCK', 'model', 'Pick a model.');
+    else if (model === undefined || !/^MI_/.test(String(define))) add('NN_MODEL', 'BLOCK', 'model', `Model ${define} is not in defineObj.h.`);
+    else if (ws.movers && !ws.movers.movers.has(model)) add('NN_MODEL', 'BLOCK', 'model', `Model ${define} (${model}) has no row in propMover.txt: the server cannot create it.`);
+    else if (FRE.newNpcSim.modelNames(ws) && !FRE.newNpcSim.modelNames(ws).has(define)) add('NN_MODEL', 'BLOCK', 'model', `Model ${define} has no entry in mdlDyna.inc: the game has no 3D model for it.`);
+    else if ((FRE.newNpcSim.missingModelFiles(ws, define) || []).length)
+      add('NN_MODEL_FILES', 'BLOCK', 'model', `Model ${define} is missing ${FRE.newNpcSim.missingModelFiles(ws, define).join(', ')} in Client/Model: the game cannot draw, colour or animate it.`);
+    else if (ws.mapFiles.size && !FRE.newNpcSim.provenModels(ws).has(model)) add('NN_MODEL_UNPROVEN', 'WARN', 'model', `No NPC players can see uses ${define}: not seen in game yet, check it on the test server first.`);
+  }
+
+  // The spot checks (x, y, z, angle on the map in `file`), shared by + NPC and "Edit where / model".
+  // skipAt: the record offset of the NPC being moved (it does not overlap itself).
+  function checkSpot(ws, file, form, add, skipAt = null) {
+    const nums = ['x', 'y', 'z', 'angle'];
+    const bad = nums.filter(k => typeof form[k] !== 'number' || !Number.isFinite(form[k]));
+    if (bad.length) add('NN_POS', 'BLOCK', 'position', `${bad.join(', ')} must be numbers (copy them from /position in game).`);
+    else if (form.angle < 0 || form.angle >= 360) add('NN_POS', 'BLOCK', 'position', `Angle ${form.angle} must be 0 or more and under 360.`);
+    if (!bad.length) {
+      const near = FRE.world.readDyo(file.serialize()).placements.filter(p => p.at !== skipAt);
+      const close = near.find(p => Math.hypot(p.x - form.x, p.z - form.z) < FRE.world.OLD_MPU);
+      if (close) add('NN_OVERLAP', 'WARN', 'position', `${close.key} stands less than 4 units away: the two NPCs overlap.`);
+      let best = null;
+      for (const p of near) { const d = Math.hypot(p.x - form.x, p.z - form.z); if (!best || d < best.d) best = { p, d }; }
+      if (best && Math.abs(best.p.y - form.y) > 30)
+        add('NN_HEIGHT', 'WARN', 'position', `Height ${form.y} is ${Math.round(Math.abs(best.p.y - form.y))} away from the nearest NPC (${best.p.key}, ${best.p.y.toFixed(1)}): it may float or be under the ground. Check y with /position.`);
+    }
+  }
+
   // -> [{ code, severity, field, message }]
   function checkNewNpc(ws, form) {
     const out = [];
@@ -52,14 +83,7 @@
     if (!menus.length) add('NN_NO_MENU', 'WARN', 'menus', 'No menu is ticked: right-clicking the NPC does nothing.');
     if (menus.includes('MMI_DIALOG')) add('NN_DIALOG', 'WARN', 'menus', 'Dialog needs a C++ dialog script (WorldDialog.dll); without one the menu does nothing.');
 
-    const model = D.get(form.model);
-    if (!form.model) add('NN_MODEL', 'BLOCK', 'model', 'Pick a model.');
-    else if (model === undefined || !/^MI_/.test(String(form.model))) add('NN_MODEL', 'BLOCK', 'model', `Model ${form.model} is not in defineObj.h.`);
-    else if (ws.movers && !ws.movers.movers.has(model)) add('NN_MODEL', 'BLOCK', 'model', `Model ${form.model} (${model}) has no row in propMover.txt: the server cannot create it.`);
-    else if (FRE.newNpcSim.modelNames(ws) && !FRE.newNpcSim.modelNames(ws).has(form.model)) add('NN_MODEL', 'BLOCK', 'model', `Model ${form.model} has no entry in mdlDyna.inc: the game has no 3D model for it.`);
-    else if ((FRE.newNpcSim.missingModelFiles(ws, form.model) || []).length)
-      add('NN_MODEL_FILES', 'BLOCK', 'model', `Model ${form.model} is missing ${FRE.newNpcSim.missingModelFiles(ws, form.model).join(', ')} in Client/Model: the game cannot draw, colour or animate it.`);
-    else if (ws.mapFiles.size && !FRE.newNpcSim.provenModels(ws).has(model)) add('NN_MODEL_UNPROVEN', 'WARN', 'model', `No NPC players can see uses ${form.model}: not seen in game yet, check it on the test server first.`);
+    checkModel(ws, form.model, add);
     if (form.image && !ws.strings.map.has(form.image)) add('NN_IMAGE', 'WARN', 'image', `Portrait ${form.image} is not a known text key: the dialog shows no picture.`);
     if (form.structure && !D.has(form.structure)) add('NN_STRUCTURE', 'BLOCK', 'structure', `${form.structure} is not defined: the server uses 0.`);
     if (form.newTag !== null && form.newTag !== undefined) {
@@ -140,22 +164,12 @@
     if (!file) add('NN_MAP', 'BLOCK', 'map', `Map ${form.map} has no .dyo file in World/.`);
     else if (BLOCKED_MAPS.has(lowerMap) || FRE.npcOps.insertPoint(file.serialize()) === null)
       add('NN_MAP', 'BLOCK', 'map', `Map ${form.map}: the server does not read this map's objects to the end marker, so a new NPC there would not appear. Pick another map.`);
-    const nums = ['x', 'y', 'z', 'angle'];
-    const bad = nums.filter(k => typeof form[k] !== 'number' || !Number.isFinite(form[k]));
-    if (bad.length) add('NN_POS', 'BLOCK', 'position', `${bad.join(', ')} must be numbers (copy them from /position in game).`);
-    else if (form.angle < 0 || form.angle >= 360) add('NN_POS', 'BLOCK', 'position', `Angle ${form.angle} must be 0 or more and under 360.`);
-    if (file && !bad.length) {
-      const near = FRE.world.readDyo(file.serialize()).placements;
-      const close = near.find(p => Math.hypot(p.x - form.x, p.z - form.z) < FRE.world.OLD_MPU);
-      if (close) add('NN_OVERLAP', 'WARN', 'position', `${close.key} stands less than 4 units away: the two NPCs overlap.`);
-      let best = null;
-      for (const p of near) { const d = Math.hypot(p.x - form.x, p.z - form.z); if (!best || d < best.d) best = { p, d }; }
-      if (best && Math.abs(best.p.y - form.y) > 30)
-        add('NN_HEIGHT', 'WARN', 'position', `Height ${form.y} is ${Math.round(Math.abs(best.p.y - form.y))} away from the nearest NPC (${best.p.key}, ${best.p.y.toFixed(1)}): it may float or be under the ground. Check y with /position.`);
-    }
+    if (file) checkSpot(ws, file, form, add);
     return out;
   }
 
   FRE.validateNewNpc = checkNewNpc;
+  FRE.validateNpcModel = checkModel;
+  FRE.validateNpcSpot = checkSpot;
   FRE.newNpcText = textProblem;
 })(globalThis.FRE = globalThis.FRE || {});

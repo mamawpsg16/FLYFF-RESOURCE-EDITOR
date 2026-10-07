@@ -113,6 +113,7 @@
   const click = el => el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
   const renderAllForTest = () => FRE.app.ctx.renderAll(false);
   const btnByText = (root, t) => [...root.querySelectorAll('button')].find(b => b.textContent.includes(t));
+  const lastModalAny = () => [...document.querySelectorAll('.modal')].pop();
 
   // [Change task] (when a task is open) then the task's card on the start screen
   async function openTask(id) {
@@ -135,14 +136,14 @@
     click($('btn-root'));
     await waitFor(() => S.layout, 'folder detected');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
-    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 4, 'real-files tag; 4 tasks to pick');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 3 && !document.querySelector('.task-card[data-task="exchange"]'), 'real-files tag; 3 tasks to pick (exchanges are in NPC Shops)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     await openTask('npc');
     ok(!document.body.classList.contains('start') && /Task:\s*NPC Shops/.test($('mode-tabs').textContent), 'NPC Shops task open');
     ok(S.client && S.client.dir === clientDir, 'Client copies attached automatically');
     ok(S.ws.items.rows.length === 8067, 'items loaded (8067)');
-    ok(document.querySelectorAll('#list .npc').length === 6 && /Shops with fixed items \(6\)/.test(document.querySelector('select.npc-filter').textContent), 'NPC list defaults to the 6 shops with fixed items (AddShopItem)');
+    ok(document.querySelectorAll('#list .npc').length === 6 && /Shops with hand-picked items \(6\)/.test(document.querySelector('select.npc-filter').textContent), 'NPC list defaults to the 6 shops with fixed items (AddShopItem)');
     ok(S.ws.diags.filter(d => d.code === 'C_NO_OPEN_BRACE').length === 6, '6 missing-brace warnings');
 
     const lui = [...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MaFl_Lui'));
@@ -484,7 +485,8 @@
       ok(/also used by 5 other places/.test(box.textContent) && /Change it in all 6 places/.test(box.textContent), 'shared text: lists the 5 other tabs, offers "all 6 places"');
       inp(box.querySelector('input[type=text]'), 'Event');
       ok(/Only this one changes: it gets its own text line IDS_CHARACTER_INC_\d+ instead of the shared IDS_CHARACTER_INC_000049/.test(box.textContent), 'checks: own key, the shared one stays');
-      click(btnByText(box, 'Rename'));
+      ok(/^Edit tab 2 name: n\/a/.test(box.querySelector('header').textContent) && btnByText(box, 'Apply changes'), '✎ dialog says what it does: "Edit tab 2 name", button "Apply changes"');
+      click(btnByText(box, 'Apply changes'));
       await waitFor(() => !document.querySelector('.modal input[type=text]'), 'rename closed');
       ok(tabBtns()[1].textContent.startsWith('2 · Event') && S.ws.files.get('character.txt.txt').dirty && S.ws.files.get('character.inc').dirty, 'tab 2 reads "Event"; character.inc + character.txt.txt changed');
       ok(tabBtns()[2].textContent.includes('n/a'), 'tab 3 still reads "n/a"');
@@ -516,7 +518,8 @@
       await waitFor(() => document.querySelector('.modal input[type=text]'), 'rename NPC dialog');
       box = [...document.querySelectorAll('.modal')].pop();
       inp(box.querySelector('input[type=text]'), 'Gem Lady Peach');
-      click(btnByText(box, 'Rename'));
+      ok(/^Edit name: /.test(box.querySelector('header').textContent), '✎ on the name: "Edit name: …"');
+      click(btnByText(box, 'Apply changes'));
       await waitFor(() => !document.querySelector('.modal input[type=text]'), 'rename NPC closed');
       ok($('editor').querySelector('h2').textContent === 'Gem Lady Peach' && S.ws.dirtyFiles().length === 1, 'NPC renamed: only character.txt.txt changed (its key is used once)');
       click($('btn-undo'));
@@ -620,7 +623,7 @@
       ok(pv && pv.querySelector('.board-title').textContent === 'Guild Rules' && /How to win/.test(pv.textContent) && !/#b/.test(pv.textContent), 'preview: the name as title, the codes drawn (not shown)');
       ok(/Saved as MMI_GUILD_RULES, menu 282; text file Client\/Client\/NpcBoard_282\.inc/.test(box.textContent) && /npc-board change/.test(box.textContent), 'says where it goes and that the client needs the change');
       click(btnByText(box, 'Create'));
-      ok(/Guild Rules ✎/.test($('editor').querySelector('.menus').textContent), 'the new menu shows in the right-click row');
+      ok([...$('editor').querySelectorAll('.menus button.board')].some(b => /Guild Rules/.test(b.textContent) && b.querySelector('.pencil')), 'the new menu shows in the right-click row');
       ok(S.ws.dirtyFiles().some(f => f.clientOnly && f.name === 'NpcBoard_282.inc') && !S.ws.files.get('exchange_script.txt').dirty, 'Client/Client/NpcBoard_282.inc to be created; Exchange_Script.txt untouched');
       // the + NPC stage put older bytes back on the fake disk: make the disk hold what this workspace loaded
       for (const f of S.ws.dirtyFiles()) if (!f.clientOnly && res.children.has(f.name)) res.children.get(f.name).bytes = f.bytes;
@@ -639,7 +642,8 @@
       box = lastModal();
       ok(box.querySelector('textarea.board-text').value === '#b#cffffcc00How to win#nc#nb\nKill players for points', 'the form opens with the saved text');
       typeIn(box.querySelector('textarea.board-text'), 'Changed');
-      click(btnByText(box, 'Save'));
+      ok(/^Edit rules text: /.test(box.querySelector('header').textContent), '✎ on a rules menu: "Edit rules text: …"');
+      click(btnByText(box, 'Apply changes'));
       ok(S.ws.boardTextOf(282) === 'Changed', 'text changed');
       click($('btn-undo'));
       ok(S.ws.dirtyFiles().length === 0, 'Undo: back to the saved text');
@@ -653,6 +657,56 @@
       ta.value = '#b#cffffcc00How points are gained#nc#nb\n- Kill a player: 1 point\n- Kill the guild master: 3 points\n#cffff4444Leaving the siege map costs 1 life per minute.#nc';
       ta.dispatchEvent(new Event('input'));
       return;
+    }
+
+    // ---- Edit where / model (task S part 3): same-length rewrite of the NPC's .dyo record
+    {
+      const mod = FRE.ui.modules.find(m => m.id === 'npc');
+      const openNpc = key => { const n = S.ws.chars.byKey.get(key.toLowerCase()); mod.st.show = 'all'; mod.st.sel = mod.npcId(n[n.length - 1]); mod.st.tab = 0; renderAllForTest(); return n[n.length - 1]; };
+      const peach = openNpc('MaFl_Peach');
+      const P = () => FRE.npcEditOps.placementsOf(S.ws, peach)[0];
+      const p0 = P(), dyo0 = S.ws.files.get(p0.file).serialize();
+      click($('editor').querySelector('.place-edit'));
+      await waitFor(() => lastModalAny() && /^Change position \/ model: /.test(lastModalAny().querySelector('header').textContent), 'Edit where / model dialog');
+      let box = lastModalAny();
+      const apply = () => btnByText(box.querySelector('footer'), 'Apply changes');
+      ok(/No change\./.test(box.textContent) && apply().disabled, 'opens on the current spot and model: "No change", Apply greyed');
+      ok(/Players will read here:\s*Flaris/.test(box.querySelector('.nn-where').textContent), 'shows where players read the spot');
+      const typeX = v => { const el = box.querySelector('input[placeholder="x"]'); el.value = v; el.dispatchEvent(new Event('input')); };
+      typeX(String(p0.x + 10));
+      ok(!apply().disabled && /x [\d.]+ → [\d.]+/.test(box.querySelector('.nn-preview').textContent) && /4 bytes rewritten in place, same file size/.test(box.textContent), 'live: x changes, preview says 4 bytes rewritten in place');
+      click(apply());
+      const p1 = P(), dyo1 = S.ws.files.get(p0.file).serialize();
+      let diff = 0; for (let i = 0; i < dyo0.length; i++) if (dyo0[i] !== dyo1[i]) diff++;
+      ok(dyo1.length === dyo0.length && diff > 0 && diff <= 4 && Math.abs(p1.x - (p0.x + 10)) < 0.01 && p1.z === p0.z && p1.y === p0.y && p1.model === p0.model, 'Peach moved 10 to the east: same file size, only the x bytes changed');
+      ok(/✓ \[Jewel Manager\] Peach: moved — not saved yet/.test($('toasts').textContent), 'standard note after the move');
+      click($('btn-undo'));
+      ok(FRE.bytes.bytesEqual(S.ws.files.get(p0.file).serialize(), dyo0), 'Undo: the map file is back');
+      // an NPC in 11 places: pick spot 7, change the model on all spots
+      const pb = openNpc('MaFl_Postbox');
+      const spots0 = FRE.npcEditOps.placementsOf(S.ws, pb);
+      click($('editor').querySelector('.place-edit'));
+      await waitFor(() => lastModalAny() && /^Change position \/ model: /.test(lastModalAny().querySelector('header').textContent), 'Postbox dialog');
+      box = lastModalAny();
+      const spotSel = box.querySelector('select:not(.nn-modelview)');
+      ok(spots0.length === 11 && spotSel && spotSel.options.length === 11, 'Postbox: a Spot list with its 11 places');
+      spotSel.value = '6'; spotSel.dispatchEvent(new Event('change'));
+      box = lastModalAny();
+      const mbox = box.querySelector('select.nn-modelview').closest('.nn-row').querySelector('.combo'), min = mbox.querySelector('input');
+      min.dispatchEvent(new Event('focus')); min.value = 'juria'; min.dispatchEvent(new Event('input'));
+      const opt = [...mbox.querySelectorAll('.combo-opt')].find(o => /Julia/.test(o.textContent));
+      opt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      box = lastModalAny();
+      const all = [...box.querySelectorAll('label')].find(l => /Change the model on all 11 spots/.test(l.textContent)).querySelector('input');
+      ok(/Spot 7: model/.test(box.querySelector('.nn-preview').textContent) && !/Spot 1:/.test(box.querySelector('.nn-preview').textContent), 'model on spot 7 only');
+      all.checked = true; all.dispatchEvent(new Event('change'));
+      ok(/Spot 1: model/.test(box.querySelector('.nn-preview').textContent) && /Spot 11: model/.test(box.querySelector('.nn-preview').textContent), 'ticked: the model goes on all 11 spots');
+      click(btnByText(box.querySelector('footer'), 'Apply changes'));
+      const spots1 = FRE.npcEditOps.placementsOf(S.ws, pb);
+      ok(spots1.length === 11 && spots1[0].model !== spots0[0].model && S.ws.movers.movers.get(spots1[0].model).name === 'Julia' && spots1.every(p => p.model === spots1[0].model) && spots1.every((p, i) => p.x === spots0[i].x && p.angle === spots0[i].angle), 'all 11 Postboxes now use Julia\'s body, nothing else moved');
+      click($('btn-undo'));
+      ok(FRE.npcEditOps.placementsOf(S.ws, pb).every((p, i) => p.model === spots0[i].model) && S.ws.dirtyFiles().length === 0, 'one Undo restores all 11');
+      if (STOP === 'npcmove') { openNpc('MaFl_Peach'); $('toasts').textContent = ''; click($('editor').querySelector('.place-edit')); return; }
     }
 
     // ---- Donation Shop
@@ -807,20 +861,24 @@
     document.querySelectorAll('.modal-back').forEach(m => m.remove());
 
     // ---- Exchanges
-    await openTask('exchange');
-    ok(!S.ws.isEditable('spec_item.txt') && !S.ws.isEditable('character.inc') && S.ws.clientFileNames().join() === 'Exchange_Script.txt', 'Exchanges task: only Exchange_Script.txt is editable and synced');
-    ok(S.mode === 'exchange', 'Exchanges mode');
-    ok(!document.querySelector('#list-extra select') && /9 exchange menus in the game/.test($('list-extra').textContent), 'no filter: only the 9 menus players can really use');
-    ok(S.ws.moduleDiags.exchange.length === 0, 'hidden / unplaced menus are not checked (their old warnings are gone)');
-    ok(document.querySelectorAll('#list .npc').length === 9 && ![...document.querySelectorAll('#list .npc')].some(n => /Bles|Brooks/.test(n.textContent)), 'only in-game NPCs listed (no Bles, no Brooks)');
+    // (in NPC Shops since 2026-10-07: the user asked for exchanges next to the NPC's shop; no Exchanges task)
+    await openTask('npc');
+    ok(S.ws.isEditable('exchange_script.txt') && S.ws.clientFileNames().includes('Exchange_Script.txt'), 'NPC Shops edits and syncs Exchange_Script.txt');
+    ok(Array.isArray(S.ws.moduleDiags.exchange) && S.ws.moduleDiags.exchange.length === 0, 'exchange checks run in NPC Shops (hidden / unplaced menus are not checked)');
+    const exFilt = $('list-extra').querySelector('select');
+    const exOpt = [...exFilt.options].find(o => o.value === 'exchange');
+    ok(exOpt && /NPCs with exchanges \(\d+\)/.test(exOpt.textContent), 'filter "NPCs with exchanges"');
+    exFilt.value = 'exchange'; exFilt.dispatchEvent(new Event('change'));
+    const exList = () => [...document.querySelectorAll('#list .npc')];
+    ok(exList().some(n => /Collins/.test(n.textContent)) && !exList().some(n => /Bles|Brooks/.test(n.textContent)) && !exList().some(n => /^Peach/.test(n.textContent)), 'only in-game NPCs that open an exchange (no Bles, no Brooks, no Peach)');
     const exEd = () => $('editor');
-    click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MMI_COLLECT01')));
-    ok(/Collins/.test(exEd().querySelector('h2').textContent) && exEd().querySelectorAll('.ex-card').length === 8, 'Collins: 8 recipe cards');
+    click(exList().find(n => /MaFl_Collins|Collins/.test(n.textContent)));
+    ok(exEd().querySelector('.tabs .ex-tab.sel') && exEd().querySelectorAll('.ex-card').length === 8, 'Collins opens on his ⇄ tab: 8 exchange cards');
+    ok(!btnByText(exEd(), 'Open in Exchanges'), 'no "Open in Exchanges" button any more');
     ok(/In game:/.test(exEd().querySelector('.ex-card').textContent), 'each card shows the in-game row');
     ok(btnByText(exEd().querySelector('.ex-card'), 'Remove Name Color Scroll (3 Days)') && /Exchange 1/.test(exEd().querySelector('.ex-label').textContent), 'the card is named by its reward: "Exchange 1", "Remove Name Color Scroll (3 Days)"');
     ok(/You get\s*Name Color Scroll \(3 Days\) ×1/.test(exEd().querySelector('.ex-get').textContent), 'card headline: what the player gets');
     ok(/Rewards/.test(exEd().querySelectorAll('.ex-section-title')[0].textContent) && /Costs/.test(exEd().querySelectorAll('.ex-section-title')[1].textContent), 'rewards first, then costs');
-    ok([...exEd().querySelectorAll('.ex-npcs .ex-npc')].some(t => /Collins/.test(t.textContent) && /Flaris/.test(t.textContent) && /Saint Morning/.test(t.textContent) && /Darkon 1, 2/.test(t.textContent) && t.querySelectorAll('button.te').length === 3), 'Collins: his three spots (Flaris, Saint Morning, Darkon 1, 2) with /te');
     if (STOP === 'exchange') return;
     // Try it: the exchange simulator (loaders/exchange-sim.js) on Collins recipe 8 (Scroll of Holy x5)
     click(btnByText(exEd().querySelectorAll('.ex-card')[7], 'Try it'));
@@ -840,9 +898,9 @@
     q1.value = '450'; q1.dispatchEvent(new Event('change'));
     const s1 = S.ws.models.exchange.menus.find(m => m.name === 'MMI_COLLECT01').sets[0];
     ok(s1.condition[0].num.value === 450 && s1.remove[0].num.value === 450, 'ingredient qty written to CONDITION and REMOVE');
-    const colBadge = () => /edited/.test([...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MMI_COLLECT01')).textContent);
+    const colBadge = () => /edited/.test(exList().find(n => /Collins/.test(n.textContent)).textContent);
     ok(colBadge(), 'edit: Collins gets the "edited" badge');
-    ok(/^Undo \(\d+\)$/.test($('btn-undo').textContent) && /MMI_COLLECT01/.test($('btn-undo').title), 'Undo shows how many edits the task has, and its tooltip names the step and the menu');
+    ok(/^Undo \(\d+\)$/.test($('btn-undo').textContent), 'Undo shows how many edits the task has');
     click($('btn-undo'));
     ok(!colBadge(), 'undo the only edit: the badge goes away');
     click($('btn-redo'));
@@ -878,7 +936,8 @@
     if (STOP === 'exrecipe') return;
     click(btnByText(exEd().querySelectorAll('.ex-card')[7], 'Copy'));
     ok(exEd().querySelectorAll('.ex-card').length === 9, 'copy: 9 recipes');
-    click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MMI_COLOSSEUM_REWARD_MIX')));
+    click(exList().find(n => /Rambo/.test(n.textContent)));
+    click([...exEd().querySelectorAll('.tabs .ex-tab')].find(b => b.title.startsWith('MMI_COLOSSEUM_REWARD_MIX:')));
     const mix0 = S.ws.models.exchange.menus.find(m => m.name === 'MMI_COLOSSEUM_REWARD_MIX');
     const second = mix0.sets[1].pay[0].item.name;
     click(exEd().querySelectorAll('.ex-card')[0].querySelector('button[title="Move down"]'));
@@ -888,14 +947,14 @@
     click($('btn-change-task'));
     await waitFor(() => document.querySelector('.modal') && /Unsaved changes/.test(document.querySelector('.modal').textContent), 'unsaved-changes question');
     click(btnByText(document.querySelector('.modal footer'), 'Cancel'));
-    ok(S.task === 'exchange' && S.ws.dirtyFiles().length === 1, 'Cancel keeps the task and the edits');
+    ok(S.task === 'npc' && S.ws.dirtyFiles().length === 1, 'Cancel keeps the task and the edits');
     click($('btn-save'));
     await waitFor(() => btnByText(document, 'Back up and write'), 'review dialog (exchange)');
     click(btnByText(document, 'Back up and write'));
     await waitFor(() => [...document.querySelectorAll('.modal header')].some(h => /^Saved|failed/.test(h.textContent) && !/Client sync/.test(h.textContent)), 'save finished (exchange)');
     const exSrv = res.children.get('Exchange_Script.txt').bytes, exCli = clientDir.children.get('Exchange_Script.txt').bytes;
     ok(FRE.bytes.bytesEqual(exSrv, S.ws.files.get('exchange_script.txt').bytes), 'Exchange_Script.txt saved');
-    ok(/_exchange$/.test([...backups.children.keys()].pop()), 'backup folder is named after the task (..._exchange)');
+    ok(/_npc$/.test([...backups.children.keys()].pop()), 'backup folder is named after the task (..._npc)');
     ok(FRE.bytes.bytesEqual(exCli, lfOnly(exSrv)) && !FRE.bytes.bytesEqual(exCli, clientOriginal.get('Exchange_Script.txt')), 'Client copy got the same change, LF kept');
     document.querySelectorAll('.modal-back').forEach(m => m.remove());
 
@@ -908,7 +967,7 @@
     let refused = false;
     try { await FRE.layout.detectLayout(new FakeDir('Desktop')); } catch (e) { refused = /not the source folder/.test(e.message); }
     ok(refused, 'a folder without Server/Resource is refused');
-    if (STOP === 'end') click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MMI_COLLECT01')));
+    if (STOP === 'end') click([...document.querySelectorAll('#list .npc')].find(n => /Collins/.test(n.textContent)));
   }
 
   document.addEventListener('DOMContentLoaded', () => scenario().catch(e => ok(false, 'exception: ' + e.message + ' ' + e.stack)).then(() => {

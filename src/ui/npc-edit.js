@@ -16,7 +16,7 @@
   }
 
   // One text box + checks + "what will be written". plan(text, everywhere) -> { parts, how, others }
-  function textDialog(ctx, npc, { title, label, value, tok, action, describe, plan }) {
+  function textDialog(ctx, npc, { title, label, value, tok, action, describe, plan, what }) {
     const ws = ctx.ws;
     let text = value || '', everywhere = false, timer = null;
     const others = tok && tok.stringKey ? O().keyUses(ws, tok.stringKey).filter(u => (u.rec.args.name || u.rec.args.title || u.rec.args.image) !== tok) : [];
@@ -55,7 +55,7 @@
       { label: 'Cancel' },
       { label: action, cls: 'primary', onClick: () => {
         if (FRE.newNpcText(text) || (value && text === value && !everywhere)) return false;
-        ctx.editGroup(() => plan(text, everywhere).parts, `${title}: ${text}`, ['npc|' + npcId(npc)]);
+        ctx.editGroup(() => plan(text, everywhere).parts, `${what || title}: ${text}`, ['npc|' + npcId(npc)]);
       } },
     ] });
     btn = m.el.querySelector('footer button.primary');
@@ -67,7 +67,7 @@
   function renameNpc(ctx, npc) {
     const rec = O().nameRec(npc);
     return textDialog(ctx, npc, {
-      title: `Rename ${npc.name || npc.key}`, label: 'Name players see', value: npc.name || '', tok: rec && rec.args.name, action: 'Rename',
+      title: `Edit name: ${npc.name || npc.key}`, label: 'Name players see', value: npc.name || '', tok: rec && rec.args.name, action: 'Apply changes', what: `Rename ${npc.name || npc.key}`,
       describe: t => `Above the NPC's head and in its windows: "${t}". The key ${npc.key} stays the same (scripts and maps use it).`,
       plan: (t, all) => O().renameNpc(ctx.ws, npc, t, all),
     });
@@ -77,7 +77,7 @@
     const rec = O().slotRec(npc, slot);
     const removable = O().removableTab(npc);
     const m = textDialog(ctx, npc, {
-      title: `Rename tab ${slot + 1} of ${npc.name || npc.key}`, label: 'Tab name players see', value: npc.slotTitles[slot] || '', tok: rec && rec.args.title, action: 'Rename',
+      title: `Edit tab ${slot + 1} name: ${npc.slotTitles[slot] || ''} (${npc.name || npc.key})`, label: 'Tab name players see', value: npc.slotTitles[slot] || '', tok: rec && rec.args.title, action: 'Apply changes', what: `Rename tab ${slot + 1} of ${npc.name || npc.key}`,
       describe: t => `In the shop window (right-click → Trade), tab ${slot + 1} reads "${t}".`,
       plan: (t, all) => O().renameTab(ctx.ws, npc, slot, t, all),
     });
@@ -92,7 +92,7 @@
   function addTab(ctx, npc, after) {
     const slot = O().nextSlot(npc);
     return textDialog(ctx, npc, {
-      title: `+ Tab for ${npc.name || npc.key}`, label: `Name of tab ${slot + 1}`, value: '', tok: null, action: 'Add tab',
+      title: `+ Tab for ${npc.name || npc.key}`, label: `Name of tab ${slot + 1}`, value: '', tok: null, action: 'Add tab', what: `+ Tab for ${npc.name || npc.key}`,
       describe: t => `The shop window gets a tab "${t}" at position ${slot + 1}. Add items to it with + in the item list.`,
       plan: t => { const r = O().addTab(ctx.ws, npc, t); if (after) after(r.slot); return r; },
     });
@@ -145,5 +145,94 @@
     ] });
   }
 
-  FRE.ui.npcEdit = { renameNpc, renameTab, addTab, addMenu, removeMenu, isPlaceholder };
+  // ✎ next to "Where:": move the NPC on its map and / or change its model (task S part 3). Same-length rewrite of
+  // its .dyo record (npcEditOps.placePlan), Server + Client. One spot at a time; the model can go on all spots.
+  function editPlace(ctx, npc, spotIndex = 0) {
+    const ws = ctx.ws;
+    const spots = O().placementsOf(ws, npc);
+    if (!spots.length) { FRE.dom.toast(`${npc.name || npc.key} stands on no map the server loads.`, 'bad'); return; }
+    const name = npc.name || npc.key;
+    const modelName = id => { const d = ws.defines.byValue('MI_', id); const mv = ws.movers && ws.movers.movers.get(id); return (mv && mv.name) || d || String(id); };
+    const spotText = (p, i) => {
+      const w = FRE.newNpcSim.whereAt(ws, p.map, p.x, p.z);
+      return `${i + 1} · ${w ? w.label : p.map} · /position ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`;
+    };
+    const place = { modelView: 'used', cache: {} };
+    let k = Math.min(spotIndex, spots.length - 1), form, allSpots = false, where = null, btn = null;
+    function start() {
+      const p = spots[k], r = FRE.ui.npcPlace.regionAt(ws, p.map, p.x, p.z, place.cache);
+      // the record's own floats, so an untouched field writes nothing
+      form = { region: r ? r.value : `${p.map}|${p.map}`, map: p.map, x: p.x, y: p.y, z: p.z, angle: p.angle, nextTo: null, model: ws.defines.byValue('MI_', p.model) || '' };
+    }
+    start();
+    const body = h('div.newnpc'), checks = h('div.nn-problems'), preview = h('div.nn-preview');
+    const to = () => ({ x: form.x, y: form.y, z: form.z, angle: form.angle, model: form.model || null });
+    const modelSpots = () => allSpots ? spots.map((_, i) => i) : [k];
+
+    function render() {
+      body.textContent = '';
+      if (spots.length > 1) {
+        body.appendChild(h('div.nn-row', FRE.ui.fieldLabel('Spot', true), h('select', { on: { change: e => { k = Number(e.target.value); start(); render(); } } },
+          spots.map((p, i) => h('option', { value: i, selected: i === k }, spotText(p, i)))),
+          h('span.muted.small', `${name} stands in ${spots.length} places (one record each). Pick the one to change.`)));
+      }
+      body.appendChild(h('h3', 'Where'));
+      where = FRE.ui.npcPlace.whereFields(ctx, form, { cache: place.cache, onlyMap: spots[k].map, skipAt: spots[k].at, rerender: render, changed: refresh });
+      where.rows.forEach(r => body.appendChild(r));
+      body.appendChild(h('h3', 'Model'));
+      body.appendChild(FRE.ui.npcPlace.modelField(ctx, form, place, { cache: place.cache, rerender: render, changed: refresh,
+        keepModel: ws.defines.byValue('MI_', spots[k].model), note: `What the NPC looks like. Now: ${modelName(spots[k].model)}.` }));
+      if (spots.length > 1) body.appendChild(h('label.nn-row.small', h('input', { type: 'checkbox', checked: allSpots, on: { change: e => { allSpots = e.target.checked; refresh(); } } }),
+        ` Change the model on all ${spots.length} spots (the position changes only on spot ${k + 1})`));
+      body.append(...FRE.ui.formFooter({ checks, action: 'Apply changes', previewTitle: 'What players will see / what will be written', preview }));
+      refresh();
+    }
+
+    function refresh() {
+      if (where) where.refreshWhere();
+      checks.textContent = ''; preview.textContent = '';
+      const diags = [];
+      const add = (code, severity, field, message) => diags.push({ code, severity, field, message, key: `${code}|${field}`, module: 'npc' });
+      FRE.validateNpcSpot(ws, ws.files.get(spots[k].file), form, add, spots[k].at);
+      if (form.model !== ws.defines.byValue('MI_', spots[k].model)) FRE.validateNpcModel(ws, form.model, add);
+      const blocked = diags.some(d => d.severity === 'BLOCK');
+      let plan = null;
+      if (!blocked) { try { plan = O().placePlan(ws, npc, k, to(), modelSpots()); } catch (e) { add('NN_POS', 'BLOCK', 'position', e.message); } }
+      if (plan && !plan.changes.length) checks.appendChild(h('div.muted', 'No change.'));   // the spot as it is today: no old warnings
+      else {
+        diags.forEach(d => checks.appendChild(FRE.ui.diagRow(d)));
+        if (plan && !diags.length) checks.appendChild(h('div.ok', '✓ No problem found.'));
+      }
+      if (btn) btn.disabled = !plan || !plan.changes.length;
+      if (!plan) { preview.appendChild(h('p.muted', 'Fix the ⛔ problems to see what changes.')); return; }
+      if (!plan.changes.length) return;
+      const fmtv = (c, v) => c.field === 'model' ? modelName(v) : c.field === 'angle' ? `${Math.round(v * 10) / 10}°` : String(Math.round(v * 10) / 10);
+      const label = { x: 'x', y: 'height (y)', z: 'z', angle: 'facing', model: 'model' };
+      preview.appendChild(h('ul.plan.small', plan.changes.map(c => h('li', `${spots.length > 1 ? `Spot ${c.spot + 1}: ` : ''}${label[c.field]} ${fmtv(c, c.from)} → ${fmtv(c, c.to)}`))));
+      const w = FRE.newNpcSim.whereAt(ws, form.map, form.x, form.z);
+      if (w && plan.changes.some(c => c.field !== 'model')) preview.appendChild(h('p.small', `Players will find ${name} at ${w.label}${w.te ? ` (GM: ${w.te})` : ''}.`));
+      for (const part of plan.parts) {
+        const sf = ws.files.get(part.file);
+        preview.appendChild(h('div.muted.small', `${sf.dir ? sf.dir + '/' : ''}${sf.name} (Server + Client): ${part.splices.length * 4} bytes rewritten in place, same file size — ` +
+          part.splices.map(s => `offset ${s.start}`).join(', ')));
+      }
+    }
+
+    const m = FRE.dom.modal({ title: `Change position / model: ${name}`, body, wide: true, buttons: [
+      { label: 'Cancel' },
+      { label: 'Apply changes', cls: 'primary', onClick: () => {
+        if (btn && btn.disabled) return false;
+        let plan;
+        try { plan = O().placePlan(ws, npc, k, to(), modelSpots()); } catch (e) { FRE.dom.toast(e.message, 'bad'); return false; }
+        const moved = plan.changes.some(c => c.field !== 'model'), remodel = plan.changes.some(c => c.field === 'model');
+        ctx.editGroup(() => O().placePlan(ws, npc, k, to(), modelSpots()).parts,
+          `${name}: ${[moved ? 'moved' : null, remodel ? `model ${modelName(ws.defines.defines.get(form.model))}` : null].filter(Boolean).join(', ')}`, ['npc|' + npcId(npc)]);
+      } },
+    ] });
+    btn = m.el.querySelector('footer button.primary');
+    render();
+    return m;
+  }
+
+  FRE.ui.npcEdit = { editPlace, renameNpc, renameTab, addTab, addMenu, removeMenu, isPlaceholder };
 })(globalThis.FRE = globalThis.FRE || {});

@@ -10,17 +10,26 @@
   const npcId = npc => `${npc.file}|${npc.key}`;
   const isShopNpc = npc => npc.statements.some(r => FRE.character.shopEntry(r)) || npc.venderType > 0;
   const selNpc = ctx => (ctx.ws && st.sel ? ctx.ws.chars.npcs.find(n => npcId(n) === st.sel) : null) || null;
+  // The exchange menus an NPC opens (names, in its AddMenu order, once each), with their Exchange_Script.txt menu.
+  const exMenuOf = (ws, m) => (ws.models.exchange && ws.models.exchange.menus.find(x => x.name === m && !x.isJunk)) || null;
+  const exMenusOf = (ws, npc) => [...new Set(npc.menus.map(v => ws.defines.byValue('MMI_', v) || String(v)))]
+    .filter(m => ws.exchangeMenus.has(m) && exMenuOf(ws, m));
+  // the "NPCs with exchanges" filter: NPCs players can use (on a map, shown) that open at least one exchange menu
+  let listWs = null;
+  const hasExchanges = npc => !!listWs && exMenusOf(listWs, npc).length > 0
+    && (!listWs.placed || FRE.world.npcStatus(npc, listWs.placed).inGame !== false);
   const TYPES = [{ v: 0, label: 'Penya shop' }, { v: 1, label: 'Red Chip shop' }, { v: 2, label: 'Donate Chip shop' }];
   // NPC list filter: which NPCs to list
   // editable = has fixed items (AddShopItem / AddVenderItem2). Rule items are editable too (ui/shop-rules.js),
   // but listing every rule shop here would hide the few shops with hand-set prices.
   const hasEditable = npc => npc.statements.some(r => { const e = FRE.character.shopEntry(r); return e && e.kind !== 'generated'; });
   const SHOW = [
-    { v: 'editable', label: 'Shops with fixed items', test: hasEditable },
+    { v: 'editable', label: 'Shops with hand-picked items', test: hasEditable },
     { v: 'shops', label: 'All shops', test: isShopNpc },
     { v: 'penya', label: 'Penya shops', test: n => isShopNpc(n) && FRE.shopOps.shopType(n.venderType) === 0 },
     { v: 'red', label: 'Red Chip shops', test: n => FRE.shopOps.shopType(n.venderType) === 1 },
     { v: 'donate', label: 'Donate Chip shops', test: n => FRE.shopOps.shopType(n.venderType) === 2 },
+    { v: 'exchange', label: 'NPCs with exchanges', test: hasExchanges },
     { v: 'all', label: 'All NPCs', test: () => true },
   ];
   // hover text of a right-click menu: what a click does, in plain words (newNpcSim.rightClick / opensOf)
@@ -36,6 +45,8 @@
       : 'Opens its own window.');
     return `${what}${x && x.when ? ` Only if: ${x.when}.` : ''}`;
   }
+  // the tab an NPC opens on: its first exchange under the "NPCs with exchanges" filter, else shop tab 1
+  const firstTab = (ws, npc) => { const ex = st.show === 'exchange' ? exMenusOf(ws, npc) : []; return ex.length ? 'ex:' + ex[0] : 0; };
   const showTest = () => (SHOW.find(o => o.v === st.show) || SHOW[0]).test;
 
   function edit(ctx, npc, make, label) {
@@ -50,15 +61,28 @@
     el.appendChild(h('div.row.ex-tools', { style: 'margin:8px 0' },
       h('span', h('b', label), h('span.def', ' ' + menu.name), h('span.muted', ` · ${Math.min(menu.sets.length, 30)} exchange${menu.sets.length === 1 ? '' : 's'} in the window`)),
       editable && menu.closed && FRE.ui.menuForm ? h('button.small', { title: 'Add exchanges to this menu', on: { click: () => FRE.ui.menuForm.openNewExchanges(ctx, menu) } }, '+ New exchange') : null,
-      h('button.small', { title: 'The same menu in the Exchanges task (asks to save first when there are unsaved edits)', on: { click: () => ctx.openTask('exchange', c => {
-        const mod = FRE.ui.modules.find(x => x.id === 'exchange');
-        if (mod) { mod.st.menu = menu.name; mod.st.pick = null; }
-        c.setQuery('');
-      }) } }, 'Open in Exchanges'),
       editable ? null : h('span.tag.bad', 'read-only')));
+    // the same menu id on other NPCs: they open the same window, so an edit here changes theirs too
+    const others = ((ws.npcInfoByMenu() || new Map()).get(menu.mmi.value) || []).filter(x => x.npc !== npc && x.inGame !== false);
+    const otherNames = [...new Set(others.map(x => x.name))];
+    if (otherNames.length) el.appendChild(h('p.small.warn.ex-shared', `Also opened by ${otherNames.join(', ')}: they show the same window, so a change here changes theirs too.`));
     el.appendChild(h('p.muted.small', `What players see after right-click ${npc.name || npc.key} → ${label}. Chances are in percent; changing one moves the others so they always add up to 100%. Try it presses OK in the game's exchange window.`));
     if (!menu.sets.length) el.appendChild(h('p.muted', 'No exchange yet: the window opens empty. Press + New exchange.'));
     xv.cards(ctx, menu).forEach(c => el.appendChild(c));
+  }
+
+  // "Change position / model" (map-pin icon) next to the name: where it stands and its body (task S part 3)
+  const PIN = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="#ea4335" d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7z"/><circle cx="12" cy="9" r="2.6" fill="#fff"/></svg>';
+  function placeButton(ctx, npc) {
+    const ws = ctx.ws;
+    if (!ws.placed) return null;
+    const spots = FRE.npcEditOps.placementsOf(ws, npc);
+    if (!spots.length || !spots.every(p => ws.isEditable(p.file))) return null;
+    const b = h('button.place-edit', { title: `Move ${npc.name || npc.key} or change its model (its map record, Server + Client)${spots.length > 1 ? `; it stands in ${spots.length} places` : ''}`,
+      on: { click: () => FRE.ui.npcEdit.editPlace(ctx, npc) } });
+    b.innerHTML = PIN;
+    b.appendChild(h('span', 'Change position / model'));
+    return b;
   }
 
   function shopTypeSelect(ctx, npc, canEdit) {
@@ -175,8 +199,9 @@
     st, npcId,
 
     onLoad(ctx) {
+      listWs = ctx.ws;
       const first = ctx.ws.chars.npcs.find(showTest()) || ctx.ws.chars.npcs.find(isShopNpc);
-      st.sel = first ? npcId(first) : null; st.tab = 0;
+      st.sel = first ? npcId(first) : null; st.tab = first ? firstTab(ctx.ws, first) : 0;
     },
 
     isListed: npc => showTest()(npc),
@@ -189,14 +214,16 @@
     },
 
     listExtra(ctx) {
+      listWs = ctx.ws;
       const npcs = ctx.ws ? ctx.ws.chars.npcs : [];
-      return h('select.npc-filter', { title: 'Which NPCs to list', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
+      return h('select.npc-filter', { title: 'Which NPCs to list. Hand-picked items: a shop where at least one item was added one by one (with a price you can set), not only every item of a type (auto)', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
         SHOW.map(o => ({ o, n: npcs.filter(o.test).length }))
           .filter(x => x.n > 0 || x.o.v === st.show)            // e.g. no Donate Chip NPC since 7d7df4f9: option hidden
           .map(({ o, n }) => h('option', { value: o.v, selected: o.v === st.show }, `${o.label} (${n})`)));
     },
 
     renderList(el, ctx) {
+      listWs = ctx.ws;
       const q = ctx.query.toLowerCase();
       const diagBy = new Map();
       for (const d of ctx.ws.diags) if (d.npcKey && d.severity !== 'INFO') {
@@ -212,10 +239,10 @@
         if (q && !label.toLowerCase().includes(q) && !npc.key.toLowerCase().includes(q)) continue;
         const id = npcId(npc), dg = diagBy.get(id);
         shown++;
-        el.appendChild(h('div.npc' + (id === st.sel ? '.sel' : ''), { on: { click: () => { st.sel = id; st.tab = 0; if (FRE.ui.exchangeView) FRE.ui.exchangeView.clearPick(); ctx.renderAll(false); } } },
+        el.appendChild(h('div.npc' + (id === st.sel ? '.sel' : ''), { on: { click: () => { st.sel = id; st.tab = firstTab(ctx.ws, npc); if (FRE.ui.exchangeView) FRE.ui.exchangeView.clearPick(); ctx.renderAll(false); } } },
           h('div.n', h('span', label),
             h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : null,
-              ctx.edited.has('npc|' + id) ? h('span.tag.edit', 'edited') : null,
+              ctx.edited.has('npc|' + id) || exMenusOf(ctx.ws, npc).some(m => ctx.edited.has('ex|' + m)) ? h('span.tag.edit', 'edited') : null,
               dg && dg.b ? h('span.tag.bad', '⛔' + dg.b) : dg && dg.w ? h('span.tag.warn', '⚠' + dg.w) : null)),
           h('div.k', `${npc.key} · ${npc.file}`),
           ctx.ws.area ? h('div.k.where-short', FRE.ui.whereText(ctx.ws.whereOf(npc.key))) : null));
@@ -237,14 +264,15 @@
 
       const E = FRE.npcEditOps, canTexts = E.canEditTexts(ws, npc);
       el.appendChild(h('div.npc-title', h('h2', npc.name || npc.key),
-        canTexts ? h('button.icon', { title: 'Rename this NPC (the name players see; the key stays)', on: { click: () => FRE.ui.npcEdit.renameNpc(ctx, npc) } }, '✎') : null,
+        canTexts ? h('button.icon.edit-btn', { title: 'Edit the name (the name players see; the key stays)', on: { click: () => FRE.ui.npcEdit.renameNpc(ctx, npc) } }, FRE.ui.pencil()) : null,
+        placeButton(ctx, npc),
         h('span.def', npc.key),
         h('span.line', `${npc.file}:${f.lineOf(npc.start) + 1}`),
         shopTypeSelect(ctx, npc, canEdit),
         canEdit ? null : h('span.tag.bad', 'read-only')));
       if (ws.placed) {
         const status = FRE.world.npcStatus(npc, ws.placed);
-        el.appendChild(h('div', FRE.ui.whereLine(ws.whereOf(npc.key)),
+        el.appendChild(h('div.where-row', FRE.ui.whereLine(ws.whereOf(npc.key)),
           status.inGame === false && status.maps.length ? h('span.tag.warn', { title: 'CWorld::IsUsableDYO2: the WorldServer does not load this NPC' }, status.why) : null));
       }
       // a NPC made with "+ New NPC": what the game will load (loaders/newnpc-sim.js)
@@ -255,10 +283,9 @@
       }
       const menus = npc.menus.map(v => D.byValue('MMI_', v) || String(v));
       // exchange menus: the label players read + how many exchanges; each has its own tab next to the shop tabs
-      const exModel = ws.models.exchange;
-      const exMenu = m => (exModel && exModel.menus.find(x => x.name === m && !x.isJunk)) || null;
+      const exMenu = m => exMenuOf(ws, m);
       const labelOf = m => { const id = D.defines.get(m); const t = id === undefined || !ws.texts ? null : ws.texts.byId.get(FRE.newNpcSim.TID_MMI_DIALOG + id); return t ? t.text : pretty(m); };
-      const exNames = FRE.ui.exchangeView ? [...new Set(menus.filter(m => ws.exchangeMenus.has(m) && exMenu(m)))] : [];
+      const exNames = FRE.ui.exchangeView ? exMenusOf(ws, npc) : [];
       const showTab = t => { if (FRE.ui.exchangeView) FRE.ui.exchangeView.clearPick(); st.tab = t; ctx.renderAll(false); };
       if (typeof st.tab === 'string' && !exNames.includes(st.tab.slice(3))) st.tab = 0;
       const ownMenu = new Set(npc.statements.filter(r => r.cmd === 'AddMenu').map(r => r.args.menu.value));
@@ -270,7 +297,7 @@
       el.appendChild(h('div.menus', h('span.menus-label', { title: 'What players see when they right-click this NPC.' }, 'Right-click menu:'), order.map(i => {
         const m = menus[i], x = rc.get(npc.menus[i]);
         const label = (x && x.label) || pretty(m);
-        if (x && x.opens && x.opens.board) return h('span.tag.exch-wrap', h('button.tag.board', { title: menuHelp(m, x), on: { click: () => FRE.ui.menuChooser.boardForm(ctx, npc, { id: npc.menus[i], name: m }) } }, `${label} ✎`), rmMenu(i, m));
+        if (x && x.opens && x.opens.board) return h('span.tag.exch-wrap', h('button.tag.board', { title: menuHelp(m, x), on: { click: () => FRE.ui.menuChooser.boardForm(ctx, npc, { id: npc.menus[i], name: m }) } }, label, ' ', FRE.ui.pencil(12)), rmMenu(i, m));
         if (!exNames.includes(m)) return h('span.tag', { title: menuHelp(m, x) }, label, rmMenu(i, m));
         const n = Math.min(exMenu(m).sets.length, 30);
         return h('span.tag.exch-wrap', h('button.tag.exch', { title: `Swap items for other items (${n}). Click to edit.`,
@@ -291,7 +318,7 @@
         tabs.appendChild(h('button' + (sel ? '.sel' : '') + (named(t) ? (FRE.ui.npcEdit.isPlaceholder(npc.slotTitles[t]) ? '.placeholder' : '') : '.unnamed'),
           { title: named(t) ? `Tab ${t + 1} (slot ${t} in the file)` : 'No AddVendorSlot: the game shows no such tab, so these items are invisible', on: { click: () => showTab(t) } },
           named(t) ? '' : '⚠ ', tabLabel(t), h('span.count', n ? `(${n})` : ''),
-          sel && named(t) && canTexts ? h('span.tab-edit', { title: 'Rename this tab', on: { click: e => { e.stopPropagation(); FRE.ui.npcEdit.renameTab(ctx, npc, t); } } }, ' ✎') : null));
+          sel && named(t) && canTexts ? h('span.tab-edit', { title: 'Edit this tab\'s name', on: { click: e => { e.stopPropagation(); FRE.ui.npcEdit.renameTab(ctx, npc, t); } } }, ' ', FRE.ui.pencil(12)) : null));
       }
       if (canTexts && E.nextSlot(npc) !== null) {
         tabs.appendChild(h('button.add-tab', { title: `Add tab ${E.nextSlot(npc) + 1}: a name players see in the shop window (AddVendorSlot, the d11123ac way)`,
@@ -398,6 +425,17 @@
     },
 
     locate(d, ctx) {
+      if (d.module === 'exchange') {           // an exchange problem: the first NPC players use that opens the menu, on its ⇄ tab
+        const ex = ctx.ws.models.exchange;
+        const m = ex && ex.menus.find(x => d.start >= x.start && d.start < Math.max(x.end, x.start + 1));
+        const users = m ? ((ctx.ws.npcInfoByMenu() || new Map()).get(m.mmi.value) || []) : [];
+        const u = users.find(x => x.inGame) || users[0];
+        if (!u || !exMenusOf(ctx.ws, u.npc).includes(m.name)) return false;
+        st.sel = npcId(u.npc); st.tab = 'ex:' + m.name;
+        if (!showTest()(u.npc)) st.show = 'exchange';
+        if (FRE.ui.exchangeView) FRE.ui.exchangeView.clearPick();
+        return true;
+      }
       const npc = d.npcKey && ctx.ws.chars.npcs.find(n => n.key === d.npcKey && n.file === d.file);
       if (!npc) return false;
       st.sel = npcId(npc);
