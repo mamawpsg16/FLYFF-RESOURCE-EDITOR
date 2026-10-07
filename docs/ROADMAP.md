@@ -517,6 +517,15 @@ New box:  [ Infinity Treasure Box ]   Type: (•) 1 random item  ( ) everything 
 - The description is written from the contents: "Gives one of: Scroll of Awakening (40%), …" / "Contains: Tuxedo Suit, Tuxedo Gloves, Tuxedo Shoes".
 - After saving, offer to put the box in a shop / the Donation Shop / an exchange / a monster's drops (links to those editors). No commit of the user's has added a box yet: the first one needs the in-game check (§ Deferred).
 
+**Box item settings (asked 2026-10-07).** The box's own `Spec_Item.txt` row (Server + Client), checked against the C++ before writing this:
+
+| Setting (UI words) | Field | What the server really does |
+|---|---|---|
+| **Price** ("costs N Penya in a shop") | `dwCost` (token 12) | A Penya shop sells it for `dwCost` (unless an `AddShopItem` price overrides it server-wide, see task S). Selling it back to an NPC pays **`dwCost / 4`** (`CDPSrvr` sell code, `WORLDSERVER/DPSrvr.cpp:3760`). Show both: "Shop price 100,000 · sells back for 25,000". |
+| **Can be traded** (on/off) | `dwFlag` bit `IP_FLAG_BINDS` = 0x01 (token 17; `_Common/ProjectCmn.h:360`) | **Not `bCanTrade`:** that column is loaded (`ProjectCmn.cpp:822`) but never used anywhere. The real block is `CItemElem::IsBinds` (`_Common/Item.cpp:434`), checked by `CVTInfo::TradeSetItem2` (`_Common/MoverItem.cpp:221`, "can't trade this item"). Off = set the bit. Note shown in the UI: any copy with a time limit is also always untradeable. Check the private shop and NPC sell paths before promising more than "can't be traded". |
+| **Stack size** ("up to N in one bag slot") | `dwPackMax` (token 4) | Existing boxes use 1; Moonstones and scrolls use 999. Also the cap for amounts INSIDE other boxes (a line's amount must be ≤ that item's `dwPackMax`). |
+| **Level needed to open** | `dwLimitLevel1` (token 128) | ⚠ It is enforced only when EQUIPPING (`_Common/MoverEquip.cpp:1696`, `TID_GAME_REQLEVEL`); the client only colours it (`_Interface/WndItemCtrl.cpp:354`). **No check was found when USING a box** (`DoUseGiftbox` / `DoUsePackItem`). `nMinLimitLevel` / `nMaxLimitLevel` are only checked for Scrolls of Amplification (`_Common/MoverSkill.cpp:3216`). So: show this setting greyed with "needs a small C++ change to work for boxes" until a level check is added in the use path (a TODO in V19, not editor work). |
+
 **Box look picker (asked 2026-10-07: "choose a type of box, with a preview"):**
 - A gallery of every box icon in the game: 66 different icons today, used by 1,330 box items, all present in `Client/Item/` as `.dds`. Each tile shows the icon, an example box name and how many boxes use it. Search by name, filter random / set.
 - Most used: `Itm_SysSysScrBxLuck.dds` "Box of Lucky" (472 boxes), `itm_EveBalPBox.dds` (280), `itm_RandomPackBox01-32.dds` (133), plus treasure chests, gift boxes, seedings, bags, beads, eggs….
