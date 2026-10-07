@@ -517,6 +517,17 @@ New box:  [ Infinity Treasure Box ]   Type: (•) 1 random item  ( ) everything 
 - The description is written from the contents: "Gives one of: Scroll of Awakening (40%), …" / "Contains: Tuxedo Suit, Tuxedo Gloves, Tuxedo Shoes".
 - After saving, offer to put the box in a shop / the Donation Shop / an exchange / a monster's drops (links to those editors). No commit of the user's has added a box yet: the first one needs the in-game check (§ Deferred).
 
+**Box look picker (asked 2026-10-07: "choose a type of box, with a preview"):**
+- A gallery of every box icon in the game: 66 different icons today, used by 1,330 box items, all present in `Client/Item/` as `.dds`. Each tile shows the icon, an example box name and how many boxes use it. Search by name, filter random / set.
+- Most used: `Itm_SysSysScrBxLuck.dds` "Box of Lucky" (472 boxes), `itm_EveBalPBox.dds` (280), `itm_RandomPackBox01-32.dds` (133), plus treasure chests, gift boxes, seedings, bags, beads, eggs….
+- A mock-up of all 66 was shown to the user on 2026-10-07; aim for that look: dark background, grid, name + count under each icon.
+- Picking a look copies:
+  - the icon file name into the box's `Spec_Item.txt` row (`szIcon`);
+  - the box's ground model line in `mdlDyna.inc` from a box that uses that icon. Most boxes use the common `"SysSysScrBxCom"` model; copy the line, change only the `II_` id.
+- **Needs a `.dds` reader in the editor** (it only has `ui/tga.js`): DXT1/3/5 + uncompressed. Treat the magenta key colour (255, 0, 255) as transparent, as the client does. Show icons at 2–3× with smoothing off, so they stay crisp.
+- Optional later: **upload your own icon** (PNG → 32×32 with the magenta key, written as an uncompressed `.dds` to `Client/Item/`). Check in game that the client loads an uncompressed `.dds` before offering it.
+- The preview also shows the icon as it looks in an inventory slot, with the box name and the generated description as the hover tooltip (reuse `loaders/item-tooltip.js`).
+
 **Nesting:** a random box may give a pack box (e.g. a 5% chance of a whole fashion set). Show the nested contents in the preview.
 
 **Simulator:** port `CGiftboxMan::Open` / `Verify` (with the server's `xRandom`) and `DoUseGiftbox` / `DoUsePackItem`, including bag space, the bound flag, time limits and +upgrade:
