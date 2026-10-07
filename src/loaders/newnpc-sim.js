@@ -124,7 +124,7 @@
     for (const w of g.where || []) out.push(`Where: ${FRE.area.label ? FRE.area.label(w) : w.caption} · GM: ${w.te}`);
     out.push('Right-click: ' + (g.menus.length ? g.menus.map(m => (m.label || m.define || m.id) + (m.when ? ` (${m.when})` : '') +
       (m.opens ? ` [exchange window: ${m.opens.sets ? m.opens.sets + ' exchange' + (m.opens.sets === 1 ? '' : 's') : 'EMPTY'}]` : '')).join(', ') : '(no menu)'));
-    for (const t of g.tabs) out.push(`Tab ${t.slot} "${t.title === null ? '(no title)' : t.title}": ${t.items.length} item(s)` +
+    for (const t of g.tabs) out.push(`Tab ${t.slot + 1} "${t.title === null ? '(no title)' : t.title}": ${t.items.length} item(s)` +
       (t.items.length ? ' — ' + t.items.slice(0, 6).map(itemName).join(', ') + (t.items.length > 6 ? ', …' : '') : '') + (t.dropped ? ` (${t.dropped} left out)` : ''));
     return out;
   }

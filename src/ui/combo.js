@@ -2,12 +2,15 @@
 // appear in the option's label or its extra search text. Keys: ↑ ↓ to move, Enter to pick, Esc to close.
 //   FRE.ui.combo({ options: [{ v, label, group?, find? }], value, placeholder, onPick(v), onNew? }) -> element
 //   onNew: { label: text => 'row text', pick(text) }: a first row that takes the typed text as a new value
+//   wordStart: match typed words at the start of words only
 (function (FRE) {
   'use strict';
   const { h } = FRE.dom;
   const MAX = 300;
 
-  function combo({ options, value, placeholder = 'Type to search…', onPick, onNew = null }) {
+  // wordStart: each typed word must match the START of a word ("ra" finds "Raised pets", not "Upgrade")
+  const esc = w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  function combo({ options, value, placeholder = 'Type to search…', onPick, onNew = null, wordStart = false }) {
     const cur = () => options.find(o => String(o.v) === String(value));
     const input = h('input.combo-input', { type: 'text', placeholder, value: cur() ? cur().label : '', autocomplete: 'off' });
     const list = h('div.combo-list');
@@ -17,7 +20,8 @@
 
     function paint(q) {
       const words = q.toLowerCase().split(/\s+/).filter(Boolean);
-      shown = options.filter(o => words.every(w => (o.label + ' ' + (o.find || '') + ' ' + (o.group || '')).toLowerCase().includes(w)));
+      const hit = (hay, w) => wordStart ? new RegExp('(^|[^a-z0-9])' + esc(w)).test(hay) : hay.includes(w);
+      shown = options.filter(o => words.every(w => hit((o.label + ' ' + (o.find || '') + ' ' + (o.group || '')).toLowerCase(), w)));
       if (onNew && q.trim()) shown.unshift({ v: null, label: onNew.label(q.trim()), typed: q.trim() });
       list.textContent = '';
       let group = null;

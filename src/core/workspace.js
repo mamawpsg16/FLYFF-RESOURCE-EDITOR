@@ -386,7 +386,7 @@
         job: g('dwItemJob'), jobName: g('dwItemJob') === -1 ? null : D.byValue('JOB_', g('dwItemJob')),
         level: g('dwLimitLevel1'), atkMin: g('dwAbilityMin'), atkMax: g('dwAbilityMax'),
         grade, rarity: grade === 100 ? 'normal' : grade === 200 ? 'unique' : grade === 300 ? 'ultimate' : grade === 400 ? 'baruna' : 'other',
-        cost: g('dwCost'), chipCost: g('dwReferValue1'), icon: g('szIcon'), packMax: g('dwPackMax'),
+        cost: g('dwCost'), chipCost: g('dwReferValue1'), referStat1: g('dwReferStat1'), icon: g('szIcon'), packMax: g('dwPackMax'),
       };
     }
   }

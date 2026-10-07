@@ -47,6 +47,7 @@
     // Repeated edits of the same field within 2 s (typing) are folded into one undo step.
     edit(lowerFile, make, label, key) {
       const f = S.ws.files.get(lowerFile);
+      const said = FRE.dom.toasts();
       try {
         const splices = make(f.text);
         if (!splices.length) return;
@@ -55,15 +56,17 @@
         tagLast(key ? [key] : [], label);
         const now = Date.now(), last = S.ws.history[S.ws.history.length - 1];
         if (before && before !== last && before.label === label && String(before.tags) === String(last.tags) && now - (before.at || 0) < 2000 && S.ws.mergeLast()) before.at = now;
-        else last.at = now;
+        else { last.at = now; done(label, said); }
       } catch (e) { toast(e.message, 'bad'); }
       renderAll(false);
     },
     // Several files as one undo step: make() -> [{ file: lowerName, splices }] (current texts).
     editGroup(make, label, keys = []) {
+      const said = FRE.dom.toasts();
       try {
         S.ws.applyGroup(make(), label);
         tagLast(keys, label);
+        done(label, said);
       } catch (e) { toast(e.message, 'bad'); }
       renderAll(false);
     },
@@ -244,8 +247,22 @@
     });
   }
 
-  function undo() { if (S.ws && S.ws.undo() !== null) renderAll(false); }
-  function redo() { if (S.ws && S.ws.redo() !== null) renderAll(false); }
+  // The standard note after every change (add / change / remove), unless the editor already showed one.
+  function done(label, said) {
+    if (FRE.dom.toasts() !== said) return;
+    const n = S.ws.dirtyFiles().length;
+    toast(`✓ ${label || 'Changed'} — not saved yet (${n} file${n === 1 ? '' : 's'} to save; Ctrl+Z undoes it)`, 'ok');
+  }
+  function undo() {
+    if (!S.ws) return;
+    const e = S.ws.history[S.ws.history.length - 1];
+    if (S.ws.undo() !== null) { toast(`↶ Undone: ${(e && e.label) || 'edit'}`); renderAll(false); }
+  }
+  function redo() {
+    if (!S.ws) return;
+    const e = S.ws.redoStack[S.ws.redoStack.length - 1];
+    if (S.ws.redo() !== null) { toast(`↷ Redone: ${(e && e.label) || 'edit'}`); renderAll(false); }
+  }
 
   function setMode(id) { if (id !== S.task) loadTask(id); }
 
@@ -408,27 +425,45 @@
   // ------------------------------------------------------------------ item database
   function buildItems() {
     S.items = [...S.ws.items.items.values()].map(it => S.ws.itemInfo(it)).sort((a, b) => a.name.localeCompare(b.name));
+    for (const i of S.items) i.cat = FRE.itemCategory.of(i, S.ws.defines);     // the editor's own categories (loaders/item-category.js)
+  }
+
+  const inCategory = i => !S.ik1 || (S.ik1.includes('|') ? `${i.cat.group}|${i.cat.sub}` === S.ik1 : i.cat.group === S.ik1);
+  // rarity (dwItemGrade) only tells weapons and armor apart: every other item is Normal
+  function showRarity() {
+    const g = S.ik1.split('|')[0];
+    const on = !g || FRE.itemCategory.RARITY_GROUPS.has(g);
+    $('rarity-chips').hidden = !on;
+    if (!on && S.rarity.size) { S.rarity.clear(); document.querySelectorAll('#rarity-chips .chip.on').forEach(b => b.classList.remove('on')); }
   }
 
   function renderItemFilters() {
     if (!S.ws) return;
     const D = S.ws.defines;
-    const ik1 = $('item-ik1'), ik3 = $('item-ik3');
-    const k1 = [...new Set(S.items.map(i => i.ik1))].sort((a, b) => a - b);
-    ik1.textContent = '';
-    ik1.appendChild(h('option', { value: '' }, 'All categories'));
-    k1.forEach(v => ik1.appendChild(h('option', { value: v, selected: String(v) === S.ik1 }, (D.byValue('IK1_', v) || String(v)).replace(/^IK1_/, ''))));
-    const k3 = [...new Set(S.items.filter(i => S.ik1 === '' || String(i.ik1) === S.ik1).map(i => i.ik3))].sort((a, b) => a - b);
+    const ik3 = $('item-ik3');
+    // S.ik1 holds the category: '' | 'Pets' (a group) | 'Pets|Raised pets' (one of its parts)
+    // a box you can type in (FRE.ui.combo): "pet" finds Pets and every part of it
+    const options = [{ v: '', label: 'All categories', find: 'all' }];
+    for (const g of FRE.itemCategory.tree(S.items)) {
+      options.push({ v: g.group, label: `All ${g.group} (${g.n})`, group: g.group });
+      for (const x of g.subs) options.push({ v: `${g.group}|${x.sub}`, label: `${x.sub} (${x.n})`, group: g.group });
+    }
+    const box = $('item-cat');
+    box.textContent = '';
+    const cat = FRE.ui.combo({ options, value: S.ik1, placeholder: 'Category: type to search (pets, sword…)', wordStart: true,
+      onPick: v => { S.ik1 = v; S.ik3 = ''; showRarity(); renderItemFilters(); renderItems(); } });
+    box.appendChild(cat);
+    const k3 = [...new Set(S.items.filter(inCategory).map(i => i.ik3))].sort((a, b) => a - b);
     ik3.textContent = '';
-    ik3.appendChild(h('option', { value: '' }, 'All types'));
-    k3.forEach(v => ik3.appendChild(h('option', { value: v, selected: String(v) === S.ik3 }, (D.byValue('IK3_', v) || String(v)).replace(/^IK3_/, ''))));
+    ik3.appendChild(h('option', { value: '' }, 'All game types'));
+    k3.forEach(v => ik3.appendChild(h('option', { value: v, selected: String(v) === S.ik3, title: D.byValue('IK3_', v) || String(v) }, FRE.ui.pretty(D.byValue('IK3_', v) || String(v)))));
   }
 
   function applyItemFilter() {
     const q = S.itemQuery.toLowerCase();
     S.filtered = S.items.filter(i =>
       (!q || i.name.toLowerCase().includes(q) || i.define.toLowerCase().includes(q)) &&
-      (S.ik1 === '' || String(i.ik1) === S.ik1) &&
+      inCategory(i) &&
       (S.ik3 === '' || String(i.ik3) === S.ik3) &&
       (!S.rarity.size || S.rarity.has(i.rarity)));
   }
@@ -440,6 +475,9 @@
     $('item-count').textContent = `${fmt(S.filtered.length)} of ${fmt(S.items.length)} items`;
     const target = S.ws.available[S.mode].ok ? active().addTarget(ctx) : { ok: false, title: '' };
     $('new-price-row').hidden = !(target.ok && target.usesPrice);
+    const at = $('add-target');
+    at.textContent = target.title ? (target.ok ? `+ ${target.title.replace(/^Add to /, 'adds to ')}` : `+ is off: ${target.title}`) : '';
+    at.className = 'small add-target' + (target.ok ? '' : ' muted');
     paintItems();
   }
 
@@ -530,7 +568,31 @@
   }
 
   // after(): runs once the save succeeded and its log is closed (Save and continue)
+  // After a reload the browser forgets write access. It only asks when the request comes straight from a
+  // click, so ask for the picked folder (covers Resource, Client and backups inside it) from a button, then
+  // one button per folder that still needs it.
+  async function writeAccess(handles) {
+    const missing = async () => { const out = []; for (const d of handles.filter(Boolean)) if (!(await FRE.fsa.ensurePermission(d, false))) out.push(d); return out; };
+    let need = await missing();
+    if (!need.length) return true;
+    if (S.layout && S.layout.root && !(await FRE.fsa.ensurePermission(S.layout.root, false))) need = [S.layout.root].concat(need.filter(d => d !== S.layout.root));
+    for (const d of need) {
+      if (await FRE.fsa.ensurePermission(d, false)) continue;
+      const ok = await new Promise(res => modal({ title: 'Allow writing', body: h('div',
+        h('p', `The browser needs your OK to write to the folder "${d.name}" again (it forgets after a reload).`),
+        h('p.muted.small', 'Nothing is written until you confirm the changes on the next screen.')),
+        buttons: [{ label: 'Cancel', onClick: () => res(false) }, { label: `Allow "${d.name}"`, cls: 'primary', onClick: async () => res(await FRE.fsa.ensurePermission(d)) }] }));
+      if (!ok) return false;
+    }
+    return !(await missing()).length;
+  }
+
   async function onSave(after) {
+    try { await reviewSave(after); }
+    catch (e) { modal({ title: 'Save failed: nothing was written', body: h('div', h('p', String(e && e.message || e)), h('p.muted.small', 'Your edits are still here. Try Save again; if it fails again, send this message.')) }); }
+  }
+
+  async function reviewSave(after) {
     if (typeof after !== 'function') after = null;
     const ws = S.ws;
     if (!ws || !ws.dirtyFiles().length) return;
@@ -545,7 +607,7 @@
         buttons: [{ label: 'Cancel', onClick: () => res(false) }, { label: 'Choose folder…', cls: 'primary', onClick: async () => res(await pickBackup()) }] }));
       if (!ok) return;
     }
-    if (!(await FRE.fsa.ensurePermission(S.resDir)) || !(await FRE.fsa.ensurePermission(S.backupDir))) { toast('Write permission was not granted.', 'bad'); return; }
+    if (!(await writeAccess([S.resDir, S.backupDir, S.client && S.client.dir]))) { toast('Not saved: write permission was not given.', 'bad'); return; }
 
     const dirty = ws.dirtyFiles();
     const warns = ws.diags.filter(d => d.severity === 'WARN');
@@ -601,7 +663,6 @@
     $('btn-diag').onclick = () => { S.diagOpen = !S.diagOpen; renderDiagPanel(); };
     $('list-search').oninput = e => { S.queries[S.mode] = e.target.value; renderList(); };
     $('item-search').oninput = e => { S.itemQuery = e.target.value; $('item-list').scrollTop = 0; renderItems(); };
-    $('item-ik1').onchange = e => { S.ik1 = e.target.value; S.ik3 = ''; renderItemFilters(); renderItems(); };
     $('item-ik3').onchange = e => { S.ik3 = e.target.value; renderItems(); };
     $('item-list').addEventListener('scroll', () => requestAnimationFrame(paintItems));
     window.addEventListener('resize', () => S.ws && paintItems());

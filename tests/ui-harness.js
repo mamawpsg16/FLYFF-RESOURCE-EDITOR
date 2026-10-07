@@ -364,7 +364,7 @@
       if (STOP === 'newnpcform') return;
       click(document.getElementById('nn-create'));
       await waitFor(() => !document.querySelector('.newnpc'), 'form closed');
-      ok(/In game after Save/.test($('editor').textContent) && /Stands on WdMadrigal at \/position 6966\.0, 100\.0, 3220\.0/.test($('editor').textContent) && /Tab 0 "General Goods": 1 item/.test($('editor').textContent),
+      ok(/In game after Save/.test($('editor').textContent) && /Stands on WdMadrigal at \/position 6966\.0, 100\.0, 3220\.0/.test($('editor').textContent) && /Tab 1 "General Goods": 1 item/.test($('editor').textContent),
         'the new NPC is selected and shows what the game will load');
       ok(ls.value === 'Lumi' && (document.querySelector('#list .npc.sel') || { textContent: '' }).textContent.includes('MaFl_Lumi'),
         'the search that hid the new NPC is replaced by its name: Lumi is listed and selected');
@@ -462,6 +462,90 @@
       FRE.ui.modules.find(m => m.id === 'npc').st.tab = 0;
     }
     if (STOP === 'newmenu') return;
+
+    // ---- task S: existing NPC edits on Peach (ui/npc-edit.js): tab names, + Tab, rename, + Menu, all undone
+    {
+      const peach = [...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MaFl_Peach'));
+      click(peach);
+      const tabBtns = () => [...$('editor').querySelectorAll('.tabs button')];
+      ok(tabBtns().map(b => b.textContent.replace(/\s*\(\d+\)|\s*✎/g, '').trim()).slice(0, 4).join('|') === '1 · Scrolls|2 · n/a|3 · n/a|4 · n/a',
+        'Peach: 4 tabs, numbered because 3 share the name "n/a" (no made-up "Tab N" label)');
+      ok(/In game \(right-click → Trade\): Tabs: \[Scrolls \(6\)\]/.test($('editor').textContent), 'the shop window line shows what players see');
+      ok(/adds to \[Jewel Manager\] Peach → tab 1 "Scrolls"/.test($('add-target').textContent), 'item list says where + adds');
+      click(tabBtns()[1]);
+      ok(/Players see this tab as "n\/a"/.test($('editor').textContent), 'a placeholder tab says how players see it and what to do');
+      // rename tab 2: its key is shared by 6 tabs -> only this one, with its own new text line
+      click($('editor').querySelector('.tabs .tab-edit'));
+      await waitFor(() => document.querySelector('.modal input[type=text]'), 'rename tab dialog');
+      let box = [...document.querySelectorAll('.modal')].pop();
+      const inp = (el, v) => { el.value = v; el.dispatchEvent(new Event('input')); el.dispatchEvent(new Event('change')); };
+      ok(/also used by 5 other places/.test(box.textContent) && /Change it in all 6 places/.test(box.textContent), 'shared text: lists the 5 other tabs, offers "all 6 places"');
+      inp(box.querySelector('input[type=text]'), 'Event');
+      ok(/Only this one changes: it gets its own text line IDS_CHARACTER_INC_\d+ instead of the shared IDS_CHARACTER_INC_000049/.test(box.textContent), 'checks: own key, the shared one stays');
+      click(btnByText(box, 'Rename'));
+      await waitFor(() => !document.querySelector('.modal input[type=text]'), 'rename closed');
+      ok(tabBtns()[1].textContent.startsWith('2 · Event') && S.ws.files.get('character.txt.txt').dirty && S.ws.files.get('character.inc').dirty, 'tab 2 reads "Event"; character.inc + character.txt.txt changed');
+      ok(tabBtns()[2].textContent.includes('n/a'), 'tab 3 still reads "n/a"');
+      ok(/✓ Rename tab 2 of \[Jewel Manager\] Peach: Event — not saved yet \(2 files to save/.test($('toasts').textContent), 'standard note after an edit: what was done, not saved yet, how many files');
+      click($('btn-undo'));
+      ok(/↶ Undone: Rename tab 2/.test($('toasts').textContent), 'standard note after Undo');
+      ok(S.ws.dirtyFiles().length === 0, 'Undo: both files back');
+      // remove the empty last tab, then + Tab names it again
+      click(tabBtns()[3]);
+      click($('editor').querySelector('.tabs .tab-edit'));
+      await waitFor(() => document.querySelector('.modal input[type=text]'), 'rename tab 4 dialog');
+      box = [...document.querySelectorAll('.modal')].pop();
+      click(btnByText(box, 'Remove this tab'));
+      ok(tabBtns().filter(b => !b.classList.contains('add-tab')).length === 3 && tabBtns().some(b => b.classList.contains('add-tab')), 'tab 4 removed; + Tab appears');
+      click(tabBtns().find(b => b.classList.contains('add-tab')));
+      await waitFor(() => document.querySelector('.modal input[type=text]'), '+ Tab dialog');
+      box = [...document.querySelectorAll('.modal')].pop();
+      inp(box.querySelector('input[type=text]'), 'Bad "name"');
+      ok(/⛔ The text contains a "/.test(box.textContent) && box.querySelector('footer button.primary').disabled, 'a " in the name is refused before writing');
+      inp(box.querySelector('input[type=text]'), 'Pets');
+      ok(/AddVendorSlot\( 3, IDS_CHARACTER_INC_\d+ \);/.test(box.textContent), '+ Tab preview: AddVendorSlot( 3, new key ) (d11123ac way)');
+      click(btnByText(box, 'Add tab'));
+      await waitFor(() => !document.querySelector('.modal input[type=text]'), '+ Tab closed');
+      ok(tabBtns().some(b => b.textContent.startsWith('4 · Pets')) && /adds to .*tab 4 "Pets"/.test($('add-target').textContent), 'new tab "Pets" selected; + adds to it');
+      click($('btn-undo')); click($('btn-undo'));
+      ok(S.ws.dirtyFiles().length === 0, 'Undo twice: back to the original');
+      // rename the NPC
+      click($('editor').querySelector('.npc-title button.icon'));
+      await waitFor(() => document.querySelector('.modal input[type=text]'), 'rename NPC dialog');
+      box = [...document.querySelectorAll('.modal')].pop();
+      inp(box.querySelector('input[type=text]'), 'Gem Lady Peach');
+      click(btnByText(box, 'Rename'));
+      await waitFor(() => !document.querySelector('.modal input[type=text]'), 'rename NPC closed');
+      ok($('editor').querySelector('h2').textContent === 'Gem Lady Peach' && S.ws.dirtyFiles().length === 1, 'NPC renamed: only character.txt.txt changed (its key is used once)');
+      click($('btn-undo'));
+      // + Menu
+      click(btnByText($('editor'), '+ Menu'));
+      await waitFor(() => document.querySelector('.modal .combo'), '+ Menu dialog');
+      box = [...document.querySelectorAll('.modal')].pop();
+      box.querySelector('.combo').pick('MMI_BANKING');
+      ok(/Right-click will show: .*Dialog.*Trade/.test(box.textContent), '+ Menu shows the right-click list it will make');
+      click(btnByText(box, 'Add menu'));
+      ok(/AddMenu\( MMI_BANKING \);/.test(S.ws.files.get('character.inc').text) && $('editor').querySelectorAll('.menus .menu-x').length === 8, 'Bank added after the last AddMenu; every menu has ✕');
+      click($('btn-undo'));
+      ok(S.ws.dirtyFiles().length === 0, 'all Peach edits undone');
+      // the item list's own categories: Pets › Raised pets, rarity chips hidden outside Weapons / Armor
+      const srch = $('item-search'); srch.value = ''; srch.dispatchEvent(new Event('input'));
+      const pickCat = v => $('item-cat').querySelector('.combo').pick(v);
+      const inp2 = $('item-cat').querySelector('input'); inp2.focus(); inp2.value = 'pet'; inp2.dispatchEvent(new Event('input'));
+      const shown = [...$('item-cat').querySelectorAll('.combo-opt')].map(o => o.textContent);
+      ok(shown.some(t => /^Buff pets/.test(t)) && shown.some(t => /^Raised pets/.test(t)) && !shown.some(t => /^Swords/.test(t)), 'category search: "pet" lists Buff / Raised pets, not Swords');
+      inp2.value = 'ra'; inp2.dispatchEvent(new Event('input'));
+      const ra = [...$('item-cat').querySelectorAll('.combo-opt')].map(o => o.textContent);
+      ok(ra.some(t => /^Raised pets/.test(t)) && !ra.some(t => /^Auras|^Upgrade|^All Upgrade/.test(t)), 'category search matches word starts: "ra" finds Raised pets, not Auras / Upgrade');
+      inp2.blur();
+      pickCat('Pets|Raised pets');
+      ok(/^8 of /.test($('item-count').textContent) && $('rarity-chips').hidden, 'Raised pets: 8 items; rarity chips hidden');
+      pickCat('Weapons');
+      ok(!$('rarity-chips').hidden, 'Weapons: rarity chips shown');
+      pickCat('');
+      FRE.ui.modules.find(m => m.id === 'npc').st.tab = 0;
+    }
+    if (STOP === 'npcedit') return;
 
     // ---- Donation Shop
     await openTask('donation');

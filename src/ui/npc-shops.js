@@ -219,8 +219,12 @@
       const D = ws.defines;
       const entries = npc.statements.map(r => ({ r, e: FRE.character.shopEntry(r) })).filter(x => x.e);
       const line = pos => 'L' + (f.lineOf(pos) + 1);
+      const npcName = npc.name || npc.key;
 
-      el.appendChild(h('div.npc-title', h('h2', npc.name || npc.key), h('span.def', npc.key),
+      const E = FRE.npcEditOps, canTexts = E.canEditTexts(ws, npc);
+      el.appendChild(h('div.npc-title', h('h2', npc.name || npc.key),
+        canTexts ? h('button.icon', { title: 'Rename this NPC (the name players see; the key stays)', on: { click: () => FRE.ui.npcEdit.renameNpc(ctx, npc) } }, '✎') : null,
+        h('span.def', npc.key),
         h('span.line', `${npc.file}:${f.lineOf(npc.start) + 1}`),
         shopTypeSelect(ctx, npc, canEdit),
         canEdit && npc.file.toLowerCase() === 'character.inc' && ws.isEditable('exchange_script.txt') && FRE.ui.menuForm
@@ -245,19 +249,35 @@
       const exNames = FRE.ui.exchangeView ? [...new Set(menus.filter(m => ws.exchangeMenus.has(m) && exMenu(m)))] : [];
       const showTab = t => { if (FRE.ui.exchangeView) FRE.ui.exchangeView.clearPick(); st.tab = t; ctx.renderAll(false); };
       if (typeof st.tab === 'string' && !exNames.includes(st.tab.slice(3))) st.tab = 0;
-      if (menus.length) el.appendChild(h('div.menus', 'Menus: ', menus.map(m => {
-        if (!exNames.includes(m)) return h('span.tag', { title: m }, pretty(m));
+      const ownMenu = new Set(npc.statements.filter(r => r.cmd === 'AddMenu').map(r => r.args.menu.value));
+      const rmMenu = (i, m) => canEdit && ownMenu.has(npc.menus[i])
+        ? h('button.icon.menu-x', { title: `Remove ${m} from the right-click menu`, on: { click: e => { e.stopPropagation(); FRE.ui.npcEdit.removeMenu(ctx, npc, npc.menus[i], exNames.includes(m) ? labelOf(m) : pretty(m)); } } }, '✕') : null;
+      el.appendChild(h('div.menus', 'Menus: ', menus.map((m, i) => {
+        if (!exNames.includes(m)) return h('span.tag', { title: m }, pretty(m), rmMenu(i, m));
         const n = Math.min(exMenu(m).sets.length, 30);
-        return h('button.tag.exch', { title: `${m}: opens the exchange window (Exchange_Script.txt). Click to see and edit its exchanges here.`,
-          on: { click: () => showTab('ex:' + m) } }, `${labelOf(m)} ⇄ ${n} exchange${n === 1 ? '' : 's'}`);
-      })));
+        return h('span.tag.exch-wrap', h('button.tag.exch', { title: `${m}: opens the exchange window (Exchange_Script.txt). Click to see and edit its exchanges here.`,
+          on: { click: () => showTab('ex:' + m) } }, `${labelOf(m)} ⇄ ${n} exchange${n === 1 ? '' : 's'}`), rmMenu(i, m));
+      }), canEdit ? h('button.small.add-menu', { title: 'Add a right-click menu (AddMenu)', on: { click: () => FRE.ui.npcEdit.addMenu(ctx, npc) } }, '+ Menu') : null));
 
       const sim = ws.simulate(npc);
+      const named = s => npc.slotTitles[s] !== undefined && npc.slotTitles[s] !== '';
+      // only tabs the game shows (a name) or that hold items; an unnamed tab is never offered as a place for items
+      const shownTabs = [0, 1, 2, 3].filter(t => named(t) || sim.tabs[t].entries.length || sim.tabs[t].dropped.length);
+      if (typeof st.tab === 'number' && !shownTabs.includes(st.tab)) st.tab = shownTabs.length ? shownTabs[0] : 0;
+      const dupTitles = shownTabs.map(t => npc.slotTitles[t]).filter((x, i, a) => x !== undefined && a.indexOf(x) !== i).length > 0;
+      const tabLabel = t => !named(t) ? `Tab ${t + 1} · no name` : dupTitles ? `${t + 1} · ${npc.slotTitles[t]}` : npc.slotTitles[t];
       const tabs = h('div.tabs');
-      for (let t = 0; t < 4; t++) {
+      for (const t of shownTabs) {
         const n = sim.tabs[t].entries.length;
-        tabs.appendChild(h('button' + (t === st.tab ? '.sel' : ''), { on: { click: () => showTab(t) } },
-          npc.slotTitles[t] || `Tab ${t}`, h('span.count', n ? `(${n})` : '')));
+        const sel = t === st.tab;
+        tabs.appendChild(h('button' + (sel ? '.sel' : '') + (named(t) ? (FRE.ui.npcEdit.isPlaceholder(npc.slotTitles[t]) ? '.placeholder' : '') : '.unnamed'),
+          { title: named(t) ? `Tab ${t + 1} (slot ${t} in the file)` : 'No AddVendorSlot: the game shows no such tab, so these items are invisible', on: { click: () => showTab(t) } },
+          named(t) ? '' : '⚠ ', tabLabel(t), h('span.count', n ? `(${n})` : ''),
+          sel && named(t) && canTexts ? h('span.tab-edit', { title: 'Rename this tab', on: { click: e => { e.stopPropagation(); FRE.ui.npcEdit.renameTab(ctx, npc, t); } } }, ' ✎') : null));
+      }
+      if (canTexts && E.nextSlot(npc) !== null) {
+        tabs.appendChild(h('button.add-tab', { title: `Add tab ${E.nextSlot(npc) + 1}: a name players see in the shop window (AddVendorSlot, the d11123ac way)`,
+          on: { click: () => FRE.ui.npcEdit.addTab(ctx, npc, slot => { st.tab = slot; }) } }, '+ Tab'));
       }
       for (const m of exNames) {
         const n = Math.min(exMenu(m).sets.length, 30);
@@ -267,6 +287,20 @@
       el.appendChild(tabs);
       if (typeof st.tab === 'string') { exchangeTab(el, ctx, npc, exMenu(st.tab.slice(3)), labelOf(st.tab.slice(3))); return; }
       const tab = sim.tabs[st.tab];
+      const trade = D.defines.get('MMI_TRADE');
+      if (npc.menus.includes(trade)) {
+        const win = FRE.shopWindow.ofNpc(npc, sim);
+        const crash = win.clicks.includes('crash');
+        el.appendChild(h('div.shop-window.small' + (crash ? '.bad' : '.muted'), { title: 'Port of the client\'s shop window (loaders/shop-window.js)' },
+          'In game (right-click → Trade): ', FRE.shopWindow.describe(win).join(' ')));
+      }
+      if (!shownTabs.length) {
+        el.appendChild(h('p.muted', canTexts ? 'This NPC has no shop tab. + Tab adds one; players also need the Trade menu (+ Menu).' : 'This NPC has no shop tab.'));
+        return;
+      }
+      if (!named(st.tab)) el.appendChild(h('p.bad.small', `Tab ${st.tab + 1} has no name, so the game shows no such tab and players never see the items below. ${canTexts ? 'Name it with + Tab, or move the items to a named tab.' : ''}`));
+      else if (FRE.ui.npcEdit.isPlaceholder(npc.slotTitles[st.tab]) && !tab.entries.length)
+        el.appendChild(h('p.muted.small', `Players see this tab as "${npc.slotTitles[st.tab]}" (a placeholder name).${canTexts ? ' Rename it with ✎ on the tab, then add items with the + button next to an item in the list on the right.' : ''}`));
 
       // the rules that fill this tab, as one compact line
       const rules = entries.filter(x => x.e.kind === 'generated' && x.e.slot === st.tab);
@@ -289,7 +323,7 @@
       el.appendChild(h('h3', `Items in this tab (${tab.entries.length}/100)`));
       const rows = tab.entries.map(en => ({ rec: en.source, kind: en.kind, prop: en.prop }))
         .concat(tab.dropped.map(d => ({ rec: d.rec, kind: d.rec.cmd === 'AddShopItem' ? 'fixed' : 'chip', prop: d.prop || null, dropped: d.reason })));
-      if (!rows.length) el.appendChild(h('p.muted', 'Empty. Use + in the item list on the right to add an item.'));
+      if (!rows.length) el.appendChild(h('p.muted', `Empty. Add items with the + button next to an item in the list on the right: they go to "${tabLabel(st.tab)}".`));
       else {
         const tb = h('table.items', h('tr', h('th.num', '#'), h('th', 'Item'), h('th', 'Job'),
           h('th.num', chip ? `Price (${chipName} chips)` : 'Price (Penya)'), h('th', 'Tab'), h('th', ''), h('th', 'From')));
@@ -305,13 +339,13 @@
           else if (row.kind === 'fixed') {
             price = numInput({ value: r.args.cost ? r.args.cost.value : null, placeholder: info ? fmt(info.cost) + ' (item)' : '', disabled: !canEdit, key: `shop|${npcId(npc)}|${st.tab}|${i}|price`,
               title: 'Empty = the item\'s own price from Spec_Item.txt. A price here changes the item\'s price everywhere (server-wide). Commas are only for display.',
-              onCommit: v => edit(ctx, npc, text => FRE.shopOps.setCost(text, r, v), 'price') });
+              onCommit: v => edit(ctx, npc, text => FRE.shopOps.setCost(text, r, v), `${npcName}: price of ${info ? info.name : def}`) });
           } else price = info ? fmt(info.cost) : '';
           const tabCell = editable
-            ? h('select', { disabled: !canEdit, on: { change: ev => edit(ctx, npc, text => FRE.shopOps.setSlot(text, r, Number(ev.target.value)), 'move tab') } },
-              [0, 1, 2, 3].map(t => h('option', { value: t, selected: t === st.tab }, npc.slotTitles[t] || `Tab ${t}`)))
+            ? h('select', { disabled: !canEdit, on: { change: ev => edit(ctx, npc, text => FRE.shopOps.setSlot(text, r, Number(ev.target.value)), `${npcName}: moved ${info ? info.name : def} to tab ${Number(ev.target.value) + 1}`) } },
+              [0, 1, 2, 3].filter(t => named(t) || t === st.tab).map(t => h('option', { value: t, selected: t === st.tab }, tabLabel(t))))
             : '';
-          const rm = editable ? h('button.icon.danger', { disabled: !canEdit, title: 'Remove from this shop', on: { click: () => edit(ctx, npc, text => FRE.shopOps.removeStatement(text, r), `remove ${def}`) } }, '✕') : '';
+          const rm = editable ? h('button.icon.danger', { disabled: !canEdit, title: 'Remove from this shop', on: { click: () => edit(ctx, npc, text => FRE.shopOps.removeStatement(text, r), `${npcName}: removed ${info ? info.name : def}`) } }, '✕') : '';
           const from = row.dropped ? h('span.tag.warn', `left out: ${row.dropped}`)
             : h('span.line', { title: f.text.slice(r.start, r.end) }, `${row.kind === 'generated' ? 'rule' : 'fixed'} ${line(r.start)}`);
           tb.appendChild(h('tr' + (editable ? '.fixed' : '') + (row.dropped ? '.dropped' : ''),
@@ -338,10 +372,11 @@
         return { ok: false, title: 'Click "+ Ingredient", "+ Reward" or "Change" on an exchange first' };
       }
       if (!ctx.ws.isEditable(npc.file.toLowerCase())) return { ok: false, title: `${npc.file} is read-only` };
-      const tabName = npc.slotTitles[st.tab] || `tab ${st.tab}`;
+      const title = npc.slotTitles[st.tab];
+      if (title === undefined || title === '') return { ok: false, title: `Tab ${st.tab + 1} has no name, so players can't see it: name it with + Tab first` };
       return {
-        ok: true, title: `Add to ${npc.name || npc.key}, ${tabName}`, usesPrice: !(npc.venderType === 1 || npc.venderType === 2),
-        add(info, cost) { edit(ctx, npc, text => FRE.shopOps.addItem(text, npc, st.tab, info.define, cost), `add ${info.define}`); },
+        ok: true, title: `Add to ${npc.name || npc.key} → tab ${st.tab + 1} "${title}"`, usesPrice: !(npc.venderType === 1 || npc.venderType === 2),
+        add(info, cost) { edit(ctx, npc, text => FRE.shopOps.addItem(text, npc, st.tab, info.define, cost), `${npc.name || npc.key}: added ${info.name} to tab ${st.tab + 1} "${title}"`); },
       };
     },
 

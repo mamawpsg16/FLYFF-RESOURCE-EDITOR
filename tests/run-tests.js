@@ -1688,6 +1688,116 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
   ok(codes.every(c => FRE.diagHelp[c]), 'every NM_ code has help text', codes.filter(c => !FRE.diagHelp[c]).join(', '));
 }
 
+section('existing NPC edits: name, tabs, menus, shop window (JS and Python copies agree)');
+{
+  const fresh = () => new FRE.Workspace(fixtureFiles(), { only: 'npc' }).load();
+  const w0 = fresh();
+  const E = FRE.npcEditOps, SW = FRE.shopWindow;
+  const npcOf = (w, key, file = 'character.inc') => w.chars.npcs.filter(n => n.key === key && n.file.toLowerCase() === file).pop();
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} npcedit ${FIXTURES}`);
+  const py = JSON.parse(new TextDecoder().decode(out));
+  const winJson = x => JSON.stringify({ tabs: x.tabs, shown: x.shown, clicks: x.clicks });
+  const titlesOf = o => Object.fromEntries(Object.entries(o).map(([k, v]) => [Number(k), v]));
+
+  // the shop window of every NPC with Trade: same tabs, same item counts, same clicks
+  ok(py.windows.length > 80, `Python lists the shop window of ${py.windows.length} Trade NPCs`);
+  let wBad = 0;
+  for (const c of py.windows) {
+    const npc = npcOf(w0, c.key, c.file);
+    const sim = w0.simulate(npc);
+    const js = SW.ofNpc(npc, sim);
+    const same = npc && JSON.stringify(sim.tabs.map(t => t.entries.length)) === JSON.stringify(c.counts) && winJson(js) === winJson(c.window);
+    if (!same && wBad++ < 3) ok(false, `shop window of ${c.key}`, `JS ${winJson(js)} vs Python ${winJson(c.window)}`);
+  }
+  eq(wBad, 0, 'every Trade NPC: JS and Python shop windows agree');
+  let sBad = 0;
+  for (const c of py.small) {
+    const js = SW.open(titlesOf(c.titles), c.counts);
+    if (winJson(js) !== winJson(c.window) && sBad++ < 3) ok(false, `small window ${JSON.stringify(c.titles)}`, `JS ${winJson(js)} vs Python ${winJson(c.window)}`);
+  }
+  eq(sBad, 0, `${py.small.length} small tab sets: JS and Python agree`);
+  const crash = SW.open({ 1: 'Goods' }, [0, 3, 0, 0]);
+  eq(crash.clicks.join(','), 'nothing,crash,nothing', 'slot 0 without a name, slot 1 named: clicking the tab crashes the client');
+  eq(SW.open({ 0: 'A', 2: 'C' }, [1, 0, 2, 0]).clicks.join(','), 'select,nothing,select', 'a gap: the empty position cannot be clicked, the others work');
+  eq(SW.open({}, [0, 0, 0, 0]).tabs.length, 3, 'no named tab: 3 blank tabs (WndShop.cpp:829)');
+
+  // the same edits through edit/npcedit-ops.js give byte-identical files and the same game state
+  const sha = t => GLib.compute_checksum_for_string(GLib.ChecksumType.SHA1, t, -1);
+  for (const c of py.edits) {
+    const w = fresh();
+    const hows = [];
+    try {
+      for (const e of c.steps) {
+        const npc = npcOf(w, e.npc);
+        if (e.op === 'rename') { const r = E.renameNpc(w, npc, e.text, !!e.all); w.applyGroup(r.parts, 'rename'); hows.push(r.how); }
+        if (e.op === 'tab') { const r = E.renameTab(w, npc, e.slot, e.text, !!e.all); w.applyGroup(r.parts, 'tab'); hows.push(r.how); }
+        if (e.op === 'addtab') { const r = E.addTab(w, npc, e.text); w.applyGroup(r.parts, 'add tab'); hows.push(r.slot); }
+        if (e.op === 'rmtab') { w.applyGroup(E.removeTab(w, npc, e.slot).parts, 'remove tab'); hows.push(e.slot); }
+        if (e.op === 'addmenu') { w.apply('character.inc', E.addMenu(w, npc, e.menu), 'add menu'); hows.push(e.menu); }
+        if (e.op === 'rmmenu') { w.apply('character.inc', E.removeMenu(w, npc, w.defines.defines.get(e.menu)), 'remove menu'); hows.push(e.menu); }
+      }
+    } catch (err) { ok(false, `edit "${c.name}"`, err.message); continue; }
+    eq(JSON.stringify(hows), JSON.stringify(c.hows), `edit "${c.name}": same kind of change (${c.hows.join(', ')})`);
+    ok(sha(w.files.get('character.inc').text) === c.inc && sha(w.files.get('character.txt.txt').text) === c.txt,
+      `edit "${c.name}": character.inc and character.txt.txt identical to the Python copy`);
+    const npc = npcOf(w, c.steps[c.steps.length - 1].npc);
+    const js = { name: npc.name, titles: Object.fromEntries(Object.entries(npc.slotTitles).map(([k, v]) => [String(k), v])), menus: npc.menus, window: SW.ofNpc(npc, w.simulate(npc)) };
+    eq(JSON.stringify({ ...js, window: JSON.parse(winJson(js.window)) }), JSON.stringify({ ...c.after, window: JSON.parse(winJson(c.after.window)) }), `edit "${c.name}": in game the same (name, tabs, menus, window)`);
+  }
+
+  // rules and limits
+  {
+    const w = fresh();
+    const peach = npcOf(w, 'MaFl_Peach');
+    throws(() => E.renameNpc(w, peach, 'Bad "name"'), 'a " in a name is refused');
+    throws(() => E.addTab(w, peach, 'Fifth'), 'a 5th tab is refused (MAX_VENDOR_INVENTORY_TAB 4)');
+    throws(() => E.removeTab(w, peach, 1), 'only the last tab can be removed');
+    throws(() => E.removeTab(w, peach, 0), 'a tab that sells items cannot be removed');
+    throws(() => E.addMenu(w, peach, 'MMI_TRADE'), 'a menu the NPC already has is refused');
+    const etc = w.chars.npcs.find(n => n.file.toLowerCase() === 'character-etc.inc' && n.statements.some(r => r.cmd === 'SetName'));
+    throws(() => E.renameNpc(w, etc, 'Someone'), 'character-etc.inc NPCs are not renamed (the client reads them from data.res)');
+    eq(E.nextSlot(npcOf(w, 'MaFl_Waforu')), 3, 'Wafor: + Tab names tab 4');
+    eq(E.keyUses(w, 'IDS_CHARACTER_INC_000049').length, 6, 'IDS_CHARACTER_INC_000049 ("n/a") shows on 6 tabs');
+    const before = ['character.inc', 'character.txt.txt'].map(n => w.files.get(n).serialize());
+    const r = E.renameTab(w, peach, 1, 'Event');
+    w.applyGroup(r.parts, 'tab');
+    eq(E.keyUses(w, 'IDS_CHARACTER_INC_000049').length, 5, 'own key: the other 5 "n/a" tabs keep their text');
+    w.undo();
+    ok(['character.inc', 'character.txt.txt'].every((n, i) => B.bytesEqual(w.files.get(n).serialize(), before[i])), 'one Undo restores both files byte for byte');
+
+    // the tab rules
+    const codes = (ws, key) => ws.diags.filter(d => d.npcKey === key && /^C_TAB_(FIRST_UNNAMED|UNNAMED_ITEMS|GAP)$/.test(d.code)).map(d => d.code).sort().join(',');
+    eq(codes(w, 'MaFl_Peach'), '', 'Peach as shipped: no tab problem');
+    const p2 = npcOf(w, 'MaFl_Peach');
+    w.apply('character.inc', FRE.textOps.removeRow(w.files.get('character.inc').text, E.slotRec(p2, 2)), 'drop slot 2');
+    eq(codes(w, 'MaFl_Peach'), 'C_TAB_GAP', 'Peach without a name for tab 3: C_TAB_GAP (INFO)');
+    w.undo();
+    w.apply('character.inc', FRE.textOps.removeRow(w.files.get('character.inc').text, E.slotRec(npcOf(w, 'MaFl_Peach'), 0)), 'drop slot 0');
+    eq(codes(w, 'MaFl_Peach'), 'C_TAB_FIRST_UNNAMED,C_TAB_UNNAMED_ITEMS', 'Peach without a name for tab 1: client crash (BLOCK) + its 6 items unseen (WARN)');
+    ok(w.newBlocking().some(d => d.code === 'C_TAB_FIRST_UNNAMED'), 'C_TAB_FIRST_UNNAMED blocks saving');
+    ok(['C_TAB_FIRST_UNNAMED', 'C_TAB_UNNAMED_ITEMS', 'C_TAB_GAP'].every(c => FRE.diagHelp[c]), 'help text for the 3 tab rules');
+    w.undo();
+    // live data: no shop has these problems today
+    eq(w0.diags.filter(d => /^C_TAB_(FIRST_UNNAMED|UNNAMED_ITEMS|GAP)$/.test(d.code)).length, 0, 'real data: no shop with an unnamed or missing tab');
+  }
+}
+
+section('item list categories (loaders/item-category.js)');
+{
+  const w = new FRE.Workspace(fixtureFiles(), { only: 'npc' }).load();
+  const items = [...w.items.items.values()].map(it => { const i = w.itemInfo(it); i.cat = FRE.itemCategory.of(i, w.defines); return i; });
+  ok(items.every(i => FRE.itemCategory.GROUPS.includes(i.cat.group) && i.cat.sub), 'every item gets one category and a part of it');
+  const cat = d => { const i = items.find(x => x.define === d); return i ? `${i.cat.group}|${i.cat.sub}` : null; };
+  eq(cat('II_PET_BANG1'), 'Pets|Pickup pets', 'Baby Bang: pickup pet (IK3_PET)');
+  eq(cat('II_PET_RACCON'), 'Pets|Buff pets', 'Tiny Tanuki: buff pet (IK3_PET + dwReferStat1 PET_VIS, IsVisPet)');
+  eq(cat('II_PET_PENGUIN01'), 'Pets|Pickup pets', 'Penguin Buff Pet: dwReferStat1 -1, so the game treats it as a pickup pet');
+  ok(items.filter(i => i.ik3Name === 'IK3_EGG').every(i => i.cat.sub === 'Raised pets'), 'every IK3_EGG is a raised pet');
+  eq(cat('II_SYS_SYS_SCR_AWAKE'), 'Scrolls|Awakening & blessing', 'Scroll of Awakening');
+  ok(items.filter(i => i.cat.group !== 'Weapons' && i.cat.group !== 'Armor' && i.cat.group !== 'System').every(i => i.rarity === 'normal' || i.rarity === 'other'),
+    'outside Weapons and Armor every item is Normal: the rarity chips only show for them');
+  ok(items.filter(i => i.cat.group === 'Other').length < 150, `few items left in Other (${items.filter(i => i.cat.group === 'Other').length})`);
+}
+
 section('mutations');
 function mutation(name, code, mutate) {
   editCase(name, w => {

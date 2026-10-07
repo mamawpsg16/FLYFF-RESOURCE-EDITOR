@@ -13,7 +13,8 @@
     const opts = { mode: 'readwrite' };
     if ((await handle.queryPermission(opts)) === 'granted') return true;
     if (!ask) return false;
-    return (await handle.requestPermission(opts)) === 'granted';
+    // Brave / Chrome only ask when the request comes straight from a click; otherwise it throws
+    try { return (await handle.requestPermission(opts)) === 'granted'; } catch (e) { return false; }
   }
 
   // Case-insensitive lookup of the wanted top-level files (Windows-like).

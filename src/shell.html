@@ -39,8 +39,8 @@
     <div class="panel-head col">
       <input id="item-search" type="search" placeholder="Search items (name or II_)" autocomplete="off">
       <div class="row">
-        <select id="item-ik1"><option value="">All categories</option></select>
-        <select id="item-ik3"><option value="">All types</option></select>
+        <div id="item-cat" class="item-cat" title="The editor's item categories (type to search)"></div>
+        <select id="item-ik3" title="The game's raw item type (dwItemKind3)"><option value="">All game types</option></select>
       </div>
       <div class="row chips" id="rarity-chips">
         <button class="chip" data-r="normal">Normal</button>
@@ -53,6 +53,7 @@
       </label>
     </div>
     <div id="item-count" class="muted small item-count"></div>
+    <div id="add-target" class="small add-target"></div>
     <div class="item-head"><span>Name</span><span>Type</span><span>Lv</span><span>ATK</span><span></span></div>
     <div id="item-list" class="list virtual"><div id="item-spacer"></div></div>
   </aside>

@@ -6,7 +6,7 @@ one copy shows up as a disagreement in tests/run-tests.js. It makes its own test
 cases (bags, seeds, small scripts), runs them, and prints both as JSON; the JS
 test runs the same cases through src/loaders/exchange-sim.js and compares.
 
-Usage: python3 tools/oracle_sim.py exchange|battlepass|area|newnpc <Resource folder>   -> JSON
+Usage: python3 tools/oracle_sim.py exchange|battlepass|area|newnpc|newmenu|npcedit <Resource folder>   -> JSON
 
 exchange: CExchange::Load_Script / CheckCondition / GetPayItemList / IsFull /
 ResultExchange (_Common/Exchange.cpp), CMover::GetItemNum / RemoveItemA /
@@ -2416,6 +2416,266 @@ def nm_run(root):
     return dict(cases=out, exchanges=xcases, caseIds=A.cases)
 
 
+# ---------------------------------------------------------------- npcedit (task S: edits of an existing NPC)
+# Written from the client C++ and the proven commits, without reading src/edit/npcedit-ops.js or
+# src/loaders/shop-window.js.
+#   shop window: CWndShop::OnInitialUpdate (WndShop.cpp:815-833), CWndTabCtrl ctor (m_nCurSelect 0),
+#                InsertItem (WndControl.cpp:5744: m_aTab.resize(i+1), m_aTab[i] = tab), OnLButtonDown (5632:
+#                NULL entries skipped), SetCurSel (5674: only a tab with a window is selected; it hides
+#                m_aTab[old]->pWndBase first)
+#   edits:       f58e56ba (renames), ba92f67f (tab text), d11123ac (new tab: text line + AddVendorSlot after
+#                SetName), AddMenu lines
+
+def ne_window(titles, counts):
+    """titles: {slot: text}, counts: [n per slot] -> dict(tabs, shown, clicks)"""
+    aTab = []
+    for i in range(4):
+        t = titles.get(i)
+        if t is None or t == '':
+            continue
+        if len(aTab) < i + 1:
+            aTab += [None] * (i + 1 - len(aTab))
+        aTab[i] = dict(slot=i, title=t, list=True, items=counts[i] if i < len(counts) else 0)
+    i = len(aTab)
+    while i < 3:
+        aTab.append(dict(slot=None, title='', list=False, items=0))
+        i += 1
+    cur = 0
+
+    def click(n):
+        if not aTab or n >= len(aTab) or aTab[n] is None:
+            return 'nothing'
+        if not aTab[n]['list']:
+            return 'nothing'
+        old = aTab[cur]
+        if old is None or not old['list']:
+            return 'crash'
+        return 'select'
+    shown = aTab[cur]['slot'] if aTab[cur] is not None and aTab[cur]['list'] else None
+    return dict(tabs=aTab, shown=shown, clicks=[click(n) for n in range(len(aTab))])
+
+
+def ne_unquote(t):
+    return t[1:-1] if len(t) >= 2 and t[0] == '"' and t[-1] == '"' else t
+
+
+def ne_mask(text):
+    """comments blanked (same length) so regexes skip commented statements"""
+    out, i, n = list(text), 0, len(text)
+    while i < n:
+        if text.startswith('//', i):
+            j = i
+            while j < n and text[j] not in '\r\n':
+                out[j] = ' '; j += 1
+            i = j
+        elif text.startswith('/*', i):
+            j = text.find('*/', i + 2)
+            j = n if j < 0 else j + 2
+            for k in range(i, j):
+                if text[k] not in '\r\n': out[k] = ' '
+            i = j
+        elif text[i] == '"':
+            j = text.find('"', i + 1)
+            i = n if j < 0 else j + 1
+        else:
+            i += 1
+    return ''.join(out)
+
+
+def ne_block(text, key):
+    """(start, end) of the NPC block `key` in character.inc: the key at a line start, then braces to depth 0"""
+    m = ne_mask(text)
+    k = re.search(r'(?m)^[ \t]*' + re.escape(key) + r'\b', m)
+    b = m.index('{', k.end())
+    d, i = 0, b
+    while True:
+        if m[i] == '{': d += 1
+        elif m[i] == '}':
+            d -= 1
+            if d == 0: return k.start(), i + 1
+        i += 1
+
+
+def ne_stmts(text, key):
+    """statements of the block, from the masked text: [(cmd, start, end_incl_semicolon, args...)]"""
+    s0, s1 = ne_block(text, key)
+    m = ne_mask(text)
+    out = []
+    for r in re.finditer(r'\bSetName\s*\(\s*(\S+?)\s*\)\s*;?', m[s0:s1]):
+        out.append(('SetName', s0 + r.start(), s0 + r.end(), None, (s0 + r.start(1), s0 + r.end(1))))
+    for r in re.finditer(r'\bAddVendorSlot\s*\(\s*(\d+)\s*,\s*("[^"]*"|[^\s)]+)\s*\)\s*;?', m[s0:s1]):
+        out.append(('AddVendorSlot', s0 + r.start(), s0 + r.end(), int(r.group(1)), (s0 + r.start(2), s0 + r.end(2))))
+    for r in re.finditer(r'\bAddMenu\s*\(\s*(\w+)\s*\)\s*;?', m[s0:s1]):
+        out.append(('AddMenu', s0 + r.start(), s0 + r.end(), r.group(1), None))
+    return sorted(out, key=lambda x: x[1])
+
+
+def ne_line_bounds(text, a, b):
+    """start of a's line, end of b's line including its line break, b's line break"""
+    ls = text.rfind('\n', 0, a) + 1
+    le = b
+    while le < len(text) and text[le] not in '\r\n': le += 1
+    eol = '\r\n' if text.startswith('\r\n', le) else ('\n' if text.startswith('\n', le) else '')
+    return ls, le + len(eol), eol
+
+
+def ne_indent(text, a):
+    ls = text.rfind('\n', 0, a) + 1
+    return re.match(r'[ \t]*', text[ls:]).group(0)
+
+
+def ne_insert_after(text, stmt_end, anchor_start, row):
+    _, le, eol = ne_line_bounds(text, stmt_end, stmt_end)
+    if not eol:
+        return text + '\r\n' + ne_indent(text, anchor_start) + row
+    return text[:le] + ne_indent(text, anchor_start) + row + eol + text[le:]
+
+
+class NEState:
+    def __init__(self, A):
+        self.inc = nn_text16(A.raw['character.inc'])
+        self.txt = nn_text16(A.raw['character.txt.txt'])
+        self.others = [nn_text16(A.raw[n]) for n in NN_CHAR_FILES[1:] + NN_STRING_FILES[1:] if n in A.raw]
+        self.A = A
+
+    def strings(self):
+        S = {}
+        nn_strings_add(S, self.txt)
+        for n in NN_STRING_FILES[1:]:
+            if n in self.A.raw: nn_strings_add(S, nn_text16(self.A.raw[n]))
+        return S
+
+    def last_id(self):
+        mx = 0
+        for t in [self.inc, self.txt] + self.others:
+            for m in re.finditer(r'IDS_CHARACTER_INC_(\d+)', t): mx = max(mx, int(m.group(1)))
+        return mx
+
+    def key_count(self, key):
+        """statements in the three NPC files that show `key` (comments skipped)"""
+        n = 0
+        for t in [self.inc] + [nn_text16(self.A.raw[f]) for f in NN_CHAR_FILES[1:] if f in self.A.raw]:
+            n += len(re.findall(r'\b(?:SetName|AddVendorSlot|AddVenderSlot|SetImage|m_szChar)\b[^;{}]*?\b' + re.escape(key) + r'\b', ne_mask(t)))
+        return n
+
+    def append_key(self, text):
+        key = 'IDS_CHARACTER_INC_%06d' % (self.last_id() + 1)
+        eol = '\r\n' if self.txt.count('\r\n') >= self.txt.count('\n') - self.txt.count('\r\n') else '\n'
+        if self.txt and self.txt[-1] not in '\r\n': self.txt += eol
+        self.txt += key + '\t' + text + eol
+        return key
+
+    def set_text(self, key, text):
+        m = re.search(r'(?m)^[ \t]*' + re.escape(key) + r'(?=[ \t\r\n])([ \t]*)([^\r\n]*?)[ \t]*(?=\r?$)', self.txt)
+        a, b = m.start(2), m.end(2)
+        glue = '' if m.group(1) else '\t'
+        self.txt = self.txt[:a] + glue + text + self.txt[b:]
+
+    def retitle(self, span, text, everywhere):
+        tok = self.inc[span[0]:span[1]]
+        if tok.startswith('"'):
+            self.inc = self.inc[:span[0]] + '"' + text + '"' + self.inc[span[1]:]
+            return 'inline'
+        if self.key_count(tok) == 1 or everywhere:
+            self.set_text(tok, text)
+            return 'everywhere' if self.key_count(tok) > 1 else 'text'
+        key = self.append_key(text)
+        self.inc = self.inc[:span[0]] + key + self.inc[span[1]:]
+        return 'own key'
+
+    def do(self, e):
+        st = ne_stmts(self.inc, e['npc'])
+        if e['op'] == 'rename':
+            name = [x for x in st if x[0] == 'SetName'][-1]
+            return self.retitle(name[4], e['text'], e.get('all', False))
+        if e['op'] == 'tab':
+            slot = [x for x in st if x[0] == 'AddVendorSlot' and x[3] == e['slot']][-1]
+            return self.retitle(slot[4], e['text'], e.get('all', False))
+        if e['op'] == 'addtab':
+            S = self.strings()
+            titles = {x[3]: ne_unquote(S.get(self.inc[x[4][0]:x[4][1]], self.inc[x[4][0]:x[4][1]])) for x in st if x[0] == 'AddVendorSlot'}
+            new = next(i for i in range(4) if titles.get(i, '') == '')
+            key = self.append_key(e['text'])
+            lower = [x for x in st if x[0] == 'AddVendorSlot' and x[3] < new]
+            names = [x for x in st if x[0] == 'SetName']
+            slots = [x for x in st if x[0] == 'AddVendorSlot']
+            anchor = (lower or names or slots)[-1]
+            self.inc = ne_insert_after(self.inc, anchor[2], anchor[1], 'AddVendorSlot( %d, %s );' % (new, key))
+            return new
+        if e['op'] == 'rmtab':
+            for x in sorted([x for x in st if x[0] == 'AddVendorSlot' and x[3] == e['slot']], key=lambda x: -x[1]):
+                ls, le, _ = ne_line_bounds(self.inc, x[1], x[2])
+                self.inc = self.inc[:ls] + self.inc[le:]
+            return e['slot']
+        if e['op'] == 'addmenu':
+            pad = re.search(r'AddMenu\s*\(( ?)', self.inc)
+            pad = pad.group(1) if pad else ' '
+            last = [x for x in st if x[0] == 'AddMenu'][-1]
+            self.inc = ne_insert_after(self.inc, last[2], last[1], 'AddMenu(%s%s%s);' % (pad, e['menu'], pad))
+            return e['menu']
+        if e['op'] == 'rmmenu':
+            for x in sorted([x for x in st if x[0] == 'AddMenu' and x[3] == e['menu']], key=lambda x: -x[1]):
+                ls, le, _ = ne_line_bounds(self.inc, x[1], x[2])
+                self.inc = self.inc[:ls] + self.inc[le:]
+            return e['menu']
+
+
+def ne_summary(A, ns, key, counts):
+    S = ns.strings()
+    npc = [x for x in nn_npcs(ns.inc, A.D, S) if x['key'] == key][-1]
+    titles = {k: ne_unquote(v) for k, v in npc['slots'].items()}
+    w = ne_window(titles, counts)
+    return dict(name=npc['name'], titles={str(k): v for k, v in titles.items()}, menus=npc['menus'], window=w)
+
+
+NE_EDITS = [
+    ('rename Peach', [dict(op='rename', npc='MaFl_Peach', text='Gem Lady Peach')]),
+    ('Peach tab 2 (shared n/a) own key', [dict(op='tab', npc='MaFl_Peach', slot=1, text='Event')]),
+    ('Peach tab 2 everywhere', [dict(op='tab', npc='MaFl_Peach', slot=1, text='Empty', all=True)]),
+    ('Peach tab 1 (shared) own key', [dict(op='tab', npc='MaFl_Peach', slot=0, text='Protection')]),
+    ('Isruel inline tab', [dict(op='tab', npc='MaFl_Isruel', slot=0, text='Men')]),
+    ('Waforu + tab', [dict(op='addtab', npc='MaFl_Waforu', text='Extra')]),
+    ('Peach remove tab 4 then + tab', [dict(op='rmtab', npc='MaFl_Peach', slot=3), dict(op='addtab', npc='MaFl_Peach', text='Pets')]),
+    ('Peach menus', [dict(op='addmenu', npc='MaFl_Peach', menu='MMI_BANKING'), dict(op='rmmenu', npc='MaFl_Peach', menu='MMI_SMELT_JEWEL')]),
+    ('Pet Tamer rename + tab 1', [dict(op='rename', npc='MaFl_PetTamer', text='Pet Tamer Mia'), dict(op='tab', npc='MaFl_PetTamer', slot=0, text='3 days')]),
+    ('Peach rename twice', [dict(op='rename', npc='MaFl_Peach', text='Peach A'), dict(op='rename', npc='MaFl_Peach', text='Peach B')]),
+]
+
+
+def ne_run(root):
+    import hashlib
+    from oracle import vendor_sim
+    A = NNData(root)
+    shops, _ = vendor_sim(root)
+    trade = A.D.get('MMI_TRADE')
+    windows = []
+    for f in NN_CHAR_FILES:
+        if f not in A.raw: continue
+        for x in nn_npcs(nn_text16(A.raw[f]), A.D, A.S):
+            if trade not in x['menus']: continue
+            counts = [len(t) for t in shops.get(f + '|' + x['key'], [[], [], [], []])]
+            titles = {k: ne_unquote(v) for k, v in x['slots'].items()}
+            windows.append(dict(file=f, key=x['key'], titles={str(k): v for k, v in titles.items()}, counts=counts, window=ne_window(titles, counts)))
+    small = []
+    for mask in range(16):
+        for blank in (None, 0, 2):
+            titles = {i: ('T%d' % i) for i in range(4) if mask >> i & 1}
+            if blank is not None and blank in titles: titles[blank] = ''
+            counts = [i + 1 if mask >> i & 1 else (2 if i == 3 else 0) for i in range(4)]
+            small.append(dict(titles={str(k): v for k, v in titles.items()}, counts=counts, window=ne_window(titles, counts)))
+    edits = []
+    for name, steps in NE_EDITS:
+        ns = NEState(A)
+        hows = [ns.do(e) for e in steps]
+        key = steps[-1]['npc']
+        f = 'character.inc'
+        counts = [len(t) for t in shops.get(f + '|' + key, [[], [], [], []])]
+        sha = lambda t: hashlib.sha1(t.encode('utf-8')).hexdigest()
+        edits.append(dict(name=name, steps=steps, hows=hows, inc=sha(ns.inc), txt=sha(ns.txt), lastId=ns.last_id(),
+                          after=ne_summary(A, ns, key, counts)))
+    return dict(windows=windows, small=small, edits=edits)
+
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -2429,6 +2689,8 @@ if __name__ == '__main__':
         print(json.dumps(nn_run(root)))
     elif what == 'newmenu':
         print(json.dumps(nm_run(root)))
+    elif what == 'npcedit':
+        print(json.dumps(ne_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model
         for f in sorted(os.listdir(root)):
             if f.lower().startswith('mvr_') and f.lower().endswith('.o3d'):

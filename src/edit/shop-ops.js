@@ -135,5 +135,5 @@
     return plan;
   }
 
-  FRE.shopOps = { addItem, removeStatement, setCost, setSlot, setShopType, shopTypePlan, shopType, stmtExtent: T.stmtExtent };
+  FRE.shopOps = { formatStmt, addItem, removeStatement, setCost, setSlot, setShopType, shopTypePlan, shopType, stmtExtent: T.stmtExtent };
 })(globalThis.FRE = globalThis.FRE || {});

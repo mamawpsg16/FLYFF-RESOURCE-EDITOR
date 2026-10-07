@@ -122,7 +122,7 @@
           if (full.length || overflow) {
             const names = full.map(d => (d.prop && d.prop.item.define) || d.rec.cmd).slice(0, 5).join(', ');
             add(Object.assign({ code: 'C_TAB_FULL', severity: 'WARN', start: npc.start, end: npc.keyEnd, key: `C_TAB_FULL|${npc.file}|${npc.key}|${t}`,
-              message: `${npc.key}: tab ${t} would hold more than ${MAX_TAB_ITEMS} items; ${overflow + full.length} are left out${names ? ' (' + names + (full.length > 5 ? ', …' : '') + ')' : ''}` }, at));
+              message: `${npc.key}: tab ${t + 1} would hold more than ${MAX_TAB_ITEMS} items; ${overflow + full.length} are left out${names ? ' (' + names + (full.length > 5 ? ', …' : '') + ')' : ''}` }, at));
           }
           for (const r of tab.rules) {
             if (!r.empty) continue;
@@ -132,6 +132,27 @@
               message: `${npc.key}: ${r.rec.cmd}(${t}, ${ik3}, rarity ${r.rec.args.rareMin.value}-${r.rec.args.rareMax.value}) matches no item; the server logs a VENDORITEM error and adds nothing` }, at));
           }
         });
+      }
+      // The shop window's tab bar (loaders/shop-window.js: CWndShop::OnInitialUpdate + CWndTabCtrl): only
+      // named slots become tabs, at their slot's position. Only NPCs with Trade open the window.
+      if (sim && tradeMenu !== undefined && npc.menus.includes(tradeMenu)) {
+        const title = s => npc.slotTitles[s];
+        const named = [0, 1, 2, 3].filter(s => title(s) !== undefined && title(s) !== '');
+        const win = FRE.shopWindow.ofNpc(npc, sim);
+        if (named.length && !named.includes(0)) {
+          add(Object.assign({ code: 'C_TAB_FIRST_UNNAMED', severity: 'BLOCK', start: npc.start, end: npc.keyEnd, key: `C_TAB_FIRST_UNNAMED|${npc.file}|${npc.key}`,
+            message: `${npc.key}: the first tab has no name (no AddVendorSlot( 0, ... )) but tab ${named[0] + 1} has one; clicking a tab in this shop crashes the game client` }, at));
+        }
+        [0, 1, 2, 3].forEach(s => {
+          const n = sim.tabs[s].entries.length;
+          if (!n || named.includes(s)) return;
+          add(Object.assign({ code: 'C_TAB_UNNAMED_ITEMS', severity: 'WARN', start: npc.start, end: npc.keyEnd, key: `C_TAB_UNNAMED_ITEMS|${npc.file}|${npc.key}|${s}`,
+            message: `${npc.key}: tab ${s + 1} sells ${n} item(s) but has no name (no AddVendorSlot( ${s}, ... )): the game shows no such tab, so players never see them` }, at));
+        });
+        if (named.length && named[named.length - 1] + 1 !== named.length && named.includes(0)) {
+          add(Object.assign({ code: 'C_TAB_GAP', severity: 'INFO', start: npc.start, end: npc.keyEnd, key: `C_TAB_GAP|${npc.file}|${npc.key}`,
+            message: `${npc.key}: tabs ${win.tabs.map((t, i) => t ? null : i + 1).filter(Boolean).join(', ')} have no name, so the tab bar has an empty space there` }, at));
+        }
       }
       if (shopCount && tradeMenu !== undefined && !npc.menus.includes(tradeMenu)) {
         const text = ctx.textOf ? ctx.textOf(npc.file) : '';

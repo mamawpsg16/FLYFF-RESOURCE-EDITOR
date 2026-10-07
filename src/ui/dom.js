@@ -117,7 +117,9 @@
     try { n.setSelectionRange(s0, s1); } catch (e) { /* not a text input */ }
   }
 
+  let toastCount = 0;                 // lets the shell skip its own "done" note when an editor already said something
   function toast(msg, kind = '') {
+    toastCount++;
     const t = h('div.toast' + (kind ? '.' + kind : ''), msg);
     $('toasts').appendChild(t);
     setTimeout(() => t.remove(), kind === 'bad' ? 7000 : 3500);
@@ -136,5 +138,5 @@
     return { close, el: back };
   }
 
-  FRE.dom = { h, $, fmt, toast, modal, numInput, pctInput, pctText, keepFocus, LIVE_MS, flushLive };
+  FRE.dom = { h, $, fmt, toast, toasts: () => toastCount, modal, numInput, pctInput, pctText, keepFocus, LIVE_MS, flushLive };
 })(globalThis.FRE = globalThis.FRE || {});

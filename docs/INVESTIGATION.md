@@ -192,6 +192,33 @@ Startup order (`OpenProject`):
 - **Client copies:** defineText.h, defineNeuz.h and Exchange_Script.txt are LF in Client (`eol` sync), textClient.* and character.inc identical.
 - **Full bag:** an exchange whose ingredients are used up whole frees their slots (`IsFull` counts them as empty), so Jeff's exchanges succeed even with no free slot (the core's slot is freed).
 
+### 1.11 Editing an existing NPC: name, shop tabs, menus (added 2026-10-07, `edit/npcedit-ops.js`, `loaders/shop-window.js`)
+
+**Name and tab texts.**
+- `SetName( IDS_… )` and `AddVendorSlot( n, IDS_… )` show the text of a `character.txt.txt` line.
+- `AddVendorSlot( n, "Male" )` keeps its text in character.inc itself (`GetLangScript`, `Project.cpp:3433`).
+- The proven edits:
+  - change the text after the key: `f58e56ba` NPC renames, `ba92f67f` Peach Awaken → Scrolls, `5794b14d`;
+  - add a tab: append a key line + `\tAddVendorSlot( n, KEY );` after `SetName` (`d11123ac`).
+- Many keys are shared: `IDS_CHARACTER_INC_000049` "n/a" is 6 tabs (Peach 2–4, Raia 2–4), and the guild house doors share one name ×17. So the editor changes a shared text only when asked, and otherwise gives this NPC or tab its own new key.
+- Only character.inc NPCs: the client has no loose copy of character-etc.inc / character-school.inc or their string files (it reads `data.res`).
+
+**The shop window** (client, `CWndShop::OnInitialUpdate`, `WndShop.cpp:815-833`):
+- One tab per slot whose `m_venderSlot` is not empty, inserted at index = slot (`CWndTabCtrl::InsertItem`, `WndControl.cpp:5744`, `m_aTab.resize(i+1)`).
+- Unnamed slots below a named one stay NULL entries: not drawn, not clickable (`OnLButtonDown`, 5632). Fewer than 3 entries are padded with blank tabs.
+- `m_nCurSelect` starts at 0. A click runs `SetCurSel`, which first hides `m_aTab[old]->pWndBase`. With slot 0 unnamed and another slot named, that is a NULL dereference, so **the client crashes on the first tab click** (rule `C_TAB_FIRST_UNNAMED`, BLOCK; from the code, not seen in game).
+- Items in an unnamed slot are never shown (`C_TAB_UNNAMED_ITEMS`).
+- A gap in the middle only leaves an empty space (`C_TAB_GAP`, INFO).
+- Buying sends `cTab = GetCurSel()` (`WndShop.cpp:673`) and the server sells from `m_ShopInventory[cTab]` (`DPSrvr.cpp:3363`). Position = slot, so a gap does not mix up tabs.
+- Real data today: no shop has any of the three.
+
+**Menus:** `AddMenu( MMI_X );` lines. `AddMenuLang` and `AddVendorSlotLang` are for other languages; `AddVendorSlotLang` appears only in comments here.
+
+**Buy / sell price** (for task S part 2):
+- Buy: `CDPSrvr::OnBuyItem` (`DPSrvr.cpp:3332`) charges `int(GetCost() × m_fShopCost)`, then `× EventLua GetShopBuyFactor()` (`__SHOP_COST_RATE` on, `WORLDSERVER/VersionCommon.h:257`), then at least 1; Perin costs `PERIN_VALUE`. Only `SetVenderType 0` shops buy here.
+- Sell back: `GetCost()/4 × GetShopSellFactor()`, at least 1 (`DPSrvr.cpp:3760`).
+- Both factors default to 1.0 and are set at run time.
+
 ## Phase 2: Encoding and line-ending forensics (all 15,299 files, raw bytes)
 
 **Method:** Python read every file as bytes. For each one it checked:

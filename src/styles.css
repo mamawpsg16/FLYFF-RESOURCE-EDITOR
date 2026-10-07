@@ -315,3 +315,19 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
 .small.ok { color: var(--ok); } .small.bad { color: var(--bad); } .small.warn { color: var(--warn); }
 .pct-wrap { white-space: nowrap; } .pct-input { width: 80px; }
 .ex-tab { color: var(--baruna); }
+/* task S: existing NPC edits (ui/npc-edit.js) */
+.tabs button.add-tab { border-style: dashed; color: var(--muted); }
+.tabs button.add-tab:hover { color: var(--text); }
+.tabs button.unnamed { color: var(--warn); border-style: dashed; }
+.tabs button.placeholder { font-style: italic; }
+.tabs .tab-edit { cursor: pointer; color: var(--muted); }
+.tabs .tab-edit:hover { color: var(--accent); }
+.menus .menu-x { padding: 0 4px; margin-left: 4px; font-size: 10px; line-height: 1; min-height: 0; }
+.menus .exch-wrap { padding: 0; border: none; background: none; }
+.menus .add-menu { margin-left: 6px; }
+.shop-window { margin: -4px 0 8px; }
+.add-target { padding: 2px 10px 6px; color: var(--accent); }
+.nn-shared { margin: 10px 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); }
+.item-cat { flex: 1; min-width: 0; }
+.item-cat .combo { min-width: 0; }
+.item-cat .combo-list { min-width: 280px; max-height: 420px; }

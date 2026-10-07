@@ -1,8 +1,39 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-07 (Step 2 polish after the user's Brave test: handoff on top)._
+_Last updated 2026-10-07 (task S part 1: existing NPC edits, handoff on top)._
 
-> **Handoff (2026-10-07) — START HERE: Step 2 (new exchange menus, Jeff) + the polish below are user-tested in Brave and committed.** In-game test of Add New NPC (steps 1 + 2) deferred to Friday 2026-10-09 or Saturday 2026-10-10 (when the user has the Windows PC); until then continue with S. Plan: `/home/kevin/.claude/plans/witty-churning-parrot.md`. The user made Bob Marley + "Bob's Weapons" on test-data and saved it (backup `test-data/backups/2026-10-07_08-04-42_npc/`).
+> **Handoff (2026-10-07, evening) — START HERE: task S part 1 is user-tested in Brave and committed. Next: S part 2 (rule rows editable: Scroll of Awakening / Pet Awakening on Peach and Raia, with "players pay / get back"), see "### S." below.**
+> - After the user's test, also committed:
+>   - **Nothing silent** (now in CLAUDE.md "UI standards"): every edit shows "✓ <what> — not saved yet (n files…)", Undo / Redo show "↶ Undone / ↷ Redone", errors show a reason.
+>   - **Save never fails silently.** After a reload Brave forgot write access, and chained `requestPermission` calls without a click threw an uncaught error. Now an "Allow writing" button asks (`writeAccess`), and any Save error shows "Save failed: nothing was written".
+>   - **Category search:** a type-to-search box, matching word starts ("ra" → Raised pets); readable game type names.
+>   - **Rename with the same text:** "No change", button greyed.
+> - Waiting for a decision: **info-board menus** ("Rules" / "Information" on any NPC, like the Guild Siege boards). Needs ONE generic C++ change in the client's `CWndWorld::OnCommand` `default:` (show `Client/Client/NpcBoard_<menu id>.inc` when it exists, else the exchange window), made in the source repo. Then the editor adds board menus + text with no further C++. The user has not said yet whether it goes in S or Step 3.
+>
+> **Earlier the same day — task S part 1 (built, then user-tested):** Plan: `/home/kevin/.claude/plans/read-claude-md-and-the-magical-hopcroft.md`. The user widened S the same day: edit EVERYTHING of an existing NPC (name, tabs, menus, position, model), plus clearer item categories and Donation Shop categories.
+> - **NPC Shops, any character.inc NPC:**
+>   - ✎ next to the name renames it;
+>   - ✎ on the selected tab renames that tab, with "Remove this tab" when it is the last one and sells nothing;
+>   - **+ Tab** names the lowest free slot (`d11123ac` way);
+>   - menus get ✕ and **+ Menu**, a searchable list of every menu id with what it opens.
+> - **Shared texts:** a shared text (e.g. `000049` "n/a" on 6 tabs) gets its own new key for this NPC or tab, unless "Change it in all N places" is ticked.
+> - **Tab labels:** no more made-up "Tab 0" labels. Tabs without a name are not offered (adding items to them is blocked); repeated names show their position ("2 · n/a"). A line under the tabs shows the in-game shop window. The item list says where + adds ("+ adds to Peach → tab 2 "n/a"").
+> - **Shop window port** (`loaders/shop-window.js`): only named slots become tabs, at their slot's position. Slot 0 unnamed with a later slot named → the client crashes on a tab click (`C_TAB_FIRST_UNNAMED` BLOCK); items in an unnamed tab are invisible (`C_TAB_UNNAMED_ITEMS`); a gap is harmless (`C_TAB_GAP` INFO). No shop has any of these today. INVESTIGATION §1.11.
+> - **Item list categories** (`loaders/item-category.js`): Weapons › Swords…, Pets › Raised / Pickup / Buff pets (the game's `IsVisPet`), Scrolls › Awakening / Protection…, etc. The raw type list stays as "All game types". Rarity chips show only for Weapons / Armor (every other item is Normal). Penguin Buff Pet's `dwReferStat1` is -1, so the game treats it as a pickup pet.
+> - **Simulator:** `tools/npcedit-sim.js MaFl_Peach tab2=Event +menu=MMI_BANKING` (in memory). Python copy `oracle_sim.py npcedit`: 88 Trade NPCs' windows, 48 small tab sets, 10 edit scripts with byte-identical character.inc / character.txt.txt. Tests: core 648, UI harness 222.
+> - "Tab N" in messages (C_TAB_FULL, the new-NPC "In game" box) is now 1-based, like the game.
+>
+> **User's test:** `python3 build.py`, reload, pick `test-data` (no refresh needed).
+> 1. NPC Shops → Peach: ✎ on tab 2 "n/a" → it says 5 other places use the text → type a name → Rename: only tab 2 changes.
+> 2. Tab 4 ✎ → Remove this tab → + Tab → name it.
+> 3. ✎ on the name → rename.
+> 4. + Menu → Bank; ✕ on a menu.
+> 5. Item list → Category → Pets › Raised pets.
+> 6. Save and look at the backup. Undo works for each step.
+>
+> **Next in S:** part 2 (rule rows editable, players pay / get back, `C_PRICE_MIN1`), part 3 (move NPC / change model: `.dyo` record), part 4 (Donation Shop categories: `DonationShopTree.inc`, `7d7df4f9` / `ae345504`).
+>
+> **Handoff (2026-10-07): Step 2 (new exchange menus, Jeff) + the polish below are user-tested in Brave and committed.** In-game test of Add New NPC (steps 1 + 2) deferred to Friday 2026-10-09 or Saturday 2026-10-10 (when the user has the Windows PC); until then continue with S. Plan: `/home/kevin/.claude/plans/witty-churning-parrot.md`. The user made Bob Marley + "Bob's Weapons" on test-data and saved it (backup `test-data/backups/2026-10-07_08-04-42_npc/`).
 > - **NPC Shops shows and edits exchanges:** each exchange menu of the NPC has a tab `⇄ <label> (n)` next to Tab 0–3 with the same cards as Exchanges (Try it, chances, Gives, add / remove / change, + New exchange, Open in Exchanges), before and after saving. Menu chips show the in-game label + count and open that tab.
 > - **Chances in percent:** the Chance box is a percent (`FRE.dom.pctInput`, 4 decimals); "of 1,000,000" is read-only. Changing one reward rebalances the others so the total stays 100% (`exchangeOps.rebalance`, `setChanceKeepTotal`); + Reward gives an equal share (`addRewardKeepTotal`); ✕ scales the rest back up (`removeRewardKeepTotal`). No more `EX_PROB_OVER` drops from editing.
 > - **Typing updates by itself** after 400 ms (keyed `numInput` / `pctInput`, `live`); the focus and caret stay (`FRE.dom.keepFocus`); typing in one field is one undo step (`Workspace.mergeLast`, 2 s).
@@ -204,7 +235,7 @@ _Last updated 2026-10-07 (Step 2 polish after the user's Brave test: handoff on 
 
 ### Add New NPC: Step 2 and Step 3 (agreed 2026-10-06)
 - **Step 2:** built 2026-10-06 (see the handoff): new exchange menus on any character.inc NPC (`MMI_` 282-349, label `TID_MMI_*` = 7000 + id) + new exchanges in a menu; Jeff's 6 Weapon Pieces menus (`7b1210d4`; Weapon Pieces handoff Step 3) applied to test-data.
-- **Step 3:** edit an existing NPC's menus (add / remove `AddMenu`) and the info-board texts its menus show.
+- **Step 3:** the info-board texts an NPC's menus show (adding / removing `AddMenu` moved to task S part 1, built 2026-10-07).
   - Example: the Guild Siege manager `MaFl_GuildWar`. `MMI_GUILDCOMBAT_INFO_BOARD1/2/3` and `MMI_GUILDCOMBAT_INFO_TEX` load the client-only `Client/Client/GuildCombatTEXT_<n>_<lang>.inc` (`WndWorld.cpp:4464-4620`, `CScript::Load` + `SetString`). Each file is ASCII, CRLF, with `#c` colour codes.
   - Goal: put the siege rules (TODO `13364001`) on a board.
   - Check which `<lang>` the client uses (`GetLangFileName`).
@@ -260,6 +291,13 @@ Python copy, as for every task.
 - Simulator: a character wears / wields the items, and the simulator applies the bonuses the way the server does, giving the stats the game would show. Plus the independent Python copy, as for every task.
 
 ### S. Shops: everything editable (asked 2026-10-06)
+**Widened 2026-10-07** (the user, testing Peach in Brave: "can't we edit an existing NPC… adding tab, renaming tab… even renaming npc", "move NPC / change model", "Donation Shop: add a new category"): S = everything about an existing NPC + its shop. Parts:
+1. Name, tabs, menus: **built 2026-10-07** (handoff above).
+2. Rule rows editable + what players pay / get back (below).
+3. Move NPC / change model (a same-length splice of its `.dyo` record; reuse the new-NPC form's spot and model pickers).
+4. Donation Shop categories: add / rename / move / remove groups and leaves of `Client/Client/DonationShopTree.inc` (+ the rows in DonationShop.inc), simulator of the tree and keyword match.
+Also built in part 1: the item list's own categories (Pets › Raised / Pickup / Buff…).
+
 **Why:** today only fixed items (`AddShopItem` / `AddVenderItem2`) are editable. Items that come from an `AddVendorItem` rule show in the shop but can't be priced or removed.
 - Example: Peach `MaFl_Peach` (character.inc ~7520) and Raia (~9519) each have `AddVendorItem( 0, IK3_GENERAL_RANDOMOPTION_GEN, -1, 190, 190, 100 )` → Scroll of Awakening (`dwCost` 100,000), and `IK3_SYSTEMPET_RANDOMOPTION_GEN` → Scroll of Pet Awakening (200,000).
 
