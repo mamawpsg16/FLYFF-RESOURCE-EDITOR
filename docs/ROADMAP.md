@@ -166,7 +166,7 @@ _Last updated 2026-10-06._
 8. Add New NPC step 3 (edit NPC menus + info boards, Guild Siege rules).
 9. **I. Rates & Buffs** (server rates, level-up gifts, rebirth tiers, guild buff, server buff, couple; buff descriptions written from the stats).
 10. F. Monster drops: add / remove / change what each monster drops (the Rates calculator then shows real drop chances).
-11. **J. Random boxes.**
+11. **J. Boxes: create and edit treasure boxes (1 random of N), sets / bundles (everything inside) and single-item boxes.**
 12. **K. Upgrade rates.**
 13. **L. Monster Hunt + Badges + Collecting.**
 14. G. Item set effects and weapon effects.
@@ -456,11 +456,74 @@ All five came in with the import commit `3ebc5356`. `Event.lua` was also changed
 - F extends the calculator with per-monster drop chances.
 - Python copy, as for every task.
 
-### J. Random boxes (asked 2026-10-06)
-- Files: `propGiftbox.inc` (`LoadGiftbox`, `_Common/Project.cpp:842`) and `propPackItem.inc` (`LoadPackItem`, `Project.cpp:855`; the client loads it too, see the comment in `OpenProject`).
-- Show each box's contents with the real chance of each item, as the server rolls it.
-- Rules: unknown items, chances that don't add up the way the loader expects, a box sold in the Donation Shop whose contents changed.
-- Simulator: "open N boxes" with the server's `xRandom` (port the open-box code path), plus the Python copy.
+### J. Boxes: create and edit random boxes, sets and bundles (asked 2026-10-06; widened 2026-10-07)
+**For players' words:** make a new box item in one form. Pick what kind of box:
+1. **Treasure box: "get 1 random item out of N".** Add items, set each one's chance in plain %, and see a bar that must add up to 100%.
+2. **Set / bundle box: "get everything inside".** E.g. a fashion set (hat, suit, gloves, shoes) or a starter pack.
+3. **Single-item box:** a bundle with one item.
+
+Also view / edit / remove the 487 random boxes and 844 packs that exist today, and an **"Open it 1,000 times"** test that shows what players would really get.
+
+Example form:
+```
+New box:  [ Infinity Treasure Box ]   Type: (•) 1 random item  ( ) everything inside
+  Item                      Amount  Chance   Bound  Time limit  Upgrade
+  Scroll of Awakening        ×1      40%      ☐      —           —
+  Blessing of the Goddess    ×1      35%      ☐      —           —
+  Sentinel Mask              ×1      20%      ☑      7 days      —
+  Iron Sword                 ×1       5%      ☐      —           +5
+  ─────────────────────────────────── 100% ✓
+```
+
+**System 1: random box** (`propGiftbox.inc`, UTF-16LE + BOM, CRLF, **server only**; the client doesn't load it)
+- Loader: `CProject::LoadGiftbox`, and `CGiftboxMan::AddItem` / `Open` / `Verify` (`_Common/Project.cpp`, around 4092). Opening: `CUser::DoUseGiftbox` (`WORLDSERVER/User.cpp:2983`). It runs for ANY used item whose id is a box here.
+- 6 line types. They differ only in the chance unit and the extra columns:
+
+  | Type | Columns | Chance ×, out of 1,000,000 | Count today |
+  |---|---|---|---|
+  | `GiftBox` | item, chance, amount | ×100 (per 10,000) | 392 |
+  | `GiftBox2` | item, chance, amount | ×1 | |
+  | `GiftBox3` | + flag | ×100 | 40 |
+  | `GiftBox4` | + flag, minutes | ×100 | 23 |
+  | `GiftBox5` | + flag, minutes | ×10 | 1 |
+  | `GiftBox6` | + flag, minutes, +upgrade | ×10 | 31 |
+
+  - flag: 2 = bound, 4 = keep the item's default.
+  - The editor shows % only and picks the smallest type that holds the needed columns and precision.
+- Roll: `xRandom( 1000000 )`, walking the running total.
+  - `Verify()` gives the shortfall below 100% to the LAST item.
+  - Items past 100% never drop (WARN; show the real chances).
+  - A full bag: the box is NOT used up (`TID_GAME_LACKSPACE`).
+- **Max 128 items per box** (`MAX_GIFTBOX_ITEM`). The server does NOT check it (array overflow): BLOCK.
+- The same box id twice: its lines are appended (WARN).
+
+**System 2: pack / set** (`propPackItem.inc`: Server ANSI CRLF, Client copy LF)
+- The client loads it too (the Item Wiki, see the comment in `OpenProject`), so write both copies.
+- Format: `PackItem <box item> <minutes, 0 = none> { <item> <+upgrade> <amount> ... }`.
+- Loader: `CProject::LoadPackItem` / `CPackItem::AddItem`; opening: `CUser::DoUsePackItem` (`WORLDSERVER/User.cpp:2937`):
+  - gives ALL items;
+  - needs as many free bag slots as items, otherwise nothing is given;
+  - the time limit applies to every item;
+  - a bound box makes every item bound.
+- **Max 24 items per pack** (`MAX_ITEM_PER_PACK`, `__VER >= 18`); more = load error (BLOCK).
+- There is no gender choice inside a pack: the existing fashion sets are separate male / female boxes (e.g. `II_SYS_SYS_SCR_BXMTUXEDO01` = suit + gloves + shoes). **Fashion-set helper:** pick a fashion item and it fills in the matching pieces (same set name; `SetItem` blocks of `propItemEtc.inc` where defined), and makes the male and female boxes in one step.
+
+**The box item itself** (created in the same undo step, Server + Client):
+- `Spec_Item.txt` row, copied from an existing box (e.g. "Box of Wish" `II_SYS_SYS_SCR_BXSSUIT`: `IK1_SYSTEM / IK2_SYSTEM / IK3_SCROLL`, usable, stack 1);
+- `#define` in `defineItem.h` (next free id; no clash with existing ids);
+- name and description in `propItem.txt.txt`;
+- an icon (pick from existing box icons, or a new `.dds`);
+- the drop-model line in `mdlDyna.inc` (copy the source box's line).
+- The description is written from the contents: "Gives one of: Scroll of Awakening (40%), …" / "Contains: Tuxedo Suit, Tuxedo Gloves, Tuxedo Shoes".
+- After saving, offer to put the box in a shop / the Donation Shop / an exchange / a monster's drops (links to those editors). No commit of the user's has added a box yet: the first one needs the in-game check (§ Deferred).
+
+**Nesting:** a random box may give a pack box (e.g. a 5% chance of a whole fashion set). Show the nested contents in the preview.
+
+**Simulator:** port `CGiftboxMan::Open` / `Verify` (with the server's `xRandom`) and `DoUseGiftbox` / `DoUsePackItem`, including bag space, the bound flag, time limits and +upgrade:
+- "open this box N times with this bag": what came out, how often, refusals;
+- nested boxes are opened too.
+
+Python copy in `tools/oracle_sim.py boxes`; planted bugs (e.g. `<=` vs `<` on the roll edge, the `Verify` top-up) must be caught.
 
 ### K. Upgrade rates (asked 2026-10-06)
 - Files:
