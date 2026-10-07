@@ -8,6 +8,7 @@ _Last updated 2026-10-07 (task S part 1: existing NPC edits, handoff on top)._
 >   - **Save never fails silently.** After a reload Brave forgot write access, and chained `requestPermission` calls without a click threw an uncaught error. Now an "Allow writing" button asks (`writeAccess`), and any Save error shows "Save failed: nothing was written".
 >   - **Category search:** a type-to-search box, matching word starts ("ra" → Raised pets); readable game type names.
 >   - **Rename with the same text:** "No change", button greyed.
+> - Part 2 also: rename the item list's "Price for new items" box to "Price for items added with +", with a hint: empty = the item's own price (dwCost); a price is AddShopItem's and applies server-wide (the user asked what it was for).
 > - Waiting for a decision: **info-board menus** ("Rules" / "Information" on any NPC, like the Guild Siege boards). Needs ONE generic C++ change in the client's `CWndWorld::OnCommand` `default:` (show `Client/Client/NpcBoard_<menu id>.inc` when it exists, else the exchange window), made in the source repo. Then the editor adds board menus + text with no further C++. The user has not said yet whether it goes in S or Step 3.
 >
 > **Earlier the same day — task S part 1 (built, then user-tested):** Plan: `/home/kevin/.claude/plans/read-claude-md-and-the-magical-hopcroft.md`. The user widened S the same day: edit EVERYTHING of an existing NPC (name, tabs, menus, position, model), plus clearer item categories and Donation Shop categories.
