@@ -36,7 +36,7 @@
       maps: true,            // reads World/*/ to show where each NPC stands
       editsMaps: true,       // a new NPC is a new record in World/<map>/<map>.dyo (Server + Client copies)
       parse(ws) {
-        ws._sim = new Map();
+        ws._sim = new Map(); ws._costs = null;
         // model names and the "has a propMover row" check of a new NPC (validate/newnpc.js)
         if (!ws.movers && ws.files.get('propmover.txt')) ws.movers = FRE.propMover.loadPropMover(ws.files.get('propmover.txt'), { defines: ws.defines.defines, strings: ws.strings.map });
         return (ws.chars = FRE.character.loadCharacters(ws.files, { defines: ws.defines.defines, strings: ws.strings.map }));
@@ -44,7 +44,7 @@
       validate(ws, model) {
         return FRE.validateCharacters(model, {
           items: ws.items.items, defines: ws.defines.defines,
-          simulate: npc => ws.simulate(npc), textOf: n => ws.textOf(n),
+          simulate: npc => ws.simulate(npc), textOf: n => ws.textOf(n), costs: () => ws.costs(),
         }).map(d => Object.assign({ module: 'npc' }, d));
       },
     },
@@ -185,6 +185,33 @@
     }
 
     // file names in the client's Theme folder (BattlePass.inc rarity / icon textures)
+    // Rules windows (docs/patches/npc-board.diff): Client/Client/NpcBoard_<menu id>.inc, client-only files.
+    // They sit in this.files as 'client/npcboard_<id>.inc' with clientOnly set; io/save.js writes them into
+    // the Client folder. setBoardFiles: the ones already there (SourceFiles read from Client/Client).
+    setBoardFiles(list) {
+      for (const f of list || []) this._addBoard(f);
+    }
+    _addBoard(f) {
+      f.clientOnly = true;
+      f.dir = 'Client';
+      const lower = 'client/' + f.name.toLowerCase();
+      this.files.set(lower, f);
+      if (!f.readOnly) this.editable.add(lower);
+      return { lower, file: f };
+    }
+    // -> { lower, file } of NpcBoard_<id>.inc; create: an empty one (no bytes yet) when there is none
+    boardFile(id, create = false) {
+      const lower = `client/npcboard_${id}.inc`;
+      if (this.files.has(lower)) return { lower, file: this.files.get(lower) };
+      if (!create) return null;
+      return this._addBoard(new FRE.SourceFile(`NpcBoard_${id}.inc`, new Uint8Array(0)));
+    }
+    // the rules text players see for menu id (null: no board file, or an empty one)
+    boardTextOf(id) {
+      const b = this.boardFile(id);
+      return b && b.file.text.length ? b.file.text : null;
+    }
+
     setClientTheme(names) {
       this.clientTheme = names ? new Set([...names].map(n => n.toLowerCase())) : null;
       if (this.available.battlepass && this.available.battlepass.ok) this.reparse('battlepass.inc');
@@ -331,6 +358,16 @@
     simulate(npc) {
       if (!this._sim.has(npc)) this._sim.set(npc, FRE.vendorSim.simulateNpc(this.vendorIndex, npc));
       return this._sim.get(npc);
+    }
+
+    // Each item's dwCost after every AddShopItem price (vendorSim.effectiveCosts; cached until the next edit).
+    costs() {
+      if (!this._costs) this._costs = FRE.vendorSim.effectiveCosts(this.items, this.chars);
+      return this._costs;
+    }
+    // What players pay / get back for every item of one tab (vendorSim.pricedTab)
+    pricedTab(npc, slot, rates) {
+      return FRE.vendorSim.pricedTab(this.costs(), this.defines.defines, this.simulate(npc).tabs[slot], rates);
     }
 
     dirtyFiles() { return [...this.files.values()].filter(f => f.dirty); }

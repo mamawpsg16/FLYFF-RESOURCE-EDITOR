@@ -42,8 +42,11 @@
   async function save(ws, backupDir, log = () => {}, client = null) {
     const report = { ok: false, steps: [], files: [], backupFolder: null, client: [] };
     const step = (m) => { report.steps.push(m); log(m); };
-    const dirty = ws.dirtyFiles();
-    if (!dirty.length) { step('Nothing to save.'); report.ok = true; return report; }
+    const all = ws.dirtyFiles();
+    if (!all.length) { step('Nothing to save.'); report.ok = true; return report; }
+    // client-only files (rules windows: Client/Client/NpcBoard_<id>.inc) go into the Client folder
+    const dirty = all.filter(f => !f.clientOnly), boards = all.filter(f => f.clientOnly);
+    if (boards.length && !client) { step(`Aborted: ${boards.map(label).join(', ')} belong in the Client folder, and no Client folder was found. Nothing was written.`); return report; }
 
     const blocking = ws.newBlocking();
     if (blocking.length) { step(`Aborted: ${blocking.length} new blocking problem(s). Nothing was written.`); report.blocking = blocking; return report; }
@@ -82,7 +85,26 @@
         targets.push(p);
       }
     }
-    step(`Disk contents unchanged since load${targets.length ? ' (Server and Client)' : ''}.`);
+    const boardDisk = new Map();
+    for (const f of boards) {
+      if (f.handle) {
+        const cur = await FRE.fsa.readHandle(f.handle);
+        if (!B.bytesEqual(cur.bytes, f.bytes)) {
+          step(`Aborted: Client/${label(f)} was changed on disk since it was loaded. Nothing was written. Reload the Client folder.`);
+          report.conflict = 'Client/' + label(f);
+          return report;
+        }
+        boardDisk.set(f, cur.bytes);
+      } else {
+        const d = await FRE.fsa.dirAt(client.dir, f.dir);
+        if (d && await exists(d, f.name)) {
+          step(`Aborted: Client/${label(f)} appeared on disk since it was loaded. Nothing was written. Reload the Client folder.`);
+          report.conflict = 'Client/' + label(f);
+          return report;
+        }
+      }
+    }
+    step(`Disk contents unchanged since load${targets.length || boards.length ? ' (Server and Client)' : ''}.`);
 
     // 2. backup the current disk bytes, verified
     const folder = await FRE.fsa.newFolder(backupDir, stampName() + (ws.only ? '_' + ws.only : ''));   // e.g. 2026-10-06_08-10-00_exchange
@@ -90,11 +112,14 @@
     // files in a sub-folder (World/<map>/<map>.dyo) keep their path in the backup
     for (const f of dirty) await FRE.fsa.newFile(await FRE.fsa.dirAt(folder, f.dir, true), f.name, onDisk.get(f));
     const existing = targets.filter(t => t.client);
-    if (existing.length) {
+    const oldBoards = boards.filter(f => boardDisk.has(f));
+    if (existing.length || oldBoards.length) {
       const cf = await folder.getDirectoryHandle('Client', { create: true });
       for (const t of existing) await FRE.fsa.newFile(await FRE.fsa.dirAt(cf, t.client.dir, true), t.client.name, t.client.bytes);
+      for (const f of oldBoards) await FRE.fsa.newFile(await FRE.fsa.dirAt(cf, f.dir, true), f.name, boardDisk.get(f));
     }
-    step(`Backup written and verified: ${backupDir.name}/${folder.name}/ (${dirty.length} file(s)${existing.length ? ` + ${existing.length} in Client/` : ''})`);
+    const inClient = existing.length + oldBoards.length, created = boards.length - oldBoards.length;
+    step(`Backup written and verified: ${backupDir.name}/${folder.name}/ (${dirty.length} file(s)${inClient ? ` + ${inClient} in Client/` : ''}${created ? `; ${created} new file(s), listed in the manifest` : ''})`);
 
     // 3. write + verify each file; restore on failure
     const written = [];
@@ -113,11 +138,23 @@
         report.client.push({ name: t.client ? label(t.client) : t.name, lower: t.lower, dir: t.client ? t.client.dir : '', file: t.client ? t.client.name : t.name, mode: t.mode, handle, bytes: t.bytes, before: t.client ? t.client.bytes : null });
         step(`Client/${t.client ? label(t.client) : t.name}: ${t.mode === 'missing' ? 'created as a copy of the server file' : t.mode === 'eol' ? 'same change written, LF kept' : 'same change written'} and verified (${t.bytes.length} bytes).`);
       }
+      for (const f of boards) {
+        const candidate = f.serialize();
+        let stamp, handle = f.handle;
+        if (handle) stamp = await FRE.fsa.writeVerified(handle, candidate);
+        else { handle = await FRE.fsa.newFile(await FRE.fsa.dirAt(client.dir, f.dir, true), f.name, candidate); stamp = (await FRE.fsa.readHandle(handle)).stamp; }
+        written.push({ f, candidate, stamp, handle, board: true, dirHandle: await FRE.fsa.dirAt(client.dir, f.dir) });
+        report.files.push({ name: 'Client/' + label(f), before: f.bytes.length, after: candidate.length, changes: changeSummary(f), created: !f.handle });
+        step(`Client/${label(f)}: ${f.handle ? 'written' : 'created'} and verified (${candidate.length} bytes).`);
+      }
     } catch (e) {
       step(`WRITE FAILED: ${e.message}. Restoring from the backup...`);
       for (const w of written) {
-        try { await FRE.fsa.writeVerified(w.f.handle, onDisk.get(w.f)); step(`Restored ${w.f.name}.`); }
-        catch (e2) { step(`!! Could not restore ${w.f.name}: ${e2.message}. Copy it back manually from ${folder.name}.`); }
+        try {
+          if (w.board && !w.f.handle) await w.dirHandle.removeEntry(w.f.name);
+          else await FRE.fsa.writeVerified(w.f.handle, w.board ? boardDisk.get(w.f) : onDisk.get(w.f));
+          step(`Restored ${w.board ? 'Client/' + label(w.f) : w.f.name}.`);
+        } catch (e2) { step(`!! Could not restore ${w.f.name}: ${e2.message}. Copy it back manually from ${folder.name}.`); }
       }
       for (const c of report.client) {
         try {
@@ -132,7 +169,7 @@
     }
 
     await writeManifest(folder, report, 'ok');
-    for (const w of written) w.f.commitSaved(w.candidate, w.stamp);
+    for (const w of written) { if (w.board) w.f.handle = w.handle; w.f.commitSaved(w.candidate, w.stamp); }
     ws.markSaved();
     report.ok = true;
     step('Saved.');
@@ -146,7 +183,7 @@
   async function writeManifest(folder, report, status) {
     const manifest = {
       tool: 'FLYFF Resource Editor', version: VERSION, status, time: new Date().toISOString(),
-      files: report.files.map(f => ({ name: f.name, bytesBefore: f.before, bytesAfter: f.after, changes: f.changes })),
+      files: report.files.map(f => ({ name: f.name, bytesBefore: f.before, bytesAfter: f.after, changes: f.changes, created: !!f.created })),   // created: no file before (restore = delete it)
       client: report.client.map(c => ({ name: 'Client/' + c.name, mode: c.mode, bytesBefore: c.before ? c.before.length : null, bytesAfter: c.bytes.length })),
       log: report.steps,
     };

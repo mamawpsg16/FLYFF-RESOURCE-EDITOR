@@ -99,7 +99,8 @@
   }
 
   // + Menu: a searchable list of every MMI_ id the client can show (< MAX_MOVER_MENU) that this NPC lacks.
-  function addMenu(ctx, npc) {
+  // opts: { title, back } from + Menu (ui/menu-chooser.js)
+  function addMenu(ctx, npc, opts = {}) {
     const ws = ctx.ws;
     const have = new Set(npc.menus);
     const seen = new Set();
@@ -110,8 +111,8 @@
       const [m] = FRE.newNpcSim.rightClick(ws, [id]);
       if (!m) continue;
       const label = m.label || FRE.ui.pretty(name);
-      const group = m.opens ? (m.opens.sets ? 'Opens the exchange window' : 'Opens an EMPTY exchange window (no exchanges in Exchange_Script.txt)') : 'Opens its own window';
-      options.push({ v: name, label: `${label} · ${name}`, group, find: name });
+      const group = m.opens ? (m.opens.board ? 'Rules text' : m.opens.sets ? 'Swap items for other items' : 'Swap items (none set up yet)') : 'Opens its own window';
+      options.push({ v: name, label, group, find: name });
     }
     options.sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label));
     let pick = null;
@@ -119,8 +120,8 @@
     const body = h('div', h('label.nn-row', FRE.ui.fieldLabel('Menu', true), FRE.ui.combo({ options, value: null, placeholder: 'Type a menu name (Trade, Bank, …)',
       onPick: v => { pick = v; const ids = [...npc.menus, ws.defines.defines.get(v)];
         info.textContent = 'Right-click will show: ' + FRE.newNpcSim.rightClick(ws, ids).map(x => x.label || x.define).join(', '); } })), info);
-    FRE.dom.modal({ title: `+ Menu for ${npc.name || npc.key}`, body, buttons: [
-      { label: 'Cancel' },
+    FRE.dom.modal({ title: opts.title || `+ Menu for ${npc.name || npc.key}`, body, buttons: [
+      ...(opts.back ? [{ label: '← Back', onClick: opts.back }] : []), { label: 'Cancel' },
       { label: 'Add menu', cls: 'primary', onClick: () => {
         if (!pick) { FRE.dom.toast('Pick a menu first', 'bad'); return false; }
         ctx.edit(npc.file.toLowerCase(), () => O().addMenu(ws, npc, pick), `add menu ${pick}`, 'npc|' + npcId(npc));
@@ -135,7 +136,8 @@
     const [m] = FRE.newNpcSim.rightClick(ws, [id]);
     const notes = [];
     if (id === trade && sells) notes.push('Without Trade, players cannot open this shop: its items stay in the file but nobody can buy them.');
-    if (m && m.opens) notes.push('The exchanges of this menu stay in Exchange_Script.txt; only the right-click entry goes away.');
+    if (m && m.opens && m.opens.board) notes.push('Its text file (Client/Client/NpcBoard_' + id + '.inc) stays; only the right-click entry goes away.');
+    else if (m && m.opens) notes.push('The exchanges of this menu stay in Exchange_Script.txt; only the right-click entry goes away.');
     const go = () => ctx.edit(npc.file.toLowerCase(), () => O().removeMenu(ws, npc, id), `remove menu ${label}`, 'npc|' + npcId(npc));
     if (!notes.length) { go(); return; }
     FRE.dom.modal({ title: `Remove "${label}" from ${npc.name || npc.key}?`, body: h('div', notes.map(n => h('p', n))), buttons: [

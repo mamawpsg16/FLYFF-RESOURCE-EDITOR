@@ -33,10 +33,24 @@
       if (shown.length > MAX) list.appendChild(h('div.combo-more', `${shown.length - MAX} more: type more letters`));
       if (!shown.length) list.appendChild(h('div.combo-more', 'Nothing matches.'));
     }
-    function open() { hi = -1; paint(''); list.hidden = false; input.select(); }
-    function close() { list.hidden = true; input.value = cur() ? cur().label : ''; }
+    // The list is position: fixed at the box's spot on screen, so a scrolling parent (a window's body)
+    // can't clip it; it opens upward when there is more room above.
+    function place() {
+      const r = input.getBoundingClientRect(), below = window.innerHeight - r.bottom - 8, above = r.top - 8;
+      const up = below < 200 && above > below;
+      list.style.left = r.left + 'px'; list.style.width = r.width + 'px';
+      list.style.maxHeight = Math.max(120, Math.min(320, up ? above : below)) + 'px';
+      list.style.top = up ? '' : r.bottom + 'px';
+      list.style.bottom = up ? (window.innerHeight - r.top) + 'px' : '';
+    }
+    const onMove = () => { if (!list.hidden && input.isConnected) place(); };
+    const watch = on => { const f = on ? 'addEventListener' : 'removeEventListener'; window[f]('scroll', onMove, true); window[f]('resize', onMove); };
+    const show = () => { if (list.hidden) watch(true); list.hidden = false; place(); };
+    const hide = () => { if (!list.hidden) watch(false); list.hidden = true; };
+    function open() { hi = -1; paint(''); show(); input.select(); }
+    function close() { hide(); input.value = cur() ? cur().label : ''; }
     function pick(o) {
-      if (o.typed !== undefined) { list.hidden = true; onNew.pick(o.typed); return; }
+      if (o.typed !== undefined) { hide(); onNew.pick(o.typed); return; }
       value = o.v; close(); onPick(o.v);
     }
     function move(d) {
@@ -48,7 +62,7 @@
     }
     input.addEventListener('focus', open);
     input.addEventListener('blur', close);              // a click in the list never blurs: its mousedown is cancelled
-    input.addEventListener('input', () => { hi = 0; paint(input.value); list.hidden = false; });
+    input.addEventListener('input', () => { hi = 0; paint(input.value); show(); });
     input.addEventListener('keydown', e => {
       if (e.key === 'ArrowDown') { e.preventDefault(); if (list.hidden) open(); move(1); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }

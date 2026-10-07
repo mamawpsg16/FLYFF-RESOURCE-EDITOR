@@ -21,6 +21,7 @@ loaders/donation-tree.js
 loaders/battlepass.js
 loaders/exchange.js
 loaders/exchange-sim.js
+loaders/board-text.js
 validate/help.js
 validate/character.js
 core/diff.js
@@ -45,12 +46,14 @@ ui/dom.js
 ui/common.js
 ui/tooltip.js
 ui/chip-price.js
+ui/shop-rules.js
 ui/npc-shops.js
 ui/combo.js
 ui/tga.js
 ui/new-npc.js
 ui/menu-form.js
 ui/npc-edit.js
+ui/menu-chooser.js
 ui/donation.js
 ui/battlepass.js
 ui/exchange.js

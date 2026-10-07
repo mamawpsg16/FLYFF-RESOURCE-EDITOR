@@ -135,5 +135,99 @@
     return plan;
   }
 
-  FRE.shopOps = { formatStmt, addItem, removeStatement, setCost, setSlot, setShopType, shopTypePlan, shopType, stmtExtent: T.stmtExtent };
+  // A tab's AddVendorItem rules -> AddShopItem lines (plan from vendorSim.ruleToFixedPlan).
+  // Every rule row is removed; the new lines take the place of the plan's anchor (the first rule,
+  // or an earlier fixed line of the tab, which then stays below them), with its indent and EOL.
+  function convertRules(text, npc, plan) {
+    if (plan.blocked) throw new Error(plan.blocked);
+    const stmts = plan.items.filter(it => !it.omitted).map(it => {
+      checkSlot(it.slot); T.checkDefine(it.prop.item.define);
+      const args = [it.slot, it.prop.item.define];
+      if (it.cost !== null && it.cost !== undefined) { checkCost(it.cost); args.push(it.cost); }
+      return formatStmt('AddShopItem', args, text);
+    });
+    const a = plan.anchor;
+    const eol = T.eolAt(text, a.start) || T.dominantEol(text);
+    const asLines = () => stmts.map(s => T.indentOf(text, a.start) + s + eol).join('');
+    const splices = [];
+    for (const rec of plan.rules) {
+      const r = T.removeRow(text, rec)[0];
+      if (rec === a && stmts.length) {
+        if (r.start === T.lineStart(text, a.start)) r.insert = asLines();      // the whole line: the new lines replace it
+        else r.insert = (r.start < a.start ? ' ' : '') + stmts.join(' ');      // shares its line: inline
+      }
+      splices.push(r);
+    }
+    if (!plan.rules.includes(a) && stmts.length) {
+      if (T.prefixIsBlank(text, a.start)) { const at = T.lineStart(text, a.start); splices.push({ start: at, end: at, insert: asLines() }); }
+      else splices.push({ start: a.start, end: a.start, insert: stmts.join(' ') + ' ' });
+    }
+    return splices.sort((x, y) => x.start - y.start);
+  }
+
+  // AddVendorItem( tab, IK3_X, job, rarity min, rarity max, n ): every sellable item of kind IK3_X
+  // (for that job, -1 = any) with dwItemRare min..max (Mover.cpp:5414). The server ignores n.
+  function checkRule(r) {
+    checkSlot(r.slot); T.checkDefine(r.ik3);
+    if (r.job !== -1) T.checkDefine(r.job);
+    T.checkAmount(r.rareMin, 0, 2147483647, 'lowest rarity');
+    T.checkAmount(r.rareMax, r.rareMin, 2147483647, 'highest rarity');
+  }
+  function ruleArgs(r) { return [r.slot, r.ik3, r.job, r.rareMin, r.rareMax, r.count === undefined ? 100 : r.count]; }
+  function addRule(text, npc, r) {
+    checkRule(r);
+    const stmt = formatStmt('AddVendorItem', ruleArgs(r), text);
+    // after the tab's last rule, else after its last shop line, else as addItem places a line
+    const tabRecs = npc.statements.filter(x => { const e = FRE.character.shopEntry(x); return e && e.slot === r.slot; });
+    const rules = tabRecs.filter(x => FRE.character.shopEntry(x).kind === 'generated');
+    const shop = npc.statements.filter(x => FRE.character.shopEntry(x));
+    const anchor = rules[rules.length - 1] || tabRecs[tabRecs.length - 1] || shop[shop.length - 1]
+      || npc.statements.filter(x => x.cmd === 'AddMenu').pop() || null;
+    if (anchor) return T.insertRowAfter(text, anchor, stmt);
+    return T.insertRowBelowLine(text, npc.braceTok.start, stmt);
+  }
+  // Only the values that change are replaced (the rest of the line stays byte for byte).
+  function setRule(text, rec, r) {
+    if (rec.cmd !== 'AddVendorItem' && rec.cmd !== 'AddVenderItem') throw new Error('only AddVendorItem rules can be changed here');
+    checkRule(r);
+    const out = [];
+    const put = (name, v) => { const a = rec.args[name]; if (text.slice(a.start, a.end) !== String(v)) out.push(...T.replaceSpan(a, v)); };
+    put('slot', r.slot); put('ik3', r.ik3); put('job', r.job); put('rareMin', r.rareMin); put('rareMax', r.rareMax);
+    return out;
+  }
+
+  // One Penya price per item: every AddShopItem( tab, II_X, price ) line sets II_X's dwCost for the whole
+  // server and the last one loaded wins (Project.cpp:3581). So a new price is also written on the item's
+  // other priced lines, or an older line loaded later would win. Returns grouped-edit parts (every NPC file);
+  // `except` = the line being edited (left out). Lines without a price are left alone: they use dwCost.
+  function otherPriceParts(ws, itemId, cost, except) {
+    const id = itemId >>> 0, byFile = new Map(), lines = [];
+    if (cost === null || cost === undefined) return { parts: [], lines };
+    checkCost(cost);
+    for (const npc of ws.chars.npcs) {
+      for (const rec of npc.statements) {
+        if (rec.cmd !== 'AddShopItem' || !rec.args.cost || !rec.args.item || (rec.args.item.value >>> 0) !== id) continue;
+        if (except && rec.start === except.start && npc.file.toLowerCase() === except.file) continue;
+        if (rec.args.cost.value === cost) continue;
+        const f = npc.file.toLowerCase();
+        if (!byFile.has(f)) byFile.set(f, []);
+        byFile.get(f).push(...T.replaceSpan(rec.args.cost, cost));
+        lines.push({ npc, rec, was: rec.args.cost.value });
+      }
+    }
+    return { parts: [...byFile].map(([file, splices]) => ({ file, splices })), lines };
+  }
+  // parts + more parts: splices of the same file go together
+  function mergeParts(a, b) {
+    const out = a.map(p => ({ file: p.file, splices: [...p.splices] }));
+    for (const p of b) {
+      const same = out.find(x => x.file === p.file);
+      if (same) same.splices.push(...p.splices); else out.push({ file: p.file, splices: [...p.splices] });
+    }
+    out.forEach(p => p.splices.sort((x, y) => x.start - y.start));
+    return out;
+  }
+
+  FRE.shopOps = { otherPriceParts, mergeParts, formatStmt, addItem, removeStatement, setCost, setSlot, setShopType, shopTypePlan, shopType, stmtExtent: T.stmtExtent,
+    convertRules, addRule, setRule };
 })(globalThis.FRE = globalThis.FRE || {});

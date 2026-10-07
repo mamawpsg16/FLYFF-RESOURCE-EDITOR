@@ -142,7 +142,7 @@
     ok(!document.body.classList.contains('start') && /Task:\s*NPC Shops/.test($('mode-tabs').textContent), 'NPC Shops task open');
     ok(S.client && S.client.dir === clientDir, 'Client copies attached automatically');
     ok(S.ws.items.rows.length === 8067, 'items loaded (8067)');
-    ok(document.querySelectorAll('#list .npc').length === 6 && /Shops with editable items \(6\)/.test(document.querySelector('select.npc-filter').textContent), 'NPC list defaults to the 6 shops with editable items');
+    ok(document.querySelectorAll('#list .npc').length === 6 && /Shops with fixed items \(6\)/.test(document.querySelector('select.npc-filter').textContent), 'NPC list defaults to the 6 shops with fixed items (AddShopItem)');
     ok(S.ws.diags.filter(d => d.code === 'C_NO_OPEN_BRACE').length === 6, '6 missing-brace warnings');
 
     const lui = [...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MaFl_Lui'));
@@ -195,7 +195,7 @@
     const plus = [...document.querySelectorAll('#item-list .item')].find(r => r.querySelector('.def').textContent === 'II_SYS_SYS_SCR_BLESSEDNESS').querySelector('button');
     click(plus);
     ok([...$('editor').querySelectorAll('.def.block')].some(td => td.textContent === 'II_SYS_SYS_SCR_BLESSEDNESS'), 'item added to the shop');
-    const priceInputs = [...$('editor').querySelectorAll('input.num-input')];
+    const priceInputs = [...$('editor').querySelectorAll('tr.fixed input.num-input')];
     ok(priceInputs[0].value === '1,000,000', 'existing price is shown with commas');
     const inp = priceInputs[priceInputs.length - 1];
     inp.value = '25,000'; inp.dispatchEvent(new Event('change'));   // typed with a comma
@@ -402,7 +402,9 @@
     {
       const peach = [...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MaFl_Peach'));
       click(peach);
-      click(btnByText($('editor'), '+ Exchange menu'));
+      click(btnByText($('editor'), '+ Menu'));                      // the chooser (ui/menu-chooser.js) → Swap list
+      await waitFor(() => document.querySelector('.modal .menu-cards'), '+ Menu chooser');
+      click([...document.querySelectorAll('.modal .menu-card')].find(c => /^Exchange/.test(c.textContent)));
       await waitFor(() => document.querySelector('.modal .mf-recipe'), 'new exchange menu dialog');
       const box = [...document.querySelectorAll('.modal')].pop();
       const inp = (el, v) => { el.value = v; el.dispatchEvent(new Event('input')); };
@@ -520,6 +522,8 @@
       click($('btn-undo'));
       // + Menu
       click(btnByText($('editor'), '+ Menu'));
+      await waitFor(() => document.querySelector('.modal .menu-cards'), '+ Menu chooser');
+      click(btnByText([...document.querySelectorAll('.modal')].pop(), 'Other game window'));
       await waitFor(() => document.querySelector('.modal .combo'), '+ Menu dialog');
       box = [...document.querySelectorAll('.modal')].pop();
       box.querySelector('.combo').pick('MMI_BANKING');
@@ -546,6 +550,110 @@
       FRE.ui.modules.find(m => m.id === 'npc').st.tab = 0;
     }
     if (STOP === 'npcedit') return;
+
+    // ---- task S part 2: rows the server lists by itself ("auto") on Peach: edited like the others, no extra window
+    {
+      const peach = [...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MaFl_Peach'));
+      click(peach);
+      const inc0 = S.ws.files.get('character.inc').text;
+      const modals0 = document.querySelectorAll('.modal').length;      // the npcedit stage leaves its + Menu window open
+      const rowOf = name => [...$('editor').querySelectorAll('table.items tr')].find(tr => tr.textContent.includes(name) && tr.querySelector('td'));
+      const block = () => { const t = S.ws.files.get('character.inc').text; const i = t.indexOf('MaFl_Peach'); return t.slice(i, t.indexOf('SetName', i)); };
+      ok(/Players pay 100,000 · sells to an NPC for 25,000/.test(rowOf('Scroll of Awakening').textContent), 'row the server adds by itself: players pay 100,000, sell it to an NPC for 25,000 (OnBuyItem / OnSellItem)');
+      ok(!/auto|rule/i.test($('editor').querySelector('table.items').textContent) && !btnByText($('editor'), '+ Rule'), 'no "auto" / "rule" words, no rule editor');
+      ok(/Right-click menu:/.test($('editor').querySelector('.menus').textContent), 'menus row says what it is');
+      ok(/Price for items added with \+/.test($('new-price-row').textContent) && /applies server-wide/.test($('new-price-hint').textContent), 'item list price box: says what it is for');
+      // a price on an auto row: applied at once (no window), the tab's auto items get their own lines
+      const pin = rowOf('Scroll of Awakening').querySelector('input.num-input');
+      pin.value = '150000'; pin.dispatchEvent(new Event('change'));
+      ok(document.querySelectorAll('.modal').length === modals0, 'no window opens');
+      ok(!/AddVendorItem/.test(block()) && /AddShopItem\( 0, II_SYS_SYS_SCR_AWAKE, 150000 \);\r\n\t\tAddShopItem\( 0, II_SYS_SYS_SCR_PETAWAKE \);\r\n\t\tAddShopItem\( 0, II_SYS_SYS_SCR_SMELPROT, 30000000 \);/.test(block()),
+        'Peach: auto items now each have their own line, same order, above the others (CRLF, same indent)');
+      ok(/Players pay 150,000 · sells to an NPC for 37,500/.test($('editor').textContent), 'the row shows the new price');
+      ok(S.ws.diags.some(d => d.code === 'C_PRICE_FROM_OTHER' && d.npcKey === 'MaEw_Raya'), 'Raia: INFO, her price now comes from Peach\'s line');
+      ok(/✓ \[Jewel Manager\] Peach: price of Scroll of Awakening \(the 2 auto items of tab 1 "Scrolls" now each have their own line, same order\)/.test($('toasts').textContent), 'the note says what happened');
+      const steps = S.ws.history.length;
+      const pin2 = rowOf('Scroll of Awakening').querySelector('input.num-input');
+      pin2.value = '160000'; pin2.dispatchEvent(new Event('change'));
+      ok(/AddShopItem\( 0, II_SYS_SYS_SCR_AWAKE, 160000 \);/.test(block()) && S.ws.history.length === steps, 'typing the price again within 2 s: still one undo step');
+      click($('btn-undo'));
+      ok(S.ws.files.get('character.inc').text === inc0, 'one Undo restores character.inc');
+      // ✕ on an auto row
+      click(rowOf('Scroll of Pet Awakening').querySelector('button.icon.danger'));
+      ok(document.querySelectorAll('.modal').length === modals0 && /II_SYS_SYS_SCR_AWAKE \);/.test(block()) && !/PETAWAKE/.test(block()), '✕: removed at once; Scroll of Awakening keeps its own line');
+      click($('btn-undo'));
+      // the Tab box on an auto row
+      const sel = rowOf('Scroll of Awakening').querySelector('select');
+      sel.value = '1'; sel.dispatchEvent(new Event('change'));
+      ok(/AddShopItem\( 1, II_SYS_SYS_SCR_AWAKE \);/.test(block()), 'Tab: moved to tab 2 at once');
+      click($('btn-undo'));
+      ok(S.ws.files.get('character.inc').text === inc0 && S.ws.dirtyFiles().length === 0, 'all auto-row edits undone');
+      if (STOP === 'shoprules') { $('toasts').textContent = ''; renderAllForTest(); }
+    }
+    if (STOP === 'shoprules') return;
+
+    // ---- + Menu → Rules text (ui/menu-chooser.js): a new menu with a text window, saved into Client/Client
+    {
+      document.querySelectorAll('.modal-back').forEach(m => m.remove());
+      const lastModal = () => [...document.querySelectorAll('.modal')].pop();
+      click(btnByText($('editor'), '+ Menu'));
+      await waitFor(() => lastModal() && lastModal().querySelector('.menu-cards'), '+ Menu chooser');
+      let box = lastModal();
+      const cards = [...box.querySelectorAll('.menu-card')];
+      ok(cards.map(c => c.querySelector('b').textContent).join('|') === 'Shop|Exchange|Rules text', '+ Menu offers Shop, Exchange, Rules text');
+      ok(cards[0].disabled && /already has a shop/.test(cards[0].textContent), 'Shop is greyed for Peach: she already has one');
+      ok(!btnByText(document.querySelector('.npc-title'), '+ Exchange menu'), 'no separate + Exchange menu button any more');
+      click(cards[1]);
+      await waitFor(() => lastModal() && lastModal().querySelector('.mf-recipe'), 'exchange form from the chooser');
+      ok(/\+ Menu for \[Jewel Manager\] Peach › Exchange/.test(lastModal().querySelector('header').textContent), 'the form title says the choice');
+      click(btnByText(lastModal(), '← Back'));
+      await waitFor(() => lastModal() && lastModal().querySelector('.menu-cards'), 'back to the choices');
+      ok(document.querySelectorAll('.modal').length === 1, '← Back: the choices again (the form is closed)');
+      click([...lastModal().querySelectorAll('.menu-card')][2]);
+      await waitFor(() => lastModal() && lastModal().querySelector('textarea.board-text'), 'rules text form');
+      box = lastModal();
+      const typeIn = (el, v) => { el.value = v; el.dispatchEvent(new Event('input')); };
+      ok(/⛔ The name is empty/.test(box.textContent) && box.querySelector('footer button.primary').disabled, 'Create greyed until a name is typed');
+      typeIn(box.querySelector('input[type=text]'), 'Guild Rules');
+      typeIn(box.querySelector('textarea.board-text'), '#b#cffffcc00How to win#nc#nb\nKill players for points');
+      const pv = box.querySelector('.board-preview');
+      ok(pv && pv.querySelector('.board-title').textContent === 'Guild Rules' && /How to win/.test(pv.textContent) && !/#b/.test(pv.textContent), 'preview: the name as title, the codes drawn (not shown)');
+      ok(/Saved as MMI_GUILD_RULES, menu 282; text file Client\/Client\/NpcBoard_282\.inc/.test(box.textContent) && /npc-board change/.test(box.textContent), 'says where it goes and that the client needs the change');
+      click(btnByText(box, 'Create'));
+      ok(/Guild Rules ✎/.test($('editor').querySelector('.menus').textContent), 'the new menu shows in the right-click row');
+      ok(S.ws.dirtyFiles().some(f => f.clientOnly && f.name === 'NpcBoard_282.inc') && !S.ws.files.get('exchange_script.txt').dirty, 'Client/Client/NpcBoard_282.inc to be created; Exchange_Script.txt untouched');
+      // the + NPC stage put older bytes back on the fake disk: make the disk hold what this workspace loaded
+      for (const f of S.ws.dirtyFiles()) if (!f.clientOnly && res.children.has(f.name)) res.children.get(f.name).bytes = f.bytes;
+      for (const [, f] of S.client.files) if (clientDir.children.has(f.name)) clientDir.children.get(f.name).bytes = f.bytes;
+      click($('btn-save'));
+      await waitFor(() => btnByText(document, 'Back up and write'), 'review dialog (rules)');
+      click(btnByText(document, 'Back up and write'));
+      await waitFor(() => [...document.querySelectorAll('.modal header')].some(hh => /^Saved|failed/.test(hh.textContent)), 'save finished (rules)');
+      const made = clientDir.children.get('Client').children.get('NpcBoard_282.inc');
+      ok(made && new TextDecoder().decode(made.bytes) === '#b#cffffcc00How to win#nc#nb\r\nKill players for points', 'saved: Client/Client/NpcBoard_282.inc written with CRLF');
+      ok(S.ws.dirtyFiles().length === 0, 'clean after saving');
+      document.querySelectorAll('.modal-back').forEach(m => m.remove());
+      // edit it again from its menu button, then undo
+      click([...$('editor').querySelectorAll('.menus button.board')].pop());
+      await waitFor(() => lastModal() && lastModal().querySelector('textarea.board-text'), 'edit rules form');
+      box = lastModal();
+      ok(box.querySelector('textarea.board-text').value === '#b#cffffcc00How to win#nc#nb\nKill players for points', 'the form opens with the saved text');
+      typeIn(box.querySelector('textarea.board-text'), 'Changed');
+      click(btnByText(box, 'Save'));
+      ok(S.ws.boardTextOf(282) === 'Changed', 'text changed');
+      click($('btn-undo'));
+      ok(S.ws.dirtyFiles().length === 0, 'Undo: back to the saved text');
+    }
+    if (STOP === 'rulesmenu') { $('toasts').textContent = ''; click(btnByText($('editor'), '+ Menu')); return; }
+    if (STOP === 'rulesform') {
+      $('toasts').textContent = '';
+      click([...$('editor').querySelectorAll('.menus button.board')].pop());
+      await waitFor(() => document.querySelector('.modal textarea.board-text'), 'rules form');
+      const ta = document.querySelector('.modal textarea.board-text');
+      ta.value = '#b#cffffcc00How points are gained#nc#nb\n- Kill a player: 1 point\n- Kill the guild master: 3 points\n#cffff4444Leaving the siege map costs 1 life per minute.#nc';
+      ta.dispatchEvent(new Event('input'));
+      return;
+    }
 
     // ---- Donation Shop
     await openTask('donation');

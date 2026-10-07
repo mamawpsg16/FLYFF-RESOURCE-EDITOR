@@ -1,6 +1,6 @@
 // NPC Shops module (character*.inc). One table per tab: exactly what players
 // see, in server order. Fixed items (AddShopItem / AddVenderItem2) are edited
-// in place; generated items come from AddVendorItem rules (read-only).
+// in place; an edit on an item from an AddVendorItem rule asks first (ui/shop-rules.js).
 (function (FRE) {
   'use strict';
   const { h, fmt, numInput } = FRE.dom;
@@ -12,16 +12,30 @@
   const selNpc = ctx => (ctx.ws && st.sel ? ctx.ws.chars.npcs.find(n => npcId(n) === st.sel) : null) || null;
   const TYPES = [{ v: 0, label: 'Penya shop' }, { v: 1, label: 'Red Chip shop' }, { v: 2, label: 'Donate Chip shop' }];
   // NPC list filter: which NPCs to list
-  // editable = has fixed items (AddShopItem / AddVenderItem2); AddVendorItem rule items are read-only
+  // editable = has fixed items (AddShopItem / AddVenderItem2). Rule items are editable too (ui/shop-rules.js),
+  // but listing every rule shop here would hide the few shops with hand-set prices.
   const hasEditable = npc => npc.statements.some(r => { const e = FRE.character.shopEntry(r); return e && e.kind !== 'generated'; });
   const SHOW = [
-    { v: 'editable', label: 'Shops with editable items', test: hasEditable },
+    { v: 'editable', label: 'Shops with fixed items', test: hasEditable },
     { v: 'shops', label: 'All shops', test: isShopNpc },
     { v: 'penya', label: 'Penya shops', test: n => isShopNpc(n) && FRE.shopOps.shopType(n.venderType) === 0 },
     { v: 'red', label: 'Red Chip shops', test: n => FRE.shopOps.shopType(n.venderType) === 1 },
     { v: 'donate', label: 'Donate Chip shops', test: n => FRE.shopOps.shopType(n.venderType) === 2 },
     { v: 'all', label: 'All NPCs', test: () => true },
   ];
+  // hover text of a right-click menu: what a click does, in plain words (newNpcSim.rightClick / opensOf)
+  const MENU_HELP = {
+    MMI_DIALOG: 'Talk to the NPC.',
+    MMI_TRADE: 'Opens the shop.',
+    MMI_BANKING: 'Opens the bank.',
+    MMI_GUILDBANKING: 'Opens the guild bank.',
+    MMI_NPC_BUFF: 'Gives buffs.',
+  };
+  function menuHelp(name, x) {
+    const what = MENU_HELP[name] || (x && x.opens ? (x.opens.board ? 'Shows your rules text. Click to edit.' : x.opens.sets ? `Swap items for other items (${x.opens.sets}).` : 'Swap items for other items (none set up yet).')
+      : 'Opens its own window.');
+    return `${what}${x && x.when ? ` Only if: ${x.when}.` : ''}`;
+  }
   const showTest = () => (SHOW.find(o => o.v === st.show) || SHOW[0]).test;
 
   function edit(ctx, npc, make, label) {
@@ -227,8 +241,6 @@
         h('span.def', npc.key),
         h('span.line', `${npc.file}:${f.lineOf(npc.start) + 1}`),
         shopTypeSelect(ctx, npc, canEdit),
-        canEdit && npc.file.toLowerCase() === 'character.inc' && ws.isEditable('exchange_script.txt') && FRE.ui.menuForm
-          ? h('button.small', { title: 'Add right-click menus that open the exchange window (edit/menu-ops.js)', on: { click: () => FRE.ui.menuForm.openNewMenus(ctx, npc) } }, '+ Exchange menu') : null,
         canEdit ? null : h('span.tag.bad', 'read-only')));
       if (ws.placed) {
         const status = FRE.world.npcStatus(npc, ws.placed);
@@ -252,12 +264,18 @@
       const ownMenu = new Set(npc.statements.filter(r => r.cmd === 'AddMenu').map(r => r.args.menu.value));
       const rmMenu = (i, m) => canEdit && ownMenu.has(npc.menus[i])
         ? h('button.icon.menu-x', { title: `Remove ${m} from the right-click menu`, on: { click: e => { e.stopPropagation(); FRE.ui.npcEdit.removeMenu(ctx, npc, npc.menus[i], exNames.includes(m) ? labelOf(m) : pretty(m)); } } }, '✕') : null;
-      el.appendChild(h('div.menus', 'Menus: ', menus.map((m, i) => {
-        if (!exNames.includes(m)) return h('span.tag', { title: m }, pretty(m), rmMenu(i, m));
+      // shown as players see it: the in-game label, in the game's order (newNpcSim.rightClick), with what a click does
+      const rc = new Map(FRE.newNpcSim.rightClick(ws, npc.menus).map(x => [x.id, x]));
+      const order = npc.menus.map((v, i) => i).sort((a, b) => npc.menus[a] - npc.menus[b]);
+      el.appendChild(h('div.menus', h('span.menus-label', { title: 'What players see when they right-click this NPC.' }, 'Right-click menu:'), order.map(i => {
+        const m = menus[i], x = rc.get(npc.menus[i]);
+        const label = (x && x.label) || pretty(m);
+        if (x && x.opens && x.opens.board) return h('span.tag.exch-wrap', h('button.tag.board', { title: menuHelp(m, x), on: { click: () => FRE.ui.menuChooser.boardForm(ctx, npc, { id: npc.menus[i], name: m }) } }, `${label} ✎`), rmMenu(i, m));
+        if (!exNames.includes(m)) return h('span.tag', { title: menuHelp(m, x) }, label, rmMenu(i, m));
         const n = Math.min(exMenu(m).sets.length, 30);
-        return h('span.tag.exch-wrap', h('button.tag.exch', { title: `${m}: opens the exchange window (Exchange_Script.txt). Click to see and edit its exchanges here.`,
-          on: { click: () => showTab('ex:' + m) } }, `${labelOf(m)} ⇄ ${n} exchange${n === 1 ? '' : 's'}`), rmMenu(i, m));
-      }), canEdit ? h('button.small.add-menu', { title: 'Add a right-click menu (AddMenu)', on: { click: () => FRE.ui.npcEdit.addMenu(ctx, npc) } }, '+ Menu') : null));
+        return h('span.tag.exch-wrap', h('button.tag.exch', { title: `Swap items for other items (${n}). Click to edit.`,
+          on: { click: () => showTab('ex:' + m) } }, `${label} ⇄ ${n} exchange${n === 1 ? '' : 's'}`), rmMenu(i, m));
+      }), canEdit ? h('button.small.add-menu', { title: 'Add a right-click menu: a shop, a swap list or a rules text', on: { click: () => FRE.ui.menuChooser.open(ctx, npc) } }, '+ Menu') : null));
 
       const sim = ws.simulate(npc);
       const named = s => npc.slotTitles[s] !== undefined && npc.slotTitles[s] !== '';
@@ -302,23 +320,8 @@
       else if (FRE.ui.npcEdit.isPlaceholder(npc.slotTitles[st.tab]) && !tab.entries.length)
         el.appendChild(h('p.muted.small', `Players see this tab as "${npc.slotTitles[st.tab]}" (a placeholder name).${canTexts ? ' Rename it with ✎ on the tab, then add items with the + button next to an item in the list on the right.' : ''}`));
 
-      // the rules that fill this tab, as one compact line
-      const rules = entries.filter(x => x.e.kind === 'generated' && x.e.slot === st.tab);
-      if (rules.length) {
-        el.appendChild(h('div.rules', h('span.muted.small', chip ? 'Rules (ignored in chip shops): ' : 'Auto-filled by rules (read-only): '), rules.map(({ r, e }) => {
-          const ik3 = e.ik3.define || D.byValue('IK3_', e.ik3.value) || String(e.ik3.value);
-          const job = e.job.value === -1 ? 'any job' : pretty(e.job.define || D.byValue('JOB_', e.job.value));
-          const res = tab.rules.find(x => x.rec === r) || {};
-          const adds = chip ? 'ignored' : e.lang ? 'other language only' : res.empty ? 'matches nothing' : `${res.added}`;
-          return h('span.tag.rule' + (res.empty || chip ? '.warn' : ''), {
-            title: `${f.text.slice(r.start, r.end)}\n\nAdds every sellable ${pretty(ik3)} item${e.job.value === -1 ? '' : ' for ' + job} with rarity (dwItemRare) ${e.rareMin.value}–${e.rareMax.value}. The last number (${e.count.value}) is ignored by the server.`,
-          }, `${pretty(ik3)} · ${job} · rarity ${e.rareMin.value}–${e.rareMax.value} → ${adds}`, h('span.line', ' ' + line(r.start)));
-        })));
-      }
-
-      if (rules.length && !entries.some(x => x.e.kind !== 'generated' && x.e.slot === st.tab)) {
-        el.appendChild(h('p.muted.small', 'The items below come from the rules above, so they can\'t be removed or priced one by one. You can still add fixed items to this tab with + in the item list.'));
-      }
+      // items the server lists by itself (AddVendorItem: every item of one type) are edited like the others (ui/shop-rules.js)
+      const SR = FRE.ui.shopRules;
       // one table: every item players see, in server order, plus fixed items left out
       el.appendChild(h('h3', `Items in this tab (${tab.entries.length}/100)`));
       const rows = tab.entries.map(en => ({ rec: en.source, kind: en.kind, prop: en.prop }))
@@ -327,10 +330,14 @@
       else {
         const tb = h('table.items', h('tr', h('th.num', '#'), h('th', 'Item'), h('th', 'Job'),
           h('th.num', chip ? `Price (${chipName} chips)` : 'Price (Penya)'), h('th', 'Tab'), h('th', ''), h('th', 'From')));
+        const priced = chip ? [] : ws.pricedTab(npc, st.tab);
+        const ruleRow = row => row.kind === 'generated' && !chip && canEdit && named(st.tab);
+        const convert = (row, edits, what) => SR.editAuto(ctx, npc, st.tab, edits, what);
         rows.forEach((row, i) => {
           const info = row.prop ? ws.itemInfo(row.prop.item) : null;
           const r = row.rec;
-          const editable = row.kind !== 'generated';
+          const editable = row.kind !== 'generated' || ruleRow(row);
+          const pay = row.dropped || chip ? null : SR.payLine(priced[i], npc);
           const def = row.prop ? row.prop.item.define : (r.args.item && (r.args.item.define || f.text.slice(r.args.item.start, r.args.item.end)));
           let price;
           if (chip) {
@@ -339,19 +346,29 @@
           else if (row.kind === 'fixed') {
             price = numInput({ value: r.args.cost ? r.args.cost.value : null, placeholder: info ? fmt(info.cost) + ' (item)' : '', disabled: !canEdit, key: `shop|${npcId(npc)}|${st.tab}|${i}|price`,
               title: 'Empty = the item\'s own price from Spec_Item.txt. A price here changes the item\'s price everywhere (server-wide). Commas are only for display.',
-              onCommit: v => edit(ctx, npc, text => FRE.shopOps.setCost(text, r, v), `${npcName}: price of ${info ? info.name : def}`) });
+              onCommit: v => FRE.ui.shopRules.setPrice(ctx, npc, r, v, `price of ${info ? info.name : def}`) });
+          } else if (ruleRow(row)) {
+            // same key as a fixed row's box: after the first change the row is fixed and keeps the focus
+            const own = FRE.vendorSim.costOf(ws.costs(), row.prop);
+            price = numInput({ value: null, placeholder: `${fmt(own)} (item)`, key: `shop|${npcId(npc)}|${st.tab}|${i}|price`,
+              title: 'Empty = the item\'s own price from Spec_Item.txt. A price here changes the item\'s price everywhere (server-wide). Commas are only for display.',
+              onCommit: v => { if (v === null) return; convert(row, { price: new Map([[row.prop.id, v]]) }, `price of ${info ? info.name : def}`); } });
           } else price = info ? fmt(info.cost) : '';
+          const moveTo = to => (ruleRow(row) ? convert(row, { slot: new Map([[row.prop.id, to]]) }, `moved ${info ? info.name : def} to tab ${to + 1}`)
+            : edit(ctx, npc, text => FRE.shopOps.setSlot(text, r, to), `${npcName}: moved ${info ? info.name : def} to tab ${to + 1}`));
           const tabCell = editable
-            ? h('select', { disabled: !canEdit, on: { change: ev => edit(ctx, npc, text => FRE.shopOps.setSlot(text, r, Number(ev.target.value)), `${npcName}: moved ${info ? info.name : def} to tab ${Number(ev.target.value) + 1}`) } },
+            ? h('select', { disabled: !canEdit, on: { change: ev => moveTo(Number(ev.target.value)) } },
               [0, 1, 2, 3].filter(t => named(t) || t === st.tab).map(t => h('option', { value: t, selected: t === st.tab }, tabLabel(t))))
             : '';
-          const rm = editable ? h('button.icon.danger', { disabled: !canEdit, title: 'Remove from this shop', on: { click: () => edit(ctx, npc, text => FRE.shopOps.removeStatement(text, r), `${npcName}: removed ${info ? info.name : def}`) } }, '✕') : '';
+          const rm = !editable ? '' : ruleRow(row)
+            ? h('button.icon.danger', { title: 'Remove from this shop', on: { click: () => convert(row, { omit: new Set([row.prop.id]) }, `removed ${info ? info.name : def}`) } }, '✕')
+            : h('button.icon.danger', { disabled: !canEdit, title: 'Remove from this shop', on: { click: () => edit(ctx, npc, text => FRE.shopOps.removeStatement(text, r), `${npcName}: removed ${info ? info.name : def}`) } }, '✕');
           const from = row.dropped ? h('span.tag.warn', `left out: ${row.dropped}`)
-            : h('span.line', { title: f.text.slice(r.start, r.end) }, `${row.kind === 'generated' ? 'rule' : 'fixed'} ${line(r.start)}`);
-          tb.appendChild(h('tr' + (editable ? '.fixed' : '') + (row.dropped ? '.dropped' : ''),
+            : h('span.line', { title: f.text.slice(r.start, r.end) }, line(r.start));
+          tb.appendChild(h('tr' + (row.kind !== 'generated' ? '.fixed' : editable ? '.rule-row' : '') + (row.dropped ? '.dropped' : ''),
             h('td.num.line', row.dropped ? '–' : i + 1), itemCell(info, def), jobCell(info),
-            h('td.num', { title: chip || row.kind === 'fixed' ? '' : 'Base price before the server shop-rate multipliers' }, price),
-            h('td', tabCell), h('td', rm, ' ', editable ? diagTags(diagsInSpan(ws, npc.file, r.start, r.end)) : null), h('td', from)));
+            h('td.num', price, pay),
+            h('td', tabCell), h('td', rm, ' ', row.kind !== 'generated' ? diagTags(diagsInSpan(ws, npc.file, r.start, r.end)) : null), h('td', from)));
         });
         el.appendChild(tb);
       }

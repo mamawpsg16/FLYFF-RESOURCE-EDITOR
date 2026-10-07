@@ -69,10 +69,14 @@
   }
 
   // -> { ids, results: [S, F], parts, lines: { defineNeuz, defineText, textInc, textTxt, exchange, character } }
+  // spec.kind 'board' (a rules window, the npc-board client change): no Exchange_Script block, no result texts.
   function newMenusPlan(ws, spec) {
+    const board = spec.kind === 'board';
+    const need = board ? FILES.filter(n => n !== 'exchange_script.txt') : FILES;
     const f = Object.fromEntries(FILES.map(n => [n, ws.files.get(n)]));
-    const missing = FILES.filter(n => !f[n]);
-    if (missing.length) throw new Error(`a new exchange menu needs ${missing.join(', ')}`);
+    const missing = need.filter(n => !f[n]);
+    if (missing.length) throw new Error(`a new ${board ? 'rules' : 'exchange'} menu needs ${missing.join(', ')}`);
+    const what = board ? 'rules menu' : 'exchange menu';
     const list = ws.chars && ws.chars.byKey.get(String(spec.npcKey).toLowerCase());
     if (!list || !list.length) throw new Error(`no NPC ${spec.npcKey}`);
     const npc = list[list.length - 1];
@@ -80,15 +84,15 @@
     const free = freeMenuIds(ws);
     if (free.length < spec.menus.length) throw new Error(`only ${free.length} free menu ids under ${MAX_MOVER_MENU}`);
     const ids = spec.menus.map((m, i) => free[i]);
-    const newResults = spec.results && spec.results.add ? spec.results.add : [];
-    const results = newResults.length ? newResults.map(r => r.name) : spec.results.tids;
+    const newResults = !board && spec.results && spec.results.add ? spec.results.add : [];
+    const results = board ? [] : newResults.length ? newResults.map(r => r.name) : spec.results.tids;
     const parts = [];
 
     // defineNeuz.h: after the line of the highest MMI_ id (MMI_COLLECTOR_DETAILS 281 today)
     const dn = f['defineneuz.h'], mmis = defineLines(dn.text, 'MMI_').filter(d => d.value < MAX_MOVER_MENU);
     const top = mmis.reduce((a, b) => (b.value > a.value ? b : a));
     const dnEol = top.eol || T.dominantEol(dn.text);
-    const dnLines = spec.menus.map((m, i) => `#define ${m.name}\t${ids[i]}\t// ${spec.npcKey} exchange menu${dnEol}`).join('');
+    const dnLines = spec.menus.map((m, i) => `#define ${m.name}\t${ids[i]}\t// ${spec.npcKey} ${what}${dnEol}`).join('');
     parts.push({ file: 'defineneuz.h', splices: [{ start: top.end, end: top.end, insert: (top.eol ? '' : dnEol) + dnLines }] });
 
     // defineText.h: TID_MMI_ labels after the last TID_MMI_ in 7000..7349; result TIDs appended at the end
@@ -111,17 +115,20 @@
     let n = nextTextId(ws);
     const keyed = texts.map(t => Object.assign({ key: keyOf(n++) }, t));
     const ti = f['textclient.inc'], tiEol = T.dominantEol(ti.text);
-    const tiBody = `${tiEol}// ${spec.npcKey} exchange menus${tiEol}${tiEol}` +
+    const tiBody = `${tiEol}// ${spec.npcKey} ${what}s${tiEol}${tiEol}` +
       keyed.map(t => `${t.tid}\t\t\t\t0xffffffff${tiEol}{${tiEol}\t${t.key}${tiEol}}${tiEol}${tiEol}`).join('');
     parts.push({ file: 'textclient.inc', splices: [FRE.npcOps.appendSplice(ti.text, tiBody)] });
     const tt = f['textclient.txt.txt'], ttEol = T.dominantEol(tt.text);
     const ttBody = keyed.map(t => `${t.key}\t${t.text}${ttEol}`).join('');
     parts.push({ file: 'textclient.txt.txt', splices: [FRE.npcOps.appendSplice(tt.text, ttBody)] });
 
-    // Exchange_Script.txt: the menus appended after a blank line
-    const ex = f['exchange_script.txt'], exEol = T.dominantEol(ex.text);
-    const exBody = spec.menus.map(m => menuText(m, results, exEol)).join(exEol);
-    parts.push({ file: 'exchange_script.txt', splices: [FRE.npcOps.appendSplice(ex.text, exEol + exBody)] });
+    // Exchange_Script.txt: the menus appended after a blank line (not for a rules menu)
+    let exBody = '';
+    if (!board) {
+      const ex = f['exchange_script.txt'], exEol = T.dominantEol(ex.text);
+      exBody = spec.menus.map(m => menuText(m, results, exEol)).join(exEol);
+      parts.push({ file: 'exchange_script.txt', splices: [FRE.npcOps.appendSplice(ex.text, exEol + exBody)] });
+    }
 
     // character.inc: AddMenu lines after the NPC's last AddMenu
     const ci = f['character.inc'];
@@ -151,5 +158,47 @@
     return [{ file: 'exchange_script.txt', splices: [{ start: at, end: at, insert: (menu.sets.length ? eol : '') + body }] }];
   }
 
-  FRE.menuOps = { addSetsPlan, newMenusPlan, freeMenuIds, nextTid, nextTextId, menuText, setText, defineLines, FIRST_ID, MAX_MOVER_MENU, TID_MMI_DIALOG, FILES };
+  // A rules window (docs/patches/npc-board.diff): a new menu id + label + AddMenu (newMenusPlan kind 'board'),
+  // and its text in the client-only file Client/Client/NpcBoard_<id>.inc (ASCII; real line breaks are CRLF,
+  // like Client/Client/GuildCombatTEXT_1_USA.inc). spec: { npcKey, name, label, text }
+  const BOARD_EOL = '\r\n';
+  const boardFileName = id => `NpcBoard_${id}.inc`;
+  const boardText = text => String(text).replace(/\r\n|\r|\n/g, BOARD_EOL);
+  function checkBoardText(text) {
+    if (!String(text).trim()) throw new Error('the text is empty');
+    if (!FRE.bytes.isPrintableAscii(boardText(text))) throw new Error('the text has a character the game client can\'t show here (use plain English letters, digits and punctuation)');
+  }
+  function boardPlan(ws, spec) {
+    checkBoardText(spec.text);
+    const plan = newMenusPlan(ws, { npcKey: spec.npcKey, kind: 'board', menus: [{ name: spec.name, label: spec.label, sets: [] }] });
+    const id = plan.ids[0];
+    const bf = ws.boardFile(id, true);
+    plan.parts.push({ file: bf.lower, splices: [{ start: 0, end: bf.file.text.length, insert: boardText(spec.text) }] });
+    plan.board = { id, file: boardFileName(id), text: boardText(spec.text) };
+    return plan;
+  }
+  // a rules menu's text changed later (the file already in the workspace)
+  function setBoardText(ws, id, text) {
+    checkBoardText(text);
+    const bf = ws.boardFile(id, false);
+    if (!bf) throw new Error(`no ${boardFileName(id)} in the Client folder`);
+    return [{ file: bf.lower, splices: bf.file.text === boardText(text) ? [] : [{ start: 0, end: bf.file.text.length, insert: boardText(text) }] }];
+  }
+
+  // A menu's right-click name: textClient.inc "TID_MMI_X 0x.. { IDS_TEXTCLIENT_INC_n }" -> that line of
+  // textClient.txt.txt ("IDS_TEXTCLIENT_INC_n<TAB>text"); only the text after the key changes.
+  function setLabel(ws, name, text) {
+    const p = FRE.newNpcText(text);
+    if (p) throw new Error(`the name ${p}`);
+    const ti = ws.files.get('textclient.inc'), tt = ws.files.get('textclient.txt.txt');
+    const m = new RegExp(`(?:^|\\n)[ \\t]*${tidOf(name)}[ \\t]+\\S+\\s*\\{\\s*(IDS_TEXTCLIENT_INC_\\d+)`).exec(ti ? ti.text : '');
+    if (!m) throw new Error(`no text for ${tidOf(name)} in textClient.inc`);
+    const line = new RegExp(`(^|\\n)${m[1]}\\t([^\\r\\n]*)`).exec(tt.text);
+    if (!line) throw new Error(`no line ${m[1]} in textClient.txt.txt`);
+    const start = line.index + line[1].length + m[1].length + 1;
+    if (line[2] === text) return [];
+    return [{ file: 'textclient.txt.txt', splices: [{ start, end: start + line[2].length, insert: text }] }];
+  }
+
+  FRE.menuOps = { setLabel, boardPlan, setBoardText, boardFileName, boardText, BOARD_EOL, addSetsPlan, newMenusPlan, freeMenuIds, nextTid, nextTextId, menuText, setText, defineLines, FIRST_ID, MAX_MOVER_MENU, TID_MMI_DIALOG, FILES };
 })(globalThis.FRE = globalThis.FRE || {});

@@ -48,9 +48,10 @@
         <button class="chip" data-r="ultimate">Ultimate</button>
         <button class="chip" data-r="baruna">Baruna</button>
       </div>
-      <label class="row small" id="new-price-row">Price for new items
+      <label class="row small" id="new-price-row" title="Empty = the item's own price (dwCost in Spec_Item.txt). A price is written as AddShopItem( tab, item, price ) and becomes the item's price on the whole server, in every shop.">Price for items added with +
         <input id="new-price" type="text" inputmode="numeric" placeholder="item's own price">
       </label>
+      <div class="muted small" id="new-price-hint">Empty = the item's own price (dwCost). A price here applies server-wide.</div>
     </div>
     <div id="item-count" class="muted small item-count"></div>
     <div id="add-target" class="small add-target"></div>

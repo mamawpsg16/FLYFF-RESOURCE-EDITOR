@@ -116,7 +116,8 @@
   }
 
   // ---------------------------------------------------------------- NPC Shops: + Exchange menu
-  function openNewMenus(ctx, npc) {
+  // opts: { title, back } from + Menu (ui/menu-chooser.js): its title, and a ← Back to the choices
+  function openNewMenus(ctx, npc, opts = {}) {
     const ws = ctx.ws;
     const blank = () => Object.assign({ name: '', label: '', nameTouched: false }, blankRecipe());
     const { fieldLabel } = FRE.ui;
@@ -200,8 +201,8 @@
       refresh();
     };
     render();
-    const m = modal({ title: `New exchange menu — ${npc.name || npc.key}`, body, wide: true, buttons: [
-      { label: 'Close' },
+    const m = modal({ title: opts.title || `New exchange menu — ${npc.name || npc.key}`, body, wide: true, buttons: [
+      ...(opts.back ? [{ label: '← Back', onClick: opts.back }] : []), { label: 'Close' },
       { label: 'Create', cls: 'primary', id: 'mf-create', onClick: () => {
         const s = spec();
         if (FRE.validateNewMenus(ws, s).some(d => d.severity === 'BLOCK')) return false;

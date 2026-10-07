@@ -54,5 +54,45 @@
     return out;
   }
 
-  FRE.itemOps = { fieldSpan, setChipPrice, chipUses };
+  // dwCost: the item's own Penya price (94881aa2 changed II_CHP_RED's the same way, Server + Client).
+  // Shops that sell the item through a rule, or with AddShopItem and no price, charge it; selling
+  // to an NPC gives dwCost / 4 (OnSellItem). An AddShopItem price loaded later still replaces it.
+  // value: 0 .. INT_MAX, or null = "=" (no price: players pay 1 Penya, the client shows no price)
+  function setCost(text, item, value, defines) {
+    if (value !== null) T.checkAmount(value, 0, 2147483647, 'price');
+    const span = fieldSpan(text, item, 'dwCost', defines);
+    const insert = value === null ? '=' : String(value);
+    if (text.slice(span.start, span.end) === insert) return [];
+    return T.replaceSpan(span, insert);
+  }
+
+  // dwShopAble: -1 hides the item from every AddVendorItem rule in every shop. Only
+  // CMover::GenerateVendorItem reads it (9bf0cebb), so fixed AddShopItem lines still sell it.
+  function setShopAble(text, item, hidden, defines) {
+    const span = fieldSpan(text, item, 'dwShopAble', defines);
+    const insert = hidden ? '-1' : '1';
+    const cur = text.slice(span.start, span.end);
+    if (cur === insert || (hidden && cur === '=')) return [];
+    return T.replaceSpan(span, insert);
+  }
+
+  // Every Penya shop tab that sells this item, and how (a rule, or a fixed line with or without
+  // its own price). These all charge the same dwCost (vendorSim.effectiveCosts).
+  function penyaUses(ws, itemId) {
+    const id = itemId >>> 0, out = [];
+    for (const npc of ws.chars ? ws.chars.npcs : []) {
+      if (FRE.shopOps.shopType(npc.venderType) !== 0) continue;
+      ws.simulate(npc).tabs.forEach((tab, slot) => {
+        for (const en of tab.entries) {
+          if (en.prop.id !== id) continue;
+          const how = en.kind === 'generated' ? 'rule' : en.source.args.cost ? 'own price' : 'fixed';
+          out.push({ kind: 'npc', npc, slot, how, rec: en.source,
+            label: `${npc.name || npc.key}, ${npc.slotTitles[slot] ? `tab ${slot + 1} "${npc.slotTitles[slot]}"` : 'tab ' + (slot + 1)} (${how === 'rule' ? 'from a rule' : how === 'own price' ? 'AddShopItem with a price' : 'AddShopItem'})` });
+        }
+      });
+    }
+    return out;
+  }
+
+  FRE.itemOps = { fieldSpan, setChipPrice, chipUses, setCost, setShopAble, penyaUses };
 })(globalThis.FRE = globalThis.FRE || {});

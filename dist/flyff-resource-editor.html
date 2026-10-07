@@ -149,13 +149,20 @@ tr.changed td:first-child { box-shadow: inset 3px 0 var(--warn); }
 .toast.bad { border-color: var(--bad); } .toast.ok { border-color: var(--ok); }
 
 .help { color: var(--muted); font-size: 12px; margin-top: 3px; }
-.menus { margin-top: 8px; display: flex; gap: 5px; flex-wrap: wrap; align-items: center; font-size: 12px; color: var(--muted); }
+.menus { margin: 10px 0 4px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 14px; color: var(--muted); }
+.menus .menus-label { font-weight: 600; color: var(--text); margin-right: 2px; }
+.menus .tag { font-size: 13px; padding: 4px 10px; border-radius: 6px; color: var(--text); background: var(--line); display: inline-flex; align-items: center; gap: 6px; }
+.menus .tag .menu-x { font-size: 12px; padding: 0 4px; }
+.menus .add-menu { font-size: 13px; padding: 4px 12px; }
 .tag.exch { color: var(--baruna); border-color: #2b6672; }
 button.primary:disabled { background: var(--panel-2); border-color: var(--line); }
 
 .modes .mode { border-radius: 14px; padding: 4px 12px; }
 .modes .mode.sel { background: #1d2c47; border-color: var(--accent); }
 .def.block { display: block; font-size: 11px; }
+.pay { font-weight: normal; white-space: nowrap; margin-top: 2px; }
+.pay .warn { color: var(--warn, #b26a00); }
+tr.rule-row td { background: var(--rule-bg, transparent); }
 .rules { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0 6px; }
 .tag.rule { font-size: 11px; color: var(--text); }
 .tag.info { color: var(--muted); }
@@ -303,7 +310,7 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
 /* searchable dropdown (ui/combo.js) + portrait pictures (ui/tga.js) */
 .combo { position: relative; min-width: 320px; }
 .combo-input { width: 100%; }
-.combo-list { position: absolute; z-index: 20; left: 0; right: 0; top: 100%; max-height: 320px; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+.combo-list { position: fixed; z-index: 1000; max-height: 320px; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
 .combo-opt { padding: 4px 10px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .combo-opt.hi, .combo-opt:hover { background: var(--line); } .combo-opt.sel { font-weight: 600; }
 .combo-group { padding: 4px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
@@ -339,6 +346,20 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
 .item-cat { flex: 1; min-width: 0; }
 .item-cat .combo { min-width: 0; }
 .item-cat .combo-list { min-width: 280px; max-height: 420px; }
+
+/* + Menu chooser and the rules-text form (ui/menu-chooser.js) */
+.menu-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.menu-card { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 16px; min-height: 110px; font-size: 14px; border-radius: 8px; }
+.menu-card b { font-size: 16px; }
+.menu-card .why { font-size: 12px; color: var(--warn); }
+.menus .tag.board { color: var(--text); }
+.board-tools { gap: 6px; margin-bottom: 6px; align-items: center; }
+.board-text { font-family: ui-monospace, monospace; font-size: 13px; }
+.board-preview { background: #1b1d22; border: 1px solid #555; border-radius: 6px; max-width: 520px; margin: 6px 0 12px; }
+.board-title { text-align: center; font-weight: 600; padding: 6px; border-bottom: 1px solid #444; color: #fff; }
+.board-body { padding: 10px 12px; white-space: pre-wrap; font-size: 13px; line-height: 1.45; max-height: 340px; overflow-y: auto; }
+.board-tools > * { flex: none; }
+.board-tools input[type=color] { width: 44px; height: 26px; padding: 0; }
 
 </style>
 </head>
@@ -381,9 +402,10 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
         <button class="chip" data-r="ultimate">Ultimate</button>
         <button class="chip" data-r="baruna">Baruna</button>
       </div>
-      <label class="row small" id="new-price-row">Price for new items
+      <label class="row small" id="new-price-row" title="Empty = the item's own price (dwCost in Spec_Item.txt). A price is written as AddShopItem( tab, item, price ) and becomes the item's price on the whole server, in every shop.">Price for items added with +
         <input id="new-price" type="text" inputmode="numeric" placeholder="item's own price">
       </label>
+      <div class="muted small" id="new-price-hint">Empty = the item's own price (dwCost). A price here applies server-wide.</div>
     </div>
     <div id="item-count" class="muted small item-count"></div>
     <div id="add-target" class="small add-target"></div>
@@ -394,7 +416,7 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when": "Wed 7 Oct 2026, 12:53", "rev": "4ac28dc", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "30+", "when": "Wed 7 Oct 2026, 16:05", "rev": "92c620d", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -2508,7 +2530,124 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
     return { tabs, chip };
   }
 
-  FRE.vendorSim = { buildIndex, simulateNpc, expandRule, MAX_VENDOR_INVENTORY };
+  // ---- What players pay and get back (task S part 2) ----------------------------------------
+  //   effectiveCosts <- CProject::LoadCharacter's AddShopItem branch (Project.cpp:3581): a price
+  //                     overwrites pItem->dwCost server-wide; files load in Masquerade.prj order
+  //                     (character.inc, character-etc.inc, character-school.inc: lines 104-106), so
+  //                     the last one wins, and rule shops selling that item use it too (6b026003).
+  //   buyPrice       <- CDPSrvr::OnBuyItem (WORLDSERVER/DPSrvr.cpp:3378-3405), Penya shops only
+  //   sellPrice      <- CDPSrvr::OnSellItem (DPSrvr.cpp:3733-3766)
+  //   getCost        <- CItemBase::GetCost (_Common/Item.cpp:135); shop items are +0
+  // The rates are C++ floats (Project.h:1130). The WorldServer is Win32 / v143 (SSE2, /fp:precise),
+  // so float * int is done in float32 and (int) of a float out of range gives INT_MIN (cvttss2si).
+  // Not modelled: tax (only the Secret Room owner's tax rate), the karma discount (__VER < 8),
+  // a player's gold (how many he can afford; the 2,100,000,000 cap when selling).
+  const PERIN_VALUE = 100000000;       // define.h:265
+  const INT_MIN = -2147483648;
+  const f32 = Math.fround;
+  const toInt = x => (Number.isNaN(x) || x >= 2147483648 || x < INT_MIN ? INT_MIN : Math.trunc(x));   // (int)float
+  const mulInt = (rate, n) => toInt(f32(f32(rate) * f32(n)));
+  const DEFAULT_RATES = { shopCost: 1, buy: 1, sell: 1 };
+
+  // dwCost of every item after all AddShopItem prices: Map id -> { cost, base, by: [{npc, rec, cost}] }
+  function effectiveCosts(itemsState, chars) {
+    const out = new Map();
+    for (const npc of chars.npcs) {
+      for (const rec of npc.statements) {
+        if (rec.cmd !== 'AddShopItem' || !rec.args.cost || !rec.args.item) continue;
+        const id = u(rec.args.item.value);
+        const item = itemsState.items.get(id);
+        if (!item) continue;
+        if (!out.has(id)) out.set(id, { base: u(FRE.specItem.get(item, 'dwCost')), by: [] });
+        const o = out.get(id);
+        o.cost = u(rec.args.cost.value);
+        o.by.push({ npc, rec, cost: o.cost });
+      }
+    }
+    return out;
+  }
+  // the dwCost the server ends up with (DWORD). An EXP scroll copy (60000+) is cloned in
+  // LoadPropItem, before LoadCharacter, so it keeps the original's Spec_Item price.
+  function costOf(costs, prop) {
+    const o = costs && costs.get(prop.id);
+    return o ? o.cost : u(FRE.specItem.get(prop.item, 'dwCost'));
+  }
+  const getCost = dwCost => (u(dwCost) === 0xffffffff ? -1 : (u(dwCost) | 0));
+
+  // { pay, noPrice } : noPrice = the item's own cost is below 1 (or "="), so the minimum of 1 applies
+  function buyPrice(prop, dwCost, rates, D) {
+    rates = rates || DEFAULT_RATES;
+    let n = getCost(dwCost);
+    n = mulInt(rates.shopCost, n);
+    n = mulInt(rates.buy, n);
+    if (D && prop.id === u(D.get('II_SYS_SYS_SCR_PERIN'))) n = PERIN_VALUE;
+    const min1 = n < 1;
+    if (min1) n = 1;
+    return { pay: n, min1 };
+  }
+  // why OnSellItem refuses an item (null = sellable)
+  function sellRefused(prop, D) {
+    const g = f => FRE.specItem.get(prop.item, f);
+    if (u(g('dwItemKind3')) === u(D.get('IK3_EVENTMAIN'))) return 'event item (IK3_EVENTMAIN)';
+    if (u(g('dwItemKind3')) === u(D.get('IK3_QUEST'))) return 'quest item';
+    if (prop.id === u(D.get('II_SYS_SYS_SCR_SEALCHARACTER'))) return 'Sealed Character scroll';
+    if (prop.id === u(D.get('II_SYS_SYS_SCR_PERIN'))) return 'Perin';
+    if (g('dwParts') === D.get('PARTS_RIDE') && g('dwItemJob') === D.get('JOB_VAGRANT')) return 'vagrant flying item';
+    return null;
+  }
+  // { get, refused }: what the NPC pays for one
+  function sellPrice(prop, dwCost, rates, D) {
+    rates = rates || DEFAULT_RATES;
+    const refused = D ? sellRefused(prop, D) : null;
+    const c = getCost(dwCost);
+    let n = (c / 4) | 0;               // C int division (truncates toward 0: -1 / 4 = 0)
+    n = mulInt(rates.sell, n);
+    if (n === 0) n = 1;
+    return { get: n, refused };
+  }
+
+  // What one tab sells, with prices: [{ prop, kind, source, dwCost, pay, min1, get, refused, setBy }]
+  function pricedTab(costs, D, tab, rates) {
+    return tab.entries.map(en => {
+      const dwCost = costOf(costs, en.prop);
+      const b = buyPrice(en.prop, dwCost, rates, D), s = sellPrice(en.prop, dwCost, rates, D);
+      const o = costs && costs.get(en.prop.id);
+      return Object.assign({ prop: en.prop, kind: en.kind, source: en.source, dwCost }, b, s,
+        { setBy: o && o.by.length ? o.by[o.by.length - 1] : null });
+    });
+  }
+
+  // Rule rows -> fixed items, giving the same tab (same items, same order). Every
+  // AddVendorItem rule of this tab is replaced by one AddShopItem( tab, II_X ) per item it
+  // added, without a price (dwCost and every other shop stay as they are; the 73ee4bd6 way).
+  // The new lines go where the first rule (or an earlier fixed line of the tab) is, so they
+  // come before the tab's existing fixed lines, as the generated items did (Mover.cpp:1723).
+  // AddVendorItemLang rules are kept as they are (only commented-out ones exist, for LANG_TWN / LANG_JAP).
+  // edits: { omit: Set(id), price: Map(id -> cost), slot: Map(id -> tab) } applied on the new lines.
+  function ruleToFixedPlan(index, npc, slot, sim, edits = {}) {
+    const plan = { slot, rules: [], items: [], anchor: null, blocked: null };
+    if (npc.venderType === 1 || npc.venderType === 2) { plan.blocked = 'chip shops ignore AddVendorItem rules'; return plan; }
+    const tab = sim.tabs[slot];
+    for (const rec of npc.statements) {
+      const e = FRE.character.shopEntry(rec);
+      if (!e || e.slot !== slot) continue;
+      if (e.kind === 'generated' && !e.lang) plan.rules.push(rec);
+      if ((e.kind === 'generated' && !e.lang) || e.kind === 'fixed') { if (!plan.anchor) plan.anchor = rec; }
+    }
+    if (!plan.rules.length) { plan.blocked = 'this tab has no rule'; return plan; }
+    for (const en of tab.entries) {
+      if (en.kind !== 'generated') continue;
+      const p = en.prop;
+      if (p.ampCopyOf !== undefined || !p.item.define) { plan.blocked = `${p.item.define || p.id} has no item name to write (an EXP scroll copy made at load time)`; return plan; }
+      if (edits.omit && edits.omit.has(p.id)) { plan.items.push({ prop: p, omitted: true }); continue; }
+      plan.items.push({ prop: p, slot: edits.slot && edits.slot.has(p.id) ? edits.slot.get(p.id) : slot,
+        cost: edits.price && edits.price.has(p.id) ? edits.price.get(p.id) : null });
+    }
+    return plan;
+  }
+
+  FRE.vendorSim = { buildIndex, simulateNpc, expandRule, MAX_VENDOR_INVENTORY,
+    effectiveCosts, costOf, buyPrice, sellPrice, sellRefused, pricedTab, ruleToFixedPlan, DEFAULT_RATES, PERIN_VALUE };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- loaders/shop-window.js ----
@@ -3613,6 +3752,94 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
     resultExchange, clientReply, rowView, stockedPlayer, run, fmtText, countOf, freeSlots, RESULT, MAX_INVENTORY, MAX_INVENTORY_FREE, FILLER, NULL_ID };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/board-text.js ----
+// The text of a rules window (Client/Client/NpcBoard_<menu id>.inc, the npc-board client change in
+// docs/patches/npc-board.diff), read the way the game shows it: CWndGuildCombatBoard::SetString ->
+// CEditString::AddParsingString (_Common/EditString.cpp:632) -> ParsingString (EditString.cpp:441),
+// with its defaults (EditString.h:155): white (0xffffffff), no style, PS_USE_MACRO on; __ITEMLINK is on
+// in Neuz (Neuz/VersionCommon.h:36).
+//   #cAARRGGBB  colour; each of the 8 characters is read as hex with c >= 'a' ? c - 'a' + 10 : c - '0',
+//               so ONLY lowercase hex works (an uppercase 'F' gives 22, garbling the colour)
+//   #b #u #s    bold / underline / strike on;  #nb #nu #ns off;  #nc back to white;  #l<4> / #nl code page
+//   #i<7><4>    item link ids (skipped, nothing shown)
+//   #<other>    '#' and the character are shown as they are;  a '#' at the very end is dropped
+//   \n          (backslash n, two characters) a new line; a real line break is kept as it is
+// Returns pieces [{ text, color, bold, underline, strike }] (adjacent characters with one style merged).
+(function (FRE) {
+  'use strict';
+  const BOLD = 2, UNDER = 1, STRIKE = 4;
+  const WHITE = 0xffffffff;
+
+  // for( j = 7; j >= 0; j-- ) { cVal = szColor[j]; cVal = cVal >= 'a' ? cVal - 'a' + 10 : cVal - '0';
+  //   dwlNumber |= (DWORDLONG)cVal << dwMulCnt; dwMulCnt += 4; }  -- CHAR is signed (MSVC), so a wrong
+  // character can spill into other nibbles; the low 32 bits are the colour.
+  const s8 = v => ((v & 0xff) ^ 0x80) - 0x80;
+  function hexColor(s) {
+    let v = 0n, shift = 0n;
+    for (let j = 7; j >= 0; j--) {
+      const c = s8(s.charCodeAt(j) || 0);
+      const val = s8(c >= 97 ? c - 97 + 10 : c - 48);
+      v |= BigInt.asUintN(64, BigInt(val)) << shift;
+      shift += 4n;
+    }
+    return Number(v & 0xffffffffn);
+  }
+
+  function parse(src) {
+    const chars = [];                                      // [ch, color, style]
+    let color = WHITE, style = 0;
+    const n = src.length;
+    for (let i = 0; i < n; i++) {
+      const ch = src[i];
+      if (ch === '#') {
+        if (++i >= n) break;
+        switch (src[i]) {
+          case 'c':
+            if (++i >= n) break;
+            color = colorAt(src, i);
+            i += 7;
+            break;
+          case 'u': style |= UNDER; break;
+          case 'b': style |= BOLD; break;
+          case 's': style |= STRIKE; break;
+          case 'l': if (++i >= n) break; i += 3; break;     // code page: not drawn differently here
+          case 'i': if (++i >= n) break; i += 7; i += 3; break;
+          case 'n':
+            if (++i >= n) break;
+            switch (src[i]) {
+              case 'c': color = WHITE; break;
+              case 'b': style &= ~BOLD; break;
+              case 'u': style &= ~UNDER; break;
+              case 's': style &= ~STRIKE; break;
+              default: break;
+            }
+            break;
+          default:
+            chars.push(['#', color, style], [src[i], color, style]);
+        }
+      } else if (ch === '\\' && src[i + 1] === 'n') {
+        chars.push(['\n', color, style]);
+        i += 1;
+      } else chars.push([ch, color, style]);
+    }
+    const out = [];
+    for (const [ch, c, s] of chars) {
+      const last = out[out.length - 1];
+      if (last && last.color === c && last.style === s) last.text += ch;
+      else out.push({ text: ch, color: c, style: s });
+    }
+    return out.map(p => ({ text: p.text, color: p.color, bold: !!(p.style & BOLD), underline: !!(p.style & UNDER), strike: !!(p.style & STRIKE) }));
+  }
+  // the 8 characters after "#c" (fewer at the end of the text: the C++ copies past the end; here they count as 0)
+  function colorAt(src, i) { return hexColor((src.slice(i, i + 8) + '00000000').slice(0, 8)); }
+
+  // #cAARRGGBB for a CSS colour "#rrggbb" (lowercase, opaque)
+  const code = css => '#cff' + String(css).replace(/^#/, '').toLowerCase();
+  const css = v => '#' + ((v >>> 0) & 0xffffff).toString(16).padStart(6, '0');
+
+  FRE.boardText = { parse, hexColor, code, css, WHITE };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- validate/help.js ----
 // Plain-language help for every diagnostic code: what it means and what to do.
 (function (FRE) {
@@ -3641,6 +3868,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
       'Close the block.'],
     C_PRICE_CONFLICT: ['AddShopItem\'s price changes the item\'s price for the whole server, not just this shop. With different prices in different shops, the last one loaded wins everywhere.',
       'Use the same price in every shop for this item, or leave the price out to use the item\'s own price.'],
+    C_PRICE_MIN1: ['Players pay 1 Penya for this item. Its price (dwCost in Spec_Item.txt, or the last AddShopItem price) is 0, "=" or below 1, and the server charges at least 1 (OnBuyItem, DPSrvr.cpp:3404). A price above 2,147,483,583 also ends up as 1: the server multiplies it by its shop rates as a float, which overflows.',
+      'Give the item a price: type one in this shop (AddShopItem) or change its own price (dwCost).'],
+    C_PRICE_FROM_OTHER: ['The price here is not this shop\'s own: another NPC\'s AddShopItem line sets the item\'s price (dwCost) for the whole server, and this shop sells it at that price.',
+      'Nothing is wrong. To charge a different price, both shops must agree: there is only one price per item.'],
     C_PRICE_ZERO: ['The item is sold for 0 (or less) Penya.', 'Set a positive price unless it is meant to be free.'],
     C_TAB_FULL: ['A shop tab holds at most 100 items. Items beyond that (generated ones first, then AddShopItem ones in file order) are silently left out.',
       'Narrow the AddVendorItem rules of that tab or move items to another tab.'],
@@ -3947,6 +4178,36 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
         add(Object.assign({ code: 'C_NO_TRADE', severity: 'INFO', start: npc.start, end: npc.keyEnd, key: `C_NO_TRADE|${npc.file}|${npc.key}`,
           message: `${npc.key}: players can't buy here: shop items but no Trade menu (the buy code requires MMI_TRADE)` +
             (disabled ? '. The Trade menu is commented out in this NPC, so it was disabled on purpose.' : '') }, at));
+      }
+    }
+
+    // What players pay in each Penya shop (vendorSim.buyPrice, a port of OnBuyItem): one dwCost per
+    // item, which a later AddShopItem price replaces for every shop (Project.cpp:3581, 6b026003).
+    const costs = ctx.costs ? ctx.costs() : null;
+    if (costs && ctx.simulate) {
+      for (const npc of chars.npcs) {
+        if (npc.venderType === 1 || npc.venderType === 2) continue;
+        const at = { file: npc.file, npcKey: npc.key };
+        ctx.simulate(npc).tabs.forEach((tab, t) => {
+          for (const en of tab.entries) {
+            const p = en.prop, def = p.item.define || String(p.id);
+            const dwCost = FRE.vendorSim.costOf(costs, p);
+            if (FRE.vendorSim.buyPrice(p, dwCost, null, defs).min1) {
+              add(Object.assign({ code: 'C_PRICE_MIN1', severity: 'WARN', start: en.source.start, end: en.source.end,
+                key: `C_PRICE_MIN1|${npc.file}|${npc.key}|${t}|${def}`, itemId: p.id,
+                message: (dwCost | 0) >= 1
+                  ? `${npc.key}: ${def} costs ${dwCost}, too much for the server's float math (OnBuyItem), so players pay 1 Penya for it in tab ${t + 1}`
+                  : `${npc.key}: ${def} has no price (${(dwCost | 0) === -1 ? '"="' : dwCost}), so players pay 1 Penya for it in tab ${t + 1}` }, at));
+            }
+            const o = costs.get(p.id);
+            const setter = o && o.by.length ? o.by[o.by.length - 1] : null;
+            if (setter && setter.npc !== npc && !(en.kind === 'fixed' && en.source.args.cost)) {
+              add(Object.assign({ code: 'C_PRICE_FROM_OTHER', severity: 'INFO', start: en.source.start, end: en.source.end,
+                key: `C_PRICE_FROM_OTHER|${npc.file}|${npc.key}|${t}|${def}|${setter.npc.key}`, itemId: p.id,
+                message: `${npc.key}: ${def} costs ${setter.cost} here because ${setter.npc.key}'s AddShopItem sets that price for every shop (Spec_Item.txt says ${o.base})` }, at));
+            }
+          }
+        });
       }
     }
 
@@ -4302,7 +4563,101 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
     return plan;
   }
 
-  FRE.shopOps = { formatStmt, addItem, removeStatement, setCost, setSlot, setShopType, shopTypePlan, shopType, stmtExtent: T.stmtExtent };
+  // A tab's AddVendorItem rules -> AddShopItem lines (plan from vendorSim.ruleToFixedPlan).
+  // Every rule row is removed; the new lines take the place of the plan's anchor (the first rule,
+  // or an earlier fixed line of the tab, which then stays below them), with its indent and EOL.
+  function convertRules(text, npc, plan) {
+    if (plan.blocked) throw new Error(plan.blocked);
+    const stmts = plan.items.filter(it => !it.omitted).map(it => {
+      checkSlot(it.slot); T.checkDefine(it.prop.item.define);
+      const args = [it.slot, it.prop.item.define];
+      if (it.cost !== null && it.cost !== undefined) { checkCost(it.cost); args.push(it.cost); }
+      return formatStmt('AddShopItem', args, text);
+    });
+    const a = plan.anchor;
+    const eol = T.eolAt(text, a.start) || T.dominantEol(text);
+    const asLines = () => stmts.map(s => T.indentOf(text, a.start) + s + eol).join('');
+    const splices = [];
+    for (const rec of plan.rules) {
+      const r = T.removeRow(text, rec)[0];
+      if (rec === a && stmts.length) {
+        if (r.start === T.lineStart(text, a.start)) r.insert = asLines();      // the whole line: the new lines replace it
+        else r.insert = (r.start < a.start ? ' ' : '') + stmts.join(' ');      // shares its line: inline
+      }
+      splices.push(r);
+    }
+    if (!plan.rules.includes(a) && stmts.length) {
+      if (T.prefixIsBlank(text, a.start)) { const at = T.lineStart(text, a.start); splices.push({ start: at, end: at, insert: asLines() }); }
+      else splices.push({ start: a.start, end: a.start, insert: stmts.join(' ') + ' ' });
+    }
+    return splices.sort((x, y) => x.start - y.start);
+  }
+
+  // AddVendorItem( tab, IK3_X, job, rarity min, rarity max, n ): every sellable item of kind IK3_X
+  // (for that job, -1 = any) with dwItemRare min..max (Mover.cpp:5414). The server ignores n.
+  function checkRule(r) {
+    checkSlot(r.slot); T.checkDefine(r.ik3);
+    if (r.job !== -1) T.checkDefine(r.job);
+    T.checkAmount(r.rareMin, 0, 2147483647, 'lowest rarity');
+    T.checkAmount(r.rareMax, r.rareMin, 2147483647, 'highest rarity');
+  }
+  function ruleArgs(r) { return [r.slot, r.ik3, r.job, r.rareMin, r.rareMax, r.count === undefined ? 100 : r.count]; }
+  function addRule(text, npc, r) {
+    checkRule(r);
+    const stmt = formatStmt('AddVendorItem', ruleArgs(r), text);
+    // after the tab's last rule, else after its last shop line, else as addItem places a line
+    const tabRecs = npc.statements.filter(x => { const e = FRE.character.shopEntry(x); return e && e.slot === r.slot; });
+    const rules = tabRecs.filter(x => FRE.character.shopEntry(x).kind === 'generated');
+    const shop = npc.statements.filter(x => FRE.character.shopEntry(x));
+    const anchor = rules[rules.length - 1] || tabRecs[tabRecs.length - 1] || shop[shop.length - 1]
+      || npc.statements.filter(x => x.cmd === 'AddMenu').pop() || null;
+    if (anchor) return T.insertRowAfter(text, anchor, stmt);
+    return T.insertRowBelowLine(text, npc.braceTok.start, stmt);
+  }
+  // Only the values that change are replaced (the rest of the line stays byte for byte).
+  function setRule(text, rec, r) {
+    if (rec.cmd !== 'AddVendorItem' && rec.cmd !== 'AddVenderItem') throw new Error('only AddVendorItem rules can be changed here');
+    checkRule(r);
+    const out = [];
+    const put = (name, v) => { const a = rec.args[name]; if (text.slice(a.start, a.end) !== String(v)) out.push(...T.replaceSpan(a, v)); };
+    put('slot', r.slot); put('ik3', r.ik3); put('job', r.job); put('rareMin', r.rareMin); put('rareMax', r.rareMax);
+    return out;
+  }
+
+  // One Penya price per item: every AddShopItem( tab, II_X, price ) line sets II_X's dwCost for the whole
+  // server and the last one loaded wins (Project.cpp:3581). So a new price is also written on the item's
+  // other priced lines, or an older line loaded later would win. Returns grouped-edit parts (every NPC file);
+  // `except` = the line being edited (left out). Lines without a price are left alone: they use dwCost.
+  function otherPriceParts(ws, itemId, cost, except) {
+    const id = itemId >>> 0, byFile = new Map(), lines = [];
+    if (cost === null || cost === undefined) return { parts: [], lines };
+    checkCost(cost);
+    for (const npc of ws.chars.npcs) {
+      for (const rec of npc.statements) {
+        if (rec.cmd !== 'AddShopItem' || !rec.args.cost || !rec.args.item || (rec.args.item.value >>> 0) !== id) continue;
+        if (except && rec.start === except.start && npc.file.toLowerCase() === except.file) continue;
+        if (rec.args.cost.value === cost) continue;
+        const f = npc.file.toLowerCase();
+        if (!byFile.has(f)) byFile.set(f, []);
+        byFile.get(f).push(...T.replaceSpan(rec.args.cost, cost));
+        lines.push({ npc, rec, was: rec.args.cost.value });
+      }
+    }
+    return { parts: [...byFile].map(([file, splices]) => ({ file, splices })), lines };
+  }
+  // parts + more parts: splices of the same file go together
+  function mergeParts(a, b) {
+    const out = a.map(p => ({ file: p.file, splices: [...p.splices] }));
+    for (const p of b) {
+      const same = out.find(x => x.file === p.file);
+      if (same) same.splices.push(...p.splices); else out.push({ file: p.file, splices: [...p.splices] });
+    }
+    out.forEach(p => p.splices.sort((x, y) => x.start - y.start));
+    return out;
+  }
+
+  FRE.shopOps = { otherPriceParts, mergeParts, formatStmt, addItem, removeStatement, setCost, setSlot, setShopType, shopTypePlan, shopType, stmtExtent: T.stmtExtent,
+    convertRules, addRule, setRule };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- edit/donation-ops.js ----
@@ -4406,7 +4761,47 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
     return out;
   }
 
-  FRE.itemOps = { fieldSpan, setChipPrice, chipUses };
+  // dwCost: the item's own Penya price (94881aa2 changed II_CHP_RED's the same way, Server + Client).
+  // Shops that sell the item through a rule, or with AddShopItem and no price, charge it; selling
+  // to an NPC gives dwCost / 4 (OnSellItem). An AddShopItem price loaded later still replaces it.
+  // value: 0 .. INT_MAX, or null = "=" (no price: players pay 1 Penya, the client shows no price)
+  function setCost(text, item, value, defines) {
+    if (value !== null) T.checkAmount(value, 0, 2147483647, 'price');
+    const span = fieldSpan(text, item, 'dwCost', defines);
+    const insert = value === null ? '=' : String(value);
+    if (text.slice(span.start, span.end) === insert) return [];
+    return T.replaceSpan(span, insert);
+  }
+
+  // dwShopAble: -1 hides the item from every AddVendorItem rule in every shop. Only
+  // CMover::GenerateVendorItem reads it (9bf0cebb), so fixed AddShopItem lines still sell it.
+  function setShopAble(text, item, hidden, defines) {
+    const span = fieldSpan(text, item, 'dwShopAble', defines);
+    const insert = hidden ? '-1' : '1';
+    const cur = text.slice(span.start, span.end);
+    if (cur === insert || (hidden && cur === '=')) return [];
+    return T.replaceSpan(span, insert);
+  }
+
+  // Every Penya shop tab that sells this item, and how (a rule, or a fixed line with or without
+  // its own price). These all charge the same dwCost (vendorSim.effectiveCosts).
+  function penyaUses(ws, itemId) {
+    const id = itemId >>> 0, out = [];
+    for (const npc of ws.chars ? ws.chars.npcs : []) {
+      if (FRE.shopOps.shopType(npc.venderType) !== 0) continue;
+      ws.simulate(npc).tabs.forEach((tab, slot) => {
+        for (const en of tab.entries) {
+          if (en.prop.id !== id) continue;
+          const how = en.kind === 'generated' ? 'rule' : en.source.args.cost ? 'own price' : 'fixed';
+          out.push({ kind: 'npc', npc, slot, how, rec: en.source,
+            label: `${npc.name || npc.key}, ${npc.slotTitles[slot] ? `tab ${slot + 1} "${npc.slotTitles[slot]}"` : 'tab ' + (slot + 1)} (${how === 'rule' ? 'from a rule' : how === 'own price' ? 'AddShopItem with a price' : 'AddShopItem'})` });
+        }
+      });
+    }
+    return out;
+  }
+
+  FRE.itemOps = { fieldSpan, setChipPrice, chipUses, setCost, setShopAble, penyaUses };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- edit/battlepass-ops.js ----
@@ -5196,10 +5591,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
   }
 
   // -> { ids, results: [S, F], parts, lines: { defineNeuz, defineText, textInc, textTxt, exchange, character } }
+  // spec.kind 'board' (a rules window, the npc-board client change): no Exchange_Script block, no result texts.
   function newMenusPlan(ws, spec) {
+    const board = spec.kind === 'board';
+    const need = board ? FILES.filter(n => n !== 'exchange_script.txt') : FILES;
     const f = Object.fromEntries(FILES.map(n => [n, ws.files.get(n)]));
-    const missing = FILES.filter(n => !f[n]);
-    if (missing.length) throw new Error(`a new exchange menu needs ${missing.join(', ')}`);
+    const missing = need.filter(n => !f[n]);
+    if (missing.length) throw new Error(`a new ${board ? 'rules' : 'exchange'} menu needs ${missing.join(', ')}`);
+    const what = board ? 'rules menu' : 'exchange menu';
     const list = ws.chars && ws.chars.byKey.get(String(spec.npcKey).toLowerCase());
     if (!list || !list.length) throw new Error(`no NPC ${spec.npcKey}`);
     const npc = list[list.length - 1];
@@ -5207,15 +5606,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
     const free = freeMenuIds(ws);
     if (free.length < spec.menus.length) throw new Error(`only ${free.length} free menu ids under ${MAX_MOVER_MENU}`);
     const ids = spec.menus.map((m, i) => free[i]);
-    const newResults = spec.results && spec.results.add ? spec.results.add : [];
-    const results = newResults.length ? newResults.map(r => r.name) : spec.results.tids;
+    const newResults = !board && spec.results && spec.results.add ? spec.results.add : [];
+    const results = board ? [] : newResults.length ? newResults.map(r => r.name) : spec.results.tids;
     const parts = [];
 
     // defineNeuz.h: after the line of the highest MMI_ id (MMI_COLLECTOR_DETAILS 281 today)
     const dn = f['defineneuz.h'], mmis = defineLines(dn.text, 'MMI_').filter(d => d.value < MAX_MOVER_MENU);
     const top = mmis.reduce((a, b) => (b.value > a.value ? b : a));
     const dnEol = top.eol || T.dominantEol(dn.text);
-    const dnLines = spec.menus.map((m, i) => `#define ${m.name}\t${ids[i]}\t// ${spec.npcKey} exchange menu${dnEol}`).join('');
+    const dnLines = spec.menus.map((m, i) => `#define ${m.name}\t${ids[i]}\t// ${spec.npcKey} ${what}${dnEol}`).join('');
     parts.push({ file: 'defineneuz.h', splices: [{ start: top.end, end: top.end, insert: (top.eol ? '' : dnEol) + dnLines }] });
 
     // defineText.h: TID_MMI_ labels after the last TID_MMI_ in 7000..7349; result TIDs appended at the end
@@ -5238,17 +5637,20 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
     let n = nextTextId(ws);
     const keyed = texts.map(t => Object.assign({ key: keyOf(n++) }, t));
     const ti = f['textclient.inc'], tiEol = T.dominantEol(ti.text);
-    const tiBody = `${tiEol}// ${spec.npcKey} exchange menus${tiEol}${tiEol}` +
+    const tiBody = `${tiEol}// ${spec.npcKey} ${what}s${tiEol}${tiEol}` +
       keyed.map(t => `${t.tid}\t\t\t\t0xffffffff${tiEol}{${tiEol}\t${t.key}${tiEol}}${tiEol}${tiEol}`).join('');
     parts.push({ file: 'textclient.inc', splices: [FRE.npcOps.appendSplice(ti.text, tiBody)] });
     const tt = f['textclient.txt.txt'], ttEol = T.dominantEol(tt.text);
     const ttBody = keyed.map(t => `${t.key}\t${t.text}${ttEol}`).join('');
     parts.push({ file: 'textclient.txt.txt', splices: [FRE.npcOps.appendSplice(tt.text, ttBody)] });
 
-    // Exchange_Script.txt: the menus appended after a blank line
-    const ex = f['exchange_script.txt'], exEol = T.dominantEol(ex.text);
-    const exBody = spec.menus.map(m => menuText(m, results, exEol)).join(exEol);
-    parts.push({ file: 'exchange_script.txt', splices: [FRE.npcOps.appendSplice(ex.text, exEol + exBody)] });
+    // Exchange_Script.txt: the menus appended after a blank line (not for a rules menu)
+    let exBody = '';
+    if (!board) {
+      const ex = f['exchange_script.txt'], exEol = T.dominantEol(ex.text);
+      exBody = spec.menus.map(m => menuText(m, results, exEol)).join(exEol);
+      parts.push({ file: 'exchange_script.txt', splices: [FRE.npcOps.appendSplice(ex.text, exEol + exBody)] });
+    }
 
     // character.inc: AddMenu lines after the NPC's last AddMenu
     const ci = f['character.inc'];
@@ -5278,7 +5680,49 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
     return [{ file: 'exchange_script.txt', splices: [{ start: at, end: at, insert: (menu.sets.length ? eol : '') + body }] }];
   }
 
-  FRE.menuOps = { addSetsPlan, newMenusPlan, freeMenuIds, nextTid, nextTextId, menuText, setText, defineLines, FIRST_ID, MAX_MOVER_MENU, TID_MMI_DIALOG, FILES };
+  // A rules window (docs/patches/npc-board.diff): a new menu id + label + AddMenu (newMenusPlan kind 'board'),
+  // and its text in the client-only file Client/Client/NpcBoard_<id>.inc (ASCII; real line breaks are CRLF,
+  // like Client/Client/GuildCombatTEXT_1_USA.inc). spec: { npcKey, name, label, text }
+  const BOARD_EOL = '\r\n';
+  const boardFileName = id => `NpcBoard_${id}.inc`;
+  const boardText = text => String(text).replace(/\r\n|\r|\n/g, BOARD_EOL);
+  function checkBoardText(text) {
+    if (!String(text).trim()) throw new Error('the text is empty');
+    if (!FRE.bytes.isPrintableAscii(boardText(text))) throw new Error('the text has a character the game client can\'t show here (use plain English letters, digits and punctuation)');
+  }
+  function boardPlan(ws, spec) {
+    checkBoardText(spec.text);
+    const plan = newMenusPlan(ws, { npcKey: spec.npcKey, kind: 'board', menus: [{ name: spec.name, label: spec.label, sets: [] }] });
+    const id = plan.ids[0];
+    const bf = ws.boardFile(id, true);
+    plan.parts.push({ file: bf.lower, splices: [{ start: 0, end: bf.file.text.length, insert: boardText(spec.text) }] });
+    plan.board = { id, file: boardFileName(id), text: boardText(spec.text) };
+    return plan;
+  }
+  // a rules menu's text changed later (the file already in the workspace)
+  function setBoardText(ws, id, text) {
+    checkBoardText(text);
+    const bf = ws.boardFile(id, false);
+    if (!bf) throw new Error(`no ${boardFileName(id)} in the Client folder`);
+    return [{ file: bf.lower, splices: bf.file.text === boardText(text) ? [] : [{ start: 0, end: bf.file.text.length, insert: boardText(text) }] }];
+  }
+
+  // A menu's right-click name: textClient.inc "TID_MMI_X 0x.. { IDS_TEXTCLIENT_INC_n }" -> that line of
+  // textClient.txt.txt ("IDS_TEXTCLIENT_INC_n<TAB>text"); only the text after the key changes.
+  function setLabel(ws, name, text) {
+    const p = FRE.newNpcText(text);
+    if (p) throw new Error(`the name ${p}`);
+    const ti = ws.files.get('textclient.inc'), tt = ws.files.get('textclient.txt.txt');
+    const m = new RegExp(`(?:^|\\n)[ \\t]*${tidOf(name)}[ \\t]+\\S+\\s*\\{\\s*(IDS_TEXTCLIENT_INC_\\d+)`).exec(ti ? ti.text : '');
+    if (!m) throw new Error(`no text for ${tidOf(name)} in textClient.inc`);
+    const line = new RegExp(`(^|\\n)${m[1]}\\t([^\\r\\n]*)`).exec(tt.text);
+    if (!line) throw new Error(`no line ${m[1]} in textClient.txt.txt`);
+    const start = line.index + line[1].length + m[1].length + 1;
+    if (line[2] === text) return [];
+    return [{ file: 'textclient.txt.txt', splices: [{ start, end: start + line[2].length, insert: text }] }];
+  }
+
+  FRE.menuOps = { setLabel, boardPlan, setBoardText, boardFileName, boardText, BOARD_EOL, addSetsPlan, newMenusPlan, freeMenuIds, nextTid, nextTextId, menuText, setText, defineLines, FIRST_ID, MAX_MOVER_MENU, TID_MMI_DIALOG, FILES };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- validate/newnpc.js ----
@@ -5650,9 +6094,13 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
 
   // What clicking menu id i opens: null (its own window, a case in OnCommand) or the exchange window:
   // { exchange: true, sets: number of SETs the menu really has in Exchange_Script.txt (0 = an empty window) }
+  // With the npc-board client change (docs/patches/npc-board.diff) the default branch first loads
+  // Client\\NpcBoard_<id>.inc: { board: true, text } then. ws.boardPatch === false: a client without it.
   function opensOf(ws, i) {
     const names = ws.defines.withPrefix('MMI_').filter(([, v]) => v === i).map(([k]) => k);
     if (names.some(n => OWN_CASE.has(n))) return null;
+    const text = ws.boardTextOf ? ws.boardTextOf(i) : null;
+    if (text !== null && ws.boardPatch !== false) return { board: true, text };
     const model = ws.models && ws.models.exchange;
     const menu = model && model.menus.find(x => x.mmi.value === i);
     return { exchange: true, sets: menu ? Math.min(menu.sets.length, 30) : 0 };
@@ -5668,7 +6116,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
     for (const p of g.placed) out.push(`Stands on ${p.map} at /position ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}, facing ${p.angle.toFixed(1)}°, model ${p.modelName || p.model}`);
     for (const w of g.where || []) out.push(`Where: ${FRE.area.label ? FRE.area.label(w) : w.caption} · GM: ${w.te}`);
     out.push('Right-click: ' + (g.menus.length ? g.menus.map(m => (m.label || m.define || m.id) + (m.when ? ` (${m.when})` : '') +
-      (m.opens ? ` [exchange window: ${m.opens.sets ? m.opens.sets + ' exchange' + (m.opens.sets === 1 ? '' : 's') : 'EMPTY'}]` : '')).join(', ') : '(no menu)'));
+      (m.opens ? (m.opens.board ? ' [rules window]' : ` [exchange window: ${m.opens.sets ? m.opens.sets + ' exchange' + (m.opens.sets === 1 ? '' : 's') : 'EMPTY'}]`) : '')).join(', ') : '(no menu)'));
     for (const t of g.tabs) out.push(`Tab ${t.slot + 1} "${t.title === null ? '(no title)' : t.title}": ${t.items.length} item(s)` +
       (t.items.length ? ' — ' + t.items.slice(0, 6).map(itemName).join(', ') + (t.items.length > 6 ? ', …' : '') : '') + (t.dropped ? ` (${t.dropped} left out)` : ''));
     return out;
@@ -5904,7 +6352,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
       maps: true,            // reads World/*/ to show where each NPC stands
       editsMaps: true,       // a new NPC is a new record in World/<map>/<map>.dyo (Server + Client copies)
       parse(ws) {
-        ws._sim = new Map();
+        ws._sim = new Map(); ws._costs = null;
         // model names and the "has a propMover row" check of a new NPC (validate/newnpc.js)
         if (!ws.movers && ws.files.get('propmover.txt')) ws.movers = FRE.propMover.loadPropMover(ws.files.get('propmover.txt'), { defines: ws.defines.defines, strings: ws.strings.map });
         return (ws.chars = FRE.character.loadCharacters(ws.files, { defines: ws.defines.defines, strings: ws.strings.map }));
@@ -5912,7 +6360,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
       validate(ws, model) {
         return FRE.validateCharacters(model, {
           items: ws.items.items, defines: ws.defines.defines,
-          simulate: npc => ws.simulate(npc), textOf: n => ws.textOf(n),
+          simulate: npc => ws.simulate(npc), textOf: n => ws.textOf(n), costs: () => ws.costs(),
         }).map(d => Object.assign({ module: 'npc' }, d));
       },
     },
@@ -6053,6 +6501,33 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
     }
 
     // file names in the client's Theme folder (BattlePass.inc rarity / icon textures)
+    // Rules windows (docs/patches/npc-board.diff): Client/Client/NpcBoard_<menu id>.inc, client-only files.
+    // They sit in this.files as 'client/npcboard_<id>.inc' with clientOnly set; io/save.js writes them into
+    // the Client folder. setBoardFiles: the ones already there (SourceFiles read from Client/Client).
+    setBoardFiles(list) {
+      for (const f of list || []) this._addBoard(f);
+    }
+    _addBoard(f) {
+      f.clientOnly = true;
+      f.dir = 'Client';
+      const lower = 'client/' + f.name.toLowerCase();
+      this.files.set(lower, f);
+      if (!f.readOnly) this.editable.add(lower);
+      return { lower, file: f };
+    }
+    // -> { lower, file } of NpcBoard_<id>.inc; create: an empty one (no bytes yet) when there is none
+    boardFile(id, create = false) {
+      const lower = `client/npcboard_${id}.inc`;
+      if (this.files.has(lower)) return { lower, file: this.files.get(lower) };
+      if (!create) return null;
+      return this._addBoard(new FRE.SourceFile(`NpcBoard_${id}.inc`, new Uint8Array(0)));
+    }
+    // the rules text players see for menu id (null: no board file, or an empty one)
+    boardTextOf(id) {
+      const b = this.boardFile(id);
+      return b && b.file.text.length ? b.file.text : null;
+    }
+
     setClientTheme(names) {
       this.clientTheme = names ? new Set([...names].map(n => n.toLowerCase())) : null;
       if (this.available.battlepass && this.available.battlepass.ok) this.reparse('battlepass.inc');
@@ -6199,6 +6674,16 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
     simulate(npc) {
       if (!this._sim.has(npc)) this._sim.set(npc, FRE.vendorSim.simulateNpc(this.vendorIndex, npc));
       return this._sim.get(npc);
+    }
+
+    // Each item's dwCost after every AddShopItem price (vendorSim.effectiveCosts; cached until the next edit).
+    costs() {
+      if (!this._costs) this._costs = FRE.vendorSim.effectiveCosts(this.items, this.chars);
+      return this._costs;
+    }
+    // What players pay / get back for every item of one tab (vendorSim.pricedTab)
+    pricedTab(npc, slot, rates) {
+      return FRE.vendorSim.pricedTab(this.costs(), this.defines.defines, this.simulate(npc).tabs[slot], rates);
     }
 
     dirtyFiles() { return [...this.files.values()].filter(f => f.dirty); }
@@ -6537,8 +7022,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
   async function save(ws, backupDir, log = () => {}, client = null) {
     const report = { ok: false, steps: [], files: [], backupFolder: null, client: [] };
     const step = (m) => { report.steps.push(m); log(m); };
-    const dirty = ws.dirtyFiles();
-    if (!dirty.length) { step('Nothing to save.'); report.ok = true; return report; }
+    const all = ws.dirtyFiles();
+    if (!all.length) { step('Nothing to save.'); report.ok = true; return report; }
+    // client-only files (rules windows: Client/Client/NpcBoard_<id>.inc) go into the Client folder
+    const dirty = all.filter(f => !f.clientOnly), boards = all.filter(f => f.clientOnly);
+    if (boards.length && !client) { step(`Aborted: ${boards.map(label).join(', ')} belong in the Client folder, and no Client folder was found. Nothing was written.`); return report; }
 
     const blocking = ws.newBlocking();
     if (blocking.length) { step(`Aborted: ${blocking.length} new blocking problem(s). Nothing was written.`); report.blocking = blocking; return report; }
@@ -6577,7 +7065,26 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
         targets.push(p);
       }
     }
-    step(`Disk contents unchanged since load${targets.length ? ' (Server and Client)' : ''}.`);
+    const boardDisk = new Map();
+    for (const f of boards) {
+      if (f.handle) {
+        const cur = await FRE.fsa.readHandle(f.handle);
+        if (!B.bytesEqual(cur.bytes, f.bytes)) {
+          step(`Aborted: Client/${label(f)} was changed on disk since it was loaded. Nothing was written. Reload the Client folder.`);
+          report.conflict = 'Client/' + label(f);
+          return report;
+        }
+        boardDisk.set(f, cur.bytes);
+      } else {
+        const d = await FRE.fsa.dirAt(client.dir, f.dir);
+        if (d && await exists(d, f.name)) {
+          step(`Aborted: Client/${label(f)} appeared on disk since it was loaded. Nothing was written. Reload the Client folder.`);
+          report.conflict = 'Client/' + label(f);
+          return report;
+        }
+      }
+    }
+    step(`Disk contents unchanged since load${targets.length || boards.length ? ' (Server and Client)' : ''}.`);
 
     // 2. backup the current disk bytes, verified
     const folder = await FRE.fsa.newFolder(backupDir, stampName() + (ws.only ? '_' + ws.only : ''));   // e.g. 2026-10-06_08-10-00_exchange
@@ -6585,11 +7092,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
     // files in a sub-folder (World/<map>/<map>.dyo) keep their path in the backup
     for (const f of dirty) await FRE.fsa.newFile(await FRE.fsa.dirAt(folder, f.dir, true), f.name, onDisk.get(f));
     const existing = targets.filter(t => t.client);
-    if (existing.length) {
+    const oldBoards = boards.filter(f => boardDisk.has(f));
+    if (existing.length || oldBoards.length) {
       const cf = await folder.getDirectoryHandle('Client', { create: true });
       for (const t of existing) await FRE.fsa.newFile(await FRE.fsa.dirAt(cf, t.client.dir, true), t.client.name, t.client.bytes);
+      for (const f of oldBoards) await FRE.fsa.newFile(await FRE.fsa.dirAt(cf, f.dir, true), f.name, boardDisk.get(f));
     }
-    step(`Backup written and verified: ${backupDir.name}/${folder.name}/ (${dirty.length} file(s)${existing.length ? ` + ${existing.length} in Client/` : ''})`);
+    const inClient = existing.length + oldBoards.length, created = boards.length - oldBoards.length;
+    step(`Backup written and verified: ${backupDir.name}/${folder.name}/ (${dirty.length} file(s)${inClient ? ` + ${inClient} in Client/` : ''}${created ? `; ${created} new file(s), listed in the manifest` : ''})`);
 
     // 3. write + verify each file; restore on failure
     const written = [];
@@ -6608,11 +7118,23 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
         report.client.push({ name: t.client ? label(t.client) : t.name, lower: t.lower, dir: t.client ? t.client.dir : '', file: t.client ? t.client.name : t.name, mode: t.mode, handle, bytes: t.bytes, before: t.client ? t.client.bytes : null });
         step(`Client/${t.client ? label(t.client) : t.name}: ${t.mode === 'missing' ? 'created as a copy of the server file' : t.mode === 'eol' ? 'same change written, LF kept' : 'same change written'} and verified (${t.bytes.length} bytes).`);
       }
+      for (const f of boards) {
+        const candidate = f.serialize();
+        let stamp, handle = f.handle;
+        if (handle) stamp = await FRE.fsa.writeVerified(handle, candidate);
+        else { handle = await FRE.fsa.newFile(await FRE.fsa.dirAt(client.dir, f.dir, true), f.name, candidate); stamp = (await FRE.fsa.readHandle(handle)).stamp; }
+        written.push({ f, candidate, stamp, handle, board: true, dirHandle: await FRE.fsa.dirAt(client.dir, f.dir) });
+        report.files.push({ name: 'Client/' + label(f), before: f.bytes.length, after: candidate.length, changes: changeSummary(f), created: !f.handle });
+        step(`Client/${label(f)}: ${f.handle ? 'written' : 'created'} and verified (${candidate.length} bytes).`);
+      }
     } catch (e) {
       step(`WRITE FAILED: ${e.message}. Restoring from the backup...`);
       for (const w of written) {
-        try { await FRE.fsa.writeVerified(w.f.handle, onDisk.get(w.f)); step(`Restored ${w.f.name}.`); }
-        catch (e2) { step(`!! Could not restore ${w.f.name}: ${e2.message}. Copy it back manually from ${folder.name}.`); }
+        try {
+          if (w.board && !w.f.handle) await w.dirHandle.removeEntry(w.f.name);
+          else await FRE.fsa.writeVerified(w.f.handle, w.board ? boardDisk.get(w.f) : onDisk.get(w.f));
+          step(`Restored ${w.board ? 'Client/' + label(w.f) : w.f.name}.`);
+        } catch (e2) { step(`!! Could not restore ${w.f.name}: ${e2.message}. Copy it back manually from ${folder.name}.`); }
       }
       for (const c of report.client) {
         try {
@@ -6627,7 +7149,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
     }
 
     await writeManifest(folder, report, 'ok');
-    for (const w of written) w.f.commitSaved(w.candidate, w.stamp);
+    for (const w of written) { if (w.board) w.f.handle = w.handle; w.f.commitSaved(w.candidate, w.stamp); }
     ws.markSaved();
     report.ok = true;
     step('Saved.');
@@ -6641,7 +7163,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
   async function writeManifest(folder, report, status) {
     const manifest = {
       tool: 'FLYFF Resource Editor', version: VERSION, status, time: new Date().toISOString(),
-      files: report.files.map(f => ({ name: f.name, bytesBefore: f.before, bytesAfter: f.after, changes: f.changes })),
+      files: report.files.map(f => ({ name: f.name, bytesBefore: f.before, bytesAfter: f.after, changes: f.changes, created: !!f.created })),   // created: no file before (restore = delete it)
       client: report.client.map(c => ({ name: 'Client/' + c.name, mode: c.mode, bytesBefore: c.before ? c.before.length : null, bytesAfter: c.bytes.length })),
       log: report.steps,
     };
@@ -6705,17 +7227,18 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
   // while typing, a value that does not parse yet just waits (no error until the field is left).
   const LIVE_MS = 400;
   const pending = new Map();         // input -> its waiting commit (flushLive runs them now; for tests)
-  function liveCommit(el, tryCommit) {
+  function liveCommit(el, tryCommit, ms) {
     let timer = null;
     const run = () => { pending.delete(el); if (el.isConnected && document.activeElement === el) tryCommit(true); };
-    el.addEventListener('input', () => { clearTimeout(timer); pending.set(el, run); timer = setTimeout(run, FRE.dom.LIVE_MS || LIVE_MS); });
+    el.addEventListener('input', () => { clearTimeout(timer); pending.set(el, run); timer = setTimeout(run, ms || FRE.dom.LIVE_MS || LIVE_MS); });
     el.addEventListener('change', () => { clearTimeout(timer); pending.delete(el); });
   }
   const flushLive = () => { for (const run of [...pending.values()]) run(); };
 
   // key: a stable name for this field (e.g. 'ex|MMI_BOB|0|pay|1|qty'), so a re-render keeps the focus in it.
   // Only keyed inputs update while typing (live): without a key the re-render would drop the focus mid-number.
-  function numInput({ value = null, placeholder = '', disabled = false, title = '', min = 0, max = 2147483647, onCommit, key = null, live = !!key }) {
+  // liveMs: a longer pause before committing (e.g. when the commit opens a preview window)
+  function numInput({ value = null, placeholder = '', disabled = false, title = '', min = 0, max = 2147483647, onCommit, key = null, live = !!key, liveMs = 0 }) {
     const el = h('input.num-input', { type: 'text', inputMode: 'numeric', placeholder, disabled, title, value: fmt(value) });
     if (key) el.dataset.key = key;
     el.dataset.value = value === null ? '' : String(value);
@@ -6725,7 +7248,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
       if (!r.ok || String(r.value === null ? '' : r.value) === el.dataset.value) return;
       el.dataset.value = r.value === null ? '' : String(r.value);
       onCommit(r.value);
-    });
+    }, liveMs);
     el.addEventListener('blur', () => { el.value = fmt(el.dataset.value === '' ? null : Number(el.dataset.value)); });
     el.addEventListener('keydown', e => { if (e.key === 'Enter') el.blur(); if (e.key === 'Escape') { el.value = el.dataset.value; el.blur(); } });
     el.addEventListener('change', () => {
@@ -6999,10 +7522,69 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
   FRE.ui.chipPrice = { chipOf, parts, confirmShared, set, input };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- ui/shop-rules.js ----
+// Rows the server lists by itself (task S part 2). An AddVendorItem line ("a whole item type") makes the
+// server list every item of one type, and the server can't price, move or remove one item of it. So the
+// first edit on such a row gives each auto item of the tab its own AddShopItem line, in the same order
+// (vendorSim.ruleToFixedPlan + shopOps.convertRules, the 73ee4bd6 way), with the edit applied: one undo
+// step, and the toast says what happened. The user asked for plain edits, no extra windows (2026-10-07).
+// Plus the "players pay / get back" line under prices.
+(function (FRE) {
+  'use strict';
+  const { h, fmt } = FRE.dom;
+  const npcId = npc => `${npc.file}|${npc.key}`;
+  const V = () => FRE.vendorSim;
+  const tabName = (npc, s) => (npc.slotTitles[s] ? `tab ${s + 1} "${npc.slotTitles[s]}"` : `tab ${s + 1}`);
+  const fresh = (ws, npc) => ws.chars.npcs.find(n => npcId(n) === npcId(npc)) || npc;
+
+  // "players pay 100,000 · get back 25,000" under a price (vendorSim.buyPrice / sellPrice)
+  // here: the NPC being shown (its own AddShopItem prices are not named)
+  function payLine(row, here) {
+    if (!row) return null;
+    const pay = row.min1 ? h('span.warn', { title: 'Its price is below 1 (or "="), or too big for the server\'s float math: the server charges 1 (OnBuyItem)' }, 'pay 1 (no price)') : `pay ${fmt(row.pay)}`;
+    const back = row.refused ? h('span', { title: 'The NPC refuses to buy it (OnSellItem)' }, `can't sell back (${row.refused})`) : `sells to an NPC for ${fmt(row.get)}`;
+    return h('div.pay.small.muted', { title: 'What a player pays for one here, and what any NPC pays a player who sells one back (a quarter of the price). Shop rates 1.0; port of OnBuyItem / OnSellItem.' },
+      'Players ', pay, ' · ', back,
+      row.setBy && row.setBy.npc && (!here || npcId(row.setBy.npc) !== npcId(here))
+        ? h('div', { title: 'A price typed in a shop is the item\'s price on the whole server (Project.cpp:3581)' }, `price set in ${row.setBy.npc.name || row.setBy.npc.key}'s shop`) : null);
+  }
+
+  // edits: { omit: Set(id), price: Map(id -> cost), slot: Map(id -> tab) }; what: plain words for the toast
+  function editAuto(ctx, npc, slot, edits, what) {
+    const ws = ctx.ws;
+    const plan = V().ruleToFixedPlan(ws.vendorIndex, npc, slot, ws.simulate(npc), edits);
+    if (plan.blocked) { FRE.dom.toast(`Can't change this row: ${plan.blocked}`, 'bad'); ctx.renderAll(false); return; }
+    const n = plan.items.length;
+    const [priced] = [...(edits.price || new Map())];
+    const others = priced ? FRE.shopOps.otherPriceParts(ws, priced[0], priced[1], null) : { parts: [], lines: [] };
+    ctx.editGroup(() => {
+      const now = fresh(ws, npc);
+      const p = V().ruleToFixedPlan(ws.vendorIndex, now, slot, ws.simulate(now), edits);
+      const own = [{ file: ws.fileOfNpc(now).name.toLowerCase(), splices: FRE.shopOps.convertRules(ws.fileOfNpc(now).text, now, p) }];
+      return priced ? FRE.shopOps.mergeParts(own, FRE.shopOps.otherPriceParts(ws, priced[0], priced[1], null).parts) : own;
+    }, `${npc.name || npc.key}: ${what}${alsoText(others.lines)} (the ${n} auto item${n === 1 ? '' : 's'} of ${tabName(npc, slot)} now each have their own line, same order)`, ['npc|' + npcId(npc)],
+    priced ? `price|${npcId(npc)}|${priced[0]}` : null);
+  }
+
+  const alsoText = lines => (lines.length ? `, also in ${[...new Set(lines.map(l => l.npc.name || l.npc.key))].join(', ')}'s shop line${lines.length === 1 ? '' : 's'}` : '');
+
+  // A price on an item's own line, written on its other priced lines too (shopOps.otherPriceParts)
+  function setPrice(ctx, npc, rec, value, what) {
+    const ws = ctx.ws, file = npc.file.toLowerCase();
+    const others = value === null ? { parts: [], lines: [] } : FRE.shopOps.otherPriceParts(ws, rec.args.item.value, value, { start: rec.start, file });
+    ctx.editGroup(() => {
+      const own = [{ file, splices: FRE.shopOps.setCost(ws.files.get(file).text, rec, value) }];
+      return value === null ? own : FRE.shopOps.mergeParts(own, FRE.shopOps.otherPriceParts(ws, rec.args.item.value, value, { start: rec.start, file }).parts);
+    }, `${npc.name || npc.key}: ${what}${alsoText(others.lines)}`, ['npc|' + npcId(npc)], `price|${npcId(npc)}|${rec.args.item.value >>> 0}`);
+  }
+
+  FRE.ui.shopRules = { payLine, editAuto, setPrice };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- ui/npc-shops.js ----
 // NPC Shops module (character*.inc). One table per tab: exactly what players
 // see, in server order. Fixed items (AddShopItem / AddVenderItem2) are edited
-// in place; generated items come from AddVendorItem rules (read-only).
+// in place; an edit on an item from an AddVendorItem rule asks first (ui/shop-rules.js).
 (function (FRE) {
   'use strict';
   const { h, fmt, numInput } = FRE.dom;
@@ -7014,16 +7596,30 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
   const selNpc = ctx => (ctx.ws && st.sel ? ctx.ws.chars.npcs.find(n => npcId(n) === st.sel) : null) || null;
   const TYPES = [{ v: 0, label: 'Penya shop' }, { v: 1, label: 'Red Chip shop' }, { v: 2, label: 'Donate Chip shop' }];
   // NPC list filter: which NPCs to list
-  // editable = has fixed items (AddShopItem / AddVenderItem2); AddVendorItem rule items are read-only
+  // editable = has fixed items (AddShopItem / AddVenderItem2). Rule items are editable too (ui/shop-rules.js),
+  // but listing every rule shop here would hide the few shops with hand-set prices.
   const hasEditable = npc => npc.statements.some(r => { const e = FRE.character.shopEntry(r); return e && e.kind !== 'generated'; });
   const SHOW = [
-    { v: 'editable', label: 'Shops with editable items', test: hasEditable },
+    { v: 'editable', label: 'Shops with fixed items', test: hasEditable },
     { v: 'shops', label: 'All shops', test: isShopNpc },
     { v: 'penya', label: 'Penya shops', test: n => isShopNpc(n) && FRE.shopOps.shopType(n.venderType) === 0 },
     { v: 'red', label: 'Red Chip shops', test: n => FRE.shopOps.shopType(n.venderType) === 1 },
     { v: 'donate', label: 'Donate Chip shops', test: n => FRE.shopOps.shopType(n.venderType) === 2 },
     { v: 'all', label: 'All NPCs', test: () => true },
   ];
+  // hover text of a right-click menu: what a click does, in plain words (newNpcSim.rightClick / opensOf)
+  const MENU_HELP = {
+    MMI_DIALOG: 'Talk to the NPC.',
+    MMI_TRADE: 'Opens the shop.',
+    MMI_BANKING: 'Opens the bank.',
+    MMI_GUILDBANKING: 'Opens the guild bank.',
+    MMI_NPC_BUFF: 'Gives buffs.',
+  };
+  function menuHelp(name, x) {
+    const what = MENU_HELP[name] || (x && x.opens ? (x.opens.board ? 'Shows your rules text. Click to edit.' : x.opens.sets ? `Swap items for other items (${x.opens.sets}).` : 'Swap items for other items (none set up yet).')
+      : 'Opens its own window.');
+    return `${what}${x && x.when ? ` Only if: ${x.when}.` : ''}`;
+  }
   const showTest = () => (SHOW.find(o => o.v === st.show) || SHOW[0]).test;
 
   function edit(ctx, npc, make, label) {
@@ -7229,8 +7825,6 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
         h('span.def', npc.key),
         h('span.line', `${npc.file}:${f.lineOf(npc.start) + 1}`),
         shopTypeSelect(ctx, npc, canEdit),
-        canEdit && npc.file.toLowerCase() === 'character.inc' && ws.isEditable('exchange_script.txt') && FRE.ui.menuForm
-          ? h('button.small', { title: 'Add right-click menus that open the exchange window (edit/menu-ops.js)', on: { click: () => FRE.ui.menuForm.openNewMenus(ctx, npc) } }, '+ Exchange menu') : null,
         canEdit ? null : h('span.tag.bad', 'read-only')));
       if (ws.placed) {
         const status = FRE.world.npcStatus(npc, ws.placed);
@@ -7254,12 +7848,18 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
       const ownMenu = new Set(npc.statements.filter(r => r.cmd === 'AddMenu').map(r => r.args.menu.value));
       const rmMenu = (i, m) => canEdit && ownMenu.has(npc.menus[i])
         ? h('button.icon.menu-x', { title: `Remove ${m} from the right-click menu`, on: { click: e => { e.stopPropagation(); FRE.ui.npcEdit.removeMenu(ctx, npc, npc.menus[i], exNames.includes(m) ? labelOf(m) : pretty(m)); } } }, '✕') : null;
-      el.appendChild(h('div.menus', 'Menus: ', menus.map((m, i) => {
-        if (!exNames.includes(m)) return h('span.tag', { title: m }, pretty(m), rmMenu(i, m));
+      // shown as players see it: the in-game label, in the game's order (newNpcSim.rightClick), with what a click does
+      const rc = new Map(FRE.newNpcSim.rightClick(ws, npc.menus).map(x => [x.id, x]));
+      const order = npc.menus.map((v, i) => i).sort((a, b) => npc.menus[a] - npc.menus[b]);
+      el.appendChild(h('div.menus', h('span.menus-label', { title: 'What players see when they right-click this NPC.' }, 'Right-click menu:'), order.map(i => {
+        const m = menus[i], x = rc.get(npc.menus[i]);
+        const label = (x && x.label) || pretty(m);
+        if (x && x.opens && x.opens.board) return h('span.tag.exch-wrap', h('button.tag.board', { title: menuHelp(m, x), on: { click: () => FRE.ui.menuChooser.boardForm(ctx, npc, { id: npc.menus[i], name: m }) } }, `${label} ✎`), rmMenu(i, m));
+        if (!exNames.includes(m)) return h('span.tag', { title: menuHelp(m, x) }, label, rmMenu(i, m));
         const n = Math.min(exMenu(m).sets.length, 30);
-        return h('span.tag.exch-wrap', h('button.tag.exch', { title: `${m}: opens the exchange window (Exchange_Script.txt). Click to see and edit its exchanges here.`,
-          on: { click: () => showTab('ex:' + m) } }, `${labelOf(m)} ⇄ ${n} exchange${n === 1 ? '' : 's'}`), rmMenu(i, m));
-      }), canEdit ? h('button.small.add-menu', { title: 'Add a right-click menu (AddMenu)', on: { click: () => FRE.ui.npcEdit.addMenu(ctx, npc) } }, '+ Menu') : null));
+        return h('span.tag.exch-wrap', h('button.tag.exch', { title: `Swap items for other items (${n}). Click to edit.`,
+          on: { click: () => showTab('ex:' + m) } }, `${label} ⇄ ${n} exchange${n === 1 ? '' : 's'}`), rmMenu(i, m));
+      }), canEdit ? h('button.small.add-menu', { title: 'Add a right-click menu: a shop, a swap list or a rules text', on: { click: () => FRE.ui.menuChooser.open(ctx, npc) } }, '+ Menu') : null));
 
       const sim = ws.simulate(npc);
       const named = s => npc.slotTitles[s] !== undefined && npc.slotTitles[s] !== '';
@@ -7304,23 +7904,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
       else if (FRE.ui.npcEdit.isPlaceholder(npc.slotTitles[st.tab]) && !tab.entries.length)
         el.appendChild(h('p.muted.small', `Players see this tab as "${npc.slotTitles[st.tab]}" (a placeholder name).${canTexts ? ' Rename it with ✎ on the tab, then add items with the + button next to an item in the list on the right.' : ''}`));
 
-      // the rules that fill this tab, as one compact line
-      const rules = entries.filter(x => x.e.kind === 'generated' && x.e.slot === st.tab);
-      if (rules.length) {
-        el.appendChild(h('div.rules', h('span.muted.small', chip ? 'Rules (ignored in chip shops): ' : 'Auto-filled by rules (read-only): '), rules.map(({ r, e }) => {
-          const ik3 = e.ik3.define || D.byValue('IK3_', e.ik3.value) || String(e.ik3.value);
-          const job = e.job.value === -1 ? 'any job' : pretty(e.job.define || D.byValue('JOB_', e.job.value));
-          const res = tab.rules.find(x => x.rec === r) || {};
-          const adds = chip ? 'ignored' : e.lang ? 'other language only' : res.empty ? 'matches nothing' : `${res.added}`;
-          return h('span.tag.rule' + (res.empty || chip ? '.warn' : ''), {
-            title: `${f.text.slice(r.start, r.end)}\n\nAdds every sellable ${pretty(ik3)} item${e.job.value === -1 ? '' : ' for ' + job} with rarity (dwItemRare) ${e.rareMin.value}–${e.rareMax.value}. The last number (${e.count.value}) is ignored by the server.`,
-          }, `${pretty(ik3)} · ${job} · rarity ${e.rareMin.value}–${e.rareMax.value} → ${adds}`, h('span.line', ' ' + line(r.start)));
-        })));
-      }
-
-      if (rules.length && !entries.some(x => x.e.kind !== 'generated' && x.e.slot === st.tab)) {
-        el.appendChild(h('p.muted.small', 'The items below come from the rules above, so they can\'t be removed or priced one by one. You can still add fixed items to this tab with + in the item list.'));
-      }
+      // items the server lists by itself (AddVendorItem: every item of one type) are edited like the others (ui/shop-rules.js)
+      const SR = FRE.ui.shopRules;
       // one table: every item players see, in server order, plus fixed items left out
       el.appendChild(h('h3', `Items in this tab (${tab.entries.length}/100)`));
       const rows = tab.entries.map(en => ({ rec: en.source, kind: en.kind, prop: en.prop }))
@@ -7329,10 +7914,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
       else {
         const tb = h('table.items', h('tr', h('th.num', '#'), h('th', 'Item'), h('th', 'Job'),
           h('th.num', chip ? `Price (${chipName} chips)` : 'Price (Penya)'), h('th', 'Tab'), h('th', ''), h('th', 'From')));
+        const priced = chip ? [] : ws.pricedTab(npc, st.tab);
+        const ruleRow = row => row.kind === 'generated' && !chip && canEdit && named(st.tab);
+        const convert = (row, edits, what) => SR.editAuto(ctx, npc, st.tab, edits, what);
         rows.forEach((row, i) => {
           const info = row.prop ? ws.itemInfo(row.prop.item) : null;
           const r = row.rec;
-          const editable = row.kind !== 'generated';
+          const editable = row.kind !== 'generated' || ruleRow(row);
+          const pay = row.dropped || chip ? null : SR.payLine(priced[i], npc);
           const def = row.prop ? row.prop.item.define : (r.args.item && (r.args.item.define || f.text.slice(r.args.item.start, r.args.item.end)));
           let price;
           if (chip) {
@@ -7341,19 +7930,29 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
           else if (row.kind === 'fixed') {
             price = numInput({ value: r.args.cost ? r.args.cost.value : null, placeholder: info ? fmt(info.cost) + ' (item)' : '', disabled: !canEdit, key: `shop|${npcId(npc)}|${st.tab}|${i}|price`,
               title: 'Empty = the item\'s own price from Spec_Item.txt. A price here changes the item\'s price everywhere (server-wide). Commas are only for display.',
-              onCommit: v => edit(ctx, npc, text => FRE.shopOps.setCost(text, r, v), `${npcName}: price of ${info ? info.name : def}`) });
+              onCommit: v => FRE.ui.shopRules.setPrice(ctx, npc, r, v, `price of ${info ? info.name : def}`) });
+          } else if (ruleRow(row)) {
+            // same key as a fixed row's box: after the first change the row is fixed and keeps the focus
+            const own = FRE.vendorSim.costOf(ws.costs(), row.prop);
+            price = numInput({ value: null, placeholder: `${fmt(own)} (item)`, key: `shop|${npcId(npc)}|${st.tab}|${i}|price`,
+              title: 'Empty = the item\'s own price from Spec_Item.txt. A price here changes the item\'s price everywhere (server-wide). Commas are only for display.',
+              onCommit: v => { if (v === null) return; convert(row, { price: new Map([[row.prop.id, v]]) }, `price of ${info ? info.name : def}`); } });
           } else price = info ? fmt(info.cost) : '';
+          const moveTo = to => (ruleRow(row) ? convert(row, { slot: new Map([[row.prop.id, to]]) }, `moved ${info ? info.name : def} to tab ${to + 1}`)
+            : edit(ctx, npc, text => FRE.shopOps.setSlot(text, r, to), `${npcName}: moved ${info ? info.name : def} to tab ${to + 1}`));
           const tabCell = editable
-            ? h('select', { disabled: !canEdit, on: { change: ev => edit(ctx, npc, text => FRE.shopOps.setSlot(text, r, Number(ev.target.value)), `${npcName}: moved ${info ? info.name : def} to tab ${Number(ev.target.value) + 1}`) } },
+            ? h('select', { disabled: !canEdit, on: { change: ev => moveTo(Number(ev.target.value)) } },
               [0, 1, 2, 3].filter(t => named(t) || t === st.tab).map(t => h('option', { value: t, selected: t === st.tab }, tabLabel(t))))
             : '';
-          const rm = editable ? h('button.icon.danger', { disabled: !canEdit, title: 'Remove from this shop', on: { click: () => edit(ctx, npc, text => FRE.shopOps.removeStatement(text, r), `${npcName}: removed ${info ? info.name : def}`) } }, '✕') : '';
+          const rm = !editable ? '' : ruleRow(row)
+            ? h('button.icon.danger', { title: 'Remove from this shop', on: { click: () => convert(row, { omit: new Set([row.prop.id]) }, `removed ${info ? info.name : def}`) } }, '✕')
+            : h('button.icon.danger', { disabled: !canEdit, title: 'Remove from this shop', on: { click: () => edit(ctx, npc, text => FRE.shopOps.removeStatement(text, r), `${npcName}: removed ${info ? info.name : def}`) } }, '✕');
           const from = row.dropped ? h('span.tag.warn', `left out: ${row.dropped}`)
-            : h('span.line', { title: f.text.slice(r.start, r.end) }, `${row.kind === 'generated' ? 'rule' : 'fixed'} ${line(r.start)}`);
-          tb.appendChild(h('tr' + (editable ? '.fixed' : '') + (row.dropped ? '.dropped' : ''),
+            : h('span.line', { title: f.text.slice(r.start, r.end) }, line(r.start));
+          tb.appendChild(h('tr' + (row.kind !== 'generated' ? '.fixed' : editable ? '.rule-row' : '') + (row.dropped ? '.dropped' : ''),
             h('td.num.line', row.dropped ? '–' : i + 1), itemCell(info, def), jobCell(info),
-            h('td.num', { title: chip || row.kind === 'fixed' ? '' : 'Base price before the server shop-rate multipliers' }, price),
-            h('td', tabCell), h('td', rm, ' ', editable ? diagTags(diagsInSpan(ws, npc.file, r.start, r.end)) : null), h('td', from)));
+            h('td.num', price, pay),
+            h('td', tabCell), h('td', rm, ' ', row.kind !== 'generated' ? diagTags(diagsInSpan(ws, npc.file, r.start, r.end)) : null), h('td', from)));
         });
         el.appendChild(tb);
       }
@@ -7429,10 +8028,24 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
       if (shown.length > MAX) list.appendChild(h('div.combo-more', `${shown.length - MAX} more: type more letters`));
       if (!shown.length) list.appendChild(h('div.combo-more', 'Nothing matches.'));
     }
-    function open() { hi = -1; paint(''); list.hidden = false; input.select(); }
-    function close() { list.hidden = true; input.value = cur() ? cur().label : ''; }
+    // The list is position: fixed at the box's spot on screen, so a scrolling parent (a window's body)
+    // can't clip it; it opens upward when there is more room above.
+    function place() {
+      const r = input.getBoundingClientRect(), below = window.innerHeight - r.bottom - 8, above = r.top - 8;
+      const up = below < 200 && above > below;
+      list.style.left = r.left + 'px'; list.style.width = r.width + 'px';
+      list.style.maxHeight = Math.max(120, Math.min(320, up ? above : below)) + 'px';
+      list.style.top = up ? '' : r.bottom + 'px';
+      list.style.bottom = up ? (window.innerHeight - r.top) + 'px' : '';
+    }
+    const onMove = () => { if (!list.hidden && input.isConnected) place(); };
+    const watch = on => { const f = on ? 'addEventListener' : 'removeEventListener'; window[f]('scroll', onMove, true); window[f]('resize', onMove); };
+    const show = () => { if (list.hidden) watch(true); list.hidden = false; place(); };
+    const hide = () => { if (!list.hidden) watch(false); list.hidden = true; };
+    function open() { hi = -1; paint(''); show(); input.select(); }
+    function close() { hide(); input.value = cur() ? cur().label : ''; }
     function pick(o) {
-      if (o.typed !== undefined) { list.hidden = true; onNew.pick(o.typed); return; }
+      if (o.typed !== undefined) { hide(); onNew.pick(o.typed); return; }
       value = o.v; close(); onPick(o.v);
     }
     function move(d) {
@@ -7444,7 +8057,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
     }
     input.addEventListener('focus', open);
     input.addEventListener('blur', close);              // a click in the list never blurs: its mousedown is cancelled
-    input.addEventListener('input', () => { hi = 0; paint(input.value); list.hidden = false; });
+    input.addEventListener('input', () => { hi = 0; paint(input.value); show(); });
     input.addEventListener('keydown', e => {
       if (e.key === 'ArrowDown') { e.preventDefault(); if (list.hidden) open(); move(1); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
@@ -8030,7 +8643,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
   }
 
   // ---------------------------------------------------------------- NPC Shops: + Exchange menu
-  function openNewMenus(ctx, npc) {
+  // opts: { title, back } from + Menu (ui/menu-chooser.js): its title, and a ← Back to the choices
+  function openNewMenus(ctx, npc, opts = {}) {
     const ws = ctx.ws;
     const blank = () => Object.assign({ name: '', label: '', nameTouched: false }, blankRecipe());
     const { fieldLabel } = FRE.ui;
@@ -8114,8 +8728,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
       refresh();
     };
     render();
-    const m = modal({ title: `New exchange menu — ${npc.name || npc.key}`, body, wide: true, buttons: [
-      { label: 'Close' },
+    const m = modal({ title: opts.title || `New exchange menu — ${npc.name || npc.key}`, body, wide: true, buttons: [
+      ...(opts.back ? [{ label: '← Back', onClick: opts.back }] : []), { label: 'Close' },
       { label: 'Create', cls: 'primary', id: 'mf-create', onClick: () => {
         const s = spec();
         if (FRE.validateNewMenus(ws, s).some(d => d.severity === 'BLOCK')) return false;
@@ -8268,7 +8882,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
   }
 
   // + Menu: a searchable list of every MMI_ id the client can show (< MAX_MOVER_MENU) that this NPC lacks.
-  function addMenu(ctx, npc) {
+  // opts: { title, back } from + Menu (ui/menu-chooser.js)
+  function addMenu(ctx, npc, opts = {}) {
     const ws = ctx.ws;
     const have = new Set(npc.menus);
     const seen = new Set();
@@ -8279,8 +8894,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
       const [m] = FRE.newNpcSim.rightClick(ws, [id]);
       if (!m) continue;
       const label = m.label || FRE.ui.pretty(name);
-      const group = m.opens ? (m.opens.sets ? 'Opens the exchange window' : 'Opens an EMPTY exchange window (no exchanges in Exchange_Script.txt)') : 'Opens its own window';
-      options.push({ v: name, label: `${label} · ${name}`, group, find: name });
+      const group = m.opens ? (m.opens.board ? 'Rules text' : m.opens.sets ? 'Swap items for other items' : 'Swap items (none set up yet)') : 'Opens its own window';
+      options.push({ v: name, label, group, find: name });
     }
     options.sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label));
     let pick = null;
@@ -8288,8 +8903,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
     const body = h('div', h('label.nn-row', FRE.ui.fieldLabel('Menu', true), FRE.ui.combo({ options, value: null, placeholder: 'Type a menu name (Trade, Bank, …)',
       onPick: v => { pick = v; const ids = [...npc.menus, ws.defines.defines.get(v)];
         info.textContent = 'Right-click will show: ' + FRE.newNpcSim.rightClick(ws, ids).map(x => x.label || x.define).join(', '); } })), info);
-    FRE.dom.modal({ title: `+ Menu for ${npc.name || npc.key}`, body, buttons: [
-      { label: 'Cancel' },
+    FRE.dom.modal({ title: opts.title || `+ Menu for ${npc.name || npc.key}`, body, buttons: [
+      ...(opts.back ? [{ label: '← Back', onClick: opts.back }] : []), { label: 'Cancel' },
       { label: 'Add menu', cls: 'primary', onClick: () => {
         if (!pick) { FRE.dom.toast('Pick a menu first', 'bad'); return false; }
         ctx.edit(npc.file.toLowerCase(), () => O().addMenu(ws, npc, pick), `add menu ${pick}`, 'npc|' + npcId(npc));
@@ -8304,7 +8919,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
     const [m] = FRE.newNpcSim.rightClick(ws, [id]);
     const notes = [];
     if (id === trade && sells) notes.push('Without Trade, players cannot open this shop: its items stay in the file but nobody can buy them.');
-    if (m && m.opens) notes.push('The exchanges of this menu stay in Exchange_Script.txt; only the right-click entry goes away.');
+    if (m && m.opens && m.opens.board) notes.push('Its text file (Client/Client/NpcBoard_' + id + '.inc) stays; only the right-click entry goes away.');
+    else if (m && m.opens) notes.push('The exchanges of this menu stay in Exchange_Script.txt; only the right-click entry goes away.');
     const go = () => ctx.edit(npc.file.toLowerCase(), () => O().removeMenu(ws, npc, id), `remove menu ${label}`, 'npc|' + npcId(npc));
     if (!notes.length) { go(); return; }
     FRE.dom.modal({ title: `Remove "${label}" from ${npc.name || npc.key}?`, body: h('div', notes.map(n => h('p', n))), buttons: [
@@ -8313,6 +8929,160 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
   }
 
   FRE.ui.npcEdit = { renameNpc, renameTab, addTab, addMenu, removeMenu, isPlaceholder };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- ui/menu-chooser.js ----
+// "+ Menu" in NPC Shops: three kinds of new right-click menu, in plain words (the user, 2026-10-07:
+// "a trade that sells something, an exchange list like Collins, or the Rules like in GS"):
+//   Shop        Trade + a first tab (npcEditOps.addMenu / addTab)
+//   Exchange    the exchange-menu form (ui/menu-form.js, edit/menu-ops.js newMenusPlan)
+//   Rules text  a menu that opens a text window (menuOps.boardPlan): needs the npc-board client change,
+//               docs/patches/npc-board.diff (Client\NpcBoard_<id>.inc in CWndWorld::OnCommand's default branch)
+// plus "Other game window…" (the plain menu list, ui/npc-edit.js addMenu).
+(function (FRE) {
+  'use strict';
+  const { h } = FRE.dom;
+  const npcId = npc => `${npc.file}|${npc.key}`;
+  const E = () => FRE.npcEditOps;
+
+  function open(ctx, npc) {
+    const ws = ctx.ws, D = ws.defines.defines;
+    const trade = D.get('MMI_TRADE');
+    const hasTrade = npc.menus.includes(trade);
+    const inc = npc.file.toLowerCase() === 'character.inc';
+    let m = null;
+    // each choice opens its form titled "+ Menu for X › <choice>", with ← Back to these choices
+    const base = `+ Menu for ${npc.name || npc.key}`;
+    const sub = title => ({ title: `${base} › ${title}`, back: () => open(ctx, npc) });
+    const card = (title, text, enabled, why, go) => h('button.menu-card', { disabled: !enabled, title: enabled ? '' : why,
+      on: { click: () => { m.close(); go(sub(title)); } } }, h('b', title), h('span', text), enabled ? null : h('span.why', why));
+    const body = h('div.menu-cards',
+      card('Shop', 'Sells items. Players buy with Penya.', !hasTrade || !npc.slotTitles[0], 'This NPC already has a shop: add items with + in the item list.', o => shop(ctx, npc, o)),
+      card('Exchange', 'Players give items and get rewards (like Collins).', inc && ws.isEditable('exchange_script.txt') && FRE.ui.menuForm, 'Only for NPCs in character.inc.', o => FRE.ui.menuForm.openNewMenus(ctx, npc, o)),
+      card('Rules text', 'A window with your text (like the Guild Siege rules).', inc && ctx.hasClient, inc ? 'Needs the Client folder (the text file goes in Client/Client).' : 'Only for NPCs in character.inc.', o => boardForm(ctx, npc, null, o)));
+    m = FRE.dom.modal({ title: base, body, buttons: [
+      { label: 'Other game window…', onClick: () => { FRE.ui.npcEdit.addMenu(ctx, npc, sub('Other game window')); } },
+      { label: 'Cancel' },
+    ] });
+    return m;
+  }
+
+  // Trade (when missing) + the first tab (when none): one undo step
+  function shop(ctx, npc, opts = {}) {
+    const ws = ctx.ws, trade = ws.defines.defines.get('MMI_TRADE');
+    const needTab = !npc.slotTitles[0] && E().nextSlot(npc) === 0;
+    const make = name => {
+      const parts = [];
+      if (!npc.menus.includes(trade)) parts.push({ file: npc.file.toLowerCase(), splices: E().addMenu(ws, npc, 'MMI_TRADE') });
+      return needTab ? FRE.shopOps.mergeParts(parts, E().addTab(ws, npc, name).parts) : parts;
+    };
+    if (!needTab) { ctx.editGroup(() => make(null), `${npc.name || npc.key}: shop added (Trade menu)`, ['npc|' + npcId(npc)]); return; }
+    let name = '';
+    const input = h('input', { type: 'text', style: 'width:100%', maxlength: 63, placeholder: 'e.g. Scrolls' });
+    const checks = h('div');
+    const problem = () => (name.trim() ? FRE.newNpcText(name) : 'is empty');
+    const refresh = () => { checks.textContent = ''; const p = problem(); checks.appendChild(p ? h('div.bad', `⛔ The tab name ${p}.`) : h('div.ok', '✓ No problem found.')); if (btn) btn.disabled = !!p; };
+    input.addEventListener('input', () => { name = input.value; refresh(); });
+    const body = h('div', h('p.small.muted', 'The shop window shows this as its first tab. Then add items with + in the item list.'),
+      h('label.nn-row', FRE.ui.fieldLabel('First tab name', true), input),
+      FRE.ui.formFooter({ checks, action: 'Add shop', previewTitle: 'What players will see', preview: h('p', 'Right-click → Trade opens the shop.') }));
+    const mm = FRE.dom.modal({ title: opts.title || `Shop for ${npc.name || npc.key}`, body, buttons: [
+      ...(opts.back ? [{ label: '← Back', onClick: opts.back }] : []), { label: 'Cancel' },
+      { label: 'Add shop', cls: 'primary', onClick: () => { if (problem()) return false; ctx.editGroup(() => make(name), `${npc.name || npc.key}: shop added (tab "${name}")`, ['npc|' + npcId(npc)]); } },
+    ] });
+    const btn = mm.el.querySelector('footer button.primary');
+    refresh();
+    setTimeout(() => input.focus(), 0);
+  }
+
+  // How the game draws the text (loaders/board-text.js, a port of CEditString::ParsingString)
+  function preview(title, text) {
+    const box = h('div.board-preview', h('div.board-title', title || ' '));
+    const body = h('div.board-body');
+    for (const p of FRE.boardText.parse(text)) {
+      const span = h('span', p.text);
+      span.style.color = FRE.boardText.css(p.color);
+      if (p.bold) span.style.fontWeight = 'bold';
+      const deco = [p.underline ? 'underline' : '', p.strike ? 'line-through' : ''].filter(Boolean).join(' ');
+      if (deco) span.style.textDecoration = deco;
+      body.appendChild(span);
+    }
+    box.appendChild(body);
+    return box;
+  }
+
+  // New rules menu (menu = null) or an existing one { id, name } (label + text changed in place)
+  function boardForm(ctx, npc, menu, opts = {}) {
+    const ws = ctx.ws, O = FRE.menuOps;
+    const oldLabel = menu ? (ws.texts.byId.get(O.TID_MMI_DIALOG + menu.id) || {}).text || '' : '';
+    const oldText = menu ? (ws.boardTextOf(menu.id) || '').replace(/\r\n/g, '\n') : '';
+    let label = oldLabel, text = oldText;
+    const labelIn = h('input', { type: 'text', value: label, style: 'width:100%', maxlength: 63, placeholder: 'e.g. Guild Siege Rules' });
+    const area = h('textarea.board-text', { rows: 12, style: 'width:100%' });
+    area.value = text;
+    const nameLine = h('div.small.muted');
+    const checks = h('div'), prev = h('div');
+    let btn = null;
+    const wrap = (a, b) => {
+      const s0 = area.selectionStart, s1 = area.selectionEnd;
+      area.value = area.value.slice(0, s0) + a + area.value.slice(s0, s1) + b + area.value.slice(s1);
+      area.selectionStart = s0 + a.length; area.selectionEnd = s1 + a.length;
+      area.focus(); text = area.value; refresh();
+    };
+    const color = h('input', { type: 'color', value: '#ffcc00', title: 'Colour for the Colour button' });
+    const tools = h('div.row.board-tools',
+      h('button.small', { title: 'Bold: wraps the selected text in #b … #nb', on: { click: () => wrap('#b', '#nb') } }, h('b', 'B'), ' Bold'),
+      h('button.small', { title: 'Colour: wraps the selected text in #cffRRGGBB … #nc', on: { click: () => wrap(FRE.boardText.code(color.value), '#nc') } }, 'Colour'), color,
+      h('span.small.muted', ' Select text, then press a button.'));
+    const plan = () => {
+      if (!menu) return O.boardPlan(ws, { npcKey: npc.key, name: FRE.menuNameFromLabel(ws, label), label, text });
+      const parts = [...O.setBoardText(ws, menu.id, text)];
+      if (label !== oldLabel) parts.push(...O.setLabel(ws, menu.name, label));
+      return { parts };
+    };
+    function refresh() {
+      checks.textContent = ''; prev.textContent = ''; nameLine.textContent = '';
+      const bad = m => { checks.appendChild(h('div.bad', '⛔ ' + m)); if (btn) btn.disabled = true; };
+      const lp = label.trim() ? FRE.newNpcText(label) : 'is empty';
+      prev.appendChild(preview(label, text));
+      if (lp) return bad(`The name ${lp}.`);
+      if (!menu) {
+        const name = FRE.menuNameFromLabel(ws, label), free = O.freeMenuIds(ws);
+        if (!free.length) return bad('No free menu id is left (282-349 are all used).');
+        nameLine.textContent = `Saved as ${name}, menu ${free[0]}; text file Client/Client/${O.boardFileName(free[0])}`;
+      }
+      if (menu && label === oldLabel && text.replace(/\r\n/g, '\n') === oldText) { checks.appendChild(h('div.muted', 'No change.')); if (btn) btn.disabled = true; return; }
+      let r;
+      try { r = plan(); } catch (e) { return bad(e.message.replace(/^the /, 'The ') + '.'); }
+      if (btn) btn.disabled = false;
+      checks.appendChild(h('div.ok', '✓ No problem found.'));
+      checks.appendChild(h('div.warn', '⚠ The game client needs the npc-board change (docs/patches/npc-board.diff, built into Neuz). Without it this menu opens an empty swap window.'));
+      for (const p of r.parts) {
+        const sf = ws.files.get(p.file);
+        prev.appendChild(h('h4', sf.clientOnly ? 'Client/Client/' + sf.name + (sf.bytes.length ? '' : ' (new file)') : sf.name));
+        prev.appendChild(FRE.ui.renderDiff(sf, sf.text, sf.preview(p.splices)));
+      }
+    }
+    labelIn.addEventListener('input', () => { label = labelIn.value; refresh(); });
+    area.addEventListener('input', () => { text = area.value; refresh(); });
+    const body = h('div',
+      h('label.nn-row', FRE.ui.fieldLabel('Name in the right-click menu', true), labelIn), nameLine,
+      h('div.nn-row', FRE.ui.fieldLabel('Text', true), h('div', { style: 'flex:1' }, tools, area)),
+      FRE.ui.formFooter({ checks, action: menu ? 'Save' : 'Create', previewTitle: 'What players will see / what will be written', preview: prev }));
+    const m = FRE.dom.modal({ title: opts.title || (menu ? `Rules text: ${oldLabel || menu.name}` : `Rules text for ${npc.name || npc.key}`), body, wide: true, buttons: [
+      ...(opts.back ? [{ label: '← Back', onClick: opts.back }] : []), { label: 'Cancel' },
+      { label: menu ? 'Save' : 'Create', cls: 'primary', onClick: () => {
+        if (btn && btn.disabled) return false;
+        ctx.editGroup(() => plan().parts, `${npc.name || npc.key}: rules text "${label}" ${menu ? 'changed' : 'added'}`, ['npc|' + npcId(npc)]);
+      } },
+    ] });
+    btn = m.el.querySelector('footer button.primary');
+    refresh();
+    setTimeout(() => labelIn.focus(), 0);
+    return m;
+  }
+
+  FRE.ui.menuChooser = { open, shop, boardForm, preview };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/donation.js ----
@@ -9333,6 +10103,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
   // Context handed to modules
   const ctx = {
     get ws() { return S.ws; },
+    get hasClient() { return !!S.client; },     // a Client folder was found (client-only files can be saved)
     get query() { return S.queries[S.mode] || ''; },
     // list badges: the keys of the edits still in the undo history, so Undo removes a badge and Redo brings it back
     get edited() { return new Set(S.ws ? S.ws.history.flatMap(e => e.tags || []) : []); },
@@ -9373,14 +10144,18 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
       renderAll(false);
     },
     // Several files as one undo step: make() -> [{ file: lowerName, splices }] (current texts).
-    editGroup(make, label, keys = []) {
+    // mergeKey: the same field typed again within 2 s is folded into the step before (one undo step).
+    editGroup(make, label, keys = [], mergeKey = null) {
       const said = FRE.dom.toasts();
       try {
+        const before = S.ws.history[S.ws.history.length - 1];
         S.ws.applyGroup(make(), label);
+        const last = S.ws.history[S.ws.history.length - 1], now = Date.now();
+        if (mergeKey && before && before !== last && before.mergeKey === mergeKey && now - (before.at || 0) < 2000 && S.ws.mergeLast()) { before.at = now; return; }
         tagLast(keys, label);
+        if (last && last !== before) { last.at = now; last.mergeKey = mergeKey; }
         done(label, said);
-      } catch (e) { toast(e.message, 'bad'); }
-      renderAll(false);
+      } catch (e) { toast(e.message, 'bad'); } finally { renderAll(false); }
     },
   };
 
@@ -9515,6 +10290,16 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
       const th = (await FRE.fsa.findFiles(sub, ['DonationShopTree.inc'])).get('donationshoptree.inc');
       if (th) tree = FRE.donationTree.loadTree(new FRE.SourceFile(th.name, (await FRE.fsa.readHandle(th)).bytes));
     } catch (e) { if (e.name !== 'NotFoundError' && e.name !== 'TypeMismatchError') toast('DonationShopTree.inc: ' + e.message, 'bad'); }
+    // rules windows (docs/patches/npc-board.diff): Client/Client/NpcBoard_<menu id>.inc, edited in NPC Shops
+    const boards = [];
+    try {
+      const sub = await dir.getDirectoryHandle('Client');
+      for await (const [name, handle] of sub.entries()) {
+        if (handle.kind !== 'file' || !/^npcboard_\d+\.inc$/i.test(name)) continue;
+        const { bytes, stamp } = await FRE.fsa.readHandle(handle);
+        boards.push(new FRE.SourceFile(name, bytes, { handle, stamp, dir: 'Client' }));
+      }
+    } catch (e) { if (e.name !== 'NotFoundError' && e.name !== 'TypeMismatchError') toast('Client/Client/NpcBoard files: ' + e.message, 'bad'); }
     // Battle Pass rarity / icon textures live in Client/Theme (WndBattlePass.cpp MakePath(DIR_THEME, ...))
     let theme = null;
     try {
@@ -9544,8 +10329,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
         }
       } catch (e) { toast('Client/Model: ' + e.message, 'bad'); }
     }
-    S.client = { dir, files, tree, theme, models, modelDir };
-    if (S.ws) { S.ws.setDonationTree(tree); S.ws.setClientTheme(theme); S.ws.setClientModels(models); S.ws.setClientTextures(textures, texIndex); }
+    S.client = { dir, files, tree, theme, models, modelDir, boards };
+    if (S.ws) { S.ws.setBoardFiles(boards); S.ws.setDonationTree(tree); S.ws.setClientTheme(theme); S.ws.setClientModels(models); S.ws.setClientTextures(textures, texIndex); }
     S.createMissing = new Set(clientNames().map(n => n.toLowerCase()).filter(n => !files.has(n)));   // offered, can be unticked
   }
 
@@ -9787,6 +10572,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
     $('item-count').textContent = `${fmt(S.filtered.length)} of ${fmt(S.items.length)} items`;
     const target = S.ws.available[S.mode].ok ? active().addTarget(ctx) : { ok: false, title: '' };
     $('new-price-row').hidden = !(target.ok && target.usesPrice);
+    $('new-price-hint').hidden = $('new-price-row').hidden;
     const at = $('add-target');
     at.textContent = target.title ? (target.ok ? `+ ${target.title.replace(/^Add to /, 'adds to ')}` : `+ is off: ${target.title}`) : '';
     at.className = 'small add-target' + (target.ok ? '' : ' muted');
@@ -9799,7 +10585,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "28+", "when
     let cost = null;
     if (target.usesPrice) {
       const parsed = FRE.num.parseAmount($('new-price').value);
-      if (!parsed.ok) { toast('Price for new items: ' + parsed.error, 'bad'); return; }
+      if (!parsed.ok) { toast('Price for items added with +: ' + parsed.error, 'bad'); return; }
       cost = parsed.value;
     }
     target.add(info, cost);

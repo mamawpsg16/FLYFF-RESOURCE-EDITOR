@@ -141,13 +141,20 @@ tr.changed td:first-child { box-shadow: inset 3px 0 var(--warn); }
 .toast.bad { border-color: var(--bad); } .toast.ok { border-color: var(--ok); }
 
 .help { color: var(--muted); font-size: 12px; margin-top: 3px; }
-.menus { margin-top: 8px; display: flex; gap: 5px; flex-wrap: wrap; align-items: center; font-size: 12px; color: var(--muted); }
+.menus { margin: 10px 0 4px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 14px; color: var(--muted); }
+.menus .menus-label { font-weight: 600; color: var(--text); margin-right: 2px; }
+.menus .tag { font-size: 13px; padding: 4px 10px; border-radius: 6px; color: var(--text); background: var(--line); display: inline-flex; align-items: center; gap: 6px; }
+.menus .tag .menu-x { font-size: 12px; padding: 0 4px; }
+.menus .add-menu { font-size: 13px; padding: 4px 12px; }
 .tag.exch { color: var(--baruna); border-color: #2b6672; }
 button.primary:disabled { background: var(--panel-2); border-color: var(--line); }
 
 .modes .mode { border-radius: 14px; padding: 4px 12px; }
 .modes .mode.sel { background: #1d2c47; border-color: var(--accent); }
 .def.block { display: block; font-size: 11px; }
+.pay { font-weight: normal; white-space: nowrap; margin-top: 2px; }
+.pay .warn { color: var(--warn, #b26a00); }
+tr.rule-row td { background: var(--rule-bg, transparent); }
 .rules { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0 6px; }
 .tag.rule { font-size: 11px; color: var(--text); }
 .tag.info { color: var(--muted); }
@@ -295,7 +302,7 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
 /* searchable dropdown (ui/combo.js) + portrait pictures (ui/tga.js) */
 .combo { position: relative; min-width: 320px; }
 .combo-input { width: 100%; }
-.combo-list { position: absolute; z-index: 20; left: 0; right: 0; top: 100%; max-height: 320px; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+.combo-list { position: fixed; z-index: 1000; max-height: 320px; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
 .combo-opt { padding: 4px 10px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .combo-opt.hi, .combo-opt:hover { background: var(--line); } .combo-opt.sel { font-weight: 600; }
 .combo-group { padding: 4px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
@@ -331,3 +338,17 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
 .item-cat { flex: 1; min-width: 0; }
 .item-cat .combo { min-width: 0; }
 .item-cat .combo-list { min-width: 280px; max-height: 420px; }
+
+/* + Menu chooser and the rules-text form (ui/menu-chooser.js) */
+.menu-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.menu-card { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 16px; min-height: 110px; font-size: 14px; border-radius: 8px; }
+.menu-card b { font-size: 16px; }
+.menu-card .why { font-size: 12px; color: var(--warn); }
+.menus .tag.board { color: var(--text); }
+.board-tools { gap: 6px; margin-bottom: 6px; align-items: center; }
+.board-text { font-family: ui-monospace, monospace; font-size: 13px; }
+.board-preview { background: #1b1d22; border: 1px solid #555; border-radius: 6px; max-width: 520px; margin: 6px 0 12px; }
+.board-title { text-align: center; font-weight: 600; padding: 6px; border-bottom: 1px solid #444; color: #fff; }
+.board-body { padding: 10px 12px; white-space: pre-wrap; font-size: 13px; line-height: 1.45; max-height: 340px; overflow-y: auto; }
+.board-tools > * { flex: none; }
+.board-tools input[type=color] { width: 44px; height: 26px; padding: 0; }

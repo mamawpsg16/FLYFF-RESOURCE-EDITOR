@@ -163,6 +163,36 @@
       }
     }
 
+    // What players pay in each Penya shop (vendorSim.buyPrice, a port of OnBuyItem): one dwCost per
+    // item, which a later AddShopItem price replaces for every shop (Project.cpp:3581, 6b026003).
+    const costs = ctx.costs ? ctx.costs() : null;
+    if (costs && ctx.simulate) {
+      for (const npc of chars.npcs) {
+        if (npc.venderType === 1 || npc.venderType === 2) continue;
+        const at = { file: npc.file, npcKey: npc.key };
+        ctx.simulate(npc).tabs.forEach((tab, t) => {
+          for (const en of tab.entries) {
+            const p = en.prop, def = p.item.define || String(p.id);
+            const dwCost = FRE.vendorSim.costOf(costs, p);
+            if (FRE.vendorSim.buyPrice(p, dwCost, null, defs).min1) {
+              add(Object.assign({ code: 'C_PRICE_MIN1', severity: 'WARN', start: en.source.start, end: en.source.end,
+                key: `C_PRICE_MIN1|${npc.file}|${npc.key}|${t}|${def}`, itemId: p.id,
+                message: (dwCost | 0) >= 1
+                  ? `${npc.key}: ${def} costs ${dwCost}, too much for the server's float math (OnBuyItem), so players pay 1 Penya for it in tab ${t + 1}`
+                  : `${npc.key}: ${def} has no price (${(dwCost | 0) === -1 ? '"="' : dwCost}), so players pay 1 Penya for it in tab ${t + 1}` }, at));
+            }
+            const o = costs.get(p.id);
+            const setter = o && o.by.length ? o.by[o.by.length - 1] : null;
+            if (setter && setter.npc !== npc && !(en.kind === 'fixed' && en.source.args.cost)) {
+              add(Object.assign({ code: 'C_PRICE_FROM_OTHER', severity: 'INFO', start: en.source.start, end: en.source.end,
+                key: `C_PRICE_FROM_OTHER|${npc.file}|${npc.key}|${t}|${def}|${setter.npc.key}`, itemId: p.id,
+                message: `${npc.key}: ${def} costs ${setter.cost} here because ${setter.npc.key}'s AddShopItem sets that price for every shop (Spec_Item.txt says ${o.base})` }, at));
+            }
+          }
+        });
+      }
+    }
+
     // One price per item: AddShopItem's cost overwrites the item's price globally.
     for (const [id, list] of priceByItem) {
       const costs = new Set(list.map(x => x.cost));

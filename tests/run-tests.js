@@ -1782,6 +1782,172 @@ section('existing NPC edits: name, tabs, menus, shop window (JS and Python copie
   }
 }
 
+section('shop prices and rule rows: what players pay / get back, rules made fixed items (JS and Python copies agree)');
+{
+  const V = FRE.vendorSim, SO = FRE.shopOps;
+  const fresh = () => new FRE.Workspace(fixtureFiles(), { only: 'npc' }).load();
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} shop ${FIXTURES}`);
+  const py = JSON.parse(new TextDecoder().decode(out));
+  const sha = t => GLib.compute_checksum_for_string(GLib.ChecksumType.SHA1, t, -1);
+  const rates = py.rates.map(([shopCost, buy, sell]) => ({ shopCost, buy, sell }));
+  const code = t => (!t ? null : /EVENTMAIN/.test(t) ? 'eventmain' : /quest/.test(t) ? 'quest' : /Sealed/.test(t) ? 'seal' : /^Perin/.test(t) ? 'perin' : /flying/.test(t) ? 'ride' : t);
+  const w0 = fresh(), D = w0.defines.defines, costs = w0.costs();
+  const row = (p, dw) => [rates.map(r => [V.buyPrice(p, dw, r, D).pay, V.sellPrice(p, dw, r, D).get])];
+
+  // 1. every item of every Penya shop, at 6 shop rates
+  const penya = w0.chars.npcs.filter(n => FRE.shopOps.shopType(n.venderType) === 0);
+  eq(penya.length, py.shops.length, `${py.shops.length} Penya NPCs in both copies`);
+  let bad = 0, items = 0;
+  penya.forEach((npc, i) => {
+    const c = py.shops[i];
+    const js = w0.simulate(npc).tabs.map(t => t.entries.map(en => { const dw = V.costOf(costs, en.prop); items++; return [en.prop.id, dw, ...row(en.prop, dw), code(V.sellRefused(en.prop, D))]; }));
+    if ((npc.key !== c.key || JSON.stringify(js) !== JSON.stringify(c.tabs)) && bad++ < 3) ok(false, `prices of ${npc.key}`, `JS ${JSON.stringify(js).slice(0, 300)} vs Python ${JSON.stringify(c.tabs).slice(0, 300)}`);
+  });
+  eq(bad, 0, `${items} shop items × ${rates.length} rates: JS and Python pay / get back agree`);
+  const ov = [...costs].sort((a, b) => a[0] - b[0]).map(([id, o]) => [id, o.base, o.cost, o.by[o.by.length - 1].npc.key]);
+  eq(JSON.stringify(ov), JSON.stringify(py.overrides), `${py.overrides.length} AddShopItem prices: same final price and the same NPC wins (load order)`);
+  let sBad = 0;
+  for (const [id, dw, want] of py.small) {
+    const js = row(w0.vendorIndex.byId.get(id), dw)[0];
+    if (JSON.stringify(js) !== JSON.stringify(want) && sBad++ < 3) ok(false, `price of ${id} at dwCost ${dw}`, `JS ${JSON.stringify(js)} vs Python ${JSON.stringify(want)}`);
+  }
+  eq(sBad, 0, `${py.small.length} edge prices ("=", 0, 3, 2^24+1, INT_MAX, Perin): JS and Python agree`);
+  eq(JSON.stringify(py.refusals.map(([id]) => [id, code(V.sellRefused(w0.vendorIndex.byId.get(id), D))])), JSON.stringify(py.refusals), 'items NPCs refuse to buy (event, quest, sealed, Perin, vagrant flying): same');
+  eq(JSON.stringify(py.refusals.map(r => r[1])), JSON.stringify(['eventmain', 'quest', 'seal', 'perin', 'ride', null, null]), 'each refusal kind is refused (and a non-vagrant flying item and Scroll of Awakening are not)');
+
+  // the C++ by hand
+  const awake = w0.vendorIndex.byId.get(D.get('II_SYS_SYS_SCR_AWAKE'));
+  eq(V.buyPrice(awake, 100000, null, D).pay, 100000, 'Scroll of Awakening: players pay 100,000');
+  eq(V.sellPrice(awake, 100000, null, D).get, 25000, '… and get back 25,000 (a quarter)');
+  eq(V.buyPrice(awake, 0xffffffff, null, D).pay, 1, 'dwCost "=": players pay 1 (GetCost -1, minimum 1)');
+  eq(V.sellPrice(awake, 3, null, D).get, 1, 'dwCost 3: 3 / 4 = 0 -> sells for 1');
+  eq(V.buyPrice(awake, 16777217, null, D).pay, 16777216, 'dwCost 16,777,217: the float rounds it to 16,777,216');
+  eq(V.buyPrice(awake, 2147483647, null, D).pay, 1, 'dwCost INT_MAX: the float overflows (INT_MIN), players pay 1');
+  eq(V.buyPrice(w0.vendorIndex.byId.get(D.get('II_SYS_SYS_SCR_PERIN')), 5, null, D).pay, 100000000, 'Perin costs PERIN_VALUE');
+  ok(w0.diags.some(d => d.code === 'C_PRICE_MIN1' && /II_CHP_RED/.test(d.message)), 'C_PRICE_MIN1: a Secret Room NPC sells Red Chips for 1 Penya (dwCost 0 since 94881aa2)');
+
+  // 2. every Penya tab with rules -> fixed items, one after another: byte-identical files and the same tabs
+  const w = fresh();
+  let cBad = 0;
+  for (const c of py.converts) {
+    const npc = w.chars.npcs.filter(n => n.key === c.key && n.file.toLowerCase() === c.file).pop();
+    const map = o => new Map(Object.entries(o || {}).map(([k, v]) => [Number(k), v]));
+    const edits = { omit: new Set((c.edits.omit || []).map(Number)), price: map(c.edits.price), slot: map(c.edits.slot) };
+    const plan = V.ruleToFixedPlan(w.vendorIndex, npc, c.tab, w.simulate(npc), edits);
+    if (plan.blocked || c.blocked) { if (!(plan.blocked && c.blocked) && cBad++ < 3) ok(false, `${c.key} tab ${c.tab + 1}`, `JS ${plan.blocked} vs Python ${c.blocked}`); continue; }
+    w.apply(c.file, SO.convertRules(w.files.get(c.file).text, npc, plan), 'convert');
+    const after = w.chars.npcs.filter(n => n.key === c.key && n.file.toLowerCase() === c.file).pop();
+    const tabs = w.simulate(after).tabs.map(t => t.entries.map(en => en.prop.id));
+    const won = w.costs().get(D.get('II_SYS_SYS_SCR_AWAKE') >>> 0);
+    const awakeJs = won ? [won.cost, won.by[won.by.length - 1].npc.key] : null;
+    if (JSON.stringify(awakeJs) !== JSON.stringify(c.awake) && cBad++ < 3) ok(false, `after ${c.key}: Scroll of Awakening's price`, `JS ${JSON.stringify(awakeJs)} vs Python ${JSON.stringify(c.awake)}`);
+    if ((sha(w.files.get(c.file).text) !== c.sha || JSON.stringify(tabs) !== JSON.stringify(c.tabs)) && cBad++ < 3)
+      ok(false, `${c.key} tab ${c.tab + 1} made fixed`, `tabs JS ${JSON.stringify(tabs).slice(0, 200)} vs Python ${JSON.stringify(c.tabs).slice(0, 200)}`);
+  }
+  eq(cBad, 0, `${py.converts.length} rule tabs made fixed items, one after another: files byte-identical to the Python copy, same tabs`);
+  const peachCase = py.converts.find(c => c.key === 'MaFl_Peach');
+  const before0 = w0.simulate(w0.chars.npcs.filter(n => n.key === 'MaFl_Peach').pop()).tabs.map(t => t.entries.map(en => en.prop.id));
+  eq(JSON.stringify(peachCase.tabs), JSON.stringify(before0), 'Peach with a price typed: players see the same 6 items in the same order');
+  const peachNow = w.chars.npcs.filter(n => n.key === 'MaFl_Peach').pop();
+  eq(w.pricedTab(peachNow, 0)[0].pay, 777, 'Peach typed 150,000, but players pay Raia\'s 777: her AddShopItem loads later and is server-wide');
+  ok(w.diags.some(d => d.code === 'C_PRICE_CONFLICT' && /II_SYS_SYS_SCR_AWAKE/.test(d.message)), 'two prices for one item: C_PRICE_CONFLICT');
+  // a new price is also written on the item's other priced lines, or the line loaded last would win
+  const awakeId = D.get('II_SYS_SYS_SCR_AWAKE') >>> 0;
+  const op = SO.otherPriceParts(w, awakeId, 5000, null);
+  eq(op.lines.map(l => `${l.npc.key}=${l.was}`).join(','), 'MaFl_Peach=150000,MaEw_Raya=777', 'otherPriceParts: both priced lines of Scroll of Awakening (Peach 150,000, Raia 777)');
+  w.applyGroup(op.parts, 'same price');
+  ok(w.costs().get(awakeId).cost === 5000 && !w.diags.some(d => d.code === 'C_PRICE_CONFLICT' && /II_SYS_SYS_SCR_AWAKE/.test(d.message)), 'after: one price (5,000) everywhere, no C_PRICE_CONFLICT');
+  eq(SO.otherPriceParts(w, awakeId, 5000, null).lines.length, 0, 'lines already at that price are left alone');
+  w.undo();
+  for (let k = 0; k < py.converts.length; k++) w.undo();
+  ok(fixtureFiles().get('character.inc').text === w.files.get('character.inc').text, `${py.converts.length} undos give character.inc back byte for byte`);
+
+  // 3. + Rule / a rule changed, and the Spec_Item edits
+  for (const c of py.rules) {
+    if (c.name === 'fixed line above the rules') {
+      const wr = fresh(), t = wr.files.get('character.inc').text;
+      const first = wr.chars.npcs.filter(n => n.key === 'MaFl_Peach').pop().statements.find(r => r.cmd === 'AddVendorItem');
+      const at = FRE.textOps.lineStart(t, first.start);
+      wr.apply('character.inc', [{ start: at, end: at, insert: '\t\tAddShopItem( 0, II_SYS_SYS_SCR_AMPESS );\r\n' }], 'setup');
+      const pe = wr.chars.npcs.filter(n => n.key === 'MaFl_Peach').pop();
+      const before = wr.simulate(pe).tabs.map(x => x.entries.map(en => en.prop.id));
+      wr.apply('character.inc', SO.convertRules(wr.files.get('character.inc').text, pe, V.ruleToFixedPlan(wr.vendorIndex, pe, 0, wr.simulate(pe), {})), c.name);
+      const tabs = wr.simulate(wr.chars.npcs.filter(n => n.key === 'MaFl_Peach').pop()).tabs.map(x => x.entries.map(en => en.prop.id));
+      ok(sha(wr.files.get('character.inc').text) === c.sha && JSON.stringify(tabs) === JSON.stringify(c.tabs) && JSON.stringify(tabs) === JSON.stringify(c.before) && JSON.stringify(before) === JSON.stringify(c.before),
+        'a fixed line above the rules: the new lines go above it, same tab, identical to the Python copy');
+      continue;
+    }
+    const wr = fresh(), peach = wr.chars.npcs.filter(n => n.key === 'MaFl_Peach').pop();
+    const t = wr.files.get('character.inc').text;
+    const rules = peach.statements.filter(r => r.cmd === 'AddVendorItem');
+    const ruleOf = r => ({ slot: r.args.slot.value, ik3: r.args.ik3.define, job: r.args.job.value, rareMin: r.args.rareMin.value, rareMax: r.args.rareMax.value });
+    const sp = c.name === 'add a rule' ? SO.addRule(t, peach, { slot: 0, ik3: 'IK3_GENERAL_RANDOMOPTION_GEN', job: -1, rareMin: 0, rareMax: 400 })
+      : c.name === 'rarity max 200' ? SO.setRule(t, rules[0], Object.assign(ruleOf(rules[0]), { rareMax: 200 }))
+      : SO.setRule(t, rules[1], Object.assign(ruleOf(rules[1]), { rareMin: 0 }));
+    wr.apply('character.inc', sp, c.name);
+    const tabs = wr.simulate(wr.chars.npcs.filter(n => n.key === 'MaFl_Peach').pop()).tabs.map(x => x.entries.map(en => en.prop.id));
+    ok(sha(wr.files.get('character.inc').text) === c.sha && JSON.stringify(tabs) === JSON.stringify(c.tabs), `rule "${c.name}": character.inc and Peach's tabs identical to the Python copy`);
+  }
+  for (const c of py.spec) {
+    const ws2 = fresh(), it = ws2.itemById(D.get(c.define)), t = ws2.files.get('spec_item.txt').text;
+    const sp = c.field === 'dwCost' ? FRE.itemOps.setCost(t, it, c.value === '=' ? null : c.value, ws2.defines.defines) : FRE.itemOps.setShopAble(t, it, true, ws2.defines.defines);
+    ws2.apply('spec_item.txt', sp, c.name);
+    ok(sha(ws2.files.get('spec_item.txt').text) === c.sha, `Spec_Item "${c.name}" (${c.define} ${c.field}): identical to the Python copy`);
+    const pe = ws2.chars.npcs.filter(n => n.key === 'MaFl_Peach').pop();
+    const pt = ws2.pricedTab(pe, 0);
+    if (c.name === 'own price 150000') eq(pt[0].pay, 150000, 'own price 150,000: Peach and Raia charge 150,000 (rule items use dwCost)');
+    if (c.name === 'no price') ok(pt[0].pay === 1 && ws2.newBlocking().length === 0 && ws2.diags.some(d => d.code === 'C_PRICE_MIN1' && d.npcKey === 'MaFl_Peach'), 'own price "=": players pay 1, C_PRICE_MIN1 warns (does not block)');
+    if (c.name === 'hidden from rules') ok(!pt.some(x => x.prop.item.define === 'II_SYS_SYS_SCR_PETAWAKE'), 'dwShopAble -1: Pet Awakening leaves the rule tab');
+  }
+  throws(() => SO.addRule('', w0.chars.npcs[0], { slot: 0, ik3: 'IK3_X', job: -1, rareMin: 5, rareMax: 2 }), 'a rule whose highest rarity is below the lowest is refused');
+  throws(() => SO.convertRules('', w0.chars.npcs[0], { blocked: 'chip shops ignore AddVendorItem rules' }), 'a blocked plan is refused');
+}
+
+section('rules windows: + Menu → Rules text (the npc-board client change; JS and Python copies agree)');
+{
+  const O = FRE.menuOps;
+  const fresh = () => new FRE.Workspace(fixtureFiles(), { only: 'npc' }).load();
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} board ${FIXTURES}`);
+  const py = JSON.parse(new TextDecoder().decode(out));
+  const sha = t => GLib.compute_checksum_for_string(GLib.ChecksumType.SHA1, t, -1);
+  let pBad = 0;
+  for (const c of py.parsed) {
+    const js = FRE.boardText.parse(c.text).map(p => [p.text, p.color, p.bold, p.underline, p.strike]);
+    if (JSON.stringify(js) !== JSON.stringify(c.pieces) && pBad++ < 3) ok(false, `text ${JSON.stringify(c.text)}`, `JS ${JSON.stringify(js)} vs Python ${JSON.stringify(c.pieces)}`);
+  }
+  eq(pBad, 0, `${py.parsed.length} texts read like CEditString::ParsingString (colours, bold, \\n, a lone #, uppercase hex): JS = Python`);
+  eq(FRE.boardText.parse('#cff00ff00x')[0].color, 0xff00ff00, '#cff00ff00 is green');
+  eq(FRE.boardText.code('#FFCC00'), '#cffffcc00', 'the Colour button writes lowercase hex (uppercase garbles the colour in game)');
+  for (const c of py.specs) {
+    const w = fresh();
+    const name = FRE.menuNameFromLabel(w, c.label);
+    eq(name, c.menu, `"${c.label}" -> ${c.menu}`);
+    const plan = O.boardPlan(w, { npcKey: c.npcKey, name, label: c.label, text: c.text });
+    eq(plan.ids[0], c.id, `${c.name}: menu id ${c.id}`);
+    w.applyGroup(plan.parts, 'rules');
+    const same = Object.entries(c.files).every(([f, h]) => sha(w.files.get(f.toLowerCase()).text) === h);
+    ok(same && !w.files.get('exchange_script.txt').dirty, `${c.name}: defineNeuz.h, defineText.h, textClient.inc/.txt.txt, character.inc identical to the Python copy; Exchange_Script.txt untouched`);
+    const b = w.boardFile(c.id);
+    ok(b && b.file.clientOnly && sha(b.file.text) === c.boardSha && b.file.text === c.board, `${c.name}: Client/Client/${O.boardFileName(c.id)} holds the text with CRLF line breaks`);
+    const npc = w.chars.npcs.filter(n => n.key === c.npcKey).pop();
+    const m = FRE.newNpcSim.rightClick(w, npc.menus).find(x => x.id === c.id);
+    ok(m && m.label === c.label && (m.opens && m.opens.board ? 'board' : 'exchange') === c.opens, `${c.name}: right-click shows "${c.label}" and opens the rules window`);
+    w.boardPatch = false;
+    const m2 = FRE.newNpcSim.rightClick(w, npc.menus).find(x => x.id === c.id);
+    eq(m2 && m2.opens && m2.opens.exchange ? 'exchange' : 'other', c.opensUnpatched, `${c.name}: a client without the change opens an empty swap window`);
+    w.boardPatch = undefined;
+    w.applyGroup(O.setBoardText(w, c.id, 'New text'), 'text');
+    eq(w.boardTextOf(c.id), 'New text', 'the text changed later');
+    w.applyGroup(O.setLabel(w, name, 'Renamed'), 'label');
+    eq(w.texts.byId.get(7000 + c.id).text, 'Renamed', 'the right-click name changed later (textClient.txt.txt)');
+    w.undo(); w.undo(); w.undo();
+    ok(w.dirtyFiles().length === 0 && w.boardTextOf(c.id) === null, `${c.name}: three undos: nothing left to save, no rules file`);
+  }
+  const w = fresh();
+  throws(() => O.boardPlan(w, { npcKey: 'MaFl_Peach', name: 'MMI_X_RULES', label: 'Rules', text: '   ' }), 'an empty text is refused');
+  throws(() => O.boardPlan(w, { npcKey: 'MaFl_Peach', name: 'MMI_X_RULES', label: 'Rules', text: 'café' }), 'a character the client can\'t show is refused');
+}
+
 section('item list categories (loaders/item-category.js)');
 {
   const w = new FRE.Workspace(fixtureFiles(), { only: 'npc' }).load();

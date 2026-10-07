@@ -214,10 +214,65 @@ Startup order (`OpenProject`):
 
 **Menus:** `AddMenu( MMI_X );` lines. `AddMenuLang` and `AddVendorSlotLang` are for other languages; `AddVendorSlotLang` appears only in comments here.
 
-**Buy / sell price** (for task S part 2):
-- Buy: `CDPSrvr::OnBuyItem` (`DPSrvr.cpp:3332`) charges `int(GetCost() × m_fShopCost)`, then `× EventLua GetShopBuyFactor()` (`__SHOP_COST_RATE` on, `WORLDSERVER/VersionCommon.h:257`), then at least 1; Perin costs `PERIN_VALUE`. Only `SetVenderType 0` shops buy here.
-- Sell back: `GetCost()/4 × GetShopSellFactor()`, at least 1 (`DPSrvr.cpp:3760`).
-- Both factors default to 1.0 and are set at run time.
+### 1.12 What players pay and get back; rule rows made fixed items (added 2026-10-07, task S part 2, `loaders/vendor-sim.js`, `ui/shop-rules.js`)
+
+**One price per item.** A Penya shop charges the item's `dwCost`.
+- `AddShopItem( tab, II_X, price )` writes `pItem->dwCost` while the NPC files load (`Project.cpp:3581`), for the whole server.
+- The files load in `Masquerade.prj` order (lines 104-106: `character.inc`, `character-etc.inc`, `character-school.inc`), each top to bottom. The last price wins.
+- Rule shops (`AddVendorItem`) and priceless `AddShopItem` lines charge that same number. So a price typed in one shop changes the price everywhere that item is sold (`6b026003`: "AddShopItem also sets its dwCost, so it sells back for 2,500").
+- An EXP scroll copy (id 60000+, `__NEW_STACKABLE_AMPS`) is cloned in `LoadPropItem`, before the NPC files, so it keeps the Spec_Item price.
+
+**Buy** (`CDPSrvr::OnBuyItem`, `DPSrvr.cpp:3378-3405`; only shops with `SetVenderType 0`):
+1. `nCost = (int)GetCost()`. `GetCost` (`Item.cpp:135`) returns -1 for `dwCost` "=" (0xFFFFFFFF); shop items are +0.
+2. `nCost = (int)(m_fShopCost * nCost)`, then `(int)(GetShopBuyFactor() * nCost)` (`__SHOP_COST_RATE`). Both rates are `float` (`Project.h:1130`) and default to 1.0.
+3. `II_SYS_SYS_SCR_PERIN` costs `PERIN_VALUE` (100,000,000, `define.h:265`).
+4. `nCost < 1` becomes 1. Tax applies only to the Secret Room owner (not modelled).
+
+**Sell back** (`OnSellItem`, `DPSrvr.cpp:3733-3766`): `GetCost() / 4` (C int division, so -1 / 4 = 0), then `(int)(GetShopSellFactor() * n)`, and `0` becomes 1.
+- NPCs refuse to buy: `IK3_EVENTMAIN`, quest items (`IK3_QUEST`), `II_SYS_SYS_SCR_SEALCHARACTER`, Perin, and a flying item for Vagrants (`PARTS_RIDE` + `JOB_VAGRANT`). Equipped and locked items are refused too.
+
+**Float math.** The WorldServer is built Win32 with toolset v143 (`WorldServer.vcxproj`): SSE2 and `/fp:precise`. So `float × int` is done in float32:
+- A price above 16,777,216 can move by a few Penya (16,777,217 is charged 16,777,216).
+- A price from 2,147,483,584 up overflows `(int)` (cvttss2si gives INT_MIN) and is charged **1 Penya**. The editor shows it as `C_PRICE_MIN1`.
+
+**Client.** The tooltip (`WndManager.cpp:6329-6372`, `6435-6460`) uses the same `dwCost`; it hides the price line for "=".
+
+**Rule rows -> fixed items** (the `73ee4bd6` way: prices with AddShopItem lines):
+- `CMover::ProcessRegenItem` (`Mover.cpp:1630`) puts the rule items of a tab first (sorted by kind then rarity), then the `AddShopItem` items in file order, 100 at most.
+- So the tab's rules are replaced by one `AddShopItem( tab, II_X );` per item they added, in that order. The lines go where the first rule was, or above an earlier `AddShopItem` of the tab. Players then see the same tab.
+- No price is written unless typed, so nothing else changes.
+- All 234 Penya tabs with rules convert to identical contents (tests).
+
+**The other two ways:**
+- `dwCost` in Spec_Item.txt (`94881aa2` changed `II_CHP_RED`'s). It does nothing for an item that some AddShopItem prices, since that price replaces it at load.
+- `dwShopAble -1` (`9bf0cebb`). Only `GenerateVendorItem` reads it, so the item leaves every rule shop and stays in fixed lines.
+
+**Found:** `MaFl_SecretRoom_EAST` / `MaDa_SecretRoom_WEST` sell `II_CHP_RED` (Red Chip) for 1 Penya. Its `dwCost` became 0 in `94881aa2` (so selling chips gives 1 Penya), and the buy minimum makes it 1 Penya.
+
+### 1.13 Rules windows: a menu that shows a text (added 2026-10-07, `ui/menu-chooser.js`, `loaders/board-text.js`, `docs/patches/npc-board.diff`)
+
+**What exists in the game.** The Guild Siege rules boards are client-only:
+- `case MMI_GUILDCOMBAT_INFO_BOARD1..3` / `MMI_GUILDCOMBAT_1TO1_GUIDE_*` in `CWndWorld::OnCommand` (`_Interface/WndWorld.cpp:4544`) load `Client\GuildCombatTEXT_<n>_<lang>.inc` (`GetLangFileName`, `ProjectCmn.cpp`) with `CScript`.
+- They then call `CWndGuildCombatBoard(0)->SetString(scanner.m_pProg)`, which adds the text through `CEditString::AddParsingString`.
+- The window title is fixed by type: 0 = `TID_GAME_GUILDCOMBAT_BOARD`, 1 = the 1-to-1 board (`WndField.cpp:18457`, `PaintFrame`).
+- No normal menu shows a text of your own. The NPC "Dialog" lines are compiled into `WorldDialog.dll`.
+
+**The change** (`docs/patches/npc-board.diff`; the user applies it in FLYFF-V19-SOURCE and builds Neuz; no server change):
+- In the `default:` branch (`WndWorld.cpp:6471`, `__TRADESYS`), first `CScript::Load("Client\\NpcBoard_<menu id>.inc")`. A missing file returns FALSE silently (`CScanner::Load`, `scanner.cpp:508`).
+- If it loads: open `CWndGuildCombatBoard(2)` with `m_strBoardTitle = prj.GetText(TID_MMI_DIALOG + nID)` (the menu's right-click name), then `SetString`.
+- Otherwise: the exchange window, unchanged. No `NpcBoard_` file exists today, so no existing menu changes.
+
+**Text codes** (`CEditString::ParsingString`, `EditString.cpp:441`; defaults `EditString.h:155`: white, PS_USE_MACRO; `__ITEMLINK` on in `Neuz/VersionCommon.h:36`):
+- `#cAARRGGBB` colour. Each character is read as `c >= 'a' ? c - 'a' + 10 : c - '0'` (signed `CHAR`), ORed into 64 bits. So **only lowercase hex works**: `#cFFFF0000` gives a garbled colour.
+- `#b` / `#u` / `#s` turn bold / underline / strike on; `#nb` / `#nu` / `#ns` turn them off; `#nc` goes back to white.
+- `#l<4>` sets the code page and `#i<7><4>` an item link: skipped.
+- Any other `#x` is shown as typed. A `#` at the very end is dropped.
+- `\n` (two characters) is a line break; real line breaks stay as they are.
+
+**A new rules menu** (`menuOps.boardPlan`), one undo step:
+- `#define MMI_<NAME> <282..349>` (defineNeuz.h), `TID_MMI_<NAME>` 7000 + id and its text (defineText.h, textClient.inc / .txt.txt), `AddMenu` (character.inc); Server + Client.
+- Plus the new client-only file `Client/Client/NpcBoard_<id>.inc` (ASCII, CRLF like `GuildCombatTEXT_1_USA.inc`).
+- `io/save.js` creates it in the Client folder (backup manifest: `created`, so restore deletes it).
 
 ## Phase 2: Encoding and line-ending forensics (all 15,299 files, raw bytes)
 

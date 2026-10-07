@@ -1,8 +1,38 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-07 (task S part 1: existing NPC edits, handoff on top)._
+_Last updated 2026-10-07 (task S part 2: rule rows editable, players pay / get back; handoff on top)._
 
-> **Handoff (2026-10-07, evening) — START HERE: task S part 1 is user-tested in Brave and committed. Next: S part 2 (rule rows editable: Scroll of Awakening / Pet Awakening on Peach and Raia, with "players pay / get back"), see "### S." below.**
+> **Handoff (2026-10-07, late night) — START HERE: S part 2 + "+ Menu" (Shop / Exchange / Rules text) are built, NOT committed, waiting for the user's Brave test and OK.** Plan: `/home/kevin/.claude/plans/read-claude-md-and-the-wobbly-shore.md`.
+> - **+ Menu** (NPC Shops) opens three big choices (the user: "a trade that sells something, an exchange list like Collins, or the Rules like in GS"):
+>   - **Shop:** Trade + a first tab.
+>   - **Exchange:** the old "+ Exchange menu" form. That separate button is gone. Each form has ← Back to the choices, and its title says the choice ("+ Menu for Lui › Exchange").
+>   - **Rules text:** name + text with Bold / Colour buttons and a live preview drawn like the game. It writes a new menu id, its name, `AddMenu`, and the new client-only file `Client/Client/NpcBoard_<id>.inc`. The menu's button (✎) edits it later.
+>   - Plus "Other game window…" (the old list).
+> - **Rules text needs the client C++ change `docs/patches/npc-board.diff`** (WndWorld.cpp default branch + a type-2 title in CWndGuildCombatBoard; no server change). The user applies it in FLYFF-V19-SOURCE (`git apply -p1 ../FLYFF-RESOURCE-EDITOR/docs/patches/npc-board.diff`; `--check` passes), builds Neuz and commits it. In-game test pending (Windows, Fri/Sat). INVESTIGATION §1.13.
+> - First file the editor creates: `Workspace.boardFile` / `setBoardFiles` (read from the Client folder), and `io/save.js` writes it into the Client folder (backup manifest `created`).
+> - Menus show their in-game names, in the game's order, with one-line hover texts; the + Menu list is no longer clipped.
+> - Simulator: `gjs -m tools/board-sim.js MaFl_Peach "Guild Siege Rules" "#b#cffffcc00How to win#nc#nb\nKill players"` (or `--file …GuildCombatTEXT_1_USA.inc`). Python copy `oracle_sim.py board`. Tests: core 705, UI harness 252.
+> - **Upgrade fees (asked, decided, NOT built): goes into task K** (see "### K."). The user chose: move the fixed fees into `ItemUpgrade.lua` with one C++ change, plus an "Upgrade fees" screen.
+>
+> **User's test:** `python3 build.py`, reload, pick `test-data`. NPC Shops → Peach → + Menu → Rules text: type a name and a text, use Bold / Colour, Create. The new button appears in the right-click row. Save → `test-data/Client/Client/NpcBoard_282.inc` exists. Click the button: edit, Save, Undo. + Menu → Exchange opens the old form; ← Back returns to the choices.
+>
+> **Handoff (2026-10-07, night) — START HERE: task S part 2 is built, NOT committed, waiting for the user's Brave test.** Plan: `/home/kevin/.claude/plans/read-claude-md-and-the-wobbly-shore.md`. Next after the OK: S part 3 (move NPC / change model), then part 4 (Donation Shop categories).
+> - **Every shop row is editable** (NPC Shops, Penya shops). Rows the server lists by itself (an `AddVendorItem` line = every item of one type; marked "auto") get a price box, Tab and ✕ like the others, with **no extra window** (the user, 2026-10-07: "I don't understand what that rule is for… I only want to add items, remove them and edit them"). The first change gives each auto item of the tab its own `AddShopItem( tab, II_X );` line, same order (the `73ee4bd6` way), plus the change: one undo step, and the note says so.
+> - **One Penya price per item:** a typed price also goes on the item's other priced `AddShopItem` lines in any shop (`shopOps.otherPriceParts`), or the line loaded last would win. Chip prices are separate (`dwReferValue1`) and untouched. Typing again within 2 s stays one undo step (`ctx.editGroup` merge key).
+> - **Players pay · get back** under every Penya price (port of `OnBuyItem` / `OnSellItem`, float32 like the Win32 build): "=" or 0 → pay 1; from 2,147,483,584 → pay 1 (float overflow); sell = cost / 4. "price set in X's shop" when another NPC's line decides it. INVESTIGATION §1.12.
+> - Not in the UI (the user doesn't need them): the rule editor, changing `dwCost` in Spec_Item.txt, `dwShopAble -1`. The edit ops stay (`shopOps.addRule/setRule`, `itemOps.setCost/setShopAble`) and are tested against the Python copy.
+> - New diagnostics: `C_PRICE_MIN1` (WARN: pays 1 Penya), `C_PRICE_FROM_OTHER` (INFO). Found: both Secret Room NPCs sell Red Chips for 1 Penya (dwCost 0 since `94881aa2`).
+> - Item list: "Price for items added with +", with "Empty = the item's own price (dwCost). A price here applies server-wide." The NPC list filter is now named "Shops with fixed items".
+> - Simulator: `gjs -m tools/shop-sim.js MaFl_Peach price1:II_SYS_SYS_SCR_AWAKE=150000 rates=1,1.5,0.5`. Python copy `oracle_sim.py shop`. Tests: core 682, UI harness 238 (stage `shoprules`); 16 planted bugs in copies of the Python copy, all caught.
+> - Asked, not built yet: a **Currency** choice in **+ NPC** (today Penya only; switch to Red Chip afterwards with the dropdown). Perin has no shop type in the server (`SetVenderType` 0/1/2 only): it would need C++. Plan it first (the user is fine with plan mode).
+>
+> **User's test:** `python3 build.py`, reload, pick `test-data`.
+> 1. NPC Shops → Peach → tab 1: rows 1-2 say "auto" and "Players pay 100,000 · get back 25,000".
+> 2. Type 150000 in Scroll of Awakening's price, wait: it applies by itself, the note says the auto items got their own lines. Open Raia: "price set in Peach's shop". Undo.
+> 3. ✕ on Scroll of Pet Awakening, Tab box on an auto row: at once. Undo.
+> 4. Save once and look at the backup.
+>
+> **Earlier the same evening: task S part 1 is user-tested in Brave and committed. Next: S part 2 (rule rows editable: Scroll of Awakening / Pet Awakening on Peach and Raia, with "players pay / get back"), see "### S." below.**
 > - After the user's test, also committed:
 >   - **Nothing silent** (now in CLAUDE.md "UI standards"): every edit shows "✓ <what> — not saved yet (n files…)", Undo / Redo show "↶ Undone / ↷ Redone", errors show a reason.
 >   - **Save never fails silently.** After a reload Brave forgot write access, and chained `requestPermission` calls without a click threw an uncaught error. Now an "Allow writing" button asks (`writeAccess`), and any Save error shows "Save failed: nothing was written".
@@ -293,8 +323,8 @@ Python copy, as for every task.
 
 ### S. Shops: everything editable (asked 2026-10-06)
 **Widened 2026-10-07** (the user, testing Peach in Brave: "can't we edit an existing NPC… adding tab, renaming tab… even renaming npc", "move NPC / change model", "Donation Shop: add a new category"): S = everything about an existing NPC + its shop. Parts:
-1. Name, tabs, menus: **built 2026-10-07** (handoff above).
-2. Rule rows editable + what players pay / get back (below).
+1. Name, tabs, menus: **built 2026-10-07**, committed `1a59e97`.
+2. Rule rows editable + what players pay / get back: **built 2026-10-07** (handoff above).
 3. Move NPC / change model (a same-length splice of its `.dyo` record; reuse the new-NPC form's spot and model pickers).
 4. Donation Shop categories: add / rename / move / remove groups and leaves of `Client/Client/DonationShopTree.inc` (+ the rows in DonationShop.inc), simulator of the tree and keyword match.
 Also built in part 1: the item list's own categories (Pets › Raised / Pickup / Buff…).
@@ -524,6 +554,23 @@ All five came in with the import commit `3ebc5356`. `Event.lua` was also changed
 - Simulator: "open N boxes" with the server's `xRandom` (port the open-box code path), plus the Python copy.
 
 ### K. Upgrade rates (asked 2026-10-06)
+- **Upgrade fees (asked 2026-10-07 at BoBoChan: "isn't there a fee they pay to the NPC?").** Penya taken from the player (C++, read 2026-10-07; no commit changes a fee):
+
+  | Action | Fee | Where |
+  |---|---|---|
+  | Awakening | 100,000 | `CDPSrvr::OnAwakening`, `DPSrvr.cpp:12498` (const) |
+  | Remove element | 100,000 | `CDPSrvr::OnRemoveAttribute`, `DPSrvr.cpp` (const `nPayPenya`) |
+  | Add a piercing slot | `dwItemRare × (200 + 200 × (slots + 1))` | `CItemUpgrade::OnPiercingSize`, `ItemUpgrade.cpp:231` |
+  | Remove piercing | 1,000,000 | `CItemUpgrade::OnPiercingRemove`, `ItemUpgrade.cpp:447` |
+  | Safe piercing | 100,000 | `CItemUpgrade::SmeltSafetyPiercingSize`, `ItemUpgrade.cpp:797` |
+  | Change item gender (Transy) | 500,000 / 2,000,000 | `ItemUpgrade.lua:51-52` (`nItemTransyLowLevel` / `HighLevel`) |
+  | Safe upgrade (normal / general / accessory / element), normal upgrades | none (stones and scrolls only) | `SmeltSafety*` |
+
+  The user's choices:
+  - **Move the fixed fees to a data file.** One C++ change in FLYFF-V19-SOURCE, written as a patch like `docs/patches/npc-board.diff`: the server reads each fee from `ItemUpgrade.lua` globals (e.g. `nAwakeningPenya`), with today's values as C++ defaults.
+  - **Build it with K.**
+  - **An "Upgrade fees" screen:** every action, its fee and an edit box.
+  - A simulator port and the Python copy, as for every task. In-game test after the build.
 - Files:
   - `ItemUpgrade.lua` (Lua; `CItemUpgrade::LoadScript`, `WORLDSERVER/ItemUpgrade.cpp:59`);
   - `propEnchant.inc` (`LoadPropEnchant`, `Project.cpp:833`);
@@ -561,4 +608,5 @@ All five came in with the import commit `3ebc5356`. `Event.lua` was also changed
 - 500 `AddVendorItem` rules in `character-school.inc` match nothing.
 - `KePe_Rocbin` has 3 tabs over the 100-item cap.
 - `MaFl_SecretRoom_EAST`'s Trade menu is commented out on purpose.
+- `MaFl_SecretRoom_EAST` and `MaDa_SecretRoom_WEST` list `II_CHP_RED` (Red Chip), whose `dwCost` is 0 since `94881aa2`: a Penya shop sells it for 1 Penya (`C_PRICE_MIN1`). Worth a decision: remove the line, or give it an AddShopItem price.
 - `ResData.h` lines 1138–1140 have define names glued to their numbers (client UI, harmless).

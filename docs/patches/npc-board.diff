@@ -1,0 +1,53 @@
+diff -ru a/Source/Source/_Interface/WndField.cpp b/Source/Source/_Interface/WndField.cpp
+--- a/Source/Source/_Interface/WndField.cpp	2026-10-07 15:16:06.763218821 +0800
++++ b/Source/Source/_Interface/WndField.cpp	2026-10-07 15:16:38.896360314 +0800
+@@ -18458,6 +18458,8 @@
+ 			sprintf( szNameLevel, "%s", prj.GetText(TID_GAME_GUILDCOMBAT_BOARD) );
+ 		else if(m_nCombatType == 1)
+ 			sprintf( szNameLevel, "%s", prj.GetText(TID_GAME_GUILDCOMBAT_1TO1_BOARD) );
++		else if(m_nCombatType == 2)	// npc-board
++			_snprintf( szNameLevel, sizeof( szNameLevel ) - 1, "%s", (LPCTSTR)m_strBoardTitle );
+ 
+ 		SetTitle( szNameLevel );
+ 		
+diff -ru a/Source/Source/_Interface/WndField.h b/Source/Source/_Interface/WndField.h
+--- a/Source/Source/_Interface/WndField.h	2026-10-07 15:16:06.759218680 +0800
++++ b/Source/Source/_Interface/WndField.h	2026-10-07 15:16:38.896360314 +0800
+@@ -1545,6 +1545,7 @@
+ #if __VER >= 11 // __GUILD_COMBAT_1TO1
+ public:
+ 	int m_nCombatType;
++	CString m_strBoardTitle;	// type 2 (npc-board): an NPC rules window, titled with its menu's name
+ #endif	//__GUILD_COMBAT_1TO1
+ public: 
+ #if __VER >= 11 // __GUILD_COMBAT_1TO1
+diff -ru a/Source/Source/_Interface/WndWorld.cpp b/Source/Source/_Interface/WndWorld.cpp
+--- a/Source/Source/_Interface/WndWorld.cpp	2026-10-07 15:16:06.759218680 +0800
++++ b/Source/Source/_Interface/WndWorld.cpp	2026-10-07 15:16:38.896360314 +0800
+@@ -6470,6 +6470,26 @@
+ #ifdef __TRADESYS
+ 		default:
+ 			{
++				// npc-board (FLYFF-RESOURCE-EDITOR docs/patches/npc-board.diff): a menu with its own text file
++				// Client\NpcBoard_<menu id>.inc opens a rules window (the Guild Siege board), titled with the
++				// menu's name (text 7000 + id). Without the file: the exchange window, as before.
++				{
++					CString strBoard;
++					strBoard.Format( "Client\\NpcBoard_%d.inc", nID );
++					CScript scanner;
++					if( scanner.Load( strBoard ) )
++					{
++						SAFE_DELETE( g_WndMng.m_pWndGuildCombatBoard );
++						g_WndMng.m_pWndGuildCombatBoard = new CWndGuildCombatBoard( 2 );
++						if( g_WndMng.m_pWndGuildCombatBoard )
++						{
++							g_WndMng.m_pWndGuildCombatBoard->m_strBoardTitle = prj.GetText( TID_MMI_DIALOG + nID );
++							g_WndMng.m_pWndGuildCombatBoard->Initialize();
++							g_WndMng.m_pWndGuildCombatBoard->SetString( scanner.m_pProg );
++						}
++						break;
++					}
++				}
+ 				CWndBase* pWndBaseBuf = g_WndMng.GetWndBase( APP_DIALOG_EVENT );
+ 				if( pWndBaseBuf )
+ 				{

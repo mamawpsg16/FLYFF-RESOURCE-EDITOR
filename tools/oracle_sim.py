@@ -1558,7 +1558,8 @@ def nn_items(root, D):
             continue
         p = dict(id=U32(v(c[col['dwID']])), ik1=U32(v(c[col['dwItemKind1']])), ik3=U32(v(c[col['dwItemKind3']])),
                  job=U32(v(c[col['dwItemJob']])), rare=U32(v(c[col['dwItemRare']])), shop=U32(v(c[col['dwShopAble']])),
-                 chip=v(c[col['dwReferValue1']]))
+                 chip=v(c[col['dwReferValue1']]), cost=U32(v(c[col['dwCost']])), parts=v(c[col['dwParts']]),
+                 define=c[col['dwID']].strip())
         props[p['id']] = p
         if p['ik3'] == D.get('IK3_EXP_RATE'):          # the server clones these (nMaxDuplication)
             for _ in range(v(c[col['nMaxDuplication']]) - 1):
@@ -2235,16 +2236,18 @@ def nm_check(A, spec):
 def nm_build(A, spec):
     """-> {file: [(offset, insert), ...]}, ids, the written texts"""
     T = A.txt
+    board = spec.get('kind') == 'board'                # a rules window: no Exchange_Script block, no results
+    what = 'rules menu' if board else 'exchange menu'
     ids = nm_free(A)[:len(spec['menus'])]
-    news = (spec.get('results') or {}).get('add') or []
-    results = [x['name'] for x in news] if news else spec['results']['tids']
+    news = [] if board else (spec.get('results') or {}).get('add') or []
+    results = [] if board else [x['name'] for x in news] if news else spec['results']['tids']
     ins = {}
     # defineNeuz.h: after the line with the highest MMI_ value under 350 (the first such line)
     rows = [(int(m.group(2)), m.end()) for m in re.finditer(r'^#define[ \t]+(MMI_\w*)[ \t]+(\d+)[^\r\n]*(?:\r?\n|$)', T['defineNeuz.h'], re.M) if int(m.group(2)) < 350]
     best = max(rows, key=lambda r: r[0])
     at = next(e for v, e in rows if v == best[0])
     e = nm_eol(T['defineNeuz.h'])
-    ins['defineNeuz.h'] = [(at, ''.join(f"#define {m['name']}\t{i}\t// {spec['npcKey']} exchange menu{e}" for m, i in zip(spec['menus'], ids)))]
+    ins['defineNeuz.h'] = [(at, ''.join(f"#define {m['name']}\t{i}\t// {spec['npcKey']} {what}{e}" for m, i in zip(spec['menus'], ids)))]
     # defineText.h: after the highest TID_MMI_ in 7000..7349; result TIDs at the end after the highest TID_
     dt = T['defineText.h']
     rows = [(int(m.group(2)), m.end()) for m in re.finditer(r'^#define[ \t]+(TID_MMI_\w*)[ \t]+(\d+)[^\r\n]*(?:\r?\n|$)', dt, re.M) if 7000 <= int(m.group(2)) < 7350]
@@ -2262,11 +2265,11 @@ def nm_build(A, spec):
     top = max([int(k[19:]) for k in A.S if k.startswith('IDS_TEXTCLIENT_INC_')] + [int(x) for x in re.findall(r'IDS_TEXTCLIENT_INC_(\d+)', T['textClient.txt.txt'])])
     keys = ['IDS_TEXTCLIENT_INC_%06d' % (top + 1 + k) for k in range(len(texts))]
     e = nm_eol(T['textClient.inc'])
-    ins['textClient.inc'] = [nm_append(T['textClient.inc'], f"{e}// {spec['npcKey']} exchange menus{e}{e}" + ''.join(f"{t}\t\t\t\t0xffffffff{e}{{{e}\t{k}{e}}}{e}{e}" for (t, _), k in zip(texts, keys)))]
+    ins['textClient.inc'] = [nm_append(T['textClient.inc'], f"{e}// {spec['npcKey']} {what}s{e}{e}" + ''.join(f"{t}\t\t\t\t0xffffffff{e}{{{e}\t{k}{e}}}{e}{e}" for (t, _), k in zip(texts, keys)))]
     e = nm_eol(T['textClient.txt.txt'])
     ins['textClient.txt.txt'] = [nm_append(T['textClient.txt.txt'], ''.join(f'{k}\t{x}{e}' for (_, x), k in zip(texts, keys)))]
     # Exchange_Script.txt: the menu blocks, MMI_COLLECT01's layout, REMOVE = CONDITION
-    e = nm_eol(T['Exchange_Script.txt'])
+    e = nm_eol(T.get('Exchange_Script.txt', '\r\n'))
     blocks = []
     for m in spec['menus']:
         tid = 'TID_' + m['name']
@@ -2279,7 +2282,8 @@ def nm_build(A, spec):
             S += ['\t\tPAY\t%d' % st.get('payNum', 1), '\t\t{'] + ['\t\t\t' + '\t'.join(str(v) for v in p) for p in st['pay']] + ['\t\t}', '\t}']
             b += e.join(S) + e
         blocks.append(b + '}' + e)
-    ins['Exchange_Script.txt'] = [nm_append(T['Exchange_Script.txt'], e + e.join(blocks))]
+    if not board:
+        ins['Exchange_Script.txt'] = [nm_append(T['Exchange_Script.txt'], e + e.join(blocks))]
     # character.inc: after the line of the NPC's last AddMenu, same indent
     ci = T['character.inc']
     st = re.search(r'^' + re.escape(spec['npcKey']) + r'\b[^\r\n]*\r?\n\s*\{', ci, re.M | re.I)   # the key line may carry a // comment
@@ -2675,6 +2679,417 @@ def ne_run(root):
                           after=ne_summary(A, ns, key, counts)))
     return dict(windows=windows, small=small, edits=edits)
 
+# ---------------------------------------------------------------------------------------------
+# shop: what players pay / get back in a Penya shop, and rule rows turned into fixed items
+# (task S part 2), written from the C++:
+#   CProject::LoadCharacter AddShopItem branch (Project.cpp:3581): pItem->dwCost = price, for the
+#     whole server; files load in Masquerade.prj order (lines 104-106: character.inc, -etc, -school).
+#   CDPSrvr::OnBuyItem (DPSrvr.cpp:3378-3405): (int)GetCost(); (int)(m_fShopCost * n);
+#     (int)(GetShopBuyFactor() * n); Perin = PERIN_VALUE (define.h:265); n < 1 -> 1.
+#   CDPSrvr::OnSellItem (DPSrvr.cpp:3733-3766): GetCost() / 4; (int)(GetShopSellFactor() * n); n == 0 -> 1;
+#     refused: IK3_EVENTMAIN, IsQuest (IK3_QUEST), II_SYS_SYS_SCR_SEALCHARACTER, II_SYS_SYS_SCR_PERIN,
+#     dwParts == PARTS_RIDE && dwItemJob == JOB_VAGRANT.
+#   CItemBase::GetCost (Item.cpp:135): dwCost 0xFFFFFFFF -> -1, else (int)dwCost (shop items are +0).
+#   Win32 v143 build (SSE2): float * int in float32; (int) of an out-of-range float = INT_MIN.
+# Not modelled: tax, a player's gold. Rule rows -> fixed: the tab's AddVendorItem rows are removed
+# and one "AddShopItem( tab, II_X );" per item they added takes the first one's place (or goes
+# above an earlier AddShopItem of the tab), so ProcessRegenItem gives the same tab.
+# ---------------------------------------------------------------------------------------------
+SH_RATES = [(1, 1, 1), (1, 0.5, 0.5), (1, 1.5, 1.5), (1, 0.9, 0.9), (1, 2.5, 2.5), (0.7, 1.3, 0.8)]
+SH_PERIN_VALUE = 100000000
+SH_INT_MIN = -2147483648
+
+
+def sh_f32(x):
+    return struct.unpack('<f', struct.pack('<f', x))[0]
+
+
+def sh_int(x):                                  # (int) of a float: cvttss2si
+    if x != x or x >= 2147483648.0 or x < -2147483648.0:
+        return SH_INT_MIN
+    return int(x)                                # truncates toward 0
+
+
+def sh_mul(rate, n):
+    return sh_int(sh_f32(sh_f32(rate) * sh_f32(n)))
+
+
+def sh_getcost(dw):
+    dw = U32(dw)
+    return -1 if dw == 0xFFFFFFFF else s32(dw)
+
+
+def sh_buy(iid, dw, rate, D):
+    n = sh_getcost(dw)
+    n = sh_mul(rate[0], n)
+    n = sh_mul(rate[1], n)
+    if iid == U32(D.get('II_SYS_SYS_SCR_PERIN', -2)):
+        n = SH_PERIN_VALUE
+    return 1 if n < 1 else n
+
+
+def sh_sell(dw, rate):
+    c = sh_getcost(dw)
+    n = int(c / 4)                               # C int division (toward 0)
+    n = sh_mul(rate[2], n)
+    return 1 if n == 0 else n
+
+
+def sh_refused(p, D):
+    if p['ik3'] == U32(D.get('IK3_EVENTMAIN', -2)): return 'eventmain'
+    if p['ik3'] == U32(D.get('IK3_QUEST', -2)): return 'quest'
+    if p['id'] == U32(D.get('II_SYS_SYS_SCR_SEALCHARACTER', -2)): return 'seal'
+    if p['id'] == U32(D.get('II_SYS_SYS_SCR_PERIN', -2)): return 'perin'
+    if p['parts'] == D.get('PARTS_RIDE') and s32(p['job']) == D.get('JOB_VAGRANT'): return 'ride'
+    return None
+
+
+def sh_npcs(texts, D, S):
+    """every NPC block of the three files, in load order: (file, npc)"""
+    out = []
+    for f in NN_CHAR_FILES:
+        if f in texts:
+            out += [(f, x) for x in nn_npcs(texts[f], D, S)]
+    return out
+
+
+def sh_costs(npcs, props):
+    """dwCost after every AddShopItem price, in load order: id -> (cost, setter key)"""
+    final = {}
+    for f, x in npcs:
+        for s in x['shop']:
+            if s[0] == 'fixed' and s[3] is not None and U32(s[2]) in props:
+                final[U32(s[2])] = (U32(s[3]), x['key'])
+    return final
+
+
+def sh_stmts(text, key):
+    """the block's shop rows (comments skipped): [(cmd, start, end incl. ';', [arg texts])]"""
+    s0, s1 = ne_block(text, key)
+    m = ne_mask(text)
+    out = []
+    for r in re.finditer(r'\b(AddVendorItem|AddVenderItem|AddShopItem)\s*\(([^)]*)\)', m[s0:s1]):
+        e = s0 + r.end()
+        k = e
+        while k < len(text) and text[k] in ' \t': k += 1
+        if k < len(text) and text[k] == ';': e = k + 1
+        out.append((r.group(1), s0 + r.start(), e, [a.strip() for a in r.group(2).split(',')]))
+    return out
+
+
+def sh_val(t, D):
+    t = t.strip()
+    return D[t] if t in D else atoi(t)
+
+
+def sh_line(text, a):
+    ls = a
+    while ls > 0 and text[ls - 1] not in '\r\n': ls -= 1
+    return ls
+
+
+def sh_content_end(text, i):
+    while i < len(text) and text[i] not in '\r\n': i += 1
+    return i
+
+
+def sh_eol(text, i):
+    c = sh_content_end(text, i)
+    if text.startswith('\r\n', c): return '\r\n'
+    if c < len(text): return text[c]
+    return ''
+
+
+def sh_remove(text, a, e):
+    """(start, end) to cut for one row: its whole line when it stands alone, else its span"""
+    ls = sh_line(text, a)
+    blank = text[ls:a].strip(' \t') == ''
+    ce = sh_content_end(text, e)
+    k = e
+    while k < ce and text[k] in ' \t': k += 1
+    free = k == ce or text.startswith('//', k)
+    if blank and free:
+        return ls, ce + len(sh_eol(text, e))
+    s = a
+    if s > 0 and text[s - 1] in ' \t' and not blank: s -= 1
+    return s, e
+
+
+def sh_fmt(text, cmd, args):
+    m = re.search(cmd + r'\s*\(( ?)', text)
+    pad = m.group(1) if m else ' '
+    return '%s(%s%s%s);' % (cmd, pad, ', '.join(str(a) for a in args), pad)
+
+
+def sh_apply(text, cuts):
+    for a, b, ins in sorted(cuts, key=lambda x: -x[0]):
+        text = text[:a] + ins + text[b:]
+    return text
+
+
+def sh_convert(text, npc, key, tab, I, D, edits):
+    """returns (new text, None) or (text, why it is refused)"""
+    props = I[0]
+    rows = sh_stmts(text, key)
+    rules = [r for r in rows if r[0] != 'AddShopItem' and sh_val(r[3][0], D) == tab]
+    fixed = [r for r in rows if r[0] == 'AddShopItem' and sh_val(r[3][0], D) == tab]
+    if not rules:
+        return text, 'no rule'
+    anchor = min(rules + fixed, key=lambda r: r[1])
+    gen = nn_fill(I, dict(npc, shop=[x for x in npc['shop'] if x[0] != 'fixed']))[tab][0]
+    lines = []
+    for iid in gen:
+        p = props[iid]
+        if iid >= 60000 and p['define'] and U32(D.get(p['define'], -1)) != iid:
+            return text, 'clone'
+        if str(iid) in edits.get('omit', []):
+            continue
+        args = [edits.get('slot', {}).get(str(iid), tab), p['define']]
+        if str(iid) in edits.get('price', {}): args.append(edits['price'][str(iid)])
+        lines.append(sh_fmt(text, 'AddShopItem', args))
+    ind = ne_indent(text, anchor[1])
+    eol = sh_eol(text, anchor[1]) or '\r\n'
+    block = ''.join(ind + l + eol for l in lines)
+    cuts = []
+    for r in rules:
+        a, b = sh_remove(text, r[1], r[2])
+        ins = ''
+        if r is anchor and lines:
+            ins = block if a == sh_line(text, r[1]) else (' ' if a < r[1] else '') + ' '.join(lines)
+        cuts.append((a, b, ins))
+    if anchor not in rules and lines:
+        if text[sh_line(text, anchor[1]):anchor[1]].strip(' \t') == '':
+            at = sh_line(text, anchor[1]); cuts.append((at, at, block))
+        else:
+            cuts.append((anchor[1], anchor[1], ' '.join(lines) + ' '))
+    return sh_apply(text, cuts), None
+
+
+def sh_add_rule(text, key, tab, r):
+    rows = sh_stmts(text, key)
+    rules = [x for x in rows if x[0] != 'AddShopItem' and atoi(x[3][0]) == tab]
+    anchor = rules[-1]
+    row = sh_fmt(text, 'AddVendorItem', [tab, r[0], r[1], r[2], r[3], 100])
+    return ne_insert_after(text, anchor[2], anchor[1], row)
+
+
+def sh_set_rule(text, key, nth, which, value):
+    """replace argument `which` (0-based) of the block's nth AddVendorItem row"""
+    s0, _ = ne_block(text, key)
+    rows = [x for x in sh_stmts(text, key) if x[0] != 'AddShopItem']
+    a = rows[nth]
+    open_ = text.index('(', a[1]) + 1
+    parts, pos = [], open_
+    for arg in text[open_:text.index(')', open_)].split(','):
+        lead = len(arg) - len(arg.lstrip())
+        parts.append((pos + lead, pos + lead + len(arg.strip())))
+        pos += len(arg) + 1
+    b, e = parts[which]
+    return text[:b] + str(value) + text[e:]
+
+
+def sh_spec_set(spec, define, field, value):
+    """one Spec_Item field of the row whose dwID is `define`, by the header's columns"""
+    lines = spec.split('\r\n')
+    col = {h.lstrip('/'): i for i, h in enumerate(lines[1].split('\t'))}
+    for i, l in enumerate(lines):
+        c = l.split('\t')
+        if len(c) > col['dwID'] and c[col['dwID']].strip() == define and not l.lstrip().startswith('//'):
+            cell = c[col[field]]
+            c[col[field]] = cell.replace(cell.strip(), str(value), 1)
+            lines[i] = '\t'.join(c)
+            return '\r\n'.join(lines)
+    raise KeyError(define)
+
+
+SH_EDITS = [   # (npc key, tab, {omit, price, slot}) applied with the conversion
+    ('MaFl_Peach', 0, {'price': {'II_SYS_SYS_SCR_AWAKE': 150000}}),
+    ('MaEw_Raya', 0, {'omit': ['II_SYS_SYS_SCR_PETAWAKE'], 'price': {'II_SYS_SYS_SCR_AWAKE': 777}}),   # 2 prices: load order decides
+]
+
+
+def sh_run(root):
+    import hashlib
+    sha = lambda t: hashlib.sha1(t.encode('utf-8')).hexdigest()
+    A = NNData(root)
+    D, I = A.D, A.I
+    props = I[0]
+    texts = {f: nn_text16(A.raw[f]) for f in NN_CHAR_FILES if f in A.raw}
+    npcs = sh_npcs(texts, D, A.S)
+    final = sh_costs(npcs, props)
+    cost_of = lambda iid: final[iid][0] if iid in final else props[iid]['cost']
+    penya = lambda x: x['vtype'] not in (1, 2)
+    # 1. every item of every Penya shop: dwCost, pay / get back at each rate, refused
+    shops = []
+    for f, x in npcs:
+        if not penya(x): continue
+        tabs = []
+        for ids, _ in nn_fill(I, x):
+            tabs.append([[iid, cost_of(iid), [[sh_buy(iid, cost_of(iid), r, D), sh_sell(cost_of(iid), r)] for r in SH_RATES],
+                          sh_refused(props[iid], D)] for iid in ids])
+        shops.append(dict(file=f, key=x['key'], tabs=tabs))
+    overrides = [[iid, props[iid]['cost'], c, k] for iid, (c, k) in sorted(final.items())]
+    # 2. small cases: costs around the edges, Perin, refusals
+    small = []
+    awake, perin = U32(D['II_SYS_SYS_SCR_AWAKE']), U32(D['II_SYS_SYS_SCR_PERIN'])
+    for iid in (awake, perin):
+        for dw in (0xFFFFFFFF, 0, 1, 3, 4, 5, 7, 100000, 16777217, 123456789, 858993459, 2147483583, 2147483584,
+                   2147483647, 0x80000000, 0xFFFFFFF0, 0xFFFFFF01, 0xFFFFFFFE):   # negative: C truncates toward 0
+            small.append([iid, dw, [[sh_buy(iid, dw, r, D), sh_sell(dw, r)] for r in SH_RATES]])
+    refusals = []                                # one item of each kind, picked by its fields (not by sh_refused)
+    picks = (lambda p: p['ik3'] == U32(D['IK3_EVENTMAIN']), lambda p: p['ik3'] == U32(D['IK3_QUEST']),
+             lambda p: p['id'] == U32(D['II_SYS_SYS_SCR_SEALCHARACTER']), lambda p: p['id'] == perin,
+             lambda p: p['parts'] == D['PARTS_RIDE'] and s32(p['job']) == D['JOB_VAGRANT'],
+             lambda p: p['parts'] == D['PARTS_RIDE'] and s32(p['job']) != D['JOB_VAGRANT'],
+             lambda p: p['id'] == awake)
+    for pick in picks:
+        hit = next(p for i, p in sorted(props.items()) if i < 60000 and pick(p))
+        refusals.append([hit['id'], sh_refused(hit, D)])
+    # 3. every Penya tab with rules -> fixed items, one after another (and two with an edit)
+    by_def = {p['define']: i for i, p in props.items() if i < 60000}
+    edits_of = {(k, t): {kind: ({str(by_def[d]): v for d, v in e.items()} if isinstance(e, dict) else [str(by_def[d]) for d in e])
+                         for kind, e in ed.items()} for k, t, ed in SH_EDITS}
+    seen = {}
+    for f, x in npcs: seen[(f, x['key'])] = seen.get((f, x['key']), 0) + 1
+    converts = []
+    for f, x in npcs:
+        if not penya(x) or seen[(f, x['key'])] > 1: continue
+        for t in range(4):
+            if not any(s[0] == 'gen' and s[1] == t for s in x['shop']): continue
+            ed = edits_of.get((x['key'], t), {})
+            cur = next(n for n in nn_npcs(texts[f], D, A.S) if n['key'] == x['key'])
+            texts[f], why = sh_convert(texts[f], cur, x['key'], t, I, D, ed)
+            after = next(n for n in nn_npcs(texts[f], D, A.S) if n['key'] == x['key'])
+            won = sh_costs(sh_npcs(texts, D, A.S), props).get(awake)
+            converts.append(dict(file=f, key=x['key'], tab=t, edits=ed, blocked=why, sha=sha(texts[f]),
+                                 tabs=[ids for ids, _ in nn_fill(I, after)], awake=list(won) if won else None))
+    # 4. rules added / changed, and Spec_Item edits (on the original files)
+    inc0 = nn_text16(A.raw['character.inc'])
+    rules = []
+    for name, fn in (('add a rule', lambda t: sh_add_rule(t, 'MaFl_Peach', 0, ('IK3_GENERAL_RANDOMOPTION_GEN', -1, 0, 400))),
+                     ('rarity max 200', lambda t: sh_set_rule(t, 'MaFl_Peach', 0, 4, 200)),
+                     ('rarity min 0 of the 2nd rule', lambda t: sh_set_rule(t, 'MaFl_Peach', 1, 3, 0))):
+        t2 = fn(inc0)
+        n = next(n for n in nn_npcs(t2, D, A.S) if n['key'] == 'MaFl_Peach')
+        rules.append(dict(name=name, sha=sha(t2), tabs=[ids for ids, _ in nn_fill(I, n)]))
+    # a fixed line ABOVE the rules (no NPC has one today): the converted lines must go above it
+    first = [x for x in sh_stmts(inc0, 'MaFl_Peach') if x[0] != 'AddShopItem'][0]
+    at = sh_line(inc0, first[1])
+    t2 = inc0[:at] + '\t\tAddShopItem( 0, II_SYS_SYS_SCR_AMPESS );\r\n' + inc0[at:]
+    n = next(n for n in nn_npcs(t2, D, A.S) if n['key'] == 'MaFl_Peach')
+    t3, why = sh_convert(t2, n, 'MaFl_Peach', 0, I, D, {})
+    n3 = next(n for n in nn_npcs(t3, D, A.S) if n['key'] == 'MaFl_Peach')
+    rules.append(dict(name='fixed line above the rules', sha=sha(t3), before=[ids for ids, _ in nn_fill(I, n)], tabs=[ids for ids, _ in nn_fill(I, n3)]))
+    spec0 = open(os.path.join(root, 'Spec_Item.txt'), 'rb').read().decode('latin-1')
+    spec = []
+    for name, define, field, value in (('own price 150000', 'II_SYS_SYS_SCR_AWAKE', 'dwCost', 150000),
+                                       ('no price', 'II_SYS_SYS_SCR_AWAKE', 'dwCost', '='),
+                                       ('hidden from rules', 'II_SYS_SYS_SCR_PETAWAKE', 'dwShopAble', -1)):
+        spec.append(dict(name=name, define=define, field=field, value=value, sha=sha(sh_spec_set(spec0, define, field, value))))
+    return dict(rates=SH_RATES, shops=shops, overrides=overrides, small=small, refusals=refusals, converts=converts, rules=rules, spec=spec)
+
+
+# ---------------------------------------------------------------------------------------------
+# board: rules windows (the npc-board client change, docs/patches/npc-board.diff), from the C++:
+#   CWndWorld::OnCommand default branch, patched: CScript::Load("Client\\NpcBoard_<id>.inc") ok ->
+#     CWndGuildCombatBoard(2) titled with text 7000 + id, SetString(m_pProg); else the exchange window.
+#   CWndGuildCombatBoard::SetString -> CEditString::AddParsingString (defaults: 0xffffffff, style 0,
+#     PS_USE_MACRO; __ITEMLINK on) -> ParsingString (_Common/EditString.cpp:441).
+# ---------------------------------------------------------------------------------------------
+def bd_char(c):                                  # MSVC char is signed
+    c &= 0xFF
+    return c - 256 if c >= 128 else c
+
+
+def bd_color(eight):
+    """the 8 characters after #c: for j = 7..0: cVal = c >= 'a' ? c - 'a' + 10 : c - '0'; dwl |= (DWORDLONG)cVal << 4k"""
+    num, sh = 0, 0
+    for j in range(7, -1, -1):
+        c = bd_char(ord(eight[j]) if j < len(eight) else 0)
+        v = bd_char(c - ord('a') + 10 if c >= ord('a') else c - ord('0'))
+        num |= (v & 0xFFFFFFFFFFFFFFFF) << sh
+        sh += 4
+    return num & 0xFFFFFFFF
+
+
+def bd_parse(s):
+    """-> [[text, color, bold, underline, strike]] (runs of one style)"""
+    U, B, S = 1, 2, 4
+    col, sty = 0xFFFFFFFF, 0
+    out = []
+    def put(ch):
+        if out and out[-1][1] == col and out[-1][2] == sty: out[-1][0] += ch
+        else: out.append([ch, col, sty])
+    n, i = len(s), 0
+    while i < n:
+        c = s[i]
+        if c == '#':
+            i += 1
+            if i >= n: break
+            k = s[i]
+            if k == 'c':
+                i += 1
+                if i < n:
+                    col = bd_color((s[i:i + 8] + '\0' * 8)[:8].replace('\0', chr(0)) if len(s) - i >= 8 else s[i:] + chr(0) * (8 - (len(s) - i)))
+                    i += 7
+            elif k == 'u': sty |= U
+            elif k == 'b': sty |= B
+            elif k == 's': sty |= S
+            elif k == 'l':
+                i += 1
+                if i < n: i += 3
+            elif k == 'i':
+                i += 1
+                if i < n: i += 10
+            elif k == 'n':
+                i += 1
+                if i < n:
+                    j = s[i]
+                    if j == 'c': col = 0xFFFFFFFF
+                    elif j == 'b': sty &= ~B
+                    elif j == 'u': sty &= ~U
+                    elif j == 's': sty &= ~S
+            else:
+                put('#'); put(k)
+        elif c == '\\' and i + 1 < n and s[i + 1] == 'n':
+            put('\n'); i += 1
+        else:
+            put(c)
+        i += 1
+    return [[t, col_, bool(st & B), bool(st & U), bool(st & S)] for t, col_, st in out]
+
+
+BD_TEXTS = [
+    '#b#cff0099ff* Participation#nb#nc\r\n* Application Time: Sunday 00:00 to Saturday 12:00\r\n#b#cffff0000* Guild Siege will only begin if 3 or more Guilds are accepted.#nb#nc',
+    'plain text', 'a#xb#', '#', 'end #c', '#cFFFF0000upper#nc', '#cff00ff00green #ugreen-under#nu#nc white',
+    'one\\ntwo', '#sstrike#ns', '#l0949code#nl', '#i1234567890xitem#ni', '#nz odd', '#c12345678 x', '#c!!!!!!!! y', '##',
+]
+BD_SPECS = [
+    ('rules on Peach', 'MaFl_Peach', 'Guild Siege Rules', '#b#cffffcc00How to win#nc#nb\n- Kill players\\nfor points'),
+    ('rules on Bob-less Lui', 'MaFl_Lui', 'Shop Rules', 'Line one\nLine two\n'),
+]
+
+
+def bd_run(root):
+    import hashlib
+    sha = lambda t: hashlib.sha1(t.encode('utf-8')).hexdigest()
+    A = NMData(root)
+    parsed = [dict(text=t, pieces=bd_parse(t)) for t in BD_TEXTS]
+    specs = []
+    for name, key, label, text in BD_SPECS:
+        mname = 'MMI_' + re.sub(r'[^A-Z0-9]+', '_', label.upper().replace("'", '')).strip('_')
+        spec = dict(npcKey=key, kind='board', menus=[dict(name=mname, label=label, sets=[])])
+        ins, ids, _ = nm_build(A, spec)
+        files = {f: sha(nm_apply(A.txt[f], v)) for f, v in ins.items()}
+        board = re.sub(r'\r\n|\r|\n', '\r\n', text)
+        cases = set(A.cases)
+        # the right-click result of the new id: no case in OnCommand -> board when its file exists (patched client)
+        opens = 'own' if mname in cases else 'board'
+        specs.append(dict(name=name, npcKey=key, label=label, text=text, menu=mname, id=ids[0], files=files,
+                          board=board, boardSha=sha(board), opens=opens, opensUnpatched='own' if mname in cases else 'exchange'))
+    return dict(parsed=parsed, specs=specs)
+
+
 
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
@@ -2691,6 +3106,10 @@ if __name__ == '__main__':
         print(json.dumps(nm_run(root)))
     elif what == 'npcedit':
         print(json.dumps(ne_run(root)))
+    elif what == 'shop':
+        print(json.dumps(sh_run(root)))
+    elif what == 'board':
+        print(json.dumps(bd_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model
         for f in sorted(os.listdir(root)):
             if f.lower().startswith('mvr_') and f.lower().endswith('.o3d'):

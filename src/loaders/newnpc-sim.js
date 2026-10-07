@@ -105,9 +105,13 @@
 
   // What clicking menu id i opens: null (its own window, a case in OnCommand) or the exchange window:
   // { exchange: true, sets: number of SETs the menu really has in Exchange_Script.txt (0 = an empty window) }
+  // With the npc-board client change (docs/patches/npc-board.diff) the default branch first loads
+  // Client\\NpcBoard_<id>.inc: { board: true, text } then. ws.boardPatch === false: a client without it.
   function opensOf(ws, i) {
     const names = ws.defines.withPrefix('MMI_').filter(([, v]) => v === i).map(([k]) => k);
     if (names.some(n => OWN_CASE.has(n))) return null;
+    const text = ws.boardTextOf ? ws.boardTextOf(i) : null;
+    if (text !== null && ws.boardPatch !== false) return { board: true, text };
     const model = ws.models && ws.models.exchange;
     const menu = model && model.menus.find(x => x.mmi.value === i);
     return { exchange: true, sets: menu ? Math.min(menu.sets.length, 30) : 0 };
@@ -123,7 +127,7 @@
     for (const p of g.placed) out.push(`Stands on ${p.map} at /position ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}, facing ${p.angle.toFixed(1)}°, model ${p.modelName || p.model}`);
     for (const w of g.where || []) out.push(`Where: ${FRE.area.label ? FRE.area.label(w) : w.caption} · GM: ${w.te}`);
     out.push('Right-click: ' + (g.menus.length ? g.menus.map(m => (m.label || m.define || m.id) + (m.when ? ` (${m.when})` : '') +
-      (m.opens ? ` [exchange window: ${m.opens.sets ? m.opens.sets + ' exchange' + (m.opens.sets === 1 ? '' : 's') : 'EMPTY'}]` : '')).join(', ') : '(no menu)'));
+      (m.opens ? (m.opens.board ? ' [rules window]' : ` [exchange window: ${m.opens.sets ? m.opens.sets + ' exchange' + (m.opens.sets === 1 ? '' : 's') : 'EMPTY'}]`) : '')).join(', ') : '(no menu)'));
     for (const t of g.tabs) out.push(`Tab ${t.slot + 1} "${t.title === null ? '(no title)' : t.title}": ${t.items.length} item(s)` +
       (t.items.length ? ' — ' + t.items.slice(0, 6).map(itemName).join(', ') + (t.items.length > 6 ? ', …' : '') : '') + (t.dropped ? ` (${t.dropped} left out)` : ''));
     return out;

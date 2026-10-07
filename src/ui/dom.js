@@ -34,17 +34,18 @@
   // while typing, a value that does not parse yet just waits (no error until the field is left).
   const LIVE_MS = 400;
   const pending = new Map();         // input -> its waiting commit (flushLive runs them now; for tests)
-  function liveCommit(el, tryCommit) {
+  function liveCommit(el, tryCommit, ms) {
     let timer = null;
     const run = () => { pending.delete(el); if (el.isConnected && document.activeElement === el) tryCommit(true); };
-    el.addEventListener('input', () => { clearTimeout(timer); pending.set(el, run); timer = setTimeout(run, FRE.dom.LIVE_MS || LIVE_MS); });
+    el.addEventListener('input', () => { clearTimeout(timer); pending.set(el, run); timer = setTimeout(run, ms || FRE.dom.LIVE_MS || LIVE_MS); });
     el.addEventListener('change', () => { clearTimeout(timer); pending.delete(el); });
   }
   const flushLive = () => { for (const run of [...pending.values()]) run(); };
 
   // key: a stable name for this field (e.g. 'ex|MMI_BOB|0|pay|1|qty'), so a re-render keeps the focus in it.
   // Only keyed inputs update while typing (live): without a key the re-render would drop the focus mid-number.
-  function numInput({ value = null, placeholder = '', disabled = false, title = '', min = 0, max = 2147483647, onCommit, key = null, live = !!key }) {
+  // liveMs: a longer pause before committing (e.g. when the commit opens a preview window)
+  function numInput({ value = null, placeholder = '', disabled = false, title = '', min = 0, max = 2147483647, onCommit, key = null, live = !!key, liveMs = 0 }) {
     const el = h('input.num-input', { type: 'text', inputMode: 'numeric', placeholder, disabled, title, value: fmt(value) });
     if (key) el.dataset.key = key;
     el.dataset.value = value === null ? '' : String(value);
@@ -54,7 +55,7 @@
       if (!r.ok || String(r.value === null ? '' : r.value) === el.dataset.value) return;
       el.dataset.value = r.value === null ? '' : String(r.value);
       onCommit(r.value);
-    });
+    }, liveMs);
     el.addEventListener('blur', () => { el.value = fmt(el.dataset.value === '' ? null : Number(el.dataset.value)); });
     el.addEventListener('keydown', e => { if (e.key === 'Enter') el.blur(); if (e.key === 'Escape') { el.value = el.dataset.value; el.blur(); } });
     el.addEventListener('change', () => {

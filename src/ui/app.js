@@ -21,6 +21,7 @@
   // Context handed to modules
   const ctx = {
     get ws() { return S.ws; },
+    get hasClient() { return !!S.client; },     // a Client folder was found (client-only files can be saved)
     get query() { return S.queries[S.mode] || ''; },
     // list badges: the keys of the edits still in the undo history, so Undo removes a badge and Redo brings it back
     get edited() { return new Set(S.ws ? S.ws.history.flatMap(e => e.tags || []) : []); },
@@ -61,14 +62,18 @@
       renderAll(false);
     },
     // Several files as one undo step: make() -> [{ file: lowerName, splices }] (current texts).
-    editGroup(make, label, keys = []) {
+    // mergeKey: the same field typed again within 2 s is folded into the step before (one undo step).
+    editGroup(make, label, keys = [], mergeKey = null) {
       const said = FRE.dom.toasts();
       try {
+        const before = S.ws.history[S.ws.history.length - 1];
         S.ws.applyGroup(make(), label);
+        const last = S.ws.history[S.ws.history.length - 1], now = Date.now();
+        if (mergeKey && before && before !== last && before.mergeKey === mergeKey && now - (before.at || 0) < 2000 && S.ws.mergeLast()) { before.at = now; return; }
         tagLast(keys, label);
+        if (last && last !== before) { last.at = now; last.mergeKey = mergeKey; }
         done(label, said);
-      } catch (e) { toast(e.message, 'bad'); }
-      renderAll(false);
+      } catch (e) { toast(e.message, 'bad'); } finally { renderAll(false); }
     },
   };
 
@@ -203,6 +208,16 @@
       const th = (await FRE.fsa.findFiles(sub, ['DonationShopTree.inc'])).get('donationshoptree.inc');
       if (th) tree = FRE.donationTree.loadTree(new FRE.SourceFile(th.name, (await FRE.fsa.readHandle(th)).bytes));
     } catch (e) { if (e.name !== 'NotFoundError' && e.name !== 'TypeMismatchError') toast('DonationShopTree.inc: ' + e.message, 'bad'); }
+    // rules windows (docs/patches/npc-board.diff): Client/Client/NpcBoard_<menu id>.inc, edited in NPC Shops
+    const boards = [];
+    try {
+      const sub = await dir.getDirectoryHandle('Client');
+      for await (const [name, handle] of sub.entries()) {
+        if (handle.kind !== 'file' || !/^npcboard_\d+\.inc$/i.test(name)) continue;
+        const { bytes, stamp } = await FRE.fsa.readHandle(handle);
+        boards.push(new FRE.SourceFile(name, bytes, { handle, stamp, dir: 'Client' }));
+      }
+    } catch (e) { if (e.name !== 'NotFoundError' && e.name !== 'TypeMismatchError') toast('Client/Client/NpcBoard files: ' + e.message, 'bad'); }
     // Battle Pass rarity / icon textures live in Client/Theme (WndBattlePass.cpp MakePath(DIR_THEME, ...))
     let theme = null;
     try {
@@ -232,8 +247,8 @@
         }
       } catch (e) { toast('Client/Model: ' + e.message, 'bad'); }
     }
-    S.client = { dir, files, tree, theme, models, modelDir };
-    if (S.ws) { S.ws.setDonationTree(tree); S.ws.setClientTheme(theme); S.ws.setClientModels(models); S.ws.setClientTextures(textures, texIndex); }
+    S.client = { dir, files, tree, theme, models, modelDir, boards };
+    if (S.ws) { S.ws.setBoardFiles(boards); S.ws.setDonationTree(tree); S.ws.setClientTheme(theme); S.ws.setClientModels(models); S.ws.setClientTextures(textures, texIndex); }
     S.createMissing = new Set(clientNames().map(n => n.toLowerCase()).filter(n => !files.has(n)));   // offered, can be unticked
   }
 
@@ -475,6 +490,7 @@
     $('item-count').textContent = `${fmt(S.filtered.length)} of ${fmt(S.items.length)} items`;
     const target = S.ws.available[S.mode].ok ? active().addTarget(ctx) : { ok: false, title: '' };
     $('new-price-row').hidden = !(target.ok && target.usesPrice);
+    $('new-price-hint').hidden = $('new-price-row').hidden;
     const at = $('add-target');
     at.textContent = target.title ? (target.ok ? `+ ${target.title.replace(/^Add to /, 'adds to ')}` : `+ is off: ${target.title}`) : '';
     at.className = 'small add-target' + (target.ok ? '' : ' muted');
@@ -487,7 +503,7 @@
     let cost = null;
     if (target.usesPrice) {
       const parsed = FRE.num.parseAmount($('new-price').value);
-      if (!parsed.ok) { toast('Price for new items: ' + parsed.error, 'bad'); return; }
+      if (!parsed.ok) { toast('Price for items added with +: ' + parsed.error, 'bad'); return; }
       cost = parsed.value;
     }
     target.add(info, cost);
