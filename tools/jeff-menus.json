@@ -1,0 +1,1213 @@
+{
+ "_source": "FLYFF-SOURCES-EDIT-GUIDES/SOURCES DOCUMENTATION/PLANS/Weapon Pieces/WEAPON_PIECES_HANDOFF.md section 5; items 7b1210d4; labels and messages chosen by the user 2026-10-06",
+ "npcKey": "MaFl_Jeff",
+ "results": {
+  "add": [
+   {
+    "name": "TID_GAME_WPNPIECE_SUCCESS",
+    "text": "You received your weapon."
+   },
+   {
+    "name": "TID_GAME_WPNPIECE_FAIL",
+    "text": "You need the weapon pieces, the boss item and a free inventory slot."
+   }
+  ]
+ },
+ "menus": [
+  {
+   "name": "MMI_WPNPIECE_ENTANESS",
+   "label": "Entaness Weapons",
+   "sets": [
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ENTANESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_ENTANESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_SWO_ENTANESS",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ENTANESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_ENTANESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_SWT_ENTANESS",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ENTANESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_ENTANESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_AXE_ENTANESS",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ENTANESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_ENTANESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_AXT_ENTANESS",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ENTANESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_ENTANESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_KNU_ENTANESS",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ENTANESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_ENTANESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_CHE_ENTANESS",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ENTANESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_ENTANESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_WAN_ENTANESS",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ENTANESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_ENTANESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_STA_ENTANESS",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ENTANESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_ENTANESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_BOW_ENTANESS",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ENTANESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_ENTANESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_YOY_ENTANESS",
+       1,
+       1000000
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "name": "MMI_WPNPIECE_CHITON",
+   "label": "Chiton Weapons",
+   "sets": [
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_CHITON",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_CHITON",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_SWO_HERNES",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_CHITON",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_CHITON",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_SWT_HERNES",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_CHITON",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_CHITON",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_AXE_HERNES",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_CHITON",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_CHITON",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_AXT_HERNES",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_CHITON",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_CHITON",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_KNU_HERNES",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_CHITON",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_CHITON",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_CHE_HERNES",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_CHITON",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_CHITON",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_WAN_HERNES",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_CHITON",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_CHITON",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_STA_HERNES",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_CHITON",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_CHITON",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_BOW_HERNES",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_CHITON",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_CHITON",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_YOY_HERNES",
+       1,
+       1000000
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "name": "MMI_WPNPIECE_DUCHESS",
+   "label": "Duchess Weapons",
+   "sets": [
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DUCHESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_DUCHESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_SWO_ROYAL",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DUCHESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_DUCHESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_SWT_ROYAL",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DUCHESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_DUCHESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_AXE_ROYAL",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DUCHESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_DUCHESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_AXT_ROYAL",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DUCHESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_DUCHESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_KNU_ROYAL",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DUCHESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_DUCHESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_CHE_ROYAL",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DUCHESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_DUCHESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_WAN_ROYAL",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DUCHESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_DUCHESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_STA_ROYAL",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DUCHESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_DUCHESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_BOW_ROYAL",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DUCHESS",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_DUCHESS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_YOY_ROYAL",
+       1,
+       1000000
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "name": "MMI_WPNPIECE_ANCIENT",
+   "label": "Ancient Weapons (Drakul)",
+   "sets": [
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DRAKUL",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CURSEVEMPIREGLASS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_SWO_ANCIENT",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DRAKUL",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CURSEVEMPIREGLASS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_SWT_ANCIENT",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DRAKUL",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CURSEVEMPIREGLASS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_AXE_ANCIENT",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DRAKUL",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CURSEVEMPIREGLASS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_AXT_ANCIENT",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DRAKUL",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CURSEVEMPIREGLASS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_KNU_ANCIENT",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DRAKUL",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CURSEVEMPIREGLASS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_CHE_ANCIENT",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DRAKUL",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CURSEVEMPIREGLASS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_WAN_ANCIENT",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DRAKUL",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CURSEVEMPIREGLASS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_STA_ANCIENT",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DRAKUL",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CURSEVEMPIREGLASS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_BOW_ANCIENT",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_DRAKUL",
+       200
+      ],
+      [
+       "II_GEN_GEM_GEM_CURSEVEMPIREGLASS",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_YOY_ANCIENT",
+       1,
+       1000000
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "name": "MMI_WPNPIECE_ANKOU",
+   "label": "Ankou Weapons",
+   "sets": [
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ANKOU",
+       200
+      ],
+      [
+       "II_SYS_SYS_QUE_BEHEMOTHSCALES01",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_SWO_BEHESWORD",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ANKOU",
+       200
+      ],
+      [
+       "II_SYS_SYS_QUE_BEHEMOTHSCALES01",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_SWO_BEHEONEHANDSWORD",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ANKOU",
+       200
+      ],
+      [
+       "II_SYS_SYS_QUE_BEHEMOTHSCALES01",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_SWT_BEHETWOSWORD",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ANKOU",
+       200
+      ],
+      [
+       "II_SYS_SYS_QUE_BEHEMOTHSCALES01",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_AXE_BEHEONEHANDAXE",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ANKOU",
+       200
+      ],
+      [
+       "II_SYS_SYS_QUE_BEHEMOTHSCALES01",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_AXT_BEHETWOAXE",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ANKOU",
+       200
+      ],
+      [
+       "II_SYS_SYS_QUE_BEHEMOTHSCALES01",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_KNU_BEHENUCLE",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ANKOU",
+       200
+      ],
+      [
+       "II_SYS_SYS_QUE_BEHEMOTHSCALES01",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_CHE_BEHESTICK",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ANKOU",
+       200
+      ],
+      [
+       "II_SYS_SYS_QUE_BEHEMOTHSCALES01",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_WAN_BEHEWAND",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ANKOU",
+       200
+      ],
+      [
+       "II_SYS_SYS_QUE_BEHEMOTHSCALES01",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_STA_BEHESTAFF",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ANKOU",
+       200
+      ],
+      [
+       "II_SYS_SYS_QUE_BEHEMOTHSCALES01",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_BOW_BEHECROSSBOW",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_ANKOU",
+       200
+      ],
+      [
+       "II_SYS_SYS_QUE_BEHEMOTHSCALES01",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_YOY_BEHEYOYO",
+       1,
+       1000000
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "name": "MMI_WPNPIECE_CRYSTAL",
+   "label": "Crystal Lusaka Weapons",
+   "sets": [
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_SAVAGEKHAN",
+       30
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_SAVAGEKHAN",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_SWO_LUZAM",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_SAVAGEKHAN",
+       30
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_SAVAGEKHAN",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_SWT_LUZAM",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_SAVAGEKHAN",
+       30
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_SAVAGEKHAN",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_AXE_LUZAM",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_SAVAGEKHAN",
+       30
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_SAVAGEKHAN",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_AXT_LUZAM",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_SAVAGEKHAN",
+       30
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_SAVAGEKHAN",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_KNU_LUZAM",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_SAVAGEKHAN",
+       30
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_SAVAGEKHAN",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_CHE_LUZAM",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_SAVAGEKHAN",
+       30
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_SAVAGEKHAN",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_WAN_LUZAM",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_SAVAGEKHAN",
+       30
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_SAVAGEKHAN",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_STA_LUZAM",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_SAVAGEKHAN",
+       30
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_SAVAGEKHAN",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_BOW_LUZAM",
+       1,
+       1000000
+      ]
+     ]
+    },
+    {
+     "cond": [
+      [
+       "II_GEN_GEM_GEM_WPNPIECE_SAVAGEKHAN",
+       30
+      ],
+      [
+       "II_GEN_GEM_GEM_CORE_SAVAGEKHAN",
+       1
+      ]
+     ],
+     "pay": [
+      [
+       "II_WEA_YOY_LUZAM",
+       1,
+       1000000
+      ]
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -29,7 +29,9 @@ edit/item-ops.js
 edit/battlepass-ops.js
 edit/exchange-ops.js
 edit/npc-ops.js
+edit/menu-ops.js
 validate/newnpc.js
+validate/newmenu.js
 loaders/newnpc-sim.js
 core/workspace.js
 core/client-sync.js
@@ -44,6 +46,7 @@ ui/npc-shops.js
 ui/combo.js
 ui/tga.js
 ui/new-npc.js
+ui/menu-form.js
 ui/donation.js
 ui/battlepass.js
 ui/exchange.js

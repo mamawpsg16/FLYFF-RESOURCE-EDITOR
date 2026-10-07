@@ -29,6 +29,11 @@
     backupsOf: name => (S.backupDir ? FRE.fsa.backupCopies(S.backupDir, name) : Promise.resolve(null)),
     get backupKey() { return S.backupDir ? S.backupDir.name : null; },
     renderList: () => renderList(),
+    // set the list search of the current task (e.g. so a just-created NPC is listed)
+    setQuery(q) { S.queries[S.mode] = q; $('list-search').value = q; },
+    // switch to another task with the same folder, then run then(ctx) (e.g. select a menu);
+    // unsaved edits: Cancel / Discard / Save and switch
+    openTask: (id, then) => leaveTask(async () => { await loadTask(id); if (then && S.task === id) { then(ctx); renderAll(false); } }),
     // bytes of a file in the Client folder by relative path ('Char/char_NpcHende.tga', names matched without case), or null
     async clientFile(rel) {
       if (!S.client) return null;
@@ -39,12 +44,18 @@
       return fh ? (await FRE.fsa.readHandle(fh)).bytes : null;
     },
     // Apply an edit op: make(text) -> splices. `key` marks what was edited (list badges).
+    // Repeated edits of the same field within 2 s (typing) are folded into one undo step.
     edit(lowerFile, make, label, key) {
       const f = S.ws.files.get(lowerFile);
       try {
         const splices = make(f.text);
+        if (!splices.length) return;
+        const before = S.ws.history[S.ws.history.length - 1];
         S.ws.apply(lowerFile, splices, label);
         tagLast(key ? [key] : [], label);
+        const now = Date.now(), last = S.ws.history[S.ws.history.length - 1];
+        if (before && before !== last && before.label === label && String(before.tags) === String(last.tags) && now - (before.at || 0) < 2000 && S.ws.mergeLast()) before.at = now;
+        else last.at = now;
       } catch (e) { toast(e.message, 'bad'); }
       renderAll(false);
     },
@@ -144,13 +155,17 @@
 
   // back to the start screen; unsaved edits are only dropped after asking
   function changeTask() {
-    const leave = () => { S.task = null; S.ws = null; S.client = null; S.diagOpen = false; $('diag-panel').hidden = true; renderAll(false); };
+    leaveTask(() => { S.task = null; S.ws = null; S.client = null; S.diagOpen = false; $('diag-panel').hidden = true; renderAll(false); });
+  }
+  // run go() once the open task has no unsaved edit: ask first, and offer to save them
+  function leaveTask(go) {
     const dirty = S.ws ? S.ws.dirtyFiles() : [];
-    if (!dirty.length) { leave(); return; }
+    if (!dirty.length) { go(); return; }
     modal({ title: 'Unsaved changes', body: h('div',
       h('p', `${dirty.map(f => f.name).join(', ')} ${dirty.length > 1 ? 'have' : 'has'} changes that are not saved.`),
-      h('p.muted', 'To keep them, press Cancel and then Save.')),
-      buttons: [{ label: 'Cancel' }, { label: 'Discard changes', cls: 'danger', onClick: leave }] });
+      h('p.muted', 'Save and continue: the usual review, backup and write, then go on. Discard: the edits are lost.')),
+      buttons: [{ label: 'Cancel' }, { label: 'Discard changes', cls: 'danger', onClick: go },
+        { label: 'Save and continue', cls: 'primary', onClick: () => { onSave(go); } }] });
   }
 
   async function pickBackup() {
@@ -368,6 +383,8 @@
     if (m.listAction) { const x = m.listAction(ctx); if (x) action.appendChild(x); }   // a button right of the search box
     if (m.listExtra) { const x = m.listExtra(ctx); if (x) extra.appendChild(x); }
     m.renderList(el, ctx);
+    const sel = el.querySelector('.sel');                 // e.g. a new NPC at the end of the list
+    if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: 'nearest' });
   }
 
   // Re-rendering the same view (after an edit) keeps the scroll position; a new view starts at the top.
@@ -380,9 +397,11 @@
     const m = active(), view = S.mode + '|' + JSON.stringify(m.st || {}, (k, v) => k === 'pick' ? undefined : v);
     const top = view === lastView ? el.scrollTop : 0;
     lastView = view;
-    el.className = ''; el.textContent = '';
-    if (!S.ws.available[S.mode].ok) { el.appendChild(h('p.empty-state', `Not available: missing ${S.ws.available[S.mode].missing.join(', ')}`)); return; }
-    m.renderEditor(el, ctx);
+    if (!S.ws.available[S.mode].ok) { el.className = ''; el.textContent = ''; el.appendChild(h('p.empty-state', `Not available: missing ${S.ws.available[S.mode].missing.join(', ')}`)); return; }
+    FRE.dom.keepFocus(el, () => {
+      el.className = ''; el.textContent = '';
+      m.renderEditor(el, ctx);
+    });
     el.scrollTop = top;
   }
 
@@ -510,7 +529,9 @@
     return box;
   }
 
-  async function onSave() {
+  // after(): runs once the save succeeded and its log is closed (Save and continue)
+  async function onSave(after) {
+    if (typeof after !== 'function') after = null;
     const ws = S.ws;
     if (!ws || !ws.dirtyFiles().length) return;
     const nb = ws.newBlocking();
@@ -545,11 +566,11 @@
       h('p.muted.small', `Backup folder: ${S.backupDir.name}/<timestamp>/` + (!S.client && client.length ? ` · After saving, also copy to Client/: ${client.join(', ')}` : '')));
     modal({ title: `Review changes (${dirty.length} file${dirty.length > 1 ? 's' : ''})`, body, wide: true, buttons: [
       { label: 'Cancel' },
-      { label: `Back up and write ${dirty.length} file${dirty.length > 1 ? 's' : ''}`, cls: 'primary', onClick: runSave },
+      { label: `Back up and write ${dirty.length} file${dirty.length > 1 ? 's' : ''}`, cls: 'primary', onClick: () => { runSave(after); } },
     ] });
   }
 
-  async function runSave() {
+  async function runSave(after) {
     const log = h('div.log');
     const client = S.ws.clientCopiesNeeded();
     const m = modal({ title: 'Saving…', body: log, buttons: [{ label: 'Close' }] });
@@ -566,6 +587,7 @@
     }
     m.el.querySelector('header').textContent = report.ok ? 'Saved' : 'Save failed';
     renderAll(false);
+    if (report.ok && after) { m.close(); after(); }
   }
 
   // ------------------------------------------------------------------ init

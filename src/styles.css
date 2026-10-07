@@ -303,3 +303,15 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
 .nn-col { display: flex; flex-direction: column; gap: 4px; }
 .tga-pic canvas { width: 100px; height: 120px; border: 1px solid var(--line); border-radius: 6px; background: #000; }
 .tga-pic.small canvas { width: 60px; height: 72px; }
+
+/* menu form (ui/menu-form.js) */
+.mf-head { display: flex; align-items: baseline; gap: 8px; margin: 12px 0 4px; }
+.mf-mode { gap: 16px; }
+.mf-rewards { margin: 4px 0; font-size: 13px; }
+.mf-rewards td { padding: 4px 6px; }
+.mf-hint { margin: -2px 0 6px 98px; }
+.mf-players { margin: 4px 0 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.mf-line { font-size: 13px; padding: 2px 0; }
+.small.ok { color: var(--ok); } .small.bad { color: var(--bad); } .small.warn { color: var(--warn); }
+.pct-wrap { white-space: nowrap; } .pct-input { width: 80px; }
+.ex-tab { color: var(--baruna); }

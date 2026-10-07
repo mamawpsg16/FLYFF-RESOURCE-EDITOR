@@ -27,7 +27,8 @@ for d in $SRC/Client/World/*/; do
   for f in "$d"*.dyo; do [ -f "$f" ] && mkdir -p "$DST/Client/World/$n" && cp -p "$f" "$DST/Client/World/$n/"; done
 done
 cp -p $SRC/Client/character.inc $SRC/Client/character.txt.txt $SRC/Client/DonationShop.inc $SRC/Client/BattlePass.inc $SRC/Client/Spec_Item.txt \
-  $SRC/Client/Exchange_Script.txt $SRC/Client/defineNeuz.h $SRC/Client/etc.inc $SRC/Client/etc.txt.txt "$DST/Client/"
+  $SRC/Client/Exchange_Script.txt $SRC/Client/defineNeuz.h $SRC/Client/etc.inc $SRC/Client/etc.txt.txt \
+  $SRC/Client/defineText.h $SRC/Client/textClient.inc $SRC/Client/textClient.txt.txt "$DST/Client/"
 cp -p $SRC/Client/Client/DonationShopTree.inc "$DST/Client/Client/"
 # Client/Model: file names only (Add New NPC checks each model's .o3d / .ani files)
 ls "$SRC/Client/Model" > "$DST/Client/Model.list"
@@ -40,3 +41,5 @@ if [ "$DST" = "test-data/fixtures" ]; then cp -p "$SRC/Client/Char/char_Juria.tg
 else cp -p "$SRC"/Client/Char/char_*.tga "$SRC"/Client/Char/char_*.TGA "$DST/Client/Char/" 2>/dev/null || true; fi
 cp -p $SRC/Client/Theme/BattlePass_*.tga "$DST/Client/Theme/"
 echo "refreshed $DST"
+# the client's menu click switch (oracle_sim.py newmenu reads which menu ids open the exchange window)
+if [ "$DST" = "test-data/fixtures" ]; then mkdir -p "$DST/src" && cp -p "$SRC/Source/Source/_Interface/WndWorld.cpp" "$DST/src/"; fi

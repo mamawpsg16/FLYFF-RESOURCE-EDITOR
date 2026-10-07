@@ -67,5 +67,16 @@
     return FRE.area.label(list[0]) + (list.length > 1 ? ` +${list.length - 1}` : '');
   }
 
-  FRE.ui = { modules: [], pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell, whereLine, whereText, copyText };
+  // Form field label, the same in every form: required = a red * after it; optional = "(optional)" under it
+  function fieldLabel(text, req) {
+    return h('span.nn-label', text, req ? h('span.nn-req.req', { title: 'Required' }, ' *') : [h('br'), h('span.nn-req.opt', '(optional)')]);
+  }
+  const requiredNote = () => h('p.muted.small', h('span.nn-req.req', '*'), ' = required · fields without it are optional');
+  // The end of every form, in this order: the * note, Checks (with the legend), then the preview.
+  // { checks: element, action: 'Create' | 'Add', previewTitle, preview: element }
+  function formFooter({ checks, action = 'Create', previewTitle = 'What will be written', preview }) {
+    return [requiredNote(), h('h3', 'Checks'), h('p.muted.small', `⛔ must be fixed before ${action} · ⚠ only a warning`), checks, h('h3', previewTitle), preview];
+  }
+
+  FRE.ui = { modules: [], pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell, whereLine, whereText, copyText, fieldLabel, requiredNote, formFooter };
 })(globalThis.FRE = globalThis.FRE || {});

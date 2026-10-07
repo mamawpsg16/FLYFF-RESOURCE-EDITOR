@@ -162,8 +162,7 @@
     const select = (value, options, onChange) => h('select', { on: { change: e => { onChange(e.target.value); refresh(); } } },
       options.map(o => o.group ? h('optgroup', { label: o.group }, o.options.map(x => h('option', { value: x.v, selected: String(x.v) === String(value) }, x.label)))
         : h('option', { value: o.v, selected: String(o.v) === String(value) }, o.label)));
-    // required: a red * after the label; optional: "(optional)" under it
-    const label = (text, req) => h('span.nn-label', text, req ? h('span.nn-req.req', { title: 'Required' }, ' *') : [h('br'), h('span.nn-req.opt', '(optional)')]);
+    const label = FRE.ui.fieldLabel;
     const row = (text, req, ...el) => h('div.nn-row', label(text, req), ...el);
     const note = t => h('span.muted.small', t);
     const region = () => regions.find(r => r.value === form.region) || regions[0];
@@ -310,7 +309,7 @@
         const free = [0, 1, 2, 3].find(s => !form.tabs.some(t => t.slot === s));
         if (free !== undefined) body.appendChild(h('button.small', { on: { click: () => { form.tabs.push(blankTab(free)); render(); } } }, `+ Tab ${free + 1}`));
       }
-      body.append(h('p.muted.small', h('span.nn-req.req', '*'), ' = required'), h('h3', 'Checks'), h('p.muted.small', '⛔ must be fixed before Create · ⚠ only a warning'), problems, h('h3', 'What will be written'), preview);
+      body.append(...FRE.ui.formFooter({ checks: problems, action: 'Create', preview }));
       refresh();
     }
 
@@ -382,11 +381,13 @@
     return true;
   }
 
-  // select the new NPC in the NPC Shops list (and show every NPC if the list filter hides it)
+  // select the new NPC in the NPC Shops list (and show every NPC if the list filter or the search hides it)
   function select(ctx, npc) {
     const mod = FRE.ui.modules.find(m => m.id === 'npc');
     mod.st.sel = mod.npcId(npc); mod.st.tab = 0;
     if (!mod.isListed(npc)) mod.st.show = 'all';
+    const q = ctx.query.toLowerCase();
+    if (q && !(npc.name || '').toLowerCase().includes(q) && !npc.key.toLowerCase().includes(q)) ctx.setQuery(npc.name || npc.key);
     ctx.renderAll(false);
   }
 

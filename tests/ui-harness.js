@@ -60,6 +60,9 @@
   // a new building tag's files (b4b9a465): defineNeuz.h is LF in Client, etc.inc / etc.txt.txt identical
   clientDir.children.set('defineNeuz.h', new FakeFile('defineNeuz.h', lfOnly(original.get('defineNeuz.h'))));
   for (const n of ['etc.inc', 'etc.txt.txt']) clientDir.children.set(n, new FakeFile(n, original.get(n).slice()));
+  // a new exchange menu's files: defineText.h is LF in Client, textClient.* identical
+  clientDir.children.set('defineText.h', new FakeFile('defineText.h', lfOnly(original.get('defineText.h'))));
+  for (const n of ['textClient.inc', 'textClient.txt.txt']) clientDir.children.set(n, new FakeFile(n, original.get(n).slice()));
   // a test copy has no Client/Model folder, only its file names (tools/refresh-fixtures.sh writes Client/Model.list)
   if (FRE.HARNESS_MODEL_LIST) clientDir.children.set('Model.list', new FakeFile('Model.list', new TextEncoder().encode(FRE.HARNESS_MODEL_LIST)));
   if (FRE.HARNESS_TEX_LIST) clientDir.children.set('ModelTexture.list', new FakeFile('ModelTexture.list', new TextEncoder().encode(FRE.HARNESS_TEX_LIST)));
@@ -290,6 +293,8 @@
       const madSrv = res.children.get('World').children.get('WdMadrigal').children.get('WdMadrigal.dyo');
       const madCli = clientDir.children.get('World').children.get('WdMadrigal').children.get('WdMadrigal.dyo');
       const before = { dyo: madSrv.bytes, txt: res.children.get('character.txt.txt').bytes, inc: res.children.get('character.inc').bytes };
+      // a list search that would hide the new NPC (user report: searched "Jeff", created Bob, Bob not listed)
+      const ls = $('list-search'); ls.value = 'Jeff'; ls.dispatchEvent(new Event('input'));
       click(btnByText(document.getElementById('list-action'), '+ NPC'));
       await waitFor(() => document.querySelector('.newnpc'), 'new NPC form');
       const form = document.querySelector('.newnpc');
@@ -361,6 +366,9 @@
       await waitFor(() => !document.querySelector('.newnpc'), 'form closed');
       ok(/In game after Save/.test($('editor').textContent) && /Stands on WdMadrigal at \/position 6966\.0, 100\.0, 3220\.0/.test($('editor').textContent) && /Tab 0 "General Goods": 1 item/.test($('editor').textContent),
         'the new NPC is selected and shows what the game will load');
+      ok(ls.value === 'Lumi' && (document.querySelector('#list .npc.sel') || { textContent: '' }).textContent.includes('MaFl_Lumi'),
+        'the search that hid the new NPC is replaced by its name: Lumi is listed and selected');
+      ls.value = ''; ls.dispatchEvent(new Event('input'));
       ok(S.ws.dirtyFiles().length === 6, '6 files changed (character.inc, character.txt.txt, WdMadrigal.dyo, defineNeuz.h, etc.inc, etc.txt.txt)');
       ok(/Above the name: \[Dungeon Pieces\]/.test($('editor').textContent), 'in game: [Dungeon Pieces] above the name');
       const tagBefore = Object.fromEntries(['defineNeuz.h', 'etc.inc', 'etc.txt.txt'].map(n => [n, res.children.get(n).bytes]));
@@ -389,6 +397,71 @@
       res.children.get('character.inc').bytes = before.inc; clientDir.children.get('character.inc').bytes = before.inc.slice();
       for (const n of ['defineNeuz.h', 'etc.inc', 'etc.txt.txt']) { res.children.get(n).bytes = tagBefore[n]; clientDir.children.get(n).bytes = n === 'defineNeuz.h' ? lfOnly(tagBefore[n]) : tagBefore[n].slice(); }
     }
+
+    // ---- + Exchange menu (ui/menu-form.js) on Peach: preview, Create (6 files, one undo step), Undo
+    {
+      const peach = [...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MaFl_Peach'));
+      click(peach);
+      click(btnByText($('editor'), '+ Exchange menu'));
+      await waitFor(() => document.querySelector('.modal .mf-recipe'), 'new exchange menu dialog');
+      const box = [...document.querySelectorAll('.modal')].pop();
+      const inp = (el, v) => { el.value = v; el.dispatchEvent(new Event('input')); };
+      const lab = box.querySelector('input.mf-label'), nm = box.querySelector('input.mf-name');
+      inp(lab, 'Test Weapons');
+      ok(nm.value === 'MMI_TEST_WEAPONS' && /✓ free · menu id 282/.test(box.textContent), 'menu form: the label fills the name (MMI_TEST_WEAPONS), shown free with its id');
+      inp(nm, 'MMI_TRADE');
+      ok(/✗ MMI_TRADE \(or TID_MMI_TRADE\) already exists/.test(box.textContent) && box.querySelector('#mf-create').disabled, 'a taken name says so and blocks Create');
+      inp(nm, 'MMI_TEST_UI');
+      ok(box.querySelectorAll('.nn-req.req').length >= 6 && /= required/.test(box.textContent) && /must be fixed before Create/.test(box.textContent),
+        'menu form: red * on required fields, the * note and the Checks legend (the standard form footer)');
+      const pv = box.querySelector('.nn-preview').textContent;
+      ok(/#define MMI_TEST_UI\s+282/.test(pv) && /TID_MMI_TEST_UI\s+7282/.test(pv) && /Test Weapons/.test(pv) && /AddMenu\( MMI_TEST_UI \);/.test(pv),
+        'menu dialog preview: MMI_TEST_UI 282, label TID 7282, AddMenu on Peach');
+      ok(/no exchange yet/.test(box.querySelector('.nn-problems').textContent) && !box.querySelector('#mf-create').disabled, 'an empty menu only warns; Create allowed');
+      // an ingredient and two rewards, then Random: 50/50, and 70% on one moves the other to 30%
+      box.querySelector('.mf-ing .combo').pick('II_SYS_SYS_SCR_SCRAPTOPAZ'); await tick();
+      for (const q of ['II_SYS_SYS_SCR_BLESSEDNESS', 'II_SYS_SYS_SCR_AMPESS']) {
+        click(btnByText(box, '+ Rewards'));
+        await waitFor(() => document.querySelector('.ip'), 'reward picker');
+        const ip = document.querySelector('.ip');
+        const qi = ip.querySelector('input[type=search]'); qi.value = q; qi.dispatchEvent(new Event('input'));
+        const row = [...ip.querySelectorAll('.ip-row')].find(r => r.querySelector('.def').textContent === q);
+        const cb = row.querySelector('input'); cb.checked = true; cb.dispatchEvent(new Event('change'));
+        click(btnByText(ip.closest('.modal'), 'Add 1 item'));
+        await waitFor(() => !document.querySelector('.ip'), 'picker closed');
+      }
+      ok(box.querySelectorAll('.mf-rewards tr').length === 3 && /2 exchanges in the window/.test(box.textContent), 'two rewards in a readable table; Player picks = 2 exchanges');
+      const rnd = [...box.querySelectorAll('.mf-mode input')][1]; rnd.checked = true; rnd.dispatchEvent(new Event('change'));
+      const pcts = () => [...box.querySelectorAll('.mf-rewards input.pct-input')].map(x => x.value);
+      ok(String(pcts()) === '50,50' && /1 exchange in the window/.test(box.textContent), 'Random: one exchange, 50% / 50%');
+      const p0 = box.querySelector('.mf-rewards input.pct-input'); p0.value = '70'; p0.dispatchEvent(new Event('change'));
+      ok(String(pcts()) === '70,30' && /II_SYS_SYS_SCR_BLESSEDNESS\t1\t700000/.test(box.querySelector('.nn-preview').textContent)
+        && /II_SYS_SYS_SCR_AMPESS\t1\t300000/.test(box.querySelector('.nn-preview').textContent), '70% on one reward moves the other to 30% (700000 / 300000 in the file)');
+      click(box.querySelector('#mf-create'));
+      await waitFor(() => !document.querySelector('.modal .mf-recipe'), 'menu dialog closed');
+      ok(S.ws.dirtyFiles().length === 6 && S.ws.files.get('exchange_script.txt').dirty && S.ws.files.get('definetext.h').dirty, '6 files changed (incl. Exchange_Script.txt, defineText.h)');
+      ok(/Test Weapons ⇄ 1 exchange/.test($('editor').textContent), 'menu chip: in-game label and 1 exchange');
+      // the exchange tab in NPC Shops: the Exchanges cards, before saving
+      click([...$('editor').querySelectorAll('.tabs button')].find(b => b.textContent.includes('⇄ Test Weapons')));
+      ok($('editor').querySelectorAll('.ex-card').length === 1 && /You get/.test($('editor').textContent), 'NPC Shops: the menu\'s tab shows its exchange card (before saving)');
+      // typing a percent updates by itself after a short pause, and the cursor stays in the box
+      const tp = $('editor').querySelector('.ex-card input.pct-input');
+      tp.focus(); tp.value = '25'; tp.dispatchEvent(new Event('input'));
+      FRE.dom.flushLive(); await tick();      // = the 400 ms pause after the last key
+      const exText = S.ws.files.get('exchange_script.txt').text;
+      ok(/II_SYS_SYS_SCR_BLESSEDNESS\t1\t250000/.test(exText) && /II_SYS_SYS_SCR_AMPESS\t1\t750000/.test(exText), 'typing 25 (no click): 250000 / 750000 written, the total stays 100%');
+      ok(document.activeElement && document.activeElement.dataset.key === tp.dataset.key && document.activeElement.value === '25', 'the cursor stays in the percent box after the update');
+      ok(!S.ws.diags.some(d => d.code === 'EX_PROB_OVER'), 'no reward dropped (no EX_PROB_OVER)');
+      tp.value = '20'; tp.dispatchEvent(new Event('input'));
+      FRE.dom.flushLive(); await tick();      // = the 400 ms pause after the last key
+      document.activeElement.blur();
+      click($('btn-undo'));
+      ok(/II_SYS_SYS_SCR_BLESSEDNESS\t1\t700000/.test(S.ws.files.get('exchange_script.txt').text), 'typing in one box (25, then 20) is ONE undo step: back to 70%');
+      click($('btn-undo'));
+      ok(S.ws.dirtyFiles().length === 0 && !S.ws.defines.defines.has('MMI_TEST_UI'), 'Undo: all 6 files back');
+      FRE.ui.modules.find(m => m.id === 'npc').st.tab = 0;
+    }
+    if (STOP === 'newmenu') return;
 
     // ---- Donation Shop
     await openTask('donation');
@@ -596,9 +669,13 @@
     const plusEx = [...document.querySelectorAll('#item-list .item')].find(r => r.querySelector('.def').textContent === 'II_SYS_SYS_SCR_AMPESS').querySelector('button');
     ok(!plusEx.disabled && /reward of exchange 1/.test(plusEx.title), '+ adds a reward to exchange 1');
     click(plusEx);
-    ok(/Server uses/.test(card1().textContent) && [...card1().querySelectorAll('tr')].some(tr => /AMPESS/.test(tr.textContent) && [...tr.querySelectorAll('td')].some(td => td.textContent === '0%')), 'new reward after 100% gets chance 0 (kept by the server at 0%)');
+    const pctsOf = c => [...c.querySelectorAll('input.pct-input')].map(x => x.value);
+    ok(/Server uses/.test(card1().textContent) && String(pctsOf(card1())) === '50,50' && /chances add up to 100%/.test(card1().textContent),
+      'a new reward gets an equal share: 50% / 50%, the total stays 100% (nothing dropped)');
+    const pc = card1().querySelector('input.pct-input'); pc.value = '80'; pc.dispatchEvent(new Event('change'));
+    ok(String(pctsOf(card1())) === '80,20' && [...card1().querySelectorAll('td')].some(td => td.textContent === '200,000'), 'percent 80 on one: the other becomes 20%; "of 1,000,000" shows 200,000 (read-only)');
     click(btnByText(card1(), 'Spread evenly'));
-    ok(/sum 1,000,000 = 100%/.test(card1().textContent) && (card1().textContent.match(/50%/g) || []).length >= 2, 'spread evenly: 50% / 50%');
+    ok(/chances add up to 100%/.test(card1().textContent) && String(pctsOf(card1())) === '50,50', 'spread evenly: 50% / 50%');
     ok(/You get one of\s*Name Color Scroll \(3 Days\) ×1 50%\s*or\s*Scroll of Amplification ES \(S\) ×1 50%/.test(card1().querySelector('.ex-get').textContent), 'headline: one of two rewards, 50% each');
     const bound = [...card1().querySelectorAll('tr')].find(tr => /AMPESS/.test(tr.textContent)).querySelector('input[type=checkbox]');
     bound.checked = true; bound.dispatchEvent(new Event('change'));

@@ -2127,6 +2127,295 @@ NN_BLOCKING = {'NN_KEY', 'NN_KEY_DUP', 'NN_KEY_NAME', 'NN_TEXT', 'NN_IDS_TAKEN',
                'NN_SHOP_NO_TRADE', 'NN_SHOP_EMPTY', 'NN_TAB', 'NN_RULE', 'NN_ITEM', 'NN_PRICE', 'NN_PRICE_CONFLICT', 'NN_MAP', 'NN_POS'}
 
 
+# ---------------------------------------------------------------------------------------------- newmenu
+# New NPC exchange menus, written from the C++ and the line formats of the commits that add each piece
+# (MMI 280/281: cda3af21, 15091d5f; TIDs + textClient: f58e56ba; exchange blocks: MMI_COLLECT01):
+#   CProject::LoadDefines / AddMenu (Project.cpp:3410, m_abMoverMenu[id], MAX_MOVER_MENU 350),
+#   the right-click label prj.GetText( TID_MMI_DIALOG + i ) (WndWorld.cpp:7283),
+#   CWndWorld::OnCommand: an id with no `case` there goes to `default:` = the exchange window (WndWorld.cpp:6470),
+#   CExchange::Load_Script / ResultExchange (load_script / exchange_once above).
+# It builds its own lines from the spec, loads them and presses OK on every new exchange.
+NM_FILES = {'defineNeuz.h': 'b', 'defineText.h': 'b', 'textClient.inc': 'w', 'textClient.txt.txt': 'w', 'Exchange_Script.txt': 'b', 'character.inc': 'w'}
+
+
+def nm_case_ids(cpp_path):
+    """every `case MMI_x:` of CWndWorld::OnCommand's switch, read from the C++ file"""
+    t = open(cpp_path, 'rb').read().decode('latin-1')
+    a = t.index('BOOL CWndWorld::OnCommand(')
+    b = re.compile(r'^}', re.M).search(t, a).start()
+    return sorted(set(re.findall(r'case\s+(MMI_\w+)\s*:', t[a:b])))
+
+
+def nm_text(raw, kind):
+    return raw[2:].decode('utf-16-le') if kind == 'w' else raw.decode('latin-1')
+
+
+def nm_eol(t):
+    crlf = t.count('\r\n')
+    return '\r\n' if crlf >= t.count('\n') - crlf else '\n'
+
+
+def nm_append(t, body):
+    """(offset, insert) adding body at the end, after a line break if the text lacks one"""
+    return len(t), ('' if not t or t[-1] in '\r\n' else nm_eol(t)) + body
+
+
+class NMData:
+    def __init__(self, root):
+        self.root = root
+        self.idx = area_files(root)
+        self.D = defines(root)
+        self.raw = {n: open(self.idx[n.lower()], 'rb').read() for n in NM_FILES}
+        self.txt = {n: nm_text(self.raw[n], k) for n, k in NM_FILES.items()}
+        self.S = {}
+        for n in NN_STRING_FILES:
+            if n.lower() in self.idx: nn_strings_add(self.S, nn_text16(open(self.idx[n.lower()], 'rb').read()))
+        self.npcs = nn_npcs(self.txt['character.inc'], self.D, self.S)
+        self.cases = nm_case_ids(os.path.join(os.path.dirname(os.path.abspath(root)), 'src', 'WndWorld.cpp'))
+        self.props = spec_props(root, self.D)
+
+
+def nm_free(A):
+    mmi = {v for k, v in A.D.items() if k.startswith('MMI_')}
+    tid = {v for k, v in A.D.items() if k.startswith('TID_')}
+    return [i for i in range(282, 350) if i not in mmi and 7000 + i not in tid]
+
+
+def nm_text_problem(s):
+    if isinstance(s, str) and len(s) > 255: return 'long'
+    p = nn_text_problem(s)
+    return None if p == 'long' else p
+
+
+def nm_check(A, spec):
+    out = set()
+    add = lambda c, f: out.add(f'{c}|{f}')
+    D = A.D
+    npc = [x for x in A.npcs if x['key'].lower() == str(spec.get('npcKey', '')).lower()]
+    if not npc: add('NM_NPC', 'npc')
+    menus = spec.get('menus') or []
+    if not menus: add('NM_NONE', 'menus')
+    if len(nm_free(A)) < len(menus): add('NM_ID_FULL', 'menus')
+    seen = set()
+    for i, m in enumerate(menus):
+        f = f'menu {i + 1}'
+        if not re.fullmatch(r'MMI_[A-Z0-9_]{1,40}', m.get('name') or ''): add('NM_NAME', f)
+        elif m['name'] in D or 'TID_' + m['name'] in D or m['name'] in seen: add('NM_NAME', f)
+        seen.add(m.get('name'))
+        if nm_text_problem(m.get('label')): add('NM_TEXT', f)
+        sets = m.get('sets') or []
+        if not sets: add('NM_EMPTY', f)
+        if len(sets) > 30: add('NM_SET_CAP', f)
+        for k, st in enumerate(sets):
+            g = f'{f} exchange {k + 1}'
+            if not st.get('cond'): add('NM_RECIPE', g)
+            if not st.get('pay'): add('NM_RECIPE', g)
+            for d, n in st.get('cond') or []:
+                if d != 'PENYA' and d not in D: add('NM_ITEM', g)
+                if not (isinstance(n, int) and n >= 1): add('NM_QTY', g)
+            tot = 0
+            for d, n, pr in st.get('pay') or []:
+                if d not in D or (D[d] & 0xFFFFFFFF) not in A.props: add('NM_ITEM', g)
+                if not (isinstance(n, int) and n >= 1): add('NM_QTY', g)
+                tot += pr
+            if st.get('pay') and tot != 1000000: add('NM_CHANCE', g)
+            # PAY n: GetPayItemList hands out n different lines; more than the lines logs an error (Load_Script)
+            pn = st.get('payNum', 1)
+            if st.get('pay') and not (isinstance(pn, int) and 1 <= pn <= len(st['pay'])): add('NM_PAYNUM', g)
+    r = spec.get('results') or {}
+    if r.get('add') is not None:
+        if len(r['add']) != 2: add('NM_RESULT', 'results')
+        for x in r['add']:
+            if not re.fullmatch(r'TID_[A-Z0-9_]{1,60}', x.get('name') or '') or x['name'] in D: add('NM_RESULT', 'results')
+            if nm_text_problem(x.get('text')): add('NM_TEXT', 'results')
+    elif not r.get('tids') or len(r['tids']) != 2 or any(t not in D for t in r['tids']): add('NM_RESULT', 'results')
+    return sorted(out)
+
+
+def nm_build(A, spec):
+    """-> {file: [(offset, insert), ...]}, ids, the written texts"""
+    T = A.txt
+    ids = nm_free(A)[:len(spec['menus'])]
+    news = (spec.get('results') or {}).get('add') or []
+    results = [x['name'] for x in news] if news else spec['results']['tids']
+    ins = {}
+    # defineNeuz.h: after the line with the highest MMI_ value under 350 (the first such line)
+    rows = [(int(m.group(2)), m.end()) for m in re.finditer(r'^#define[ \t]+(MMI_\w*)[ \t]+(\d+)[^\r\n]*(?:\r?\n|$)', T['defineNeuz.h'], re.M) if int(m.group(2)) < 350]
+    best = max(rows, key=lambda r: r[0])
+    at = next(e for v, e in rows if v == best[0])
+    e = nm_eol(T['defineNeuz.h'])
+    ins['defineNeuz.h'] = [(at, ''.join(f"#define {m['name']}\t{i}\t// {spec['npcKey']} exchange menu{e}" for m, i in zip(spec['menus'], ids)))]
+    # defineText.h: after the highest TID_MMI_ in 7000..7349; result TIDs at the end after the highest TID_
+    dt = T['defineText.h']
+    rows = [(int(m.group(2)), m.end()) for m in re.finditer(r'^#define[ \t]+(TID_MMI_\w*)[ \t]+(\d+)[^\r\n]*(?:\r?\n|$)', dt, re.M) if 7000 <= int(m.group(2)) < 7350]
+    hi = max(v for v, _ in rows)
+    at = next(e2 for v, e2 in rows if v == hi)
+    e = nm_eol(dt)
+    lab = ''.join(f"#define\tTID_{m['name']}\t\t\t{7000 + i}{e}" for m, i in zip(spec['menus'], ids))
+    ins['defineText.h'] = [(at, lab)]
+    if news:
+        nxt = max(int(m.group(1)) for m in re.finditer(r'^#define[ \t]+TID_\w*[ \t]+(-?\d+)', dt, re.M)) + 1
+        body = f"// {spec['npcKey']} exchange menus - result messages{e}" + ''.join(f"#define\t{x['name']}\t\t\t\t\t{nxt + k}{e}" for k, x in enumerate(news))
+        ins['defineText.h'].append(nm_append(dt, body))
+    # textClient: one block + one line per new TID (labels, then results); keys continue after the highest
+    texts = [('TID_' + m['name'], m['label']) for m in spec['menus']] + [(x['name'], x['text']) for x in news]
+    top = max([int(k[19:]) for k in A.S if k.startswith('IDS_TEXTCLIENT_INC_')] + [int(x) for x in re.findall(r'IDS_TEXTCLIENT_INC_(\d+)', T['textClient.txt.txt'])])
+    keys = ['IDS_TEXTCLIENT_INC_%06d' % (top + 1 + k) for k in range(len(texts))]
+    e = nm_eol(T['textClient.inc'])
+    ins['textClient.inc'] = [nm_append(T['textClient.inc'], f"{e}// {spec['npcKey']} exchange menus{e}{e}" + ''.join(f"{t}\t\t\t\t0xffffffff{e}{{{e}\t{k}{e}}}{e}{e}" for (t, _), k in zip(texts, keys)))]
+    e = nm_eol(T['textClient.txt.txt'])
+    ins['textClient.txt.txt'] = [nm_append(T['textClient.txt.txt'], ''.join(f'{k}\t{x}{e}' for (_, x), k in zip(texts, keys)))]
+    # Exchange_Script.txt: the menu blocks, MMI_COLLECT01's layout, REMOVE = CONDITION
+    e = nm_eol(T['Exchange_Script.txt'])
+    blocks = []
+    for m in spec['menus']:
+        tid = 'TID_' + m['name']
+        L = [m['name'], '{', '\tDESCRIPTION', '\t{', '\t\t' + tid, '\t}', '']
+        b = e.join(L) + e
+        for st in m.get('sets') or []:
+            S = ['\tSET\t' + tid, '\t{', '\t\tRESULTMSG', '\t\t{'] + ['\t\t\t' + r for r in results] + ['\t\t}']
+            for kw in ('CONDITION', 'REMOVE'):
+                S += ['\t\t' + kw, '\t\t{'] + [f'\t\t\t{d}\t{n}' for d, n in st['cond']] + ['\t\t}']
+            S += ['\t\tPAY\t%d' % st.get('payNum', 1), '\t\t{'] + ['\t\t\t' + '\t'.join(str(v) for v in p) for p in st['pay']] + ['\t\t}', '\t}']
+            b += e.join(S) + e
+        blocks.append(b + '}' + e)
+    ins['Exchange_Script.txt'] = [nm_append(T['Exchange_Script.txt'], e + e.join(blocks))]
+    # character.inc: after the line of the NPC's last AddMenu, same indent
+    ci = T['character.inc']
+    st = re.search(r'^' + re.escape(spec['npcKey']) + r'\b[^\r\n]*\r?\n\s*\{', ci, re.M | re.I)   # the key line may carry a // comment
+    end = ci.index('\n}', st.end())
+    last = list(re.finditer(r'^([ \t]*)AddMenu[ \t]*\([^)]*\)[ \t]*;[^\r\n]*(\r?\n)', ci[st.start():end], re.M))[-1]
+    ins['character.inc'] = [(st.start() + last.end(), ''.join(f"{last.group(1)}AddMenu( {m['name']} );{last.group(2)}" for m in spec['menus']))]
+    return ins, ids, results
+
+
+def nm_apply(t, ins):
+    for at, x in sorted(ins, key=lambda r: -r[0]):
+        t = t[:at] + x + t[at:]
+    return t
+
+
+def nm_game(A, spec, ins, ids):
+    """load the written files: the NPC's right-click list (label, exchange window + its SET count)"""
+    T = {n: nm_apply(A.txt[n], ins[n]) for n in NM_FILES}
+    D = dict(A.D)
+    for n in ('defineNeuz.h', 'defineText.h'):
+        for m in re.finditer(r'^[ \t]*#define[ \t]+(\w+)[ \t]+(\d+)[ \t]*(?://.*)?\r?$', T[n], re.M):
+            D.setdefault(m.group(1), int(m.group(2)))
+    S = {}
+    for n in NN_STRING_FILES:
+        if n == 'textClient.txt.txt': nn_strings_add(S, T[n])
+        elif n.lower() in A.idx: nn_strings_add(S, nn_text16(open(A.idx[n.lower()], 'rb').read()))
+    labels = {}
+    ts = [t.decode('latin-1') for t in tokens(T['textClient.inc'].encode('utf-8', 'replace'))]
+    for k in range(len(ts) - 4):
+        if ts[k + 2] == '{' and ts[k] in D:
+            labels[D[ts[k]] & 0xFFFFFFFF] = S.get(ts[k + 3], ts[k + 3]).replace('"', '')
+    table = load_script(T['Exchange_Script.txt'].encode('latin-1'), D)
+    npc = [x for x in nn_npcs(T['character.inc'], D, S) if x['key'].lower() == spec['npcKey'].lower()][-1]
+    own = {D[n] for n in A.cases if n in D}
+    menus = []
+    for i in sorted({m for m in npc['menus'] if 0 <= m < 350}):
+        menus.append([i, labels.get(7000 + i), None if i in own else min(len(table.get(i, [])), 30)])
+    return menus, table, D
+
+
+def nm_cases_for(A, table, ids, D, rates=False):
+    """press OK: exact ingredients + 1 free slot, one short, a full bag; rates: 1,500 presses on a fresh bag each"""
+    gold = D['II_GOLD_SEED1']
+    out = []
+    for mmi in ids:
+        for k, st in enumerate(table.get(mmi, [])):
+            exact = stock_bag(st, 1, 1, A.props, gold)
+            short = json.loads(json.dumps(exact))
+            for v in short['slots'].values():
+                v[1] -= 1
+                break
+            for name, bag in (('exact', exact), ('one short', short), ('full bag', stock_bag(st, 1, 0, A.props, gold))):
+                c = {'script': None, 'newmenu': True, 'mmi': mmi, 'set': k, 'name': name, 'bag': bag, 'tries': 1, 'seed': 1, 'mode': 'same'}
+                c['expect'] = run_case(c, table, A.props, gold)
+                out.append(c)
+            if rates:
+                c = {'script': None, 'newmenu': True, 'mmi': mmi, 'set': k, 'name': 'rates', 'bag': stock_bag(st, 1, 4, A.props, gold), 'tries': 1500, 'seed': 7, 'mode': 'same'}
+                c['expect'] = run_case(c, table, A.props, gold)
+                out.append(c)
+    return out
+
+
+def nm_specs(A):
+    """Jeff's spec (tools/jeff-menus.json) and small specs that trip each rule"""
+    import copy
+    jeff = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'jeff-menus.json')))
+    one = lambda **k: dict({'npcKey': 'MaFl_Jeff', 'results': {'tids': ['TID_GAME_COLLECT_COND01_SUCCESS', 'TID_GAME_COLLECT_COND01_FAIL']},
+                            'menus': [{'name': 'MMI_TEST_ONE', 'label': 'Test', 'sets': [{'cond': [['II_SYS_SYS_SCR_SCRAPTOPAZ', 5]], 'pay': [['II_SYS_SYS_SCR_HOLY', 1, 1000000]]}]}]}, **k)
+    menu = lambda **k: [dict({'name': 'MMI_TEST_ONE', 'label': 'Test', 'sets': [{'cond': [['II_SYS_SYS_SCR_SCRAPTOPAZ', 5]], 'pay': [['II_SYS_SYS_SCR_HOLY', 1, 1000000]]}]}, **k)]
+    rec = lambda cond=None, pay=None: {'cond': cond if cond is not None else [['II_SYS_SYS_SCR_SCRAPTOPAZ', 5]], 'pay': pay if pay is not None else [['II_SYS_SYS_SCR_HOLY', 1, 1000000]]}
+    S = [('jeff', jeff, True, {}),
+         ('one menu, existing texts', one(), True, {}),
+         ('penya ingredient', one(menus=menu(sets=[rec(cond=[['PENYA', 1000], ['II_SYS_SYS_SCR_SCRAPTOPAZ', 1]])])), True, {}),
+         ('two rewards by chance', one(menus=menu(sets=[rec(pay=[['II_SYS_SYS_SCR_HOLY', 1, 400000], ['II_SYS_SYS_SCR_AMPESS', 1, 600000]])])), True, {}),
+         ('random 50/50', one(menus=menu(sets=[dict(rec(pay=[['II_SYS_SYS_SCR_HOLY', 1, 500000], ['II_SYS_SYS_SCR_AMPESS', 2, 500000]]), payNum=1)])), True, {}),
+         ('random gives 2 of 3', one(menus=menu(sets=[dict(rec(pay=[['II_SYS_SYS_SCR_HOLY', 1, 333334], ['II_SYS_SYS_SCR_AMPESS', 1, 333333], ['II_SYS_SYS_SCR_BLESSEDNESS', 1, 333333]]), payNum=2)])), True, {}),
+         ('random gives 3 of 3, 70/20/10', one(menus=menu(sets=[dict(rec(pay=[['II_SYS_SYS_SCR_HOLY', 1, 700000], ['II_SYS_SYS_SCR_AMPESS', 1, 200000], ['II_SYS_SYS_SCR_BLESSEDNESS', 1, 100000]]), payNum=3)])), True, {}),
+         ('random gives 0', one(menus=menu(sets=[dict(rec(pay=[['II_SYS_SYS_SCR_HOLY', 1, 500000], ['II_SYS_SYS_SCR_AMPESS', 1, 500000]]), payNum=0)])), False, {}),
+         ('random gives 3 of 2', one(menus=menu(sets=[dict(rec(pay=[['II_SYS_SYS_SCR_HOLY', 1, 500000], ['II_SYS_SYS_SCR_AMPESS', 1, 500000]]), payNum=3)])), False, {}),
+         ('npc unknown', one(npcKey='MaFl_Nobody'), False, {}),
+         ('npc in character-etc', one(npcKey=next(x['key'] for x in nn_npcs(nn_text16(open(A.idx['character-etc.inc'], 'rb').read()), A.D, A.S))), False, {}),
+         ('no menu', one(menus=[]), False, {}),
+         ('name lower case', one(menus=menu(name='MMI_test')), False, {}),
+         ('name taken', one(menus=menu(name='MMI_TRADE')), False, {}),
+         ('name twice', one(menus=menu() + menu()), False, {}),
+         ('label empty', one(menus=menu(label='')), False, {}),
+         ('label korean', one(menus=menu(label='무기')), False, {}),
+         ('label 255', one(menus=menu(label='L' * 255)), False, {}),
+         ('label 256', one(menus=menu(label='L' * 256)), False, {}),
+         ('no exchange', one(menus=menu(sets=[])), True, {}),
+         ('30 exchanges', one(menus=menu(sets=[rec()] * 30)), True, {}),
+         ('npc with several menus (Peach)', one(npcKey='MaFl_Peach'), True, {}),
+         ('31 exchanges', one(menus=menu(sets=[rec()] * 31)), False, {}),
+         ('no ingredient', one(menus=menu(sets=[rec(cond=[])])), False, {}),
+         ('no reward', one(menus=menu(sets=[rec(pay=[])])), False, {}),
+         ('unknown ingredient', one(menus=menu(sets=[rec(cond=[['II_NOPE', 1]])])), False, {}),
+         ('unknown reward', one(menus=menu(sets=[rec(pay=[['II_NOPE', 1, 1000000]])])), False, {}),
+         ('quantity 0', one(menus=menu(sets=[rec(cond=[['II_SYS_SYS_SCR_SCRAPTOPAZ', 0]])])), False, {}),
+         ('chances 999999', one(menus=menu(sets=[rec(pay=[['II_SYS_SYS_SCR_HOLY', 1, 999999]])])), False, {}),
+         ('result texts unknown', one(results={'tids': ['TID_NOPE', 'TID_NOPE2']}), False, {}),
+         ('one new result text', one(results={'add': [{'name': 'TID_GAME_TEST_OK', 'text': 'OK'}]}), False, {}),
+         ('new result name taken', one(results={'add': [{'name': 'TID_GAME_COLLECT_COND01_SUCCESS', 'text': 'a'}, {'name': 'TID_GAME_TEST_NO', 'text': 'b'}]}), False, {}),
+         ('ids 282-348 taken', one(), True, {'MMI_FAKE_%d' % i: i for i in range(282, 349)}),
+         ('ids 282-349 taken', one(), False, {'MMI_FAKE_%d' % i: i for i in range(282, 350)}),
+         ('label slot 7282 taken', one(), True, {'TID_FAKE_7282': 7282})]
+    return [dict(name=n, spec=copy.deepcopy(sp), game=g, defs=d) for n, sp, g, d in S]
+
+
+NM_BLOCKING = {'NM_FILES', 'NM_NPC', 'NM_NONE', 'NM_ID_FULL', 'NM_NAME', 'NM_TEXT', 'NM_SET_CAP', 'NM_RECIPE', 'NM_ITEM', 'NM_QTY', 'NM_RESULT', 'NM_PAYNUM'}
+
+
+def nm_run(root):
+    A = NMData(root)
+    out, xcases = [], []
+    for c in nm_specs(A):
+        saved = A.D
+        A.D = dict(A.D, **c['defs'])
+        codes = nm_check(A, c['spec'])
+        r = dict(name=c['name'], spec=c['spec'], defs=c['defs'], codes=codes, build=None, inGame=None)
+        if not any(x.split('|')[0] in NM_BLOCKING for x in codes):
+            ins, ids, results = nm_build(A, c['spec'])
+            r['build'] = {k: [[at, x] for at, x in v] for k, v in ins.items()}
+            r['ids'] = ids
+            if c['game']:
+                menus, table, D = nm_game(A, c['spec'], ins, ids)
+                r['inGame'] = menus
+                if c['name'] == 'jeff' or c['name'].startswith(('one menu', 'penya', 'two rewards', 'random')):
+                    A2 = A
+                    for x in nm_cases_for(A2, table, ids, D, rates=c['name'].startswith(('random', 'two rewards'))):
+                        x['spec'] = c['name']
+                        xcases.append(x)
+        A.D = saved
+        out.append(r)
+    return dict(cases=out, exchanges=xcases, caseIds=A.cases)
+
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -2138,6 +2427,8 @@ if __name__ == '__main__':
         print(json.dumps(area_run(root)))
     elif what == 'newnpc':
         print(json.dumps(nn_run(root)))
+    elif what == 'newmenu':
+        print(json.dumps(nm_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model
         for f in sorted(os.listdir(root)):
             if f.lower().startswith('mvr_') and f.lower().endswith('.o3d'):

@@ -7,6 +7,7 @@
 //   CWorld::IsUsableDYO2                            SetOutput / SetLang
 //   CMover::ProcessRegenItem                        the 4 shop tabs (loaders/vendor-sim.js)
 //   CProject::LoadEtc structure, MoverRender  the [tag] above the name (Project.cpp:1262, MoverRender.cpp:1717)
+//   CWndWorld::OnCommand switch          which menu ids open the exchange window (WndWorld.cpp:4379, default 6470)
 //   right-click menu labels                         TID_MMI_DIALOG (7000) + menu id (WndWorld.cpp, textClient.inc)
 //   loaders/area.js                                 where it stands, /te
 // Not modelled: IsUsableDYO's event-state keys (Npc_Reward, MaFl_GuildWar, … — a new key is never one of
@@ -47,6 +48,38 @@
   //   MMI_COLLECTOR_DETAILS    "Collection Details" (__COLLECTOR_DETAILS)
   //   MMI_GUILDBANKING         only for a guild member, when the guild warehouse is on
   //   MMI_ARENA_ENTER          only after the first job change (__JEFF_11_4)
+  // Menu ids with their own case in CWndWorld::OnCommand (WndWorld.cpp:4379-6724, every `case MMI_x:` of its
+  // switch( nID ), #ifdef blocks included). Any other id falls to `default:` (6470, __TRADESYS) and opens the
+  // exchange window for that id (CWndDialogEvent::SetMMI), which lists the menu's SETs from the client's
+  // Exchange_Script.txt. (139 names; tools/oracle_sim.py reads the same list from the C++ file itself.)
+  const OWN_CASE = new Set([
+    'MMI_ADD_MESSENGER', 'MMI_ARENA_ENTER', 'MMI_ARENA_EXIT', 'MMI_ATTRIBUTE', 'MMI_BANKING', 'MMI_BEAUTYSHOP', 'MMI_BEAUTYSHOP_SKIN',
+    'MMI_BLESSING_CANCEL', 'MMI_BUFFPET_RELEASE', 'MMI_BUFFPET_STATUS', 'MMI_CHANGEELEM', 'MMI_CHEER', 'MMI_COLLECTOR_DETAILS',
+    'MMI_COLOSSEUM_COLOENTER01', 'MMI_COSTUMEMIX01', 'MMI_DIALOG', 'MMI_DUEL', 'MMI_DUEL_PARTY', 'MMI_FINDWORD', 'MMI_FIVESYSTEM',
+    'MMI_GUILDBANKING', 'MMI_GUILDCOMBAT_1TO1_CANCEL', 'MMI_GUILDCOMBAT_1TO1_ENTRANCE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_ENTRY',
+    'MMI_GUILDCOMBAT_1TO1_GUIDE_PRIZE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_RULE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_TEX',
+    'MMI_GUILDCOMBAT_1TO1_GUIDE_WIN', 'MMI_GUILDCOMBAT_1TO1_OFFER', 'MMI_GUILDCOMBAT_1TO1_OFFERSTATE', 'MMI_GUILDCOMBAT_1TO1_REPAYMENT',
+    'MMI_GUILDCOMBAT_1TO1_SELECTION', 'MMI_GUILDCOMBAT_BESTPLAYER', 'MMI_GUILDCOMBAT_INFO_BOARD1', 'MMI_GUILDCOMBAT_INFO_BOARD2',
+    'MMI_GUILDCOMBAT_INFO_BOARD3', 'MMI_GUILDCOMBAT_INFO_TEX', 'MMI_GUILDCOMBAT_JACKPOT', 'MMI_GUILDCOMBAT_JACKPOT2',
+    'MMI_GUILDCOMBAT_PENYA_RETURN', 'MMI_GUILDCOMBAT_RANKING', 'MMI_GUILDCOMBAT_RANKING_WEEKLY', 'MMI_GUILDCOMBAT_SELECTION',
+    'MMI_GUILDHOUSE_AUCTION01', 'MMI_GUILDHOUSE_CHARGE', 'MMI_GUILDHOUSE_ENTER', 'MMI_GUILDHOUSE_OUT', 'MMI_GUILDHOUSE_SALE',
+    'MMI_GUILDWAR_APP', 'MMI_GUILDWAR_CANCEL', 'MMI_GUILDWAR_JOIN', 'MMI_GUILDWAR_STATE', 'MMI_HEAVEN_TOWER', 'MMI_INPUT_REWARD',
+    'MMI_INVITE_CAMPUS', 'MMI_INVITE_COMPANY', 'MMI_INVITE_PARTY', 'MMI_ITEM_AWAKENING', 'MMI_ITEM_TRANSY', 'MMI_KAWIBAWIBO',
+    'MMI_LEGEND_SKILLUP', 'MMI_LOOKCHANGE', 'MMI_LORD_EVENT', 'MMI_LORD_INFO', 'MMI_LORD_RAINBOWAPPLICATION', 'MMI_LORD_RAINBOWEND',
+    'MMI_LORD_RAINBOWRULE', 'MMI_LORD_RAINBOWTOPTEN', 'MMI_LORD_RAINBOWWAIT', 'MMI_LORD_RAINBOWWIN', 'MMI_LORD_RAINBOW_ARITHMETIC',
+    'MMI_LORD_RAINBOW_CARD', 'MMI_LORD_RAINBOW_DICE', 'MMI_LORD_RAINBOW_KAWIBAWIBO', 'MMI_LORD_RAINBOW_LADDER',
+    'MMI_LORD_RAINBOW_STOPWATCH', 'MMI_LORD_RAINBOW_TYPING', 'MMI_LORD_RPINFO', 'MMI_LORD_STATE', 'MMI_LORD_TENDER', 'MMI_LORD_VOTE',
+    'MMI_LVREQDOWN_CANCEL', 'MMI_MARKING', 'MMI_MESSAGE', 'MMI_NPC_BUFF', 'MMI_PET_AWAK_CANCEL', 'MMI_PET_EGG01', 'MMI_PET_FOODMILL',
+    'MMI_PET_RELEASE', 'MMI_PET_RES', 'MMI_PET_STATUS', 'MMI_PIERCING', 'MMI_POST', 'MMI_QUERYEQUIP', 'MMI_QUIZ_ENTRANCE', 'MMI_QUIZ_EXIT',
+    'MMI_QUIZ_TELE_QUIZZONE', 'MMI_RANK_GUILD', 'MMI_RANK_INFO', 'MMI_RANK_WAR', 'MMI_REASSEMBLE', 'MMI_REMOVE_CAMPUS', 'MMI_RENAME_CANCEL',
+    'MMI_REPAIR', 'MMI_RETURNTO_WORLD', 'MMI_SECRET_BOARD', 'MMI_SECRET_CANCEL', 'MMI_SECRET_ENTRANCE', 'MMI_SECRET_ENTRANCE_1',
+    'MMI_SECRET_OFFER', 'MMI_SECRET_OFFERSTATE', 'MMI_SECRET_SELECTION', 'MMI_SECRET_TAXRATES_CHECK', 'MMI_SHOW_REWARD',
+    'MMI_SMELT_CHANGEGWEAPON', 'MMI_SMELT_CHANGEUWEAPON', 'MMI_SMELT_EXTRACTION', 'MMI_SMELT_JEWEL', 'MMI_SMELT_MIXJEWEL',
+    'MMI_SMELT_REMOVE_JEWEL', 'MMI_SMELT_REMOVE_PIERCING', 'MMI_SMELT_SAFETY_ACCESSORY', 'MMI_SMELT_SAFETY_ELEMENT',
+    'MMI_SMELT_SAFETY_GENERAL', 'MMI_SMELT_SAFETY_PIERCING', 'MMI_SUMMON_ANGEL', 'MMI_SUMMON_EXTRACTOPER', 'MMI_SUMMON_MAKECID',
+    'MMI_SUMMON_MAKEOPER', 'MMI_SUMMON_MAKEOPERCID', 'MMI_SUMMON_PEARCING', 'MMI_SUMMON_SMELT', 'MMI_SUMMON_UPGRADECID', 'MMI_TELEPORTER',
+    'MMI_TRACE', 'MMI_TRADE', 'MMI_UPGRADE', 'MMI_VISIT_FRIEND', 'MMI_VISIT_MYROOM',
+  ]);
   function rightClick(ws, ids) {
     const D = ws.defines, id = n => D.defines.get(n);
     const on = new Set(ids.filter(i => i >= 0 && i < 350));
@@ -64,9 +97,20 @@
       if (i === id('MMI_COLLECTOR_DETAILS')) m.label = 'Collection Details';
       if (i === id('MMI_GUILDBANKING')) m.when = 'guild member, guild warehouse on';
       if (i === id('MMI_ARENA_ENTER')) m.when = 'after the first job change';
+      m.opens = opensOf(ws, i);
       out.push(m);
     }
     return out;
+  }
+
+  // What clicking menu id i opens: null (its own window, a case in OnCommand) or the exchange window:
+  // { exchange: true, sets: number of SETs the menu really has in Exchange_Script.txt (0 = an empty window) }
+  function opensOf(ws, i) {
+    const names = ws.defines.withPrefix('MMI_').filter(([, v]) => v === i).map(([k]) => k);
+    if (names.some(n => OWN_CASE.has(n))) return null;
+    const model = ws.models && ws.models.exchange;
+    const menu = model && model.menus.find(x => x.mmi.value === i);
+    return { exchange: true, sets: menu ? Math.min(menu.sets.length, 30) : 0 };
   }
 
   // One line per fact, for tools/newnpc-sim.js and the editor's "In game" box.
@@ -78,7 +122,8 @@
     if (!g.placed.length) out.push('Not placed on any map: nobody can see it.');
     for (const p of g.placed) out.push(`Stands on ${p.map} at /position ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}, facing ${p.angle.toFixed(1)}°, model ${p.modelName || p.model}`);
     for (const w of g.where || []) out.push(`Where: ${FRE.area.label ? FRE.area.label(w) : w.caption} · GM: ${w.te}`);
-    out.push('Right-click: ' + (g.menus.length ? g.menus.map(m => (m.label || m.define || m.id) + (m.when ? ` (${m.when})` : '')).join(', ') : '(no menu)'));
+    out.push('Right-click: ' + (g.menus.length ? g.menus.map(m => (m.label || m.define || m.id) + (m.when ? ` (${m.when})` : '') +
+      (m.opens ? ` [exchange window: ${m.opens.sets ? m.opens.sets + ' exchange' + (m.opens.sets === 1 ? '' : 's') : 'EMPTY'}]` : '')).join(', ') : '(no menu)'));
     for (const t of g.tabs) out.push(`Tab ${t.slot} "${t.title === null ? '(no title)' : t.title}": ${t.items.length} item(s)` +
       (t.items.length ? ' — ' + t.items.slice(0, 6).map(itemName).join(', ') + (t.items.length > 6 ? ', …' : '') : '') + (t.dropped ? ` (${t.dropped} left out)` : ''));
     return out;
@@ -272,5 +317,5 @@
     return out;
   }
 
-  FRE.newNpcSim = { inGame, describe, rightClick, modelNames, modelEntries, missingModelFiles, unusedCompleteModels, visibleNpcs, provenModels, seenBefore, o3dTextures, SEEN_BEFORE, buildingNames, structures, freeStructureIds, tagOf, whereAt, regions, TID_MMI_DIALOG };
+  FRE.newNpcSim = { inGame, describe, rightClick, opensOf, OWN_CASE, modelNames, modelEntries, missingModelFiles, unusedCompleteModels, visibleNpcs, provenModels, seenBefore, o3dTextures, SEEN_BEFORE, buildingNames, structures, freeStructureIds, tagOf, whereAt, regions, TID_MMI_DIALOG };
 })(globalThis.FRE = globalThis.FRE || {});

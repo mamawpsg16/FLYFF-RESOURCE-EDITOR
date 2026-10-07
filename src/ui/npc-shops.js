@@ -28,6 +28,25 @@
     ctx.edit(npc.file.toLowerCase(), make, label, 'npc|' + npcId(npc));
   }
 
+  // One exchange menu of this NPC, edited in place with the Exchanges task's cards (ui/exchange.js):
+  // works before saving too, since the cards read the live Exchange_Script.txt model.
+  function exchangeTab(el, ctx, npc, menu, label) {
+    const ws = ctx.ws, xv = FRE.ui.exchangeView;
+    const editable = ws.isEditable('exchange_script.txt');
+    el.appendChild(h('div.row.ex-tools', { style: 'margin:8px 0' },
+      h('span', h('b', label), h('span.def', ' ' + menu.name), h('span.muted', ` · ${Math.min(menu.sets.length, 30)} exchange${menu.sets.length === 1 ? '' : 's'} in the window`)),
+      editable && menu.closed && FRE.ui.menuForm ? h('button.small', { title: 'Add exchanges to this menu', on: { click: () => FRE.ui.menuForm.openNewExchanges(ctx, menu) } }, '+ New exchange') : null,
+      h('button.small', { title: 'The same menu in the Exchanges task (asks to save first when there are unsaved edits)', on: { click: () => ctx.openTask('exchange', c => {
+        const mod = FRE.ui.modules.find(x => x.id === 'exchange');
+        if (mod) { mod.st.menu = menu.name; mod.st.pick = null; }
+        c.setQuery('');
+      }) } }, 'Open in Exchanges'),
+      editable ? null : h('span.tag.bad', 'read-only')));
+    el.appendChild(h('p.muted.small', `What players see after right-click ${npc.name || npc.key} → ${label}. Chances are in percent; changing one moves the others so they always add up to 100%. Try it presses OK in the game's exchange window.`));
+    if (!menu.sets.length) el.appendChild(h('p.muted', 'No exchange yet: the window opens empty. Press + New exchange.'));
+    xv.cards(ctx, menu).forEach(c => el.appendChild(c));
+  }
+
   function shopTypeSelect(ctx, npc, canEdit) {
     const cur = FRE.shopOps.shopType(npc.venderType);
     const sel = h('select.shop-type', { disabled: !canEdit, title: 'Which currency this NPC sells for. Changing it converts the item lines (preview first).' },
@@ -179,7 +198,7 @@
         if (q && !label.toLowerCase().includes(q) && !npc.key.toLowerCase().includes(q)) continue;
         const id = npcId(npc), dg = diagBy.get(id);
         shown++;
-        el.appendChild(h('div.npc' + (id === st.sel ? '.sel' : ''), { on: { click: () => { st.sel = id; st.tab = 0; ctx.renderAll(false); } } },
+        el.appendChild(h('div.npc' + (id === st.sel ? '.sel' : ''), { on: { click: () => { st.sel = id; st.tab = 0; if (FRE.ui.exchangeView) FRE.ui.exchangeView.clearPick(); ctx.renderAll(false); } } },
           h('div.n', h('span', label),
             h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : null,
               ctx.edited.has('npc|' + id) ? h('span.tag.edit', 'edited') : null,
@@ -204,6 +223,8 @@
       el.appendChild(h('div.npc-title', h('h2', npc.name || npc.key), h('span.def', npc.key),
         h('span.line', `${npc.file}:${f.lineOf(npc.start) + 1}`),
         shopTypeSelect(ctx, npc, canEdit),
+        canEdit && npc.file.toLowerCase() === 'character.inc' && ws.isEditable('exchange_script.txt') && FRE.ui.menuForm
+          ? h('button.small', { title: 'Add right-click menus that open the exchange window (edit/menu-ops.js)', on: { click: () => FRE.ui.menuForm.openNewMenus(ctx, npc) } }, '+ Exchange menu') : null,
         canEdit ? null : h('span.tag.bad', 'read-only')));
       if (ws.placed) {
         const status = FRE.world.npcStatus(npc, ws.placed);
@@ -217,18 +238,34 @@
         el.appendChild(h('div.nn-ingame', h('b', 'In game after Save + restart: '), FRE.newNpcSim.describe(g, name).map(l => h('div', l))));
       }
       const menus = npc.menus.map(v => D.byValue('MMI_', v) || String(v));
-      if (menus.length) el.appendChild(h('div.menus', 'Menus: ', menus.map(m => ws.exchangeMenus.has(m)
-        ? h('span.tag.exch', { title: `${m} is an item exchange defined in Exchange_Script.txt (Exchanges editor coming)` }, `${pretty(m)} ⇄ exchange`)
-        : h('span.tag', { title: m }, pretty(m)))));
+      // exchange menus: the label players read + how many exchanges; each has its own tab next to the shop tabs
+      const exModel = ws.models.exchange;
+      const exMenu = m => (exModel && exModel.menus.find(x => x.name === m && !x.isJunk)) || null;
+      const labelOf = m => { const id = D.defines.get(m); const t = id === undefined || !ws.texts ? null : ws.texts.byId.get(FRE.newNpcSim.TID_MMI_DIALOG + id); return t ? t.text : pretty(m); };
+      const exNames = FRE.ui.exchangeView ? [...new Set(menus.filter(m => ws.exchangeMenus.has(m) && exMenu(m)))] : [];
+      const showTab = t => { if (FRE.ui.exchangeView) FRE.ui.exchangeView.clearPick(); st.tab = t; ctx.renderAll(false); };
+      if (typeof st.tab === 'string' && !exNames.includes(st.tab.slice(3))) st.tab = 0;
+      if (menus.length) el.appendChild(h('div.menus', 'Menus: ', menus.map(m => {
+        if (!exNames.includes(m)) return h('span.tag', { title: m }, pretty(m));
+        const n = Math.min(exMenu(m).sets.length, 30);
+        return h('button.tag.exch', { title: `${m}: opens the exchange window (Exchange_Script.txt). Click to see and edit its exchanges here.`,
+          on: { click: () => showTab('ex:' + m) } }, `${labelOf(m)} ⇄ ${n} exchange${n === 1 ? '' : 's'}`);
+      })));
 
       const sim = ws.simulate(npc);
       const tabs = h('div.tabs');
       for (let t = 0; t < 4; t++) {
         const n = sim.tabs[t].entries.length;
-        tabs.appendChild(h('button' + (t === st.tab ? '.sel' : ''), { on: { click: () => { st.tab = t; ctx.renderAll(false); } } },
+        tabs.appendChild(h('button' + (t === st.tab ? '.sel' : ''), { on: { click: () => showTab(t) } },
           npc.slotTitles[t] || `Tab ${t}`, h('span.count', n ? `(${n})` : '')));
       }
+      for (const m of exNames) {
+        const n = Math.min(exMenu(m).sets.length, 30);
+        tabs.appendChild(h('button.ex-tab' + ('ex:' + m === st.tab ? '.sel' : ''), { title: `${m}: the exchange window this menu opens`, on: { click: () => showTab('ex:' + m) } },
+          `⇄ ${labelOf(m)}`, h('span.count', `(${n})`)));
+      }
       el.appendChild(tabs);
+      if (typeof st.tab === 'string') { exchangeTab(el, ctx, npc, exMenu(st.tab.slice(3)), labelOf(st.tab.slice(3))); return; }
       const tab = sim.tabs[st.tab];
 
       // the rules that fill this tab, as one compact line
@@ -266,7 +303,7 @@
             price = info ? FRE.ui.chipPrice.input(ctx, info, hereNpc(npc), 'npc|' + npcId(npc)) : '';
           }
           else if (row.kind === 'fixed') {
-            price = numInput({ value: r.args.cost ? r.args.cost.value : null, placeholder: info ? fmt(info.cost) + ' (item)' : '', disabled: !canEdit,
+            price = numInput({ value: r.args.cost ? r.args.cost.value : null, placeholder: info ? fmt(info.cost) + ' (item)' : '', disabled: !canEdit, key: `shop|${npcId(npc)}|${st.tab}|${i}|price`,
               title: 'Empty = the item\'s own price from Spec_Item.txt. A price here changes the item\'s price everywhere (server-wide). Commas are only for display.',
               onCommit: v => edit(ctx, npc, text => FRE.shopOps.setCost(text, r, v), 'price') });
           } else price = info ? fmt(info.cost) : '';
@@ -295,6 +332,11 @@
     addTarget(ctx) {
       const npc = selNpc(ctx);
       if (!npc) return { ok: false, title: 'Select an NPC first' };
+      if (typeof st.tab === 'string') {         // an exchange tab: the item goes to the exchange being edited
+        const xv = FRE.ui.exchangeView;
+        if (xv && xv.picking() && xv.st.menu === st.tab.slice(3)) return xv.addTarget(ctx);
+        return { ok: false, title: 'Click "+ Ingredient", "+ Reward" or "Change" on an exchange first' };
+      }
       if (!ctx.ws.isEditable(npc.file.toLowerCase())) return { ok: false, title: `${npc.file} is read-only` };
       const tabName = npc.slotTitles[st.tab] || `tab ${st.tab}`;
       return {

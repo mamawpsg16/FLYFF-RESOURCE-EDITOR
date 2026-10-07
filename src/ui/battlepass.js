@@ -224,9 +224,9 @@
       const rm = h('button.icon.danger', { disabled: !edit_, title: r === last ? `Remove level ${lv}` : `Remove level ${lv}: levels ${lv + 1}-${last.level.value} move down one (with their rewards and costs)`,
         on: { click: () => removeLevel(ctx, r, last) } }, '✕');
       tb.appendChild(h('tr' + (st.pick === lv ? '.changed' : ''), h('td.num', String(lv)), itemCell(info, r.define),
-        h('td.num', numInput({ value: r.qty.value, min: 1, disabled: !edit_, onCommit: v => v && edit(ctx, () => O().setRewardValue(r, 'qty', v), `level ${lv} quantity`) })),
+        h('td.num', numInput({ value: r.qty.value, min: 1, disabled: !edit_, key: `bp|lv|${lv}|qty`, onCommit: v => v && edit(ctx, () => O().setRewardValue(r, 'qty', v), `level ${lv} quantity`) })),
         h('td.num', r === last ? h('span.muted', { title: 'There is no next level: this cost is never used' }, `(${fmt(r.points.value)} unused)`)
-          : numInput({ value: r.points.value, min: 1, max: BP().MAX_BPOINTS, disabled: !edit_, onCommit: v => v && edit(ctx, () => O().setRewardValue(r, 'points', v), `level ${lv} cost`) })),
+          : numInput({ value: r.points.value, min: 1, max: BP().MAX_BPOINTS, disabled: !edit_, key: `bp|lv|${lv}|points`, onCommit: v => v && edit(ctx, () => O().setRewardValue(r, 'points', v), `level ${lv} cost`) })),
         h('td.num', fmt(reach)),
         h('td.nowrap', up, down, ' ', pick, ' ', rm, ' ', diagTags(rowDiags(ctx, r))), lineCell(ctx, r)));
     });
@@ -419,8 +419,8 @@
       const rm = h('button.icon.danger', { disabled: !edit_, title: 'Remove: this monster pays no points',
         on: { click: () => edit(ctx, text => O().removeMonster(text, r), `remove ${r.define}`) } }, '✕');
       tb.appendChild(h('tr' + (offBand(x) ? '.changed' : ''), name, h('td.num', mo ? String(mo.level) : ''), h('td', mo ? mo.rank : ''),
-        h('td.num', numInput({ value: r.min.value, min: 1, max: BP().MAX_BPOINTS, disabled: !edit_, onCommit: v => set('min', v) })),
-        h('td.num', numInput({ value: r.max.value, min: 1, max: BP().MAX_BPOINTS, disabled: !edit_, onCommit: v => set('max', v) })),
+        h('td.num', numInput({ value: r.min.value, min: 1, max: BP().MAX_BPOINTS, disabled: !edit_, key: `bp|mon|${r.define}|min`, onCommit: v => set('min', v) })),
+        h('td.num', numInput({ value: r.max.value, min: 1, max: BP().MAX_BPOINTS, disabled: !edit_, key: `bp|mon|${r.define}|max`, onCommit: v => set('max', v) })),
         h('td', b ? `${b.min}-${b.max}` : ''), h('td', rm, ' ', diagTags(rowDiags(ctx, r))), lineCell(ctx, r)));
     }
     el.appendChild(h('h3', `Monsters (${rows.length})`));

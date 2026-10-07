@@ -1,8 +1,30 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-06._
+_Last updated 2026-10-07 (Step 2 polish after the user's Brave test: handoff on top)._
 
-> **Handoff (2026-10-06, late night) — START HERE:** **Add New NPC step 1 (shop NPC, reworks 1b + 1c + 1d) is committed (`7cbb9c9`) but NOT tested in game yet.** The user tested 1c in Brave: OK except the Model list and the Building tag, both reworked in 1d (below). Next: the in-game test (handoff §8 + the `[tag]` above the name and its minimap icon) on a test copy first, then the real folder after asking. Plans: `/home/kevin/.claude/plans/magical-spinning-knuth.md`, `/home/kevin/.claude/plans/flickering-shimmying-dahl.md`. Tests: `gjs -m tests/run-tests.js` 543 pass, `tests/run-ui.sh` 183 pass, `python3 tools/oracle_sim.py newnpc` (152 cases + 12 small structure files, JS = Python).
+> **Handoff (2026-10-07) — START HERE: Step 2 (new exchange menus, Jeff) + the polish below are user-tested in Brave and committed.** Next: item 1 under "## Next" (in-game test of Add New NPC). Plan: `/home/kevin/.claude/plans/witty-churning-parrot.md`. The user made Bob Marley + "Bob's Weapons" on test-data and saved it (backup `test-data/backups/2026-10-07_08-04-42_npc/`).
+> - **NPC Shops shows and edits exchanges:** each exchange menu of the NPC has a tab `⇄ <label> (n)` next to Tab 0–3 with the same cards as Exchanges (Try it, chances, Gives, add / remove / change, + New exchange, Open in Exchanges), before and after saving. Menu chips show the in-game label + count and open that tab.
+> - **Chances in percent:** the Chance box is a percent (`FRE.dom.pctInput`, 4 decimals); "of 1,000,000" is read-only. Changing one reward rebalances the others so the total stays 100% (`exchangeOps.rebalance`, `setChanceKeepTotal`); + Reward gives an equal share (`addRewardKeepTotal`); ✕ scales the rest back up (`removeRewardKeepTotal`). No more `EX_PROB_OVER` drops from editing.
+> - **Typing updates by itself** after 400 ms (keyed `numInput` / `pctInput`, `live`); the focus and caret stay (`FRE.dom.keepFocus`); typing in one field is one undo step (`Workspace.mergeLast`, 2 s).
+> - **+ Exchange menu form:** Label first, Name filled from it (`FRE.menuNameFromLabel`: `MMI_BOBS_WEAPONS`, `_2` when taken) with a live `✓ free · menu id N` / `✗ already exists`; rewards in a readable table with Qty; **Player picks** (one exchange per reward) or **Random** (one exchange, chances, Spread evenly, Gives N of M: new rule `NM_PAYNUM`); "What players will see" list. Same builder in + New exchange.
+> - **Standard form pieces** (user: "make everything standard"): `FRE.ui.fieldLabel` (red `*` / "(optional)"), `FRE.ui.formFooter` (* note → Checks with ⛔/⚠ legend → preview), used by + NPC, + Exchange menu, + New exchange.
+> - Other: after + NPC the list search is replaced by the new NPC's name when it would hide it; Change task with unsaved edits offers **Save and continue**.
+> - Simulator: `oracle_sim.py newmenu` writes `PAY <n>` and has random specs (50/50, gives 2 of 3, gives 3 of 3, gives 0 / 3 of 2 blocked) with 1,500-press rate cases; JS = Python. Tests: core 590+, UI harness 201.
+>
+> **User's test:** `python3 build.py`, reload, pick `test-data` (no refresh). NPC Shops → Bob → `⇄ Bob's Weapons` tab: both exchanges; type 70 in a chance (no click): the other becomes 30. + Reward: equal share. Try it. + Exchange menu on Bob: type a label (name fills), 2 rewards, Random, Create: the new tab shows it unsaved. Change task → Save and continue.
+>
+> **Handoff (2026-10-06, evening):** **Step 1 (Add New NPC + building tags) is committed and pushed (`7cbb9c9`). Step 2 (new exchange menus, Jeff's Weapon Pieces) is built, NOT committed, waiting for the user's test.** Plan: `/home/kevin/.claude/plans/flickering-shimmying-dahl.md`. Tests: `gjs -m tests/run-tests.js` 564 pass, `tests/run-ui.sh` 188 pass, `python3 tools/oracle_sim.py newmenu` (30 specs + 192 OK presses, JS = Python).
+>
+> **What Step 2 does:**
+> - NPC Shops → an NPC from character.inc → **+ Exchange menu**: name (`MMI_…`), label, ingredients + rewards (one exchange per reward), messages (2 new texts or an existing pair). Create writes, as one undo step, Server + Client: `#define MMI_<NAME> <282..>` (defineNeuz.h), `TID_MMI_<NAME> 7000+id` + result TIDs (defineText.h), textClient.inc blocks + textClient.txt.txt lines, the menu block (Exchange_Script.txt), `AddMenu` (character.inc). No C++ change (INVESTIGATION §1.10).
+> - Exchanges → a menu → **+ New exchange**: same ingredients, one exchange per reward, reusing the menu's text and messages.
+> - Simulator: `newNpcSim.rightClick` marks which menus open the exchange window (port of `OnCommand`'s case list) and how many exchanges they hold; `tools/menu-sim.js` builds a spec, presses OK on every exchange, and with `--write` writes `test-data` (backup first). Python copy `oracle_sim.py newmenu` reads the case list from `WndWorld.cpp` (fixture copy in `test-data/fixtures/src/`).
+> - **Jeff is applied to `test-data`** (`gjs -m tools/menu-sim.js --write`, spec `tools/jeff-menus.json`, backup `test-data/backups/2026-10-06_19-07-53_npc-menus/`): menus 282-287 (Entaness / Chiton / Duchess / Ancient (Drakul) / Ankou / Crystal Lusaka Weapons), 61 exchanges (200 pieces + 1 boss item, Savage Khan 30), messages "You received your weapon." / "You need the weapon pieces, the boss item and a free inventory slot." (TID 8044/8045). NOT in the real `Server/Resource` yet.
+>
+> **User's test:** `python3 build.py`, reload, pick `test-data` (do NOT run `tools/refresh-fixtures.sh test-data`: it would remove Jeff). NPC Shops → All shops → Jeff: menus show the 6 exchanges. Exchanges task → Jeff's 6 menus, Try it. Optional: + Exchange menu on another NPC, Create, Undo. In game later: talk to Jeff → 6 menus → counts red when missing → a trade gives the weapon; no Exchange / LoadText errors in `Server/error_*.txt`. To put Jeff in the real files: run the same spec on the real folder only after the user says so.
+>
+>
+> **Step 1 (2026-10-06, late night):** **Add New NPC step 1 (shop NPC, reworks 1b + 1c + 1d) is committed (`7cbb9c9`) but NOT tested in game yet.** The user tested 1c in Brave: OK except the Model list and the Building tag, both reworked in 1d (below). Next: the in-game test (handoff §8 + the `[tag]` above the name and its minimap icon) on a test copy first, then the real folder after asking. Plans: `/home/kevin/.claude/plans/magical-spinning-knuth.md`, `/home/kevin/.claude/plans/flickering-shimmying-dahl.md`. Tests: `gjs -m tests/run-tests.js` 543 pass, `tests/run-ui.sh` 183 pass, `python3 tools/oracle_sim.py newnpc` (152 cases + 12 small structure files, JS = Python).
 >
 > **1d (user test feedback):**
 > - Model: a **Used by NPCs / Not used yet / Both** dropdown replaces the checkbox; a model not in the chosen list is cleared (no stale picture). A line under it lists the files: `.o3d`, animations, textures — all in Client/Model, or what is missing. Textures are read from the `.o3d` (`newNpcSim.o3dTextures`; a test copy uses `Client/ModelTexture.list` + `Client/Model.textures` from `tools/refresh-fixtures.sh`). Models of NPCs hidden in `b6abf414` are proven ("Soraya (until b6abf414)").
@@ -11,7 +33,7 @@ _Last updated 2026-10-06._
 >
 > **User's test:** `python3 build.py`, `tools/refresh-fixtures.sh test-data` (new: Client defineNeuz.h / etc.* and the texture lists), reload, NPC Shops → + NPC: switch the Model list, type a tag in Building, Create (6 files), Save (backup has defineNeuz.h, etc.inc, etc.txt.txt + Client/), Undo. In game later (Windows): handoff §8 plus the `[tag]` above the name and its minimap icon.
 >
-> **Next (the numbered order under "## Next" is the single source of truth, updated 2026-10-06):** in-game test of step 1 → S. Shops: everything editable → V. Save History → H. Where is this item from / used → D-sim. Donation Shop simulator → C. GM Commands list → Add NPC step 2 (exchange NPCs, Jeff's Weapon Pieces; reuse `FRE.ui.itemPicker`) → step 3 (NPC menus + info boards, Guild Siege rules) → I → F → J → K → L → G → M. No 3D model viewer (the user chose pictures only).
+> **Next (the numbered order under "## Next" is the single source of truth, updated 2026-10-06):** in-game test of step 1 → S. Shops: everything editable → V. Save History → H. Where is this item from / used → D-sim. Donation Shop simulator → C. GM Commands list → Add NPC step 2 (**built early, 2026-10-06: user test + commit pending**, see the handoff above) → step 3 (NPC menus + info boards, Guild Siege rules) → I → F → J → K → L → G → M. No 3D model viewer (the user chose pictures only).
 
 ## Done
 - **Build 1** (`1c785ce`): NPC shop editor (`character*.inc`). Add, remove, price and tab edits; byte-exact save with verified backup. Tested by the user in Brave on `test-data`.
@@ -89,7 +111,7 @@ _Last updated 2026-10-06._
 
 - **Exchange simulator** (2026-10-06, user-tested): `loaders/exchange-sim.js` (`FRE.exchangeSim`), `tools/exchange-sim.js`, and a **Try it** button on every recipe card.
   - Ports `CDPSrvr::OnExchange` → `CExchange::ResultExchange` (`_Common/Exchange.cpp:434`): CheckCondition + `CMover::GetItemNum`, GetPayItemList + `xRandom` (the server's LCG), IsFull + `GetEmptyCount`, `RemoveItemA` / `RemoveAllItem`, `CreateItem` → `CItemContainer::IsFull` / `Add`; and the client's `CWndDialogEvent::ReceiveResult` (Collins' chat line, `15091d5f`) and the row dimming (`WndControl.cpp:1973`). No commit changes `Exchange.cpp`.
-  - Try it: press OK N times with the same fresh bag (how often each reward comes out) or one bag that keeps the rewards (runs out, fills up); shows refusals, items taken, lost rewards and what the player reads.
+  - Try it: "Run again" uses the next seed (new rolls); columns "Got in this run" vs "Chance set". Press OK N times with the same fresh bag (how often each reward comes out) or one bag that keeps the rewards (runs out, fills up); shows refusals, items taken, lost rewards and what the player reads.
   - `gjs -m tools/exchange-sim.js` runs all 75 recipes of the 9 live menus: every one works, observed chances match the server's (Card Master 60/40).
   - In-game findings (tests assert each):
     - The reward roll happens BEFORE the bag check; a full bag takes nothing.
@@ -162,7 +184,7 @@ _Last updated 2026-10-06._
 4. **H. "Where is this item from / used?"** (every way to get an item: shops, exchanges, monster drops, boxes, rewards, quests).
 5. **D-sim. Donation Shop simulator** (the only finished editor without a "what happens in game" test).
 6. **C. GM Commands list** (every GM command, searchable, by category, with plain-English descriptions).
-7. Add New NPC step 2 (exchange NPCs + new menus, Jeff's Weapon Pieces).
+7. Add New NPC step 2 (exchange NPCs + new menus, Jeff's Weapon Pieces): **done, user-tested in Brave and committed 2026-10-07** (+ exchanges inside NPC Shops, percent chances, Random rewards). Jeff is on test-data only; in-game test pending.
 8. Add New NPC step 3 (edit NPC menus + info boards, Guild Siege rules).
 9. **I. Rates & Buffs** (server rates, level-up gifts, rebirth tiers, guild buff, server buff, couple; buff descriptions written from the stats).
 10. F. Monster drops: add / remove / change what each monster drops (the Rates calculator then shows real drop chances).
@@ -181,7 +203,7 @@ _Last updated 2026-10-06._
 - Simulator rule: port what the server does with the new NPC (LoadCharacter + .dyo read + shop fill), plus an independent Python copy, as for every task.
 
 ### Add New NPC: Step 2 and Step 3 (agreed 2026-10-06)
-- **Step 2:** exchange NPCs and new exchange menus (`MMI_` 282-349, label `TID_MMI_*` = 7000 + id, empty menu in `Exchange_Script.txt`); the menus can also be added to existing NPCs. First real use: Jeff's Weapon Pieces exchange (`7b1210d4`; Weapon Pieces handoff Step 3).
+- **Step 2:** built 2026-10-06 (see the handoff): new exchange menus on any character.inc NPC (`MMI_` 282-349, label `TID_MMI_*` = 7000 + id) + new exchanges in a menu; Jeff's 6 Weapon Pieces menus (`7b1210d4`; Weapon Pieces handoff Step 3) applied to test-data.
 - **Step 3:** edit an existing NPC's menus (add / remove `AddMenu`) and the info-board texts its menus show.
   - Example: the Guild Siege manager `MaFl_GuildWar`. `MMI_GUILDCOMBAT_INFO_BOARD1/2/3` and `MMI_GUILDCOMBAT_INFO_TEX` load the client-only `Client/Client/GuildCombatTEXT_<n>_<lang>.inc` (`WndWorld.cpp:4464-4620`, `CScript::Load` + `SetString`). Each file is ASCII, CRLF, with `#c` colour codes.
   - Goal: put the siege rules (TODO `13364001`) on a board.

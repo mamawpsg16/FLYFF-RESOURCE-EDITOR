@@ -5,7 +5,9 @@
 //   round-trip test; nothing is ever written anywhere.
 import GLib from 'gi://GLib';
 import System from 'system';
-import { FRE, ROOT, readBytes, listDir, loadFolder, openSource, exists, loadWorldFiles } from './gjs-env.js';
+import { FRE, ROOT, readBytes, listDir, loadFolder, openSource, exists, loadWorldFiles, readText } from './gjs-env.js';
+// the independent Python copy; ORACLE_SIM points at a copy when bugs are planted in it (never mutate tools/ in place)
+const ORACLE_SIM = GLib.getenv('ORACLE_SIM') || ROOT + '/tools/oracle_sim.py';
 import { bpServer } from './bp-server.js';
 
 const FIXTURES = ROOT + '/test-data/fixtures/Resource';
@@ -1033,7 +1035,7 @@ section('exchange simulator: every recipe players can use');
 // C++ without reading exchange-sim.js): every result, roll, reward and end bag must match.
 section('exchange simulator: JS and Python copies agree');
 {
-  const [, out] = GLib.spawn_command_line_sync(`python3 ${ROOT}/tools/oracle_sim.py exchange ${FIXTURES}`);
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} exchange ${FIXTURES}`);
   const ora = JSON.parse(new TextDecoder().decode(out));
   const env = xsEnv(W), real = XS.serverTable(W.models.exchange);
   eq(ora.gold, xsId('II_GOLD_SEED1'), 'both copies: PENYA = II_GOLD_SEED1');
@@ -1081,7 +1083,7 @@ section('exchange simulator: JS and Python copies agree');
 // The new season is Python's own text edit there, and the editor's newSeasonPlan here.
 section('battle pass simulator: JS and Python copies agree');
 {
-  const [, out] = GLib.spawn_command_line_sync(`python3 ${ROOT}/tools/oracle_sim.py battlepass ${FIXTURES}`);
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} battlepass ${FIXTURES}`);
   const ora = JSON.parse(new TextDecoder().decode(out));
   const w = freshWorkspace(), S = bpServer(FRE, w, 7), D = w.defines.defines;
   const names = ['Ana', 'Ben', 'Cy', 'Dee', 'Eve', 'Fay', 'Gus', 'Hal'];
@@ -1238,7 +1240,8 @@ section('one task at a time (Workspace only)');
   ok(!ex.isEditable('spec_item.txt') && !ex.isEditable('character.inc') && ex.isEditable('exchange_script.txt'), 'exchange task: only Exchange_Script.txt editable');
   eq(ex.clientFileNames().join(), 'Exchange_Script.txt', 'exchange task: Client sync only for Exchange_Script.txt');
   const np = new FRE.Workspace(files(), { only: 'npc' }).load();
-  ok(np.isEditable('spec_item.txt') && np.isEditable('character.inc') && !np.isEditable('exchange_script.txt'), 'NPC task: character*.inc and Spec_Item.txt (chip prices) editable');
+  ok(np.isEditable('spec_item.txt') && np.isEditable('character.inc') && np.isEditable('exchange_script.txt') && !np.isEditable('battlepass.inc') && !np.isEditable('donationshop.inc'),
+    'NPC task: character*.inc, Spec_Item.txt (chip prices) and Exchange_Script.txt (new exchange menus) editable; not the other tasks\' files');
   ok(np.clientFileNames().includes('Spec_Item.txt') && np.clientFileNames().includes('character.inc'), 'NPC task: syncs Spec_Item.txt and character.inc');
   const bp = new FRE.Workspace(files(), { only: 'battlepass' }).load();
   ok(!bp.isEditable('spec_item.txt') && bp.diags.every(d => d.module === 'battlepass'), 'Battle Pass task: no Spec_Item edits or item problems');
@@ -1321,7 +1324,7 @@ const NW = areaWs('npc');
 // area, written from the C++ without reading area.js): every result must match.
 section('where NPCs stand: JS and Python copies agree');
 {
-  const [, out] = GLib.spawn_command_line_sync(`python3 ${ROOT}/tools/oracle_sim.py area ${FIXTURES}`);
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} area ${FIXTURES}`);
   const py = JSON.parse(new TextDecoder().decode(out));
   const A = NW.area, D = NW.defines.defines, J = JSON.stringify;
   const pm = m => { const o = {}; for (const k of [...m.keys()].sort((a, b) => a - b)) o[k] = m.get(k); return o; };
@@ -1449,7 +1452,7 @@ section('add new NPC: bytes, rules, simulator (JS and Python copies agree)');
   // one with a 47-character name whose length byte (0x30) is printable
   {
     const files = ['Mvr_MaFlJuria.o3d', 'item_Mount051.o3d'].map(n => ROOT + '/test-data/fixtures/o3d/' + n);
-    const [, o] = GLib.spawn_command_line_sync(`python3 ${ROOT}/tools/oracle_sim.py o3d ${files.join(' ')}`);
+    const [, o] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} o3d ${files.join(' ')}`);
     const pyTex = JSON.parse(new TextDecoder().decode(o));
     const jsTex = Object.fromEntries(files.map(f => [f.split('/').pop(), FRE.newNpcSim.o3dTextures(readBytes(f))]));
     eq(JSON.stringify(jsTex), JSON.stringify(pyTex), '.o3d texture names: JS and Python agree on the samples');
@@ -1478,7 +1481,7 @@ section('add new NPC: bytes, rules, simulator (JS and Python copies agree)');
   ok(codes.every(c => FRE.diagHelp[c]), 'every NN_ code has help text', codes.filter(c => !FRE.diagHelp[c]).join(', '));
 
   // the independent Python copy: same rules, same bytes, same game state for every case
-  const [, out] = GLib.spawn_command_line_sync(`python3 ${ROOT}/tools/oracle_sim.py newnpc ${FIXTURES}`);
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} newnpc ${FIXTURES}`);
   const py = JSON.parse(new TextDecoder().decode(out));
   eq(py.lastId, 1188, 'Python: highest IDS_CHARACTER_INC_ 1188');
   let agree = 0, built = 0, games = 0;
@@ -1525,6 +1528,164 @@ section('add new NPC: bytes, rules, simulator (JS and Python copies agree)');
   }
   eq(sbad, 0, `${py.structs.length} small structure files read the same (names, rows outside the table, long names)`);
   ok(py.cases.filter(c => c.build && c.build.tag).length >= 5 && py.cases.some(c => c.inGame && c.inGame.tag && c.inGame.tag.text === '[Dungeon Pieces]'), 'new-tag cases were built and loaded');
+}
+
+section('new exchange menus: lines, rules, right-click, exchanges (JS and Python copies agree)');
+{
+  const w = new FRE.Workspace(fixtureFiles(), { only: 'npc' }).load();
+  const { dyoFiles, worldFiles } = loadWorldFiles(FIXTURES, w);
+  w.setMapFiles(dyoFiles, worldFiles);
+  const names = FRE.menuOps.FILES;
+  const before = names.map(n => w.files.get(n).serialize());
+  ok(names.every(n => w.isEditable(n)) && ['defineText.h', 'textClient.inc', 'textClient.txt.txt', 'Exchange_Script.txt'].every(n => w.clientFileNames().includes(n)),
+    'NPC task may write (and client-sync) defineText.h, textClient.inc, textClient.txt.txt, Exchange_Script.txt');
+  ok(w.models.exchange && w.models.exchange.menus.length > 70, 'NPC task reads the exchange menus');
+  eq(FRE.menuOps.freeMenuIds(w)[0], 282, 'first free menu id: 282 (MMI_COLLECTOR_DETAILS is 281)');
+  eq(FRE.menuOps.nextTid(w), 8044, 'next free TID: 8044 (after TID_TOOLTIP_SKILLDMG 8043)');
+  eq(FRE.menuOps.nextTextId(w), 3929, 'next textClient key: IDS_TEXTCLIENT_INC_003929');
+
+  // Jeff (tools/jeff-menus.json): golden lines, in game, every exchange pressed
+  const jeff = JSON.parse(readText(ROOT + '/tools/jeff-menus.json'));
+  eq(FRE.validateNewMenus(w, jeff).length, 0, "Jeff's 6 menus: no problem");
+  const plan = FRE.menuOps.newMenusPlan(w, jeff);
+  eq(plan.ids.join(), '282,283,284,285,286,287', 'Jeff: menu ids 282-287');
+  w.applyGroup(plan.parts, 'Jeff');
+  const txt = n => w.files.get(n).text;
+  ok(txt('defineneuz.h').includes('#define MMI_COLLECTOR_DETAILS\t281\t// Collins: Collector Details window (collecting drop rates)\r\n#define MMI_WPNPIECE_ENTANESS\t282\t// MaFl_Jeff exchange menu\r\n'), 'defineNeuz.h: MMI_WPNPIECE_ENTANESS 282 right after MMI_COLLECTOR_DETAILS 281');
+  ok(/TID_MMI_MUSICFESTIVALGUITAR\t\t\t7279[^\n]*\n#define\tTID_MMI_WPNPIECE_ENTANESS\t\t\t7282\r\n/.test(txt('definetext.h')) && txt('definetext.h').endsWith('#define\tTID_GAME_WPNPIECE_FAIL\t\t\t\t\t8045\r\n'),
+    'defineText.h: TID_MMI_ labels 7282.. after TID_MMI_MUSICFESTIVALGUITAR 7279; result TIDs 8044/8045 at the end');
+  ok(txt('textclient.txt.txt').endsWith('IDS_TEXTCLIENT_INC_003934\tCrystal Lusaka Weapons\r\nIDS_TEXTCLIENT_INC_003935\tYou received your weapon.\r\nIDS_TEXTCLIENT_INC_003936\tYou need the weapon pieces, the boss item and a free inventory slot.\r\n'),
+    'textClient.txt.txt: 8 lines appended (line i still holds key i)');
+  ok(txt('textclient.txt.txt').split('\r\n').every((l, i) => !l || l.startsWith('IDS_TEXTCLIENT_INC_' + String(i).padStart(6, '0'))), 'textClient.txt.txt stays positional');
+  const g = FRE.newNpcSim.inGame(w, 'MaFl_Jeff');
+  eq(g.menus.map(m => `${m.label}${m.opens ? ':' + m.opens.sets : ''}`).join(', '),
+    'Dialog, Entaness Weapons:10, Chiton Weapons:10, Duchess Weapons:10, Ancient Weapons (Drakul):10, Ankou Weapons:11, Crystal Lusaka Weapons:10',
+    "in game: Jeff's right-click = Dialog + the 6 labels, each opening the exchange window with its weapons");
+  eq(w.diags.filter(d => d.module === 'exchange' && d.severity === 'BLOCK').length, 0, 'the exchange loader reads the new menus without a problem');
+  const XS = FRE.exchangeSim, env = XS.envFromWorkspace(w), table = XS.serverTable(w.models.exchange);
+  const ank = table.find(286);
+  const p1 = XS.stockedPlayer(env, ank.sets[0], { free: 1 });
+  const r1 = XS.resultExchange(env, table, p1, 286, 0, XS.rng(1));
+  ok(r1.result === 'SUCCESS' && r1.given.length === 1 && r1.given[0].id === w.defines.defines.get('II_WEA_SWO_BEHESWORD') && r1.taken.length === 2, 'Ankou #1: 200 pieces + 1 Ankou\'s Scale -> Curtana');
+  w.undo();
+  ok(names.every((n, i) => B.bytesEqual(w.files.get(n).serialize(), before[i])) && !w.defines.defines.has('MMI_WPNPIECE_ENTANESS'), 'one Undo restores all 6 files and the defines');
+
+  // the C++ case list (which menu ids have their own window): JS list = the one Python reads from WndWorld.cpp
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} newmenu ${FIXTURES}`);
+  const py = JSON.parse(new TextDecoder().decode(out));
+  eq([...FRE.newNpcSim.OWN_CASE].sort().join(), py.caseIds.join(), `OnCommand case list: JS = Python (${py.caseIds.length} names read from WndWorld.cpp)`);
+
+  const build = bag => {
+    const p = XS.player({ gold: bag.gold, unlocked: bag.unlocked });
+    for (const [k, v] of Object.entries(bag.slots || {})) p.slots[+k] = { id: v[0], num: v[1], flag: v[2], charged: v[3], busy: v[4] };
+    for (let i = 0, left = bag.fill || 0; i < XS.MAX_INVENTORY && left > 0; i++) if (!p.slots[i]) { p.slots[i] = { id: XS.FILLER, num: 1, flag: 0, charged: 0, busy: false }; left--; }
+    return p;
+  };
+  const dump = p => {
+    const all = [...p.slots, ...p.equip];
+    return { gold: p.gold, fill: all.filter(x => x && x.id === XS.FILLER).length, items: all.map((x, i) => x && x.id !== XS.FILLER ? [i, x.id, x.num, x.flag] : null).filter(Boolean) };
+  };
+  const norm = o => JSON.stringify({ counts: Object.keys(o.counts).sort().map(k => [k, o.counts[k]]), lines: o.lines, trace: o.trace, end: o.end });
+  let agree = 0, xagree = 0, xall = 0;
+  for (const c of py.cases) {
+    const realDefs = new Map(Object.keys(c.defs).map(k => [k, w.defines.defines.get(k)]));
+    for (const [k, v] of Object.entries(c.defs)) w.defines.defines.set(k, v);
+    const diags = FRE.validateNewMenus(w, c.spec);
+    const mine = { codes: [...new Set(diags.map(d => `${d.code}|${d.field}`))].sort(), build: null, inGame: null };
+    if (!diags.some(d => d.severity === 'BLOCK')) {
+      const p = FRE.menuOps.newMenusPlan(w, c.spec);
+      const fname = Object.fromEntries(names.map(n => [n, w.files.get(n).name]));
+      mine.build = Object.fromEntries(p.parts.map(x => [fname[x.file], x.splices.map(sp => [sp.start, sp.insert])]));
+      mine.ids = p.ids;
+      if (c.inGame) {
+        w.applyGroup(p.parts, 'case');
+        mine.inGame = FRE.newNpcSim.inGame(w, c.spec.npcKey).menus.map(m => [m.id, m.label, m.opens ? m.opens.sets : null]);
+        const t = XS.serverTable(w.models.exchange), en = XS.envFromWorkspace(w);
+        for (const x of py.exchanges.filter(x => x.spec === c.name)) {
+          xall++;
+          const set = t.find(x.mmi).sets[x.set];
+          // x.tries presses (1, or 1,500 for the reward rates of a random exchange), a fresh bag each ('same')
+          const rng = XS.rng(x.seed), counts = {}, lines = set.pay.map(() => [0, 0]), trace = [];
+          let pl = build(x.bag);
+          for (let k = 0; k < (x.tries || 1); k++) {
+            if (k) pl = build(x.bag);
+            const r = XS.resultExchange(en, t, pl, x.mmi, x.set, rng);
+            counts[r.result] = (counts[r.result] || 0) + 1;
+            r.given.forEach(y => lines[set.pay.indexOf(y)][0]++); r.lost.forEach(y => lines[set.pay.indexOf(y)][1]++);
+            if ((x.tries || 1) <= 20) trace.push([r.result, r.given.map(y => set.pay.indexOf(y)), r.lost.map(y => set.pay.indexOf(y))]);
+          }
+          const res = { counts, lines, trace, end: dump(pl) };
+          if (norm(res) === norm(x.expect)) xagree++;
+          else ok(false, `exchange ${c.name} ${x.mmi} #${x.set + 1} ${x.name}`, `JS ${norm(res).slice(0, 300)}\n      PY ${norm(x.expect).slice(0, 300)}`);
+        }
+        w.undo();
+      }
+    }
+    for (const [k, v] of realDefs) if (v === undefined) w.defines.defines.delete(k); else w.defines.defines.set(k, v);
+    const same = JSON.stringify(mine.codes) === JSON.stringify(c.codes) && JSON.stringify(mine.build) === JSON.stringify(c.build) &&
+      JSON.stringify(mine.inGame) === JSON.stringify(c.inGame) && (!c.build || JSON.stringify(mine.ids) === JSON.stringify(c.ids));
+    if (same) agree++;
+    else ok(false, `new menu case "${c.name}"`, `JS ${JSON.stringify({ codes: mine.codes, ids: mine.ids, inGame: mine.inGame }).slice(0, 400)}\n      PY ${JSON.stringify({ codes: c.codes, ids: c.ids, inGame: c.inGame }).slice(0, 400)}` +
+      (mine.build && c.build ? '\n      build differs in: ' + Object.keys(c.build).filter(k => JSON.stringify(mine.build[k]) !== JSON.stringify(c.build[k])).join(', ') : ''));
+  }
+  eq(agree, py.cases.length, `JS and Python agree on all ${py.cases.length} new-menu cases (rules, every inserted line and offset, right-click list)`);
+  eq(xagree, xall, `JS and Python agree on all ${xall} OK presses on the new exchanges (exact / one short / full bag)`);
+  ok(xall >= 183, 'the presses cover all 61 of Jeff\'s exchanges');
+  ok(names.every((n, i) => B.bytesEqual(w.files.get(n).serialize(), before[i])), 'files unchanged after the cases');
+  // the name filled from the label (ui/menu-form.js)
+  eq(FRE.menuNameFromLabel(w, "Bob's Weapons"), 'MMI_BOBS_WEAPONS', "label \"Bob's Weapons\" -> MMI_BOBS_WEAPONS");
+  eq(FRE.menuNameFromLabel(w, 'Trade'), 'MMI_TRADE_2', 'a taken name gets _2 (MMI_TRADE exists)');
+  eq(FRE.menuNameFromLabel(w, 'Test', ['MMI_TEST']), 'MMI_TEST_2', 'a name another menu of the form uses gets _2');
+  eq(FRE.menuNameFromLabel(w, 'x'.repeat(60)).length, 44, 'at most 40 characters after MMI_');
+  eq(FRE.menuNameFromLabel(w, '무기 !'), '', 'a label with no letter or digit gives no name (the field stays empty: required)');
+  ok(FRE.menuNameProblem(w, 'MMI_TRADE') && !FRE.menuNameProblem(w, 'MMI_BOBS_WEAPONS'), 'menuNameProblem: taken vs free');
+  // a random exchange: PAY n + the chances
+  const rnd = { npcKey: 'MaFl_Jeff', results: { tids: ['TID_GAME_COLLECT_COND01_SUCCESS', 'TID_GAME_COLLECT_COND01_FAIL'] },
+    menus: [{ name: 'MMI_TEST_RND', label: 'Rnd', sets: [{ cond: [['II_SYS_SYS_SCR_SCRAPTOPAZ', 5]], pay: [['II_SYS_SYS_SCR_HOLY', 1, 700000], ['II_SYS_SYS_SCR_AMPESS', 1, 300000]], payNum: 1 }] }] };
+  ok(/\t\tPAY\t1\r\n\t\t\{\r\n\t\t\tII_SYS_SYS_SCR_HOLY\t1\t700000\r\n\t\t\tII_SYS_SYS_SCR_AMPESS\t1\t300000\r\n/.test(FRE.menuOps.newMenusPlan(w, rnd).lines.exchange.replace(/\r?\n/g, '\r\n')),
+    'random exchange: one SET, PAY 1, both rewards with their chances');
+  rnd.menus[0].sets[0].payNum = 3;
+  ok(FRE.validateNewMenus(w, rnd).some(d => d.code === 'NM_PAYNUM' && d.severity === 'BLOCK'), 'gives 3 of 2: NM_PAYNUM blocks');
+
+  // chances in percent: one change moves the others so the total stays 1,000,000 (edit/exchange-ops.js)
+  const RB = FRE.exchangeOps.rebalance, sum = a => a.reduce((x, y) => x + y, 0);
+  eq(RB([500000, 500000], 0, 700000).join(), '700000,300000', '70% on one of two: the other gets 30%');
+  eq(RB([500000, 300000, 200000], 0, 600000).join(), '600000,240000,160000', 'the others keep their proportions (3:2)');
+  eq(RB([1000000, 0, 0], 0, 400000).join(), '400000,300000,300000', 'others all at 0: split evenly');
+  eq(RB([333334, 333333, 333333], 1, 100000).join(), '450001,100000,449999', 'rounding leftovers go to the first of the others');
+  eq(RB([600000, 400000], null, 0).join(), '600000,400000', 'no line set: unchanged when already 100%');
+  eq(RB([300000, 100000], null, 0).join(), '750000,250000', 'no line set: scaled back up to 100% (after a reward is removed)');
+  ok([[1, 2, 3], [0, 0], [999999, 1, 0], [123, 456, 789, 1011]].every(v => [0, 1].every(j => j >= v.length || sum(RB(v, j, 123457)) === 1000000)), 'the total is always exactly 1,000,000');
+  {
+    const ex = w.files.get('exchange_script.txt'), t0 = ex.text, col = () => w.models.exchange.menus.find(m => m.name === 'MMI_COLLECT01');
+    const s1 = () => col().sets[0];
+    w.apply('exchange_script.txt', FRE.exchangeOps.addRewardKeepTotal(ex.text, s1(), 'II_SYS_SYS_SCR_HOLY', 1), 'add');
+    eq(s1().pay.map(l => l.prob.value).join(), '500000,500000', 'Collins #1 (one reward at 100%) + a reward: 50% / 50%');
+    w.apply('exchange_script.txt', FRE.exchangeOps.addRewardKeepTotal(ex.text, s1(), 'II_SYS_SYS_SCR_AMPESS', 1), 'add');
+    eq(s1().pay.map(l => l.prob.value).join(), '333334,333333,333333', 'a third: an equal share (1/3), the others shrink in proportion');
+    w.apply('exchange_script.txt', FRE.exchangeOps.setChanceKeepTotal(s1(), s1().pay[2], 600000), 'pct');
+    eq(s1().pay.map(l => l.prob.value).join(), '200001,199999,600000', 'set 60% on the new one: the others share 40%');
+    w.apply('exchange_script.txt', FRE.exchangeOps.removeRewardKeepTotal(ex.text, s1(), s1().pay[0]), 'rm');
+    eq(s1().pay.map(l => l.prob.value).join(), '250000,750000', 'remove one: the rest grow back to 100%');
+    ok(!w.diags.some(d => /EX_PROB_(OVER|UNDER)/.test(d.code) && d.start >= col().start && d.start < col().end), 'no EX_PROB_OVER / EX_PROB_UNDER: nothing is cut or topped up by the server');
+    const t = XS.serverTable(w.models.exchange);
+    eq(t.find(col().mmi.value).sets[0].pay.map(p => p.prob).join(), '250000,750000', 'the server (exchange-sim Load_Script) reads the same chances');
+    w.undo(); w.undo(); w.undo(); w.undo();
+    ok(ex.text === t0, 'undo x4: Exchange_Script.txt back');
+  }
+  // typing in one field = one undo step (Workspace.mergeLast)
+  {
+    const ex = w.files.get('exchange_script.txt'), t0 = ex.text, s1 = () => w.models.exchange.menus.find(m => m.name === 'MMI_COLLECT01').sets[0];
+    const n0 = w.history.length;
+    w.apply('exchange_script.txt', FRE.exchangeOps.setRewardQty(s1().pay[0], 2), 'qty');
+    w.apply('exchange_script.txt', FRE.exchangeOps.setRewardQty(s1().pay[0], 25), 'qty');
+    ok(w.mergeLast() && w.history.length === n0 + 1, 'two edits of the same field fold into one step');
+    w.undo();
+    ok(ex.text === t0, 'one undo goes back to before both');
+  }
+
+  const codes = ['NM_FILES', 'NM_NPC', 'NM_NONE', 'NM_ID_FULL', 'NM_NAME', 'NM_TEXT', 'NM_EMPTY', 'NM_SET_CAP', 'NM_RECIPE', 'NM_ITEM', 'NM_QTY', 'NM_CHANCE', 'NM_PAYNUM', 'NM_RESULT'];
+  ok(codes.every(c => FRE.diagHelp[c]), 'every NM_ code has help text', codes.filter(c => !FRE.diagHelp[c]).join(', '));
 }
 
 section('mutations');

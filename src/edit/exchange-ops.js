@@ -88,6 +88,40 @@
     if (set.payNum && set.payNum.value > set.pay.length - 1) out.push(...T.replaceSpan(set.payNum, set.pay.length - 1));
     return out;
   }
+  // Chances that keep the total at 1,000,000 (the UI types percent; nothing is cut or topped up by the server).
+  // rebalance(values, j, v): line j gets v, the others share what is left in proportion to their old values
+  // (evenly when they were all 0); rounding leftovers go to the first of them. -> new values (sum = total).
+  function rebalance(values, j, v, total = EX().PROB_TOTAL) {
+    const out = values.slice();
+    const others = values.map((x, i) => i).filter(i => i !== j);
+    if (j !== null && j !== undefined) out[j] = Math.max(0, Math.min(total, v));
+    if (!others.length) return out;
+    const rest = total - (j === null || j === undefined ? 0 : out[j]);
+    const old = others.reduce((a, i) => a + Math.max(0, values[i]), 0);
+    let given = 0;
+    for (const i of others) { out[i] = old > 0 ? Math.floor(Math.max(0, values[i]) * rest / old) : Math.floor(rest / others.length); given += out[i]; }
+    for (let k = 0; given < rest; k = (k + 1) % others.length) { out[others[k]]++; given++; }
+    return out;
+  }
+  // Set one reward's chance; the other rewards of the exchange move so the total stays 100%.
+  function setChanceKeepTotal(set, l, v) {
+    const j = set.pay.indexOf(l);
+    const vals = rebalance(set.pay.map(x => x.prob.value), j, v);
+    return set.pay.flatMap((x, i) => (vals[i] !== x.prob.value ? T.replaceSpan(x.prob, vals[i]) : []));
+  }
+  // A new reward with an equal share (100% / n); the others shrink in proportion.
+  function addRewardKeepTotal(text, set, define, n) {
+    const total = EX().PROB_TOTAL, share = Math.floor(total / (set.pay.length + 1));
+    const vals = rebalance([...set.pay.map(x => x.prob.value), share], set.pay.length, share);
+    return [...set.pay.flatMap((x, i) => (vals[i] !== x.prob.value ? T.replaceSpan(x.prob, vals[i]) : [])), ...addReward(text, set, define, n, vals[set.pay.length])];
+  }
+  // Remove a reward; the others grow in proportion back to 100%.
+  function removeRewardKeepTotal(text, set, l) {
+    const rest = set.pay.filter(x => x !== l);
+    const vals = rebalance(rest.map(x => x.prob.value), null, 0);
+    return [...removeReward(text, set, l), ...rest.flatMap((x, i) => (vals[i] !== x.prob.value ? T.replaceSpan(x.prob, vals[i]) : []))];
+  }
+
   // Spread 1,000,000 evenly over the reward lines (the remainder goes to the first lines).
   function evenChances(set) {
     const n = set.pay.length, base = Math.floor(EX().PROB_TOTAL / n), extra = EX().PROB_TOTAL - base * n;
@@ -138,6 +172,6 @@
 
   FRE.exchangeOps = {
     setIngredientQty, setIngredientItem, setRewardQty, setRewardChance, setRewardItem, setRewardFlag, setPayNum,
-    addIngredient, removeIngredient, addReward, removeReward, evenChances, copySet, removeSet, moveSet, buildSet, setBlock,
+    addIngredient, removeIngredient, addReward, removeReward, evenChances, rebalance, setChanceKeepTotal, addRewardKeepTotal, removeRewardKeepTotal, copySet, removeSet, moveSet, buildSet, setBlock,
   };
 })(globalThis.FRE = globalThis.FRE || {});

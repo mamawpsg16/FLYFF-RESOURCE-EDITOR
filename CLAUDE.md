@@ -35,6 +35,7 @@ The user is a web developer learning C++. When server behaviour matters, explain
     | Exchanges | `loaders/exchange-sim.js`, `tools/exchange-sim.js`, "Try it" on each recipe (ResultExchange, CheckCondition, GetPayItemList, IsFull, RemoveItemA, CreateItem, ReceiveResult) | `tools/oracle_sim.py exchange` (1,436 cases) | done, every case agrees |
     | Where NPCs stand | `loaders/area.js`, `tools/area-sim.js` (CContinent, GetMapArea, ReadRegion, the client's region loop) | `tools/oracle_sim.py area` (427 NPC spots, 300 walks, small files) | done, every case agrees |
     | Add New NPC (step 1: shop NPC) | `loaders/newnpc-sim.js`, `tools/newnpc-sim.js` (LoadCharacter, LoadString, ReadObj/CMover::Read, IsUsableDYO2, ProcessRegenItem, the client's right-click popup, LoadEtc structure + the `[tag]` line) | `tools/oracle_sim.py newnpc` (152 forms: every map, every rule's edge, model files and textures, new tags; 12 small structure files) | done, every case agrees; 27 planted bugs caught |
+    | New exchange menus (Step 2) | `newNpcSim.rightClick` / `opensOf` (AddMenu, TID 7000+id label, OnCommand's case list), `tools/menu-sim.js` + `exchange-sim` (every new exchange pressed) | `tools/oracle_sim.py newmenu` (35 specs incl. Jeff and random rewards (PAY n), 205 OK presses incl. 1,500-press rates; case list read from `WndWorld.cpp`) | done, every case agrees; 17 planted bugs |
     | Donation Shop | none | none | **missing:** the buy flow (price = dwReferValue1, chip check, the crash items) |
     | Monster drops (F) | — | — | build both with the editor |
 - **Commas are for display only** (`FRE.num`). The server tokenizer splits on `,`, so files always get plain digits.
@@ -57,6 +58,8 @@ The user is a web developer learning C++. When server behaviour matters, explain
   - **Which NPCs are in the game:** placed in a map `.dyo` file (`World/<map>/<map>.dyo`, maps from `World.inc`) AND shown by `CWorld::IsUsableDYO2` (`SetOutput` / `SetLang` in `character.inc`). The WorldServer's language is compiled in: `WorldServer.rc:137` `IDS_LANG "1"` = LANG_USA. Ported in `loaders/world.js`; skip commented lines (the real loader does).
   - **Adding an NPC** (`edit/npc-ops.js`, "+ New NPC" in NPC Shops): a block appended to character.inc, IDS lines appended to character.txt.txt, a 200-byte record inserted at the map `.dyo`'s final `FFFFFFFF`, x and z stored ÷ 4. All three in Server + Client. A new building tag adds `SRT_` lines to defineNeuz.h + etc.inc + etc.txt.txt (`b4b9a465`); only rows 18/19 are free (`MAX_STRUCTURE` 20 is compiled). No commit has added an NPC yet (first in-game test pending). Details: INVESTIGATION.md §1.9.
   - **Where an NPC stands** (`loaders/area.js`): `.dyo` x/z × 4 (`OLD_MPU`). The map-window name comes from the `WdMadrigal.wld.cnt` polygons and `propMapComboBoxData.inc`. The on-screen area name comes from the map's `.rgn` titles. Town blocks in `.wld.cnt` have `C_useRealData 0`, so the map window never picks a town. A GM jumps there with `/te <world id> <x> <z>`.
+  - **Editing chances:** the UI types percent and keeps the total at 1,000,000 (`exchangeOps.rebalance`); NPC Shops shows each exchange menu of an NPC as a tab with the Exchanges cards.
+  - **Adding an exchange menu** (`edit/menu-ops.js`, NPC Shops "+ Exchange menu"): `#define MMI_<NAME> <282..349>` (defineNeuz.h), `TID_MMI_<NAME>` = 7000 + id (defineText.h; the popup label), textClient.inc/txt.txt lines (append only: line i = key i), the menu block (Exchange_Script.txt), `AddMenu` (character.inc); Server + Client. Any id without a `case` in `CWndWorld::OnCommand` opens the exchange window; no C++ change. INVESTIGATION.md §1.10.
   - `Exchange_Script.txt`: a bare `CScanner`, so an unknown name becomes -1 silently (`GetDefineNum`). `__NEW_EXCHANGE_V19` is ON (`LodeConfig.h`): CONDITION is checked and taken, REMOVE is ignored, at most 30 SETs per menu. PAY chances are out of 1,000,000. The client sends only the recipe's position, so the Client copy (LF) must match. `SET_SMELT` / `SET_ENCHANT_MOVE` put the loader out of step (see ROADMAP).
     - In game (`exchange-sim.js`): the roll happens before the bag check; the bag check wants at least one EMPTY slot even when the reward would stack, and counts a reward smaller than a full stack as 0 slots, so a recipe giving several rewards can lose some (the server only logs it). Penya means gold only (not Perin). Any item in a trade / private shop or a locked bag slot makes every ingredient count 0. Ingredient quantity -1 takes every one the player has.
 
@@ -71,17 +74,17 @@ src/loaders/        defines, strings (*.txt.txt), textclient (TID_ texts), item-
                     area (where an NPC stands: map window name, area caption, /te), character, vendor-sim (shop contents), donation,
                     donation-tree (client category tree), battlepass, exchange, exchange-sim (pressing OK in the exchange window),
                     newnpc-sim (a new NPC as the game loads it)
-src/validate/       help.js (text for every diagnostic code), character.js, newnpc.js (Add New NPC rules)
+src/validate/       help.js (text for every diagnostic code), character.js, newnpc.js (Add New NPC rules), newmenu.js (new menu rules)
 src/edit/           text-ops (shared row/statement splices), shop-ops, donation-ops, item-ops (Spec_Item chip price), battlepass-ops, exchange-ops,
-                    npc-ops (a new NPC: block, IDS lines, .dyo record)
+                    npc-ops (a new NPC: block, IDS lines, .dyo record), menu-ops (new exchange menus / exchanges)
 src/io/             fsa (File System Access), layout (finds Server/Resource + Client + backups in the ONE picked folder), save (conflict check -> verified backup -> write+verify -> restore on failure;
                     Server files, then the same change in the Client/ copies)
 src/ui/             dom, common (FRE.ui registry + helpers), tooltip (item hover), chip-price (shared price input),
-                    npc-shops, new-npc (the "+ New NPC" form), donation, battlepass, exchange, app (shell: modes, item DB, problems, save)
+                    npc-shops, new-npc (the "+ New NPC" form), menu-form ("+ Exchange menu" / "+ New exchange"), donation, battlepass, exchange, app (shell: modes, item DB, problems, save)
 tests/              run-tests.js (gjs core suite), ui-harness.js + run-ui.sh (headless Firefox, fake FS), gjs-env.js
 tools/oracle.py     independent Python reference (differential tests)
 tools/refresh-fixtures.sh  copies the real files into test-data/fixtures (tests) or test-data (manual)
-tools/bp-sim.js, tools/exchange-sim.js, tools/area-sim.js, tools/newnpc-sim.js  replay the in-game behaviour by hand (gjs -m tools/<name>-sim.js)
+tools/bp-sim.js, tools/exchange-sim.js, tools/area-sim.js, tools/newnpc-sim.js, tools/menu-sim.js (+ jeff-menus.json)  replay the in-game behaviour by hand (gjs -m tools/<name>-sim.js)
 tools/oracle_sim.py independent Python copies of the simulators (differential tests)
 docs/               INVESTIGATION.md, DESIGN.md, ROADMAP.md (what's next)
 ```

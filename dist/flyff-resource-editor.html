@@ -312,6 +312,18 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
 .tga-pic canvas { width: 100px; height: 120px; border: 1px solid var(--line); border-radius: 6px; background: #000; }
 .tga-pic.small canvas { width: 60px; height: 72px; }
 
+/* menu form (ui/menu-form.js) */
+.mf-head { display: flex; align-items: baseline; gap: 8px; margin: 12px 0 4px; }
+.mf-mode { gap: 16px; }
+.mf-rewards { margin: 4px 0; font-size: 13px; }
+.mf-rewards td { padding: 4px 6px; }
+.mf-hint { margin: -2px 0 6px 98px; }
+.mf-players { margin: 4px 0 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.mf-line { font-size: 13px; padding: 2px 0; }
+.small.ok { color: var(--ok); } .small.bad { color: var(--bad); } .small.warn { color: var(--warn); }
+.pct-wrap { white-space: nowrap; } .pct-input { width: 80px; }
+.ex-tab { color: var(--baruna); }
+
 </style>
 </head>
 <body class="start">
@@ -365,7 +377,7 @@ button.te { font-family: ui-monospace, Consolas, monospace; font-size: 11px; pad
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when": "Tue 6 Oct 2026, 18:28", "rev": "35ac48a", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "25+", "when": "Wed 7 Oct 2026, 10:42", "rev": "e6920f9", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -3557,6 +3569,20 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
     NN_TAG_LONG: ['The game copies the tag into a 32-byte field (szName[32]) without a length check. A tag of 32 characters or more overwrites the memory after it.', 'Shorten the tag to 31 characters at most.'],
     NN_TAG_DUP: ['A tag with this text, or a #define with this SRT_ name, already exists.', 'Pick the existing tag from the list.'],
     NN_TAG_ICON: ['The new tag takes a free row of the building table. The minimap draws icon (row + 6) for it. Rows 14-17 were added in b4b9a465 and work in game; the icon of a newer row has not been checked.', 'After the in-game test, check the NPC\'s minimap icon.'],
+    NM_FILES: ['A new exchange menu writes defineNeuz.h, defineText.h, textClient.inc, textClient.txt.txt, Exchange_Script.txt and character.inc. One of them was not found or is read-only.', 'Pick a folder that has all six, in the NPC Shops task.'],
+    NM_NPC: ['The NPC was not found, or it is in character-etc.inc / character-school.inc, which this step does not change.', 'Pick an NPC from character.inc.'],
+    NM_NONE: ['There is no menu to add.', 'Add at least one menu.'],
+    NM_ID_FULL: ['Menu ids go up to MAX_MOVER_MENU - 1 (349). The limit is compiled into the game, and the ids from 282 are used up.', 'Reuse an existing menu, or raise MAX_MOVER_MENU in the C++ and rebuild.'],
+    NM_NAME: ['A menu name is an MMI_ #define. It must be new, and so must its label TID (TID_ + the name).', 'Choose another name in capital letters, e.g. MMI_WPNPIECE_ENTANESS.'],
+    NM_TEXT: ['A label or message is empty, starts or ends with a space, is longer than 255 characters, or has a character the game cannot show.', 'Use plain text.'],
+    NM_EMPTY: ['The menu has no exchange yet, so its window opens with an empty list.', 'Add exchanges to it (Exchanges task, + New exchange).'],
+    NM_SET_CAP: ['The server keeps at most 30 exchanges per menu (__NEW_EXCHANGE_V19); the rest are dropped without a message.', 'Split the exchanges over two menus.'],
+    NM_RECIPE: ['An exchange needs at least one ingredient (else the reward is free) and one reward (an empty PAY crashes the server and the client).', 'Add the missing ingredient or reward.'],
+    NM_ITEM: ['An item name is not defined, or a reward is not in Spec_Item.txt. The server reads an unknown name as -1, and paying out an unknown reward crashes it.', 'Pick the item from the list.'],
+    NM_QTY: ['Quantities must be whole numbers, 1 or more.', 'Fix the quantity.'],
+    NM_CHANCE: ['The reward chances of one exchange should add up to 1,000,000. The server cuts the line that goes over, or adds the rest to the last line.', 'Make the chances add up to 1,000,000.'],
+    NM_PAYNUM: ['A random exchange gives N of its rewards (PAY N), each picked by chance (GetPayItemList, Exchange.cpp). N must be at least 1 and at most the number of rewards; more than that logs an error and gives fewer.', 'Set "Gives" between 1 and the number of rewards.'],
+    NM_RESULT: ['Every exchange shows a success and a failure message (RESULTMSG). They are either two existing texts or two new ones with new TID_ names.', 'Pick two existing texts, or write two new ones.'],
     NN_SHOP_NO_TRADE: ['The shop has items but the NPC has no Trade menu, so players can never open it.', 'Tick Trade, or remove the items.'],
     NN_SHOP_EMPTY: ['Trade is ticked but no tab has an item or a rule. Trade would open an empty shop.', 'Add items, or untick Trade.'],
     NN_TAB: ['Only tabs 0-3 exist (MAX_VENDOR_INVENTORY_TAB). The server does not check the number, so tab 4 or more writes into memory that is not the shop. A tab may be listed only once.', 'Use tabs 0, 1, 2 and 3, each once.'],
@@ -4480,6 +4506,40 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
     if (set.payNum && set.payNum.value > set.pay.length - 1) out.push(...T.replaceSpan(set.payNum, set.pay.length - 1));
     return out;
   }
+  // Chances that keep the total at 1,000,000 (the UI types percent; nothing is cut or topped up by the server).
+  // rebalance(values, j, v): line j gets v, the others share what is left in proportion to their old values
+  // (evenly when they were all 0); rounding leftovers go to the first of them. -> new values (sum = total).
+  function rebalance(values, j, v, total = EX().PROB_TOTAL) {
+    const out = values.slice();
+    const others = values.map((x, i) => i).filter(i => i !== j);
+    if (j !== null && j !== undefined) out[j] = Math.max(0, Math.min(total, v));
+    if (!others.length) return out;
+    const rest = total - (j === null || j === undefined ? 0 : out[j]);
+    const old = others.reduce((a, i) => a + Math.max(0, values[i]), 0);
+    let given = 0;
+    for (const i of others) { out[i] = old > 0 ? Math.floor(Math.max(0, values[i]) * rest / old) : Math.floor(rest / others.length); given += out[i]; }
+    for (let k = 0; given < rest; k = (k + 1) % others.length) { out[others[k]]++; given++; }
+    return out;
+  }
+  // Set one reward's chance; the other rewards of the exchange move so the total stays 100%.
+  function setChanceKeepTotal(set, l, v) {
+    const j = set.pay.indexOf(l);
+    const vals = rebalance(set.pay.map(x => x.prob.value), j, v);
+    return set.pay.flatMap((x, i) => (vals[i] !== x.prob.value ? T.replaceSpan(x.prob, vals[i]) : []));
+  }
+  // A new reward with an equal share (100% / n); the others shrink in proportion.
+  function addRewardKeepTotal(text, set, define, n) {
+    const total = EX().PROB_TOTAL, share = Math.floor(total / (set.pay.length + 1));
+    const vals = rebalance([...set.pay.map(x => x.prob.value), share], set.pay.length, share);
+    return [...set.pay.flatMap((x, i) => (vals[i] !== x.prob.value ? T.replaceSpan(x.prob, vals[i]) : [])), ...addReward(text, set, define, n, vals[set.pay.length])];
+  }
+  // Remove a reward; the others grow in proportion back to 100%.
+  function removeRewardKeepTotal(text, set, l) {
+    const rest = set.pay.filter(x => x !== l);
+    const vals = rebalance(rest.map(x => x.prob.value), null, 0);
+    return [...removeReward(text, set, l), ...rest.flatMap((x, i) => (vals[i] !== x.prob.value ? T.replaceSpan(x.prob, vals[i]) : []))];
+  }
+
   // Spread 1,000,000 evenly over the reward lines (the remainder goes to the first lines).
   function evenChances(set) {
     const n = set.pay.length, base = Math.floor(EX().PROB_TOTAL / n), extra = EX().PROB_TOTAL - base * n;
@@ -4530,7 +4590,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
 
   FRE.exchangeOps = {
     setIngredientQty, setIngredientItem, setRewardQty, setRewardChance, setRewardItem, setRewardFlag, setPayNum,
-    addIngredient, removeIngredient, addReward, removeReward, evenChances, copySet, removeSet, moveSet, buildSet, setBlock,
+    addIngredient, removeIngredient, addReward, removeReward, evenChances, rebalance, setChanceKeepTotal, addRewardKeepTotal, removeRewardKeepTotal, copySet, removeSet, moveSet, buildSet, setBlock,
   };
 })(globalThis.FRE = globalThis.FRE || {});
 
@@ -4701,7 +4761,164 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
     };
   }
 
-  FRE.npcOps = { newNpcPlan, newTagPlan, tagText, tagDefine, lastEtcId, buildRecord, insertPoint, blockText, newStrings, lastStringId, RECORD };
+  FRE.npcOps = { appendSplice, newNpcPlan, newTagPlan, tagText, tagDefine, lastEtcId, buildRecord, insertPoint, blockText, newStrings, lastStringId, RECORD };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- edit/menu-ops.js ----
+// New NPC exchange menus (Step 2). No commit adds an exchange menu end to end, so the lines follow the
+// commits that add each piece, and the stock menus' label rule:
+//   defineNeuz.h        #define MMI_<NAME>\t<id>\t// <npc> exchange menu    (cda3af21 / 15091d5f: MMI 280, 281)
+//   defineText.h        #define\tTID_MMI_<NAME>\t\t\t<7000 + id>            after the last TID_MMI_ (stock TID_MMI_*)
+//                       #define\t<RESULT TID>\t\t\t\t\t<next>                appended at the end (f58e56ba: 8020-8042)
+//   textClient.inc      TID_X\t\t\t\t0xffffffff { IDS_TEXTCLIENT_INC_n }       appended (f58e56ba)
+//   textClient.txt.txt  IDS_TEXTCLIENT_INC_n\t<text>                          appended; line i holds key i, so append only
+//   Exchange_Script.txt MMI_<NAME> { DESCRIPTION { } SET .. }                 appended, MMI_COLLECT01's layout (f58e56ba)
+//   character.inc       AddMenu( MMI_<NAME> );                               after the NPC's last AddMenu (cda3af21)
+// The right-click label is TID_MMI_DIALOG (7000) + id (WndWorld.cpp:7283); a menu id without its own case in
+// CWndWorld::OnCommand opens the exchange window (WndWorld.cpp:6470); the server only runs ResultExchange
+// (DPSrvr.cpp:10721). MAX_MOVER_MENU is 350 (compiled); ids below 282 are taken (240 / 243 have stray TID texts).
+//
+// spec: { npcKey, menus: [{ name: 'MMI_X', label, sets: [{ cond: [[define, n]], pay: [[define, n, prob]] }] }],
+//         results: { tids: ['TID_S', 'TID_F'] } | { add: [{ name, text }, { name, text }] } }
+(function (FRE) {
+  'use strict';
+  const T = FRE.textOps;
+  const FIRST_ID = 282, MAX_MOVER_MENU = 350, TID_MMI_DIALOG = 7000;
+  const FILES = ['defineneuz.h', 'definetext.h', 'textclient.inc', 'textclient.txt.txt', 'exchange_script.txt', 'character.inc'];
+
+  // #define lines of one header: [{ name, value, start, end (line end incl. EOL), eol }]
+  function defineLines(text, prefix) {
+    const out = [];
+    const re = new RegExp(`^#define[ \\t]+(${prefix}\\w*)[ \\t]+(-?\\d+)[^\\r\\n]*(\\r?\\n|$)`, 'gm');
+    for (const m of text.matchAll(re)) out.push({ name: m[1], value: Number(m[2]), start: m.index, end: m.index + m[0].length, eol: m[3] });
+    return out;
+  }
+  // Free menu ids from 282: no MMI_ #define with that value, and no TID at 7000 + id (its label slot).
+  function freeMenuIds(ws) {
+    const D = ws.defines;
+    const usedMmi = new Set(D.withPrefix('MMI_').map(([, v]) => v));
+    const usedTid = new Set(D.withPrefix('TID_').map(([, v]) => v));
+    const out = [];
+    for (let id = FIRST_ID; id < MAX_MOVER_MENU; id++) if (!usedMmi.has(id) && !usedTid.has(TID_MMI_DIALOG + id)) out.push(id);
+    return out;
+  }
+  // The next free TID after the highest one in defineText.h (8044 today, after TID_TOOLTIP_SKILLDMG 8043).
+  function nextTid(ws) {
+    const f = ws.files.get('definetext.h');
+    return Math.max(0, ...defineLines(f ? f.text : '', 'TID_').map(d => d.value)) + 1;
+  }
+  function nextTextId(ws) {
+    let max = -1;
+    const f = ws.files.get('textclient.txt.txt');
+    if (f) for (const m of f.text.matchAll(/IDS_TEXTCLIENT_INC_(\d+)/g)) max = Math.max(max, Number(m[1]));
+    for (const k of ws.strings.map.keys()) if (k.startsWith('IDS_TEXTCLIENT_INC_')) max = Math.max(max, Number(k.slice(19)) || 0);
+    return max + 1;
+  }
+  const tidOf = name => 'TID_' + name;          // MMI_X -> TID_MMI_X (the stock pairing)
+  const keyOf = n => 'IDS_TEXTCLIENT_INC_' + String(n).padStart(6, '0');
+
+  // One SET in MMI_COLLECT01's layout (f58e56ba): REMOVE mirrors CONDITION like every proven commit.
+  function setText(set, setTid, results, eol) {
+    const L = [`\tSET\t${setTid}`, '\t{'];
+    const block = (kw, rows) => L.push(`\t\t${kw}`, '\t\t{', ...rows.map(r => '\t\t\t' + r), '\t\t}');
+    block('RESULTMSG', results);
+    block('CONDITION', set.cond.map(([d, n]) => `${d}\t${n}`));
+    block('REMOVE', set.cond.map(([d, n]) => `${d}\t${n}`));
+    block(`PAY\t${set.payNum || 1}`, set.pay.map(p => p.join('\t')));
+    L.push('\t}');
+    return L.join(eol) + eol;
+  }
+  function menuText(menu, results, eol) {
+    const tid = tidOf(menu.name);
+    let s = [menu.name, '{', '\tDESCRIPTION', '\t{', `\t\t${tid}`, '\t}', ''].join(eol) + eol;
+    for (const set of menu.sets || []) s += setText(set, tid, results, eol);
+    return s + '}' + eol;
+  }
+
+  // -> { ids, results: [S, F], parts, lines: { defineNeuz, defineText, textInc, textTxt, exchange, character } }
+  function newMenusPlan(ws, spec) {
+    const f = Object.fromEntries(FILES.map(n => [n, ws.files.get(n)]));
+    const missing = FILES.filter(n => !f[n]);
+    if (missing.length) throw new Error(`a new exchange menu needs ${missing.join(', ')}`);
+    const list = ws.chars && ws.chars.byKey.get(String(spec.npcKey).toLowerCase());
+    if (!list || !list.length) throw new Error(`no NPC ${spec.npcKey}`);
+    const npc = list[list.length - 1];
+    if (npc.file.toLowerCase() !== 'character.inc') throw new Error(`${npc.key} is in ${npc.file}: only character.inc NPCs can get a new menu`);
+    const free = freeMenuIds(ws);
+    if (free.length < spec.menus.length) throw new Error(`only ${free.length} free menu ids under ${MAX_MOVER_MENU}`);
+    const ids = spec.menus.map((m, i) => free[i]);
+    const newResults = spec.results && spec.results.add ? spec.results.add : [];
+    const results = newResults.length ? newResults.map(r => r.name) : spec.results.tids;
+    const parts = [];
+
+    // defineNeuz.h: after the line of the highest MMI_ id (MMI_COLLECTOR_DETAILS 281 today)
+    const dn = f['defineneuz.h'], mmis = defineLines(dn.text, 'MMI_').filter(d => d.value < MAX_MOVER_MENU);
+    const top = mmis.reduce((a, b) => (b.value > a.value ? b : a));
+    const dnEol = top.eol || T.dominantEol(dn.text);
+    const dnLines = spec.menus.map((m, i) => `#define ${m.name}\t${ids[i]}\t// ${spec.npcKey} exchange menu${dnEol}`).join('');
+    parts.push({ file: 'defineneuz.h', splices: [{ start: top.end, end: top.end, insert: (top.eol ? '' : dnEol) + dnLines }] });
+
+    // defineText.h: TID_MMI_ labels after the last TID_MMI_ in 7000..7349; result TIDs appended at the end
+    const dt = f['definetext.h'];
+    const labelTids = defineLines(dt.text, 'TID_MMI_').filter(d => d.value >= TID_MMI_DIALOG && d.value < TID_MMI_DIALOG + MAX_MOVER_MENU);
+    const lt = labelTids.reduce((a, b) => (b.value > a.value ? b : a));
+    const dtEol = lt.eol || T.dominantEol(dt.text);
+    const dtLabels = spec.menus.map((m, i) => `#define\t${tidOf(m.name)}\t\t\t${TID_MMI_DIALOG + ids[i]}${dtEol}`).join('');
+    const dtSplices = [{ start: lt.end, end: lt.end, insert: (lt.eol ? '' : dtEol) + dtLabels }];
+    let tid = nextTid(ws), dtResults = '';
+    if (newResults.length) {
+      dtResults = `// ${spec.npcKey} exchange menus - result messages${dtEol}` +
+        newResults.map(r => `#define\t${r.name}\t\t\t\t\t${tid++}${dtEol}`).join('');
+      dtSplices.push(FRE.npcOps.appendSplice(dt.text, dtResults));
+    }
+    parts.push({ file: 'definetext.h', splices: dtSplices });
+
+    // textClient.inc + textClient.txt.txt: one block and one line per new TID (labels, then results)
+    const texts = [...spec.menus.map(m => ({ tid: tidOf(m.name), text: m.label })), ...newResults.map(r => ({ tid: r.name, text: r.text }))];
+    let n = nextTextId(ws);
+    const keyed = texts.map(t => Object.assign({ key: keyOf(n++) }, t));
+    const ti = f['textclient.inc'], tiEol = T.dominantEol(ti.text);
+    const tiBody = `${tiEol}// ${spec.npcKey} exchange menus${tiEol}${tiEol}` +
+      keyed.map(t => `${t.tid}\t\t\t\t0xffffffff${tiEol}{${tiEol}\t${t.key}${tiEol}}${tiEol}${tiEol}`).join('');
+    parts.push({ file: 'textclient.inc', splices: [FRE.npcOps.appendSplice(ti.text, tiBody)] });
+    const tt = f['textclient.txt.txt'], ttEol = T.dominantEol(tt.text);
+    const ttBody = keyed.map(t => `${t.key}\t${t.text}${ttEol}`).join('');
+    parts.push({ file: 'textclient.txt.txt', splices: [FRE.npcOps.appendSplice(tt.text, ttBody)] });
+
+    // Exchange_Script.txt: the menus appended after a blank line
+    const ex = f['exchange_script.txt'], exEol = T.dominantEol(ex.text);
+    const exBody = spec.menus.map(m => menuText(m, results, exEol)).join(exEol);
+    parts.push({ file: 'exchange_script.txt', splices: [FRE.npcOps.appendSplice(ex.text, exEol + exBody)] });
+
+    // character.inc: AddMenu lines after the NPC's last AddMenu
+    const ci = f['character.inc'];
+    const anchor = npc.statements.filter(r => r.cmd === 'AddMenu').pop() || npc.statements[0];
+    if (!anchor) throw new Error(`${npc.key} has no setting block to add a menu to`);
+    const ciEol = T.eolAt(ci.text, anchor.end) || T.dominantEol(ci.text), ind = T.indentOf(ci.text, anchor.start);
+    const rows = spec.menus.map(m => `AddMenu( ${m.name} );`).join(ciEol + ind);
+    parts.push({ file: 'character.inc', splices: T.insertRowAfter(ci.text, anchor, rows) });
+
+    return { ids, results, texts: keyed, parts,
+      lines: { defineNeuz: dnLines, defineText: dtLabels + dtResults, textInc: tiBody, textTxt: ttBody, exchange: exBody, character: rows } };
+  }
+
+  // More recipes in an existing menu, before its closing brace (a blank line between recipes, like MMI_COLLECT01).
+  // opts.setTid / opts.results: TID names; when omitted, the menu's first recipe's are reused.
+  function addSetsPlan(ws, menu, sets, opts = {}) {
+    const ex = ws.files.get('exchange_script.txt');
+    if (!menu.close) throw new Error(`${menu.name} is never closed with "}"`);
+    const first = menu.sets[0];
+    const setTid = opts.setTid || (first ? first.text.name : (menu.description[0] || {}).name);
+    const results = opts.results || (first ? first.resultMsg.map(r => r.name) : null);
+    if (!setTid) throw new Error('pick a text for the recipe (no recipe or description to copy it from)');
+    if (!results || results.length < 2) throw new Error('pick the success and failure messages (no recipe to copy them from)');
+    const at = T.lineStart(ex.text, menu.close.start);
+    const eol = T.eolAt(ex.text, menu.close.start) || T.dominantEol(ex.text);
+    const body = sets.map(st => setText(st, setTid, results, eol)).join(eol);
+    return [{ file: 'exchange_script.txt', splices: [{ start: at, end: at, insert: (menu.sets.length ? eol : '') + body }] }];
+  }
+
+  FRE.menuOps = { addSetsPlan, newMenusPlan, freeMenuIds, nextTid, nextTextId, menuText, setText, defineLines, FIRST_ID, MAX_MOVER_MENU, TID_MMI_DIALOG, FILES };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- validate/newnpc.js ----
@@ -4867,6 +5084,104 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
   FRE.newNpcText = textProblem;
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- validate/newmenu.js ----
+// Rules for new exchange menus (edit/menu-ops.js). They judge only the new menus against the loaded data.
+// BLOCK = cannot be created. Limits: MAX_MOVER_MENU 350 (compiled; AddMenu writes m_abMoverMenu[id] with no
+// bounds check, Project.cpp:3410), 30 SETs per menu (__NEW_EXCHANGE_V19, Exchange.cpp:209), PAY chances out of
+// 1,000,000 (Exchange.cpp:154), and an item the reward line names must exist or the server crashes (GetProp()).
+(function (FRE) {
+  'use strict';
+  const NAME = /^MMI_[A-Z0-9_]{1,40}$/;
+  const TID_NAME = /^TID_[A-Z0-9_]{1,60}$/;
+  // textClient texts go into a CString (CScript::LoadString): no 63-character cap like an NPC name, 255 kept as a sanity limit
+  const textProblem = s => {
+    if (typeof s === 'string' && s.length > 255) return `is ${s.length} characters long (255 at most)`;
+    const p = FRE.newNpcText(s);
+    return p && /characters long/.test(p) ? null : p;
+  };
+
+  // Why a new menu name cannot be used, or null. others: names of the other new menus in the same form.
+  function menuNameProblem(ws, name, others = []) {
+    const D = ws.defines.defines;
+    if (!NAME.test(name || '')) return `Menu name "${name}" must be MMI_ followed by capital letters, digits or _ (40 at most).`;
+    if (D.has(name) || D.has('TID_' + name) || others.includes(name)) return `${name} (or TID_${name}) already exists: choose another name.`;
+    return null;
+  }
+  // "Bob's Weapons" -> MMI_BOBS_WEAPONS; MMI_BOBS_WEAPONS_2 (_3 …) when taken. '' when the label has no letter or digit.
+  function nameFromLabel(ws, label, others = []) {
+    const base = String(label || '').toUpperCase().replace(/'/g, '').replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!base) return '';
+    for (let n = 1; ; n++) {
+      const tail = n === 1 ? '' : '_' + n;
+      const name = 'MMI_' + base.slice(0, 40 - tail.length).replace(/_+$/, '') + tail;
+      if (!menuNameProblem(ws, name, others)) return name;
+    }
+  }
+
+  // spec as in menuOps.newMenusPlan -> [{ code, severity, field, message, key }]
+  function checkNewMenus(ws, spec) {
+    const out = [];
+    const add = (code, severity, field, message) => out.push({ code, severity, field, message, key: `${code}|${field}`, module: 'npc' });
+    const D = ws.defines.defines;
+    const missing = FRE.menuOps.FILES.filter(n => !ws.files.get(n) || !ws.isEditable(n));
+    if (missing.length) add('NM_FILES', 'BLOCK', 'menus', `A new menu writes ${missing.join(', ')}, which this task cannot change (not found or read-only).`);
+    const list = ws.chars && ws.chars.byKey.get(String(spec.npcKey || '').toLowerCase());
+    const npc = list && list[list.length - 1];
+    if (!npc) add('NM_NPC', 'BLOCK', 'npc', `There is no NPC ${spec.npcKey}.`);
+    else if (npc.file.toLowerCase() !== 'character.inc') add('NM_NPC', 'BLOCK', 'npc', `${npc.key} is in ${npc.file}; only NPCs in character.inc can get a new menu here.`);
+    const menus = spec.menus || [];
+    if (!menus.length) add('NM_NONE', 'BLOCK', 'menus', 'No menu to add.');
+    const free = FRE.menuOps.freeMenuIds(ws);
+    if (free.length < menus.length) add('NM_ID_FULL', 'BLOCK', 'menus', `Only ${free.length} free menu ids are left under MAX_MOVER_MENU (350, compiled); ${menus.length} are needed.`);
+    const seen = new Set();
+    menus.forEach((m, i) => {
+      const f = `menu ${i + 1}`;
+      const np = menuNameProblem(ws, m.name, [...seen]);
+      if (np) add('NM_NAME', 'BLOCK', f, np);
+      seen.add(m.name);
+      const tp = textProblem(m.label);
+      if (tp) add('NM_TEXT', 'BLOCK', f, `Label of ${m.name} ${tp}.`);
+      const sets = m.sets || [];
+      if (!sets.length) add('NM_EMPTY', 'WARN', f, `${m.name} has no exchange yet: its window opens empty.`);
+      if (sets.length > 30) add('NM_SET_CAP', 'BLOCK', f, `${m.name} has ${sets.length} exchanges; the server keeps only the first 30.`);
+      sets.forEach((s, k) => {
+        const g = `${f} exchange ${k + 1}`;
+        if (!(s.cond || []).length) add('NM_RECIPE', 'BLOCK', g, `${m.name} exchange ${k + 1} has no ingredient: the reward would be free.`);
+        if (!(s.pay || []).length) add('NM_RECIPE', 'BLOCK', g, `${m.name} exchange ${k + 1} has no reward: an empty PAY crashes the server and the client.`);
+        for (const [d, n] of s.cond || []) {
+          if (d !== 'PENYA' && !D.has(d)) add('NM_ITEM', 'BLOCK', g, `Ingredient ${d} is not defined: the server reads it as -1 and nobody can trade.`);
+          if (!(Number.isInteger(n) && n >= 1)) add('NM_QTY', 'BLOCK', g, `Ingredient ${d}: quantity ${n} must be a whole number, 1 or more.`);
+        }
+        const payNum = s.payNum === undefined ? 1 : s.payNum;
+        if ((s.pay || []).length && !(Number.isInteger(payNum) && payNum >= 1 && payNum <= s.pay.length))
+          add('NM_PAYNUM', 'BLOCK', g, `${m.name} exchange ${k + 1} gives ${payNum} of ${s.pay.length} rewards: it must give 1 to ${s.pay.length}.`);
+        let total = 0;
+        for (const [d, n, p] of s.pay || []) {
+          const id = D.get(d);
+          if (id === undefined || !ws.itemById(id)) add('NM_ITEM', 'BLOCK', g, `Reward ${d} is not in defineItem.h and Spec_Item.txt: the server crashes when it is paid out.`);
+          if (!(Number.isInteger(n) && n >= 1)) add('NM_QTY', 'BLOCK', g, `Reward ${d}: quantity ${n} must be a whole number, 1 or more.`);
+          total += p;
+        }
+        if ((s.pay || []).length && total !== 1000000) add('NM_CHANCE', 'WARN', g, `${m.name} exchange ${k + 1}: the chances add up to ${total.toLocaleString('en-US')}, not 1,000,000 (the server cuts or tops up the last line).`);
+      });
+    });
+    const r = spec.results || {};
+    if (r.add) {
+      if (r.add.length !== 2) add('NM_RESULT', 'BLOCK', 'results', 'Give two result messages: success, then failure.');
+      r.add.forEach((x, i) => {
+        if (!TID_NAME.test(x.name || '') || D.has(x.name)) add('NM_RESULT', 'BLOCK', 'results', `Result text name "${x.name}" must be a new TID_ name.`);
+        const tp = textProblem(x.text);
+        if (tp) add('NM_TEXT', 'BLOCK', 'results', `${i ? 'Failure' : 'Success'} message ${tp}.`);
+      });
+    } else if (!r.tids || r.tids.length !== 2 || r.tids.some(t => !D.has(t))) add('NM_RESULT', 'BLOCK', 'results', 'Pick two existing result texts (success, failure) or write two new ones.');
+    return out;
+  }
+
+  FRE.validateNewMenus = checkNewMenus;
+  FRE.menuNameProblem = menuNameProblem;
+  FRE.menuNameFromLabel = nameFromLabel;
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- loaders/newnpc-sim.js ----
 // What the game does with an NPC after the files are written (Add New NPC simulator).
 // Runs on the workspace's CURRENT text/bytes, so after FRE.npcOps' splices it shows the new NPC
@@ -4877,6 +5192,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
 //   CWorld::IsUsableDYO2                            SetOutput / SetLang
 //   CMover::ProcessRegenItem                        the 4 shop tabs (loaders/vendor-sim.js)
 //   CProject::LoadEtc structure, MoverRender  the [tag] above the name (Project.cpp:1262, MoverRender.cpp:1717)
+//   CWndWorld::OnCommand switch          which menu ids open the exchange window (WndWorld.cpp:4379, default 6470)
 //   right-click menu labels                         TID_MMI_DIALOG (7000) + menu id (WndWorld.cpp, textClient.inc)
 //   loaders/area.js                                 where it stands, /te
 // Not modelled: IsUsableDYO's event-state keys (Npc_Reward, MaFl_GuildWar, … — a new key is never one of
@@ -4917,6 +5233,38 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
   //   MMI_COLLECTOR_DETAILS    "Collection Details" (__COLLECTOR_DETAILS)
   //   MMI_GUILDBANKING         only for a guild member, when the guild warehouse is on
   //   MMI_ARENA_ENTER          only after the first job change (__JEFF_11_4)
+  // Menu ids with their own case in CWndWorld::OnCommand (WndWorld.cpp:4379-6724, every `case MMI_x:` of its
+  // switch( nID ), #ifdef blocks included). Any other id falls to `default:` (6470, __TRADESYS) and opens the
+  // exchange window for that id (CWndDialogEvent::SetMMI), which lists the menu's SETs from the client's
+  // Exchange_Script.txt. (139 names; tools/oracle_sim.py reads the same list from the C++ file itself.)
+  const OWN_CASE = new Set([
+    'MMI_ADD_MESSENGER', 'MMI_ARENA_ENTER', 'MMI_ARENA_EXIT', 'MMI_ATTRIBUTE', 'MMI_BANKING', 'MMI_BEAUTYSHOP', 'MMI_BEAUTYSHOP_SKIN',
+    'MMI_BLESSING_CANCEL', 'MMI_BUFFPET_RELEASE', 'MMI_BUFFPET_STATUS', 'MMI_CHANGEELEM', 'MMI_CHEER', 'MMI_COLLECTOR_DETAILS',
+    'MMI_COLOSSEUM_COLOENTER01', 'MMI_COSTUMEMIX01', 'MMI_DIALOG', 'MMI_DUEL', 'MMI_DUEL_PARTY', 'MMI_FINDWORD', 'MMI_FIVESYSTEM',
+    'MMI_GUILDBANKING', 'MMI_GUILDCOMBAT_1TO1_CANCEL', 'MMI_GUILDCOMBAT_1TO1_ENTRANCE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_ENTRY',
+    'MMI_GUILDCOMBAT_1TO1_GUIDE_PRIZE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_RULE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_TEX',
+    'MMI_GUILDCOMBAT_1TO1_GUIDE_WIN', 'MMI_GUILDCOMBAT_1TO1_OFFER', 'MMI_GUILDCOMBAT_1TO1_OFFERSTATE', 'MMI_GUILDCOMBAT_1TO1_REPAYMENT',
+    'MMI_GUILDCOMBAT_1TO1_SELECTION', 'MMI_GUILDCOMBAT_BESTPLAYER', 'MMI_GUILDCOMBAT_INFO_BOARD1', 'MMI_GUILDCOMBAT_INFO_BOARD2',
+    'MMI_GUILDCOMBAT_INFO_BOARD3', 'MMI_GUILDCOMBAT_INFO_TEX', 'MMI_GUILDCOMBAT_JACKPOT', 'MMI_GUILDCOMBAT_JACKPOT2',
+    'MMI_GUILDCOMBAT_PENYA_RETURN', 'MMI_GUILDCOMBAT_RANKING', 'MMI_GUILDCOMBAT_RANKING_WEEKLY', 'MMI_GUILDCOMBAT_SELECTION',
+    'MMI_GUILDHOUSE_AUCTION01', 'MMI_GUILDHOUSE_CHARGE', 'MMI_GUILDHOUSE_ENTER', 'MMI_GUILDHOUSE_OUT', 'MMI_GUILDHOUSE_SALE',
+    'MMI_GUILDWAR_APP', 'MMI_GUILDWAR_CANCEL', 'MMI_GUILDWAR_JOIN', 'MMI_GUILDWAR_STATE', 'MMI_HEAVEN_TOWER', 'MMI_INPUT_REWARD',
+    'MMI_INVITE_CAMPUS', 'MMI_INVITE_COMPANY', 'MMI_INVITE_PARTY', 'MMI_ITEM_AWAKENING', 'MMI_ITEM_TRANSY', 'MMI_KAWIBAWIBO',
+    'MMI_LEGEND_SKILLUP', 'MMI_LOOKCHANGE', 'MMI_LORD_EVENT', 'MMI_LORD_INFO', 'MMI_LORD_RAINBOWAPPLICATION', 'MMI_LORD_RAINBOWEND',
+    'MMI_LORD_RAINBOWRULE', 'MMI_LORD_RAINBOWTOPTEN', 'MMI_LORD_RAINBOWWAIT', 'MMI_LORD_RAINBOWWIN', 'MMI_LORD_RAINBOW_ARITHMETIC',
+    'MMI_LORD_RAINBOW_CARD', 'MMI_LORD_RAINBOW_DICE', 'MMI_LORD_RAINBOW_KAWIBAWIBO', 'MMI_LORD_RAINBOW_LADDER',
+    'MMI_LORD_RAINBOW_STOPWATCH', 'MMI_LORD_RAINBOW_TYPING', 'MMI_LORD_RPINFO', 'MMI_LORD_STATE', 'MMI_LORD_TENDER', 'MMI_LORD_VOTE',
+    'MMI_LVREQDOWN_CANCEL', 'MMI_MARKING', 'MMI_MESSAGE', 'MMI_NPC_BUFF', 'MMI_PET_AWAK_CANCEL', 'MMI_PET_EGG01', 'MMI_PET_FOODMILL',
+    'MMI_PET_RELEASE', 'MMI_PET_RES', 'MMI_PET_STATUS', 'MMI_PIERCING', 'MMI_POST', 'MMI_QUERYEQUIP', 'MMI_QUIZ_ENTRANCE', 'MMI_QUIZ_EXIT',
+    'MMI_QUIZ_TELE_QUIZZONE', 'MMI_RANK_GUILD', 'MMI_RANK_INFO', 'MMI_RANK_WAR', 'MMI_REASSEMBLE', 'MMI_REMOVE_CAMPUS', 'MMI_RENAME_CANCEL',
+    'MMI_REPAIR', 'MMI_RETURNTO_WORLD', 'MMI_SECRET_BOARD', 'MMI_SECRET_CANCEL', 'MMI_SECRET_ENTRANCE', 'MMI_SECRET_ENTRANCE_1',
+    'MMI_SECRET_OFFER', 'MMI_SECRET_OFFERSTATE', 'MMI_SECRET_SELECTION', 'MMI_SECRET_TAXRATES_CHECK', 'MMI_SHOW_REWARD',
+    'MMI_SMELT_CHANGEGWEAPON', 'MMI_SMELT_CHANGEUWEAPON', 'MMI_SMELT_EXTRACTION', 'MMI_SMELT_JEWEL', 'MMI_SMELT_MIXJEWEL',
+    'MMI_SMELT_REMOVE_JEWEL', 'MMI_SMELT_REMOVE_PIERCING', 'MMI_SMELT_SAFETY_ACCESSORY', 'MMI_SMELT_SAFETY_ELEMENT',
+    'MMI_SMELT_SAFETY_GENERAL', 'MMI_SMELT_SAFETY_PIERCING', 'MMI_SUMMON_ANGEL', 'MMI_SUMMON_EXTRACTOPER', 'MMI_SUMMON_MAKECID',
+    'MMI_SUMMON_MAKEOPER', 'MMI_SUMMON_MAKEOPERCID', 'MMI_SUMMON_PEARCING', 'MMI_SUMMON_SMELT', 'MMI_SUMMON_UPGRADECID', 'MMI_TELEPORTER',
+    'MMI_TRACE', 'MMI_TRADE', 'MMI_UPGRADE', 'MMI_VISIT_FRIEND', 'MMI_VISIT_MYROOM',
+  ]);
   function rightClick(ws, ids) {
     const D = ws.defines, id = n => D.defines.get(n);
     const on = new Set(ids.filter(i => i >= 0 && i < 350));
@@ -4934,9 +5282,20 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
       if (i === id('MMI_COLLECTOR_DETAILS')) m.label = 'Collection Details';
       if (i === id('MMI_GUILDBANKING')) m.when = 'guild member, guild warehouse on';
       if (i === id('MMI_ARENA_ENTER')) m.when = 'after the first job change';
+      m.opens = opensOf(ws, i);
       out.push(m);
     }
     return out;
+  }
+
+  // What clicking menu id i opens: null (its own window, a case in OnCommand) or the exchange window:
+  // { exchange: true, sets: number of SETs the menu really has in Exchange_Script.txt (0 = an empty window) }
+  function opensOf(ws, i) {
+    const names = ws.defines.withPrefix('MMI_').filter(([, v]) => v === i).map(([k]) => k);
+    if (names.some(n => OWN_CASE.has(n))) return null;
+    const model = ws.models && ws.models.exchange;
+    const menu = model && model.menus.find(x => x.mmi.value === i);
+    return { exchange: true, sets: menu ? Math.min(menu.sets.length, 30) : 0 };
   }
 
   // One line per fact, for tools/newnpc-sim.js and the editor's "In game" box.
@@ -4948,7 +5307,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
     if (!g.placed.length) out.push('Not placed on any map: nobody can see it.');
     for (const p of g.placed) out.push(`Stands on ${p.map} at /position ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}, facing ${p.angle.toFixed(1)}°, model ${p.modelName || p.model}`);
     for (const w of g.where || []) out.push(`Where: ${FRE.area.label ? FRE.area.label(w) : w.caption} · GM: ${w.te}`);
-    out.push('Right-click: ' + (g.menus.length ? g.menus.map(m => (m.label || m.define || m.id) + (m.when ? ` (${m.when})` : '')).join(', ') : '(no menu)'));
+    out.push('Right-click: ' + (g.menus.length ? g.menus.map(m => (m.label || m.define || m.id) + (m.when ? ` (${m.when})` : '') +
+      (m.opens ? ` [exchange window: ${m.opens.sets ? m.opens.sets + ' exchange' + (m.opens.sets === 1 ? '' : 's') : 'EMPTY'}]` : '')).join(', ') : '(no menu)'));
     for (const t of g.tabs) out.push(`Tab ${t.slot} "${t.title === null ? '(no title)' : t.title}": ${t.items.length} item(s)` +
       (t.items.length ? ' — ' + t.items.slice(0, 6).map(itemName).join(', ') + (t.items.length > 6 ? ', …' : '') : '') + (t.dropped ? ` (${t.dropped} left out)` : ''));
     return out;
@@ -5142,7 +5502,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
     return out;
   }
 
-  FRE.newNpcSim = { inGame, describe, rightClick, modelNames, modelEntries, missingModelFiles, unusedCompleteModels, visibleNpcs, provenModels, seenBefore, o3dTextures, SEEN_BEFORE, buildingNames, structures, freeStructureIds, tagOf, whereAt, regions, TID_MMI_DIALOG };
+  FRE.newNpcSim = { inGame, describe, rightClick, opensOf, OWN_CASE, modelNames, modelEntries, missingModelFiles, unusedCompleteModels, visibleNpcs, provenModels, seenBefore, o3dTextures, SEEN_BEFORE, buildingNames, structures, freeStructureIds, tagOf, whereAt, regions, TID_MMI_DIALOG };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- core/workspace.js ----
@@ -5175,8 +5535,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
       required: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt'],
       // character.txt.txt: a new NPC's name and tab names (appended IDS_CHARACTER_INC_ lines, like f58e56ba)
       // defineNeuz.h + etc.inc + etc.txt.txt: a new building tag (SRT_), the way b4b9a465 added four
-      editable: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'defineNeuz.h', 'etc.inc', 'etc.txt.txt'],
-      client: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'defineNeuz.h', 'etc.inc', 'etc.txt.txt'],
+      // defineText.h + textClient.inc + textClient.txt.txt + Exchange_Script.txt: a new exchange menu (edit/menu-ops.js)
+      editable: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'defineNeuz.h', 'etc.inc', 'etc.txt.txt',
+        'defineText.h', 'textClient.inc', 'textClient.txt.txt', 'Exchange_Script.txt'],
+      client: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'defineNeuz.h', 'etc.inc', 'etc.txt.txt',
+        'defineText.h', 'textClient.inc', 'textClient.txt.txt', 'Exchange_Script.txt'],
+      uses: ['exchange'],    // the menus' recipes (read here; a new menu's recipes are written with it)
       maps: true,            // reads World/*/ to show where each NPC stands
       editsMaps: true,       // a new NPC is a new record in World/<map>/<map>.dyo (Server + Client copies)
       parse(ws) {
@@ -5432,9 +5796,30 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
         this.texts = FRE.textClient.load(this.files, this.strings.map, this.defines.defines);
         names = ['spec_item.txt', ...names];
       }
+      // textClient.inc / textClient.txt.txt (a new menu's label): the TID texts are read again
+      if (names.some(n => n === 'textclient.inc' || n === 'textclient.txt.txt')) {
+        if (names.includes('textclient.txt.txt')) this.strings = FRE.loadStrings(this.files);
+        this.texts = FRE.textClient.load(this.files, this.strings.map, this.defines.defines);
+      }
+      if (names.includes('exchange_script.txt')) {       // the "exchange" tags in NPC Shops (MMI_ names at a line start)
+        const ex = this.files.get('exchange_script.txt');
+        this.exchangeMenus = new Set(ex ? (ex.text.match(/^MMI_\w+/gm) || []) : []);
+      }
       if (names.some(n => /\.dyo$/.test(n))) this.refreshMaps();
       if (names.includes('spec_item.txt')) this.reparse('spec_item.txt');   // reparses every module
       else names.forEach(n => this.reparse(n));
+    }
+
+    // Fold the last step into the one before it (typing in one field = one undo step): only when both changed
+    // the same files and nothing was undone in between. Undo then goes straight back to before both.
+    mergeLast() {
+      const h = this.history;
+      if (h.length < 2 || this.redoStack.length) return false;
+      const a = h[h.length - 2], b = h[h.length - 1];
+      if (a.length !== b.length || a.some((n, i) => n !== b[i])) return false;
+      for (const n of b) this.files.get(n)._undo.pop();
+      h.pop();
+      return true;
     }
 
     undo() {
@@ -5955,20 +6340,91 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
 
   // Amount box: shows "1,000,000" when idle and plain digits while editing.
   // onCommit(value|null) gets a plain number; commas never reach the files.
-  function numInput({ value = null, placeholder = '', disabled = false, title = '', min = 0, max = 2147483647, onCommit }) {
+  // Live inputs commit LIVE_MS after the last keystroke (and at once on Enter / leaving the field);
+  // while typing, a value that does not parse yet just waits (no error until the field is left).
+  const LIVE_MS = 400;
+  const pending = new Map();         // input -> its waiting commit (flushLive runs them now; for tests)
+  function liveCommit(el, tryCommit) {
+    let timer = null;
+    const run = () => { pending.delete(el); if (el.isConnected && document.activeElement === el) tryCommit(true); };
+    el.addEventListener('input', () => { clearTimeout(timer); pending.set(el, run); timer = setTimeout(run, FRE.dom.LIVE_MS || LIVE_MS); });
+    el.addEventListener('change', () => { clearTimeout(timer); pending.delete(el); });
+  }
+  const flushLive = () => { for (const run of [...pending.values()]) run(); };
+
+  // key: a stable name for this field (e.g. 'ex|MMI_BOB|0|pay|1|qty'), so a re-render keeps the focus in it.
+  // Only keyed inputs update while typing (live): without a key the re-render would drop the focus mid-number.
+  function numInput({ value = null, placeholder = '', disabled = false, title = '', min = 0, max = 2147483647, onCommit, key = null, live = !!key }) {
     const el = h('input.num-input', { type: 'text', inputMode: 'numeric', placeholder, disabled, title, value: fmt(value) });
+    if (key) el.dataset.key = key;
     el.dataset.value = value === null ? '' : String(value);
-    el.addEventListener('focus', () => { el.value = el.dataset.value; el.select(); });
+    el.addEventListener('focus', () => { el.value = el.dataset.value; if (!el.dataset.restoring) el.select(); });
+    if (live) liveCommit(el, () => {
+      const r = FRE.num.parseAmount(el.value, { min, max });
+      if (!r.ok || String(r.value === null ? '' : r.value) === el.dataset.value) return;
+      el.dataset.value = r.value === null ? '' : String(r.value);
+      onCommit(r.value);
+    });
     el.addEventListener('blur', () => { el.value = fmt(el.dataset.value === '' ? null : Number(el.dataset.value)); });
     el.addEventListener('keydown', e => { if (e.key === 'Enter') el.blur(); if (e.key === 'Escape') { el.value = el.dataset.value; el.blur(); } });
     el.addEventListener('change', () => {
+      if (!el.isConnected) return;               // replaced by a re-render: its line offsets are out of date
       const r = FRE.num.parseAmount(el.value, { min, max });
+      if (r.ok && live && String(r.value === null ? '' : r.value) === el.dataset.value) { el.value = fmt(r.value); return; }
       if (!r.ok) { toast(r.error, 'bad'); el.value = document.activeElement === el ? el.dataset.value : fmt(el.dataset.value === '' ? null : Number(el.dataset.value)); return; }
       el.dataset.value = r.value === null ? '' : String(r.value);
       if (document.activeElement !== el) el.value = fmt(r.value);
       onCommit(r.value);
     });
     return el;
+  }
+
+  // A chance typed in percent ("50", "33.3333", "12.5%") and kept in the file's units: out of 1,000,000,
+  // so 1% = 10,000 and 0.0001% = 1 (the smallest step the file can hold). value / onCommit are in units.
+  const PCT_UNIT = 10000;
+  const pctText = u => (u === null || u === undefined ? '' : (u / PCT_UNIT).toLocaleString('en-US', { maximumFractionDigits: 4, useGrouping: false }));
+  function pctInput({ value = null, disabled = false, title = '', onCommit, key = null, live = !!key }) {
+    const tip = u => `${title ? title + '\n' : ''}${u === null ? '' : `= ${fmt(u)} of 1,000,000 in the file`}`;
+    const el = h('input.num-input.pct-input', { type: 'text', inputMode: 'decimal', disabled, title: tip(value), value: pctText(value), placeholder: '%' });
+    el.dataset.value = value === null ? '' : String(value);
+    if (key) el.dataset.key = key;
+    el.addEventListener('focus', () => { if (!el.dataset.restoring) el.select(); });
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') el.blur(); if (e.key === 'Escape') { el.value = pctText(el.dataset.value === '' ? null : Number(el.dataset.value)); el.blur(); } });
+    // quiet: while typing (no toast, no rewrite of what is being typed)
+    const commit = quiet => {
+      if (!el.isConnected) return;
+      const t = el.value.trim().replace(/%$/, '').trim().replace(',', '.');
+      const back = () => { el.value = pctText(el.dataset.value === '' ? null : Number(el.dataset.value)); };
+      if (!/^\d+(\.\d*)?$|^\.\d+$/.test(t)) { if (!quiet) { toast('Type a percent between 0 and 100, e.g. 50 or 12.5.', 'bad'); back(); } return; }
+      const u = Math.round(Number(t) * PCT_UNIT);
+      if (u > 100 * PCT_UNIT) { if (!quiet) { toast('A chance is at most 100%.', 'bad'); back(); } return; }
+      if (!quiet && Math.abs(u - Number(t) * PCT_UNIT) > 1e-6) toast(`Rounded to ${pctText(u)}% (the file keeps 4 decimals).`);
+      if (!quiet) el.value = pctText(u);
+      el.title = tip(u);
+      if (String(u) === el.dataset.value) return;
+      el.dataset.value = String(u);
+      onCommit(u);
+    };
+    el.addEventListener('change', () => commit(false));
+    if (live) liveCommit(el, commit);
+    return h('span.pct-wrap', el, h('span.muted', ' %'));
+  }
+
+  // Re-render(fn) inside root without losing the field being typed in: an input made with a `key`
+  // (numInput / pctInput) is found again by that key and gets the focus, its typed text and the caret back.
+  function keepFocus(root, fn) {
+    const a = document.activeElement;
+    const key = a && root.contains(a) && a.dataset ? a.dataset.key : null;
+    if (!key) { fn(); return; }
+    const text = a.value, s0 = a.selectionStart, s1 = a.selectionEnd;
+    fn();
+    const n = [...root.querySelectorAll('input[data-key]')].find(x => x.dataset.key === key);
+    if (!n || n.disabled) return;
+    n.dataset.restoring = '1';
+    n.focus();
+    delete n.dataset.restoring;
+    n.value = text;
+    try { n.setSelectionRange(s0, s1); } catch (e) { /* not a text input */ }
   }
 
   function toast(msg, kind = '') {
@@ -5990,7 +6446,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
     return { close, el: back };
   }
 
-  FRE.dom = { h, $, fmt, toast, modal, numInput };
+  FRE.dom = { h, $, fmt, toast, modal, numInput, pctInput, pctText, keepFocus, LIVE_MS, flushLive };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/common.js ----
@@ -6063,7 +6519,18 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
     return FRE.area.label(list[0]) + (list.length > 1 ? ` +${list.length - 1}` : '');
   }
 
-  FRE.ui = { modules: [], pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell, whereLine, whereText, copyText };
+  // Form field label, the same in every form: required = a red * after it; optional = "(optional)" under it
+  function fieldLabel(text, req) {
+    return h('span.nn-label', text, req ? h('span.nn-req.req', { title: 'Required' }, ' *') : [h('br'), h('span.nn-req.opt', '(optional)')]);
+  }
+  const requiredNote = () => h('p.muted.small', h('span.nn-req.req', '*'), ' = required · fields without it are optional');
+  // The end of every form, in this order: the * note, Checks (with the legend), then the preview.
+  // { checks: element, action: 'Create' | 'Add', previewTitle, preview: element }
+  function formFooter({ checks, action = 'Create', previewTitle = 'What will be written', preview }) {
+    return [requiredNote(), h('h3', 'Checks'), h('p.muted.small', `⛔ must be fixed before ${action} · ⚠ only a warning`), checks, h('h3', previewTitle), preview];
+  }
+
+  FRE.ui = { modules: [], pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell, whereLine, whereText, copyText, fieldLabel, requiredNote, formFooter };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/tooltip.js ----
@@ -6198,6 +6665,25 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
 
   function edit(ctx, npc, make, label) {
     ctx.edit(npc.file.toLowerCase(), make, label, 'npc|' + npcId(npc));
+  }
+
+  // One exchange menu of this NPC, edited in place with the Exchanges task's cards (ui/exchange.js):
+  // works before saving too, since the cards read the live Exchange_Script.txt model.
+  function exchangeTab(el, ctx, npc, menu, label) {
+    const ws = ctx.ws, xv = FRE.ui.exchangeView;
+    const editable = ws.isEditable('exchange_script.txt');
+    el.appendChild(h('div.row.ex-tools', { style: 'margin:8px 0' },
+      h('span', h('b', label), h('span.def', ' ' + menu.name), h('span.muted', ` · ${Math.min(menu.sets.length, 30)} exchange${menu.sets.length === 1 ? '' : 's'} in the window`)),
+      editable && menu.closed && FRE.ui.menuForm ? h('button.small', { title: 'Add exchanges to this menu', on: { click: () => FRE.ui.menuForm.openNewExchanges(ctx, menu) } }, '+ New exchange') : null,
+      h('button.small', { title: 'The same menu in the Exchanges task (asks to save first when there are unsaved edits)', on: { click: () => ctx.openTask('exchange', c => {
+        const mod = FRE.ui.modules.find(x => x.id === 'exchange');
+        if (mod) { mod.st.menu = menu.name; mod.st.pick = null; }
+        c.setQuery('');
+      }) } }, 'Open in Exchanges'),
+      editable ? null : h('span.tag.bad', 'read-only')));
+    el.appendChild(h('p.muted.small', `What players see after right-click ${npc.name || npc.key} → ${label}. Chances are in percent; changing one moves the others so they always add up to 100%. Try it presses OK in the game's exchange window.`));
+    if (!menu.sets.length) el.appendChild(h('p.muted', 'No exchange yet: the window opens empty. Press + New exchange.'));
+    xv.cards(ctx, menu).forEach(c => el.appendChild(c));
   }
 
   function shopTypeSelect(ctx, npc, canEdit) {
@@ -6351,7 +6837,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
         if (q && !label.toLowerCase().includes(q) && !npc.key.toLowerCase().includes(q)) continue;
         const id = npcId(npc), dg = diagBy.get(id);
         shown++;
-        el.appendChild(h('div.npc' + (id === st.sel ? '.sel' : ''), { on: { click: () => { st.sel = id; st.tab = 0; ctx.renderAll(false); } } },
+        el.appendChild(h('div.npc' + (id === st.sel ? '.sel' : ''), { on: { click: () => { st.sel = id; st.tab = 0; if (FRE.ui.exchangeView) FRE.ui.exchangeView.clearPick(); ctx.renderAll(false); } } },
           h('div.n', h('span', label),
             h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : null,
               ctx.edited.has('npc|' + id) ? h('span.tag.edit', 'edited') : null,
@@ -6376,6 +6862,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
       el.appendChild(h('div.npc-title', h('h2', npc.name || npc.key), h('span.def', npc.key),
         h('span.line', `${npc.file}:${f.lineOf(npc.start) + 1}`),
         shopTypeSelect(ctx, npc, canEdit),
+        canEdit && npc.file.toLowerCase() === 'character.inc' && ws.isEditable('exchange_script.txt') && FRE.ui.menuForm
+          ? h('button.small', { title: 'Add right-click menus that open the exchange window (edit/menu-ops.js)', on: { click: () => FRE.ui.menuForm.openNewMenus(ctx, npc) } }, '+ Exchange menu') : null,
         canEdit ? null : h('span.tag.bad', 'read-only')));
       if (ws.placed) {
         const status = FRE.world.npcStatus(npc, ws.placed);
@@ -6389,18 +6877,34 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
         el.appendChild(h('div.nn-ingame', h('b', 'In game after Save + restart: '), FRE.newNpcSim.describe(g, name).map(l => h('div', l))));
       }
       const menus = npc.menus.map(v => D.byValue('MMI_', v) || String(v));
-      if (menus.length) el.appendChild(h('div.menus', 'Menus: ', menus.map(m => ws.exchangeMenus.has(m)
-        ? h('span.tag.exch', { title: `${m} is an item exchange defined in Exchange_Script.txt (Exchanges editor coming)` }, `${pretty(m)} ⇄ exchange`)
-        : h('span.tag', { title: m }, pretty(m)))));
+      // exchange menus: the label players read + how many exchanges; each has its own tab next to the shop tabs
+      const exModel = ws.models.exchange;
+      const exMenu = m => (exModel && exModel.menus.find(x => x.name === m && !x.isJunk)) || null;
+      const labelOf = m => { const id = D.defines.get(m); const t = id === undefined || !ws.texts ? null : ws.texts.byId.get(FRE.newNpcSim.TID_MMI_DIALOG + id); return t ? t.text : pretty(m); };
+      const exNames = FRE.ui.exchangeView ? [...new Set(menus.filter(m => ws.exchangeMenus.has(m) && exMenu(m)))] : [];
+      const showTab = t => { if (FRE.ui.exchangeView) FRE.ui.exchangeView.clearPick(); st.tab = t; ctx.renderAll(false); };
+      if (typeof st.tab === 'string' && !exNames.includes(st.tab.slice(3))) st.tab = 0;
+      if (menus.length) el.appendChild(h('div.menus', 'Menus: ', menus.map(m => {
+        if (!exNames.includes(m)) return h('span.tag', { title: m }, pretty(m));
+        const n = Math.min(exMenu(m).sets.length, 30);
+        return h('button.tag.exch', { title: `${m}: opens the exchange window (Exchange_Script.txt). Click to see and edit its exchanges here.`,
+          on: { click: () => showTab('ex:' + m) } }, `${labelOf(m)} ⇄ ${n} exchange${n === 1 ? '' : 's'}`);
+      })));
 
       const sim = ws.simulate(npc);
       const tabs = h('div.tabs');
       for (let t = 0; t < 4; t++) {
         const n = sim.tabs[t].entries.length;
-        tabs.appendChild(h('button' + (t === st.tab ? '.sel' : ''), { on: { click: () => { st.tab = t; ctx.renderAll(false); } } },
+        tabs.appendChild(h('button' + (t === st.tab ? '.sel' : ''), { on: { click: () => showTab(t) } },
           npc.slotTitles[t] || `Tab ${t}`, h('span.count', n ? `(${n})` : '')));
       }
+      for (const m of exNames) {
+        const n = Math.min(exMenu(m).sets.length, 30);
+        tabs.appendChild(h('button.ex-tab' + ('ex:' + m === st.tab ? '.sel' : ''), { title: `${m}: the exchange window this menu opens`, on: { click: () => showTab('ex:' + m) } },
+          `⇄ ${labelOf(m)}`, h('span.count', `(${n})`)));
+      }
       el.appendChild(tabs);
+      if (typeof st.tab === 'string') { exchangeTab(el, ctx, npc, exMenu(st.tab.slice(3)), labelOf(st.tab.slice(3))); return; }
       const tab = sim.tabs[st.tab];
 
       // the rules that fill this tab, as one compact line
@@ -6438,7 +6942,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
             price = info ? FRE.ui.chipPrice.input(ctx, info, hereNpc(npc), 'npc|' + npcId(npc)) : '';
           }
           else if (row.kind === 'fixed') {
-            price = numInput({ value: r.args.cost ? r.args.cost.value : null, placeholder: info ? fmt(info.cost) + ' (item)' : '', disabled: !canEdit,
+            price = numInput({ value: r.args.cost ? r.args.cost.value : null, placeholder: info ? fmt(info.cost) + ' (item)' : '', disabled: !canEdit, key: `shop|${npcId(npc)}|${st.tab}|${i}|price`,
               title: 'Empty = the item\'s own price from Spec_Item.txt. A price here changes the item\'s price everywhere (server-wide). Commas are only for display.',
               onCommit: v => edit(ctx, npc, text => FRE.shopOps.setCost(text, r, v), 'price') });
           } else price = info ? fmt(info.cost) : '';
@@ -6467,6 +6971,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
     addTarget(ctx) {
       const npc = selNpc(ctx);
       if (!npc) return { ok: false, title: 'Select an NPC first' };
+      if (typeof st.tab === 'string') {         // an exchange tab: the item goes to the exchange being edited
+        const xv = FRE.ui.exchangeView;
+        if (xv && xv.picking() && xv.st.menu === st.tab.slice(3)) return xv.addTarget(ctx);
+        return { ok: false, title: 'Click "+ Ingredient", "+ Reward" or "Change" on an exchange first' };
+      }
       if (!ctx.ws.isEditable(npc.file.toLowerCase())) return { ok: false, title: `${npc.file} is read-only` };
       const tabName = npc.slotTitles[st.tab] || `tab ${st.tab}`;
       return {
@@ -6767,8 +7276,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
     const select = (value, options, onChange) => h('select', { on: { change: e => { onChange(e.target.value); refresh(); } } },
       options.map(o => o.group ? h('optgroup', { label: o.group }, o.options.map(x => h('option', { value: x.v, selected: String(x.v) === String(value) }, x.label)))
         : h('option', { value: o.v, selected: String(o.v) === String(value) }, o.label)));
-    // required: a red * after the label; optional: "(optional)" under it
-    const label = (text, req) => h('span.nn-label', text, req ? h('span.nn-req.req', { title: 'Required' }, ' *') : [h('br'), h('span.nn-req.opt', '(optional)')]);
+    const label = FRE.ui.fieldLabel;
     const row = (text, req, ...el) => h('div.nn-row', label(text, req), ...el);
     const note = t => h('span.muted.small', t);
     const region = () => regions.find(r => r.value === form.region) || regions[0];
@@ -6915,7 +7423,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
         const free = [0, 1, 2, 3].find(s => !form.tabs.some(t => t.slot === s));
         if (free !== undefined) body.appendChild(h('button.small', { on: { click: () => { form.tabs.push(blankTab(free)); render(); } } }, `+ Tab ${free + 1}`));
       }
-      body.append(h('p.muted.small', h('span.nn-req.req', '*'), ' = required'), h('h3', 'Checks'), h('p.muted.small', '⛔ must be fixed before Create · ⚠ only a warning'), problems, h('h3', 'What will be written'), preview);
+      body.append(...FRE.ui.formFooter({ checks: problems, action: 'Create', preview }));
       refresh();
     }
 
@@ -6987,16 +7495,273 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
     return true;
   }
 
-  // select the new NPC in the NPC Shops list (and show every NPC if the list filter hides it)
+  // select the new NPC in the NPC Shops list (and show every NPC if the list filter or the search hides it)
   function select(ctx, npc) {
     const mod = FRE.ui.modules.find(m => m.id === 'npc');
     mod.st.sel = mod.npcId(npc); mod.st.tab = 0;
     if (!mod.isListed(npc)) mod.st.show = 'all';
+    const q = ctx.query.toLowerCase();
+    if (q && !(npc.name || '').toLowerCase().includes(q) && !npc.key.toLowerCase().includes(q)) ctx.setQuery(npc.name || npc.key);
     ctx.renderAll(false);
   }
 
   FRE.ui.itemPicker = itemPicker;
   FRE.ui.newNpc = { open, created: new Set(), select, provenModels, menuList, reset: () => { form = null; } };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- ui/menu-form.js ----
+// New exchange menus on an NPC (NPC Shops: "+ Exchange menu") and new exchanges in a menu
+// (Exchanges: "+ New exchange"). Both use one builder: an ingredient list + rewards; every reward
+// becomes its own exchange with the same ingredients (the player picks the reward in the window),
+// e.g. Jeff: 200 pieces + 1 core -> one of 10 weapons. Writes go through edit/menu-ops.js.
+(function (FRE) {
+  'use strict';
+  const { h, modal, toast } = FRE.dom;
+  const { diagRow } = FRE.ui;
+
+  function itemOptions(ws) {
+    if (!ws._pickItems) ws._pickItems = [...ws.items.items.values()].map(it => ws.itemInfo(it)).sort((a, b) => a.name.localeCompare(b.name));
+    if (!ws._itemOpts) ws._itemOpts = ws._pickItems.map(i => ({ v: i.define, label: `${i.name} (${i.define})`, find: i.define }));
+    return ws._itemOpts;
+  }
+  const itemName = (ws, define) => { const id = ws.defines.defines.get(define); const it = id === undefined ? null : ws.itemById(id); return it ? (it.name || define) : define; };
+
+  const TOTAL = 1000000;                                 // PAY chances are out of 1,000,000 (Exchange.cpp Load_Script)
+  const pct = p => `${(p / 10000).toLocaleString('en-US', { maximumFractionDigits: 4 })}%`;
+  // 1,000,000 split evenly, the remainder on the first lines (exchangeOps.evenChances)
+  function spread(rewards) {
+    const n = rewards.length, base = Math.floor(TOTAL / n), extra = TOTAL - base * n;
+    rewards.forEach((r, i) => { r.prob = base + (i < extra ? 1 : 0); });
+  }
+
+  // state: { cond: [[define, n]], rewards: [{ define, qty, prob }], mode: 'pick' | 'random', payNum }
+  //   pick:   one exchange per reward (the player picks the reward in the window), e.g. Jeff
+  //   random: one exchange; the server rolls payNum of the rewards by their chances (GetPayItemList)
+  // -> element; onChange() after every change
+  function recipeBuilder(ws, state, onChange) {
+    const { fieldLabel } = FRE.ui;
+    const el = h('div.mf-recipe');
+    const changed = () => { FRE.dom.keepFocus(el, paint); onChange(); };
+    const probs = () => state.rewards.map(r => r.prob);
+    const setProbs = v => state.rewards.forEach((r, i) => { r.prob = v[i]; });
+    const paint = () => {
+      el.textContent = '';
+      // --- ingredients
+      el.appendChild(h('div.mf-head', fieldLabel('Costs', true), h('span.muted.small', 'Ingredients, taken from the player when the exchange succeeds.')));
+      state.cond.forEach((c, i) => el.appendChild(h('div.nn-row.mf-ing',
+        FRE.ui.combo({ options: itemOptions(ws), value: c[0], placeholder: 'Search an item', onPick: v => { c[0] = v; onChange(); } }),
+        FRE.dom.numInput({ value: c[1], placeholder: 'qty', title: 'How many', key: `mf|cond|${i}|qty`, onCommit: v => { c[1] = v === null ? 1 : v; onChange(); } }),
+        h('button.icon.danger', { title: 'Remove', on: { click: () => { state.cond.splice(i, 1); changed(); } } }, '✕'))));
+      el.appendChild(h('button.small', { on: { click: () => { state.cond.push(['', 1]); changed(); } } }, '+ Ingredient'));
+
+      // --- rewards
+      const random = state.mode === 'random';
+      el.appendChild(h('div.mf-head', fieldLabel('Rewards', true), h('span.muted.small', 'What the player gets.')));
+      el.appendChild(h('div.nn-row.mf-mode', [['pick', 'Player picks', 'one exchange per reward: the window lists every reward and the player picks one'],
+        ['random', 'Random', 'one exchange: the server rolls which reward the player gets, by the chances below']].map(([v, t, d]) =>
+        h('label.nn-radio', { title: d }, h('input', { type: 'radio', name: 'mf-mode-' + (state.uid || 0), checked: state.mode === v,
+          on: { change: () => { state.mode = v; if (v === 'random' && state.rewards.reduce((a, r) => a + r.prob, 0) !== TOTAL) spread(state.rewards); changed(); } } }), h('b', t), ' — ', h('span.muted', d)))));
+      if (state.rewards.length) {
+        const tbl = h('table.items.ex.mf-rewards', h('tr', h('th', 'Reward'), h('th.num', 'Qty'), random ? h('th.num', { title: 'Type the percent; the other rewards move so the total stays 100%' }, 'Chance') : null, random ? h('th.num', 'of 1,000,000') : null, h('th', '')));
+        state.rewards.forEach((r, i) => {
+          const id = ws.defines.defines.get(r.define), it = id === undefined ? null : ws.itemById(id), info = it ? ws.itemInfo(it) : null;
+          tbl.appendChild(h('tr',
+            h('td', h('span', { 'data-item-id': info ? info.id : null }, h('span.r-' + (info ? info.rarity : 'normal'), info ? info.name : r.define), h('span.def.block', r.define))),
+            h('td.num', FRE.dom.numInput({ value: r.qty, min: 1, title: 'How many the player gets', key: `mf|pay|${i}|qty`, onCommit: v => { r.qty = v === null ? 1 : v; changed(); } })),
+            random ? h('td.num', FRE.dom.pctInput({ value: r.prob, key: `mf|pay|${i}|pct`, disabled: state.rewards.length < 2, title: state.rewards.length < 2 ? 'The only reward: always 100%' : 'The other rewards move so the total stays 100%',
+              onCommit: v => { setProbs(FRE.exchangeOps.rebalance(probs(), i, v)); changed(); } })) : null,
+            random ? h('td.num.muted', FRE.dom.fmt(r.prob)) : null,
+            h('td', h('button.icon.danger', { title: 'Remove this reward', on: { click: () => {
+              state.rewards.splice(i, 1);
+              if (state.rewards.length) setProbs(FRE.exchangeOps.rebalance(probs(), null, 0));     // the others grow back to 100%
+              state.payNum = Math.min(state.payNum || 1, Math.max(1, state.rewards.length));
+              changed(); } } }, '✕'))));
+        });
+        el.appendChild(tbl);
+      }
+      const tools = h('div.nn-row');
+      tools.appendChild(h('button.small', { on: { click: () => FRE.ui.itemPicker({ ws, title: random ? 'Rewards (rolled by chance)' : 'Rewards (one exchange each)',
+        have: new Set(state.rewards.map(r => ws.defines.defines.get(r.define) >>> 0)), room: Math.max(0, 30 - state.rewards.length),
+        onAdd: infos => {
+          // each new reward gets an equal share (100% / n) and the others shrink in proportion
+          for (const i of infos) {
+            const share = Math.floor(TOTAL / (state.rewards.length + 1));
+            state.rewards.push({ define: i.define, qty: 1, prob: share });
+            setProbs(FRE.exchangeOps.rebalance(probs(), state.rewards.length - 1, share));
+          }
+          changed(); } }) } }, '+ Rewards…'));
+      if (random && state.rewards.length > 1) {
+        tools.appendChild(h('button.small', { title: 'Give every reward the same chance', on: { click: () => { spread(state.rewards); changed(); } } }, 'Spread evenly'));
+        tools.appendChild(h('label', { title: 'How many different rewards one exchange hands out (PAY n)' }, 'Gives ',
+          FRE.dom.numInput({ value: state.payNum || 1, min: 1, max: state.rewards.length, key: 'mf|gives', onCommit: v => { state.payNum = v || 1; changed(); } }), ` of ${state.rewards.length}`));
+      }
+      el.appendChild(tools);
+      const n = state.rewards.length;
+      if (!n) el.appendChild(h('div.muted.small', 'No reward yet: press + Rewards… and tick one or more items.'));
+      else if (!random) el.appendChild(h('div.muted.small', `${n} exchange${n === 1 ? '' : 's'} in the window, one per reward, each with the costs above.`));
+      else {
+        const sum = state.rewards.reduce((a, r) => a + r.prob, 0);
+        el.appendChild(h('div.small' + (sum === TOTAL ? '.muted' : '.warn'), `1 exchange in the window. Chances add up to ${pct(sum)}` +
+          (sum === TOTAL ? '' : ' (should be 100%; the server cuts or tops up the last reward)') + `; it gives ${state.payNum || 1} reward${(state.payNum || 1) === 1 ? '' : 's'}.` +
+          (n === 1 ? ' With one reward, Random is the same as Player picks.' : '')));
+      }
+    };
+    paint();
+    return el;
+  }
+  const setsOf = st => {
+    const cond = st.cond.filter(c => c[0]).map(c => [c[0], c[1]]);
+    if (st.mode === 'random') return st.rewards.length ? [{ cond, pay: st.rewards.map(r => [r.define, r.qty, r.prob]), payNum: st.payNum || 1 }] : [];
+    return st.rewards.map(r => ({ cond, pay: [[r.define, r.qty, TOTAL]], payNum: 1 }));
+  };
+  let uid = 0;
+  const blankRecipe = () => ({ cond: [['', 1]], rewards: [], mode: 'pick', payNum: 1, uid: ++uid });
+  // "Exchange 1: Wand ×1 ← Emerald Piece ×460 + Flyff Piece ×45" lines: what the window will list
+  function setLines(ws, sets) {
+    const nm = d => (d === 'PENYA' ? 'Penya' : itemName(ws, d));
+    return sets.map((s, i) => {
+      const gets = s.pay.length > 1
+        ? `${s.payNum > 1 ? s.payNum + ' of ' : 'one of '}` + s.pay.map(p => `${nm(p[0])} ×${p[1]} (${pct(p[2])})`).join(' / ')
+        : s.pay.map(p => `${nm(p[0])} ×${p[1]}`).join('');
+      return `Exchange ${i + 1}: ${gets}  ←  ${s.cond.map(c => `${nm(c[0])} ×${c[1]}`).join(' + ') || '(nothing)'}`;
+    });
+  }
+
+  // ---------------------------------------------------------------- NPC Shops: + Exchange menu
+  function openNewMenus(ctx, npc) {
+    const ws = ctx.ws;
+    const blank = () => Object.assign({ name: '', label: '', nameTouched: false }, blankRecipe());
+    const { fieldLabel } = FRE.ui;
+    const others = m => st.menus.filter(x => x !== m).map(x => x.name);
+    // the name follows the label until it is typed in by hand
+    const autoName = m => { if (!m.nameTouched) m.name = FRE.menuNameFromLabel(ws, m.label, others(m)); };
+    const st = { menus: [blank()], resMode: 'add', resNames: ['', ''], resTexts: ['You received your item.', 'You do not have the ingredients, or your inventory is full.'], resTids: ['', ''] };
+    const body = h('div.newnpc'), checks = h('div.nn-problems'), preview = h('div.nn-preview');
+    let btn = null;
+    // result text pairs already used by exchanges: RESULTMSG of every loaded recipe
+    const pairs = [];
+    for (const m of (ws.models.exchange || { menus: [] }).menus) for (const s of m.sets) if (s.resultMsg.length >= 2) {
+      const k = s.resultMsg.slice(0, 2).map(r => r.name).join('|');
+      if (!pairs.some(p => p.k === k)) pairs.push({ k, tids: s.resultMsg.slice(0, 2).map(r => r.name), text: s.resultMsg.slice(0, 2).map(r => ws.texts.get(r.name) || r.name).join(' / ') });
+    }
+    const spec = () => {
+      const base = st.menus[0].name.replace(/^MMI_/, '');
+      const names = st.resNames.map((n, i) => n || `TID_GAME_${base}_${i ? 'FAIL' : 'SUCCESS'}`);
+      return { npcKey: npc.key, menus: st.menus.map(m => ({ name: m.name, label: m.label, sets: setsOf(m) })),
+        results: st.resMode === 'add' ? { add: names.map((n, i) => ({ name: n, text: st.resTexts[i] })) } : { tids: st.resTids } };
+    };
+    const nameViews = [];             // per menu: { input, status } updated without a re-render (keeps the focus)
+    const refresh = () => {
+      const s = spec();
+      const free = FRE.menuOps.freeMenuIds(ws);
+      st.menus.forEach((m, i) => {
+        const v = nameViews[i]; if (!v) return;
+        if (v.input !== document.activeElement) v.input.value = m.name;
+        const p = m.name ? FRE.menuNameProblem(ws, m.name, st.menus.slice(0, i).map(x => x.name)) : 'Type a label, or a name.';
+        v.status.textContent = p ? '✗ ' + p : `✓ free · menu id ${free[i] !== undefined ? free[i] : '?'}`;
+        v.status.className = 'small ' + (p ? 'bad' : 'ok');
+      });
+      const diags = FRE.validateNewMenus(ws, s);
+      checks.textContent = '';
+      if (!diags.length) checks.appendChild(h('p.ok', '✓ No problem found.'));
+      diags.forEach(d => checks.appendChild(diagRow(d)));
+      const blocked = diags.some(d => d.severity === 'BLOCK');
+      if (btn) btn.disabled = blocked;
+      preview.textContent = '';
+      if (blocked) { preview.appendChild(h('p.muted', 'Fix the ⛔ problems to see the exact lines.')); return; }
+      try {
+        const p = FRE.menuOps.newMenusPlan(ws, s);
+        preview.appendChild(h('div.mf-players', s.menus.map(m => [h('div', h('b', `${m.label}`), h('span.muted', ` — right-click ${npc.name || npc.key} → ${m.label} → exchange window:`)),
+          setLines(ws, m.sets).map(l => h('div.mf-line', l))])));
+        const show = (t, x) => { preview.appendChild(h('div.muted.small', t)); preview.appendChild(h('pre.nn-pre', x.replace(/\r/g, '').replace(/\n$/, ''))); };
+        show(`defineNeuz.h (menu id${p.ids.length > 1 ? 's' : ''} ${p.ids.join(', ')}):`, p.lines.defineNeuz);
+        show('defineText.h (label = TID 7000 + id):', p.lines.defineText);
+        show('textClient.txt.txt (+ one textClient.inc block each):', p.lines.textTxt);
+        show(`character.inc (${npc.key}):`, p.lines.character);
+        show(`Exchange_Script.txt (${p.lines.exchange.split(/\r?\n/).length} lines; the start):`, p.lines.exchange.split(/\r?\n/).slice(0, 40).join('\n'));
+      } catch (e) { preview.appendChild(h('p.bad', e.message)); }
+    };
+    const render = () => {
+      body.textContent = '';
+      body.appendChild(h('p.muted.small', `Adds right-click menus to ${npc.name || npc.key} that open the exchange window. No C++ change: a menu id without its own case opens the exchange window (WndWorld.cpp:6470), and its label is text 7000 + id. Server + Client copies, one undo step.`));
+      nameViews.length = 0;
+      st.menus.forEach((m, i) => {
+        body.appendChild(h('h3', `Menu ${i + 1}`, st.menus.length > 1 ? h('button.icon.danger', { style: 'margin-left:8px', title: 'Remove this menu', on: { click: () => { st.menus.splice(i, 1); render(); } } }, '✕') : null));
+        body.appendChild(h('div.nn-row', fieldLabel('Label', true), h('input.mf-label', { value: m.label, placeholder: 'Entaness Weapons', on: { input: e => { m.label = e.target.value; autoName(m); refresh(); } } }),
+          h('span.muted.small', 'What players read when they right-click the NPC.')));
+        const input = h('input.mf-name', { value: m.name, placeholder: 'MMI_ENTANESS_WEAPONS', on: { input: e => {
+          m.name = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''); e.target.value = m.name;
+          m.nameTouched = m.name !== '';          // emptied: follows the label again
+          if (!m.nameTouched) autoName(m);
+          refresh(); } } });
+        const status = h('span.small');
+        nameViews[i] = { input, status };
+        body.appendChild(h('div.nn-row', fieldLabel('Name', true), input, status));
+        body.appendChild(h('div.muted.small.mf-hint', 'Internal name the server needs (an MMI_ #define); players never see it. It is filled from the label and must be new; change it only if you want another.'));
+        body.appendChild(recipeBuilder(ws, m, refresh));
+      });
+      body.appendChild(h('button.small', { on: { click: () => { st.menus.push(blank()); render(); } } }, '+ Another menu'));
+      body.appendChild(h('h3', 'Messages after an exchange'));
+      body.appendChild(h('div.nn-row', ['add', 'tids'].map(v => h('label.nn-radio', h('input', { type: 'radio', name: 'mf-res', checked: st.resMode === v, on: { change: () => { st.resMode = v; render(); } } }),
+        v === 'add' ? 'two new texts (shared by these menus)' : 'texts an exchange already uses'))));
+      if (st.resMode === 'add') ['Success', 'Failure'].forEach((t, i) => body.appendChild(h('div.nn-row', fieldLabel(t, true),
+        h('input', { value: st.resTexts[i], style: 'flex:1', on: { input: e => { st.resTexts[i] = e.target.value; refresh(); } } }))));
+      else body.appendChild(h('div.nn-row', fieldLabel('Messages', true), FRE.ui.combo({ options: pairs.map(p => ({ v: p.k, label: p.text, find: p.k })), value: st.resTids.join('|'), placeholder: 'Search a message pair',
+        onPick: v => { st.resTids = v.split('|'); refresh(); } })));
+      body.append(...FRE.ui.formFooter({ checks, action: 'Create', previewTitle: 'What players will see, and what will be written', preview }));
+      refresh();
+    };
+    render();
+    const m = modal({ title: `New exchange menu — ${npc.name || npc.key}`, body, wide: true, buttons: [
+      { label: 'Close' },
+      { label: 'Create', cls: 'primary', id: 'mf-create', onClick: () => {
+        const s = spec();
+        if (FRE.validateNewMenus(ws, s).some(d => d.severity === 'BLOCK')) return false;
+        if (FRE.ui.newNpc) FRE.ui.newNpc.created.add(npc.key.toLowerCase());     // shows the "In game after Save" box (drawn by editGroup)
+        ctx.editGroup(() => FRE.menuOps.newMenusPlan(ws, s).parts, `new menu${s.menus.length > 1 ? 's' : ''} on ${npc.key}`, [`npc|character.inc|${npc.key}`]);
+        toast(`${s.menus.map(x => x.label).join(', ')} added to ${npc.name || npc.key} (not saved yet). Save writes the 6 files, Server and Client.`, 'ok');
+        return true;
+      } },
+    ] });
+    btn = m.el.querySelector('#mf-create');
+    refresh();
+  }
+
+  // ---------------------------------------------------------------- Exchanges: + New exchange
+  function openNewExchanges(ctx, menu) {
+    const ws = ctx.ws;
+    const st = blankRecipe();
+    const body = h('div.newnpc'), checks = h('div.nn-problems'), players = h('div.mf-players');
+    let btn = null;
+    const refresh = () => {
+      const sets = setsOf(st);
+      const fake = { npcKey: '-', menus: [{ name: 'MMI_X', label: 'x', sets }], results: { tids: ['x', 'y'] } };
+      const diags = FRE.validateNewMenus(ws, fake).filter(d => /^NM_(RECIPE|ITEM|QTY|CHANCE|PAYNUM)$/.test(d.code));
+      if (menu.sets.length + sets.length > 30) diags.push({ code: 'NM_SET_CAP', severity: 'BLOCK', field: 'menu', message: `${menu.name} would have ${menu.sets.length + sets.length} exchanges; the server keeps only the first 30.` });
+      if (!sets.length) diags.push({ code: 'NM_RECIPE', severity: 'BLOCK', field: 'menu', message: 'Pick at least one reward.' });
+      checks.textContent = '';
+      diags.forEach(d => checks.appendChild(diagRow(d)));
+      if (!diags.length) checks.appendChild(h('p.ok', `✓ ${sets.length} exchange${sets.length === 1 ? '' : 's'} will be added.`));
+      if (btn) btn.disabled = diags.some(d => d.severity === 'BLOCK');
+      players.textContent = '';
+      setLines(ws, sets).forEach((l, i) => players.appendChild(h('div.mf-line', l.replace(/^Exchange \d+/, `Exchange ${menu.sets.length + i + 1}`))));
+    };
+    body.appendChild(h('p.muted.small', menu.sets.length ? `New exchanges reuse the text and the messages of ${menu.name}'s first exchange.` : `${menu.name} has no exchange yet: its text and messages come from its description.`));
+    body.appendChild(recipeBuilder(ws, st, refresh));
+    body.append(...FRE.ui.formFooter({ checks, action: 'Add', previewTitle: 'What players will see (added at the end of the window)', preview: players }));
+    const m = modal({ title: `New exchange — ${menu.name}`, body, wide: true, buttons: [
+      { label: 'Close' },
+      { label: 'Add', cls: 'primary', id: 'mf-add', onClick: () => {
+        const sets = setsOf(st);
+        ctx.editGroup(() => FRE.menuOps.addSetsPlan(ws, menu, sets), `${sets.length} new exchange(s) in ${menu.name}`, [`exchange|${menu.name}`]);
+        return true;
+      } },
+    ] });
+    btn = m.el.querySelector('#mf-add');
+    refresh();
+  }
+
+  FRE.ui.menuForm = { openNewMenus, openNewExchanges, recipeBuilder, setsOf, setLines, blankRecipe };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/donation.js ----
@@ -7371,9 +8136,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
       const rm = h('button.icon.danger', { disabled: !edit_, title: r === last ? `Remove level ${lv}` : `Remove level ${lv}: levels ${lv + 1}-${last.level.value} move down one (with their rewards and costs)`,
         on: { click: () => removeLevel(ctx, r, last) } }, '✕');
       tb.appendChild(h('tr' + (st.pick === lv ? '.changed' : ''), h('td.num', String(lv)), itemCell(info, r.define),
-        h('td.num', numInput({ value: r.qty.value, min: 1, disabled: !edit_, onCommit: v => v && edit(ctx, () => O().setRewardValue(r, 'qty', v), `level ${lv} quantity`) })),
+        h('td.num', numInput({ value: r.qty.value, min: 1, disabled: !edit_, key: `bp|lv|${lv}|qty`, onCommit: v => v && edit(ctx, () => O().setRewardValue(r, 'qty', v), `level ${lv} quantity`) })),
         h('td.num', r === last ? h('span.muted', { title: 'There is no next level: this cost is never used' }, `(${fmt(r.points.value)} unused)`)
-          : numInput({ value: r.points.value, min: 1, max: BP().MAX_BPOINTS, disabled: !edit_, onCommit: v => v && edit(ctx, () => O().setRewardValue(r, 'points', v), `level ${lv} cost`) })),
+          : numInput({ value: r.points.value, min: 1, max: BP().MAX_BPOINTS, disabled: !edit_, key: `bp|lv|${lv}|points`, onCommit: v => v && edit(ctx, () => O().setRewardValue(r, 'points', v), `level ${lv} cost`) })),
         h('td.num', fmt(reach)),
         h('td.nowrap', up, down, ' ', pick, ' ', rm, ' ', diagTags(rowDiags(ctx, r))), lineCell(ctx, r)));
     });
@@ -7566,8 +8331,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
       const rm = h('button.icon.danger', { disabled: !edit_, title: 'Remove: this monster pays no points',
         on: { click: () => edit(ctx, text => O().removeMonster(text, r), `remove ${r.define}`) } }, '✕');
       tb.appendChild(h('tr' + (offBand(x) ? '.changed' : ''), name, h('td.num', mo ? String(mo.level) : ''), h('td', mo ? mo.rank : ''),
-        h('td.num', numInput({ value: r.min.value, min: 1, max: BP().MAX_BPOINTS, disabled: !edit_, onCommit: v => set('min', v) })),
-        h('td.num', numInput({ value: r.max.value, min: 1, max: BP().MAX_BPOINTS, disabled: !edit_, onCommit: v => set('max', v) })),
+        h('td.num', numInput({ value: r.min.value, min: 1, max: BP().MAX_BPOINTS, disabled: !edit_, key: `bp|mon|${r.define}|min`, onCommit: v => set('min', v) })),
+        h('td.num', numInput({ value: r.max.value, min: 1, max: BP().MAX_BPOINTS, disabled: !edit_, key: `bp|mon|${r.define}|max`, onCommit: v => set('max', v) })),
         h('td', b ? `${b.min}-${b.max}` : ''), h('td', rm, ' ', diagTags(rowDiags(ctx, r))), lineCell(ctx, r)));
     }
     el.appendChild(h('h3', `Monsters (${rows.length})`));
@@ -7718,7 +8483,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
       const shown = info.filter(x => x.inGame !== false), title = (shown.length ? shown : info).map(x => plainName(x.name)).filter(Boolean).join(', ');
       el.appendChild(h('div.npc-title', h('h2', title || m.name), h('span.def', m.name),
         h('span.line', `${f.name} L${f.lineOf(m.start) + 1}`), canEdit(ctx) ? null : h('span.tag.bad', 'read-only'),
-        null));
+        canEdit(ctx) && m.closed && FRE.ui.menuForm ? h('button.small', { title: 'Add exchanges: the same ingredients, one exchange per reward', on: { click: () => FRE.ui.menuForm.openNewExchanges(ctx, m) } }, '+ New exchange') : null));
       // who opens it, and whether the WorldServer shows that NPC (map files + SetOutput / SetLang)
       // where each NPC stands (loaders/area.js), with the GM teleport command
       if (info.length) el.appendChild(h('div.ex-npcs', info.map(x => x.inGame && x.where && x.where.length
@@ -7736,7 +8501,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
           m.description.map(d => h('div.ex-desc', h('span.def', d.name), h('div', ctx.ws.texts.get(d.name) || h('span.muted', '(no text)'))))));
       }
       if (!m.sets.length) { el.appendChild(h('p.muted', 'This menu has no exchanges the server loads, so its window opens empty and closes.')); return; }
-      el.appendChild(h('p.muted.small', 'Chances are out of 1,000,000 (= 100%). "Gives" is how many different rewards one exchange hands out, picked by chance. ',
+      el.appendChild(h('p.muted.small', 'Chances are typed in percent (the file keeps them out of 1,000,000: 50% = 500,000). "Spread evenly" splits 100% over the rewards. "Gives" is how many different rewards one exchange hands out, picked by chance. ',
         'Pick items with "+ Ingredient", "+ Reward" or "Change", then + on an item in the list on the right.'));
       m.sets.forEach((s, i) => el.appendChild(card(ctx, m, s, i)));
       const rest = exDiags(ctx).filter(d => d.start >= m.start && d.start < m.end && d.severity !== 'INFO' && !m.sets.some(s => d.start >= s.start && d.start < s.end) && !head.includes(d));
@@ -7745,8 +8510,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
 
     addTarget(ctx) {
       if (!canEdit(ctx)) return { ok: false, title: 'Exchange_Script.txt is read-only' };
-      const m = current(ctx), p = st.pick;
+      const m = model(ctx).menus.find(x => x.name === st.menu && !x.isJunk) || null, p = st.pick;
       const s = m && p ? m.sets[p.set] : null;
+      const edit = (c, make, label) => c.edit(FILE, make, label, 'ex|' + (m ? m.name : st.menu));
       if (!s) return { ok: false, title: 'Click "+ Ingredient", "+ Reward" or "Change" on an exchange first' };
       const n = p.set + 1;
       const done = () => { st.pick = null; };
@@ -7758,9 +8524,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
           add(info) { done(); edit(ctx, () => O().setIngredientItem(s, l, info.define), `exchange ${n} ingredient ${info.define}`); } };
       }
       if (p.line === null) {
-        const left = Math.max(0, X().PROB_TOTAL - s.pay.reduce((a, l) => a + l.prob.value, 0));
-        return { ok: true, usesPrice: false, title: `Add as a reward of exchange ${n} (quantity 1, chance ${pct(left)}: what is left of 100%)`,
-          add(info) { done(); edit(ctx, text => O().addReward(text, s, info.define, 1, left), `exchange ${n} add reward ${info.define}`); } };
+        return { ok: true, usesPrice: false, title: `Add as a reward of exchange ${n} (quantity 1, an equal share: 100% / ${s.pay.length + 1}; the others shrink to make room)`,
+          add(info) { done(); edit(ctx, text => O().addRewardKeepTotal(text, s, info.define, 1), `exchange ${n} add reward ${info.define}`); } };
       }
       const l = s.pay[p.line];
       return { ok: true, usesPrice: false, title: `Give instead of ${l.item.name} in exchange ${n}`,
@@ -7789,9 +8554,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
   // ---------------------------------------------------------------- one recipe
   function card(ctx, m, s, i) {
     const edit_ = canEdit(ctx), n = i + 1, f = ctx.ws.files.get(FILE);
-    const picking = (kind, line) => st.pick && st.pick.set === i && st.pick.kind === kind && st.pick.line === line;
+    const edit = (c, make, label) => c.edit(FILE, make, label, 'ex|' + m.name);     // tags this card's menu (also when shown in NPC Shops)
+    const picking = (kind, line) => st.pick && st.menu === m.name && st.pick.set === i && st.pick.kind === kind && st.pick.line === line;
     const pickBtn = (kind, line, label) => h('button', { disabled: !edit_, title: 'Then press + on an item in the list on the right',
-      on: { click: () => { st.pick = picking(kind, line) ? null : { set: i, kind, line }; ctx.renderAll(true); } } }, picking(kind, line) ? 'Pick an item →' : label);
+      on: { click: () => { const on = picking(kind, line); st.menu = m.name; st.pick = on ? null : { set: i, kind, line }; ctx.renderAll(true); } } }, picking(kind, line) ? 'Pick an item →' : label);
     const lineDiags = l => inSpan(ctx, l.start, l.end);
 
     // ingredients
@@ -7799,14 +8565,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
     s.condition.forEach((l, j) => {
       const info = itemOf(ctx, l);
       ing.appendChild(h('tr' + (picking('cond', j) ? '.changed' : ''), h('td', itemSpan(info, l.item.name)),
-        h('td.num', numInput({ value: l.num.value, min: 1, disabled: !edit_, onCommit: v => v && edit(ctx, () => O().setIngredientQty(s, l, v), `exchange ${n} ${l.item.name} qty`) })),
+        h('td.num', numInput({ value: l.num.value, min: 1, disabled: !edit_, key: `ex|${m.name}|${i}|cond|${j}|qty`, onCommit: v => v && edit(ctx, () => O().setIngredientQty(s, l, v), `exchange ${n} ${l.item.name} qty`) })),
         h('td.nowrap', pickBtn('cond', j, 'Change'), ' ', h('button.icon.danger', { disabled: !edit_ || s.condition.length < 2, title: s.condition.length < 2 ? 'An exchange needs at least one cost' : 'Remove this cost',
           on: { click: () => edit(ctx, text => O().removeIngredient(text, s, l), `exchange ${n} remove ${l.item.name}`) } }, '✕'), ' ', diagTags(lineDiags(l)))));
     });
 
     // rewards, with the chance the server really uses
     const paid = new Map((s.paid ? s.paid.lines : []).map(x => [x.line, x.prob]));
-    const rew = h('table.items.ex', h('tr', h('th', 'Reward'), h('th.num', 'Qty'), h('th.num', 'Chance (of 1,000,000)'), h('th.num', 'Server uses'), h('th', 'Bound'), h('th', '')));
+    const rew = h('table.items.ex', h('tr', h('th', 'Reward'), h('th.num', 'Qty'), h('th.num', { title: 'Type the percent; the other rewards move so the total stays 100%' }, 'Chance'), h('th.num', { title: 'What the file holds: out of 1,000,000 (1% = 10,000)' }, 'of 1,000,000'), h('th.num', 'Server uses'), h('th', 'Bound'), h('th', '')));
     s.pay.forEach((l, j) => {
       const info = itemOf(ctx, l), eff = paid.get(l);
       const flag = l.flag ? l.flag.value : 0;
@@ -7815,12 +8581,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
           on: { change: e => edit(ctx, text => O().setRewardFlag(text, l, e.target.checked ? BINDS : 0), `exchange ${n} ${l.item.name} bound`) } })
         : h('span', { title: 'item flag value' }, String(flag));
       rew.appendChild(h('tr' + (picking('pay', j) ? '.changed' : eff === undefined ? '.dropped' : ''), h('td', itemSpan(info, l.item.name)),
-        h('td.num', numInput({ value: l.num.value, min: 1, disabled: !edit_, onCommit: v => v && edit(ctx, () => O().setRewardQty(l, v), `exchange ${n} ${l.item.name} qty`) })),
-        h('td.num', numInput({ value: l.prob.value, min: 0, max: X().PROB_TOTAL, disabled: !edit_, onCommit: v => v !== null && edit(ctx, () => O().setRewardChance(l, v), `exchange ${n} ${l.item.name} chance`) })),
+        h('td.num', numInput({ value: l.num.value, min: 1, disabled: !edit_, key: `ex|${m.name}|${i}|pay|${j}|qty`, onCommit: v => v && edit(ctx, () => O().setRewardQty(l, v), `exchange ${n} ${l.item.name} qty`) })),
+        h('td.num', FRE.dom.pctInput({ value: l.prob.value, key: `ex|${m.name}|${i}|pay|${j}|pct`, disabled: !edit_ || s.pay.length < 2, title: s.pay.length < 2 ? 'The only reward: always 100%' : 'The other rewards move so the total stays 100%',
+          onCommit: v => edit(ctx, () => O().setChanceKeepTotal(s, l, v), `exchange ${n} ${l.item.name} chance`) })),
+        h('td.num.muted', fmt(l.prob.value)),
         h('td.num', eff === undefined ? h('span.tag.bad', { title: 'The chances before this line already reach 100%' }, 'dropped') : h('span' + (eff !== l.prob.value ? '.warn-text' : ''), pct(eff))),
         h('td', bound),
         h('td.nowrap', pickBtn('pay', j, 'Change'), ' ', h('button.icon.danger', { disabled: !edit_ || s.pay.length < 2, title: s.pay.length < 2 ? 'An exchange needs at least one reward (to remove the whole exchange, use the Remove button at the top of the card)' : 'Remove this reward (the exchange stays)',
-          on: { click: () => edit(ctx, text => O().removeReward(text, s, l), `exchange ${n} remove ${l.item.name}`) } }, '✕'), ' ', diagTags(lineDiags(l)))));
+          on: { click: () => edit(ctx, text => O().removeRewardKeepTotal(text, s, l), `exchange ${n} remove ${l.item.name}`) } }, '✕'), ' ', diagTags(lineDiags(l)))));
     });
     const given = X().rewardsGiven(s);
     const sum = s.pay.reduce((a, l) => a + l.prob.value, 0);
@@ -7828,9 +8596,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
       pickBtn('pay', null, '+ Reward'),
       s.pay.length > 1 ? h('button', { disabled: !edit_, title: 'Give every reward the same chance, adding up to exactly 1,000,000',
         on: { click: () => edit(ctx, () => O().evenChances(s), `exchange ${n} spread chances`) } }, 'Spread evenly') : null,
-      s.pay.length > 1 && s.payNum ? h('label', 'Gives ', numInput({ value: s.payNum.value, min: 1, max: s.pay.length, disabled: !edit_,
+      s.pay.length > 1 && s.payNum ? h('label', 'Gives ', numInput({ value: s.payNum.value, min: 1, max: s.pay.length, disabled: !edit_, key: `ex|${m.name}|${i}|gives`,
         onCommit: v => v && edit(ctx, () => O().setPayNum(s, v), `exchange ${n} gives ${v}`) }), ` of ${s.pay.length}`) : null,
-      h('span' + (sum === X().PROB_TOTAL ? '.muted' : '.warn-text'), `sum ${fmt(sum)} = ${pct(sum)}`),
+      h('span' + (sum === X().PROB_TOTAL ? '.muted' : '.warn-text'), `chances add up to ${pct(sum)}${sum === X().PROB_TOTAL ? '' : ' (should be 100%)'}`),
       h('span.muted', `· one exchange gives ${given} reward${given === 1 ? '' : 's'}`));
 
     // the row as the client draws it (WndControl.cpp:1980): ingredients, arrow, rewards; ~9 icons fit
@@ -7882,10 +8650,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
     const pos = table.find(m.mmi.value) ? table.find(m.mmi.value).sets.findIndex(x => x.source === s) : -1;
     const out = h('div.ex-try-out');
     const set = (k, v) => { if (v !== null) { trial[k] = v; go(); } };      // every change runs again
-    const stockRow = h('label', 'Ingredients for ', numInput({ value: trial.stock, min: 1, max: 100000, onCommit: v => set('stock', v) }), ' exchanges');
+    const stockRow = h('label', 'Ingredients for ', numInput({ key: `try|stock`, value: trial.stock, min: 1, max: 100000, onCommit: v => set('stock', v) }), ' exchanges');
     const showStock = () => { stockRow.style.display = trial.mode === 'keep' ? '' : 'none'; };
+    const seedIn = numInput({ key: `try|seed`, value: trial.seed, min: 0, max: 4294967295, onCommit: v => set('seed', v) });
+    let runs = 0;
     function go() {
       out.textContent = '';
+      runs++;
+      out.appendChild(h('div.muted.small', `Run ${runs} · seed ${FRE.dom.fmt(trial.seed)}`));
       if (pos < 0) { out.appendChild(h('p.warn-text', 'The server does not load this exchange (a duplicate menu or over 30 exchanges).')); return; }
       let r;
       try { r = S.run(env, table, m.mmi.value, pos, trial); } catch (e) { out.appendChild(h('p.warn-text', 'Cannot run: ' + e.message)); return; }
@@ -7895,14 +8667,18 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
       h('p.muted.small', 'This presses OK in the exchange window again and again, the way the server does it (CExchange::ResultExchange: check the ingredients, roll the rewards, check the bag, take, give). ',
         'It uses the exchange as it is in the editor now, saved or not.'),
       h('div.row.ex-tools',
-        h('label', 'Press OK ', numInput({ value: trial.tries, min: 1, max: 1000000, onCommit: v => set('tries', v) }), ' times'),
+        h('label', 'Press OK ', numInput({ key: `try|tries`, value: trial.tries, min: 1, max: 1000000, onCommit: v => set('tries', v) }), ' times'),
         h('select', { on: { change: e => { trial.mode = e.target.value; showStock(); go(); } } },
           h('option', { value: 'same', selected: trial.mode === 'same' }, 'Same fresh bag every time (how often each reward comes out)'),
           h('option', { value: 'keep', selected: trial.mode === 'keep' }, 'One bag that keeps the rewards (runs out, fills up)')),
         stockRow,
-        h('label', 'Empty bag slots ', numInput({ value: trial.free, min: 0, max: S.MAX_INVENTORY_FREE, onCommit: v => set('free', v) })),
-        h('label', { title: 'The same seed gives the same rolls' }, 'Seed ', numInput({ value: trial.seed, min: 0, max: 4294967295, onCommit: v => set('seed', v) })),
-        h('button.primary', { on: { click: go } }, 'Run')),
+        h('label', 'Empty bag slots ', numInput({ key: `try|free`, value: trial.free, min: 0, max: S.MAX_INVENTORY_FREE, onCommit: v => set('free', v) })),
+        h('label', { title: 'The same seed gives the same rolls (so a result can be repeated)' }, 'Seed ', seedIn),
+        h('button.primary', { title: 'Run again with the next seed: new rolls', on: { click: () => {
+          trial.seed = (trial.seed + 1) >>> 0;
+          seedIn.dataset.value = String(trial.seed); seedIn.value = FRE.dom.fmt(trial.seed);
+          go();
+        } } }, 'Run again (new rolls)')),
       out);
     showStock();
     modal({ title: `Try: ${rewardNames(ctx, s)} (${whoOpens(ctx, m)}, exchange ${i + 1})`, wide: true, body });
@@ -7919,7 +8695,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
       R.CRASH ? h('span.tag.bad', 'the server CRASHED') : null,
       r.lost ? h('span.tag.bad', `${fmt(r.lost)} reward${r.lost > 1 ? 's' : ''} LOST`) : null,
     ];
-    const tbl = h('table.items.ex', h('tr', h('th', 'Reward'), h('th.num', 'Times'), h('th.num', 'Items'), h('th.num', 'Seen'), h('th.num', 'Server chance'), h('th.num', 'Lost')));
+    const tbl = h('table.items.ex', h('tr', h('th', 'Reward'), h('th.num', 'Times'), h('th.num', 'Items'), h('th.num', { title: 'How often this reward came out in THIS run (Times ÷ presses). Luck moves it a little around the chance you set; more presses = closer.' }, 'Got in this run'), h('th.num', { title: 'The chance you set (what the server uses for every press)' }, 'Chance set'), h('th.num', 'Lost')));
     for (const g of r.given) tbl.appendChild(h('tr', h('td', { 'data-item-id': env.prop(g.line.id) ? g.line.id : null }, `${nameOf(g.line.id)} ×${fmt(g.line.num)}`),
       h('td.num', fmt(g.times)), h('td.num', fmt(g.qty)), h('td.num', R.SUCCESS ? `${g.seenPct.toFixed(2)}%` : '-'), h('td.num', `${g.serverPct.toFixed(2)}%`),
       h('td.num', g.lost ? h('span.warn-text', fmt(g.lost)) : '')));
@@ -7970,6 +8746,16 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
   }
 
   FRE.ui.modules.push(mod);
+  // The exchange cards of one menu, for other tasks (NPC Shops shows an NPC's exchange menus with them).
+  // Picking an item (+ Ingredient / + Reward / Change) goes through exchangeView.addTarget.
+  FRE.ui.exchangeView = {
+    st,
+    cards: (ctx, m) => m.sets.map((s, i) => card(ctx, m, s, i)),
+    picking: () => !!st.pick,
+    clearPick: () => { st.pick = null; },
+    addTarget: ctx => mod.addTarget(ctx),
+    menuByName: (ctx, name) => (model(ctx) ? model(ctx).menus.find(x => x.name === name && !x.isJunk) : null) || null,
+  };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/app.js ----
@@ -8004,6 +8790,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
     backupsOf: name => (S.backupDir ? FRE.fsa.backupCopies(S.backupDir, name) : Promise.resolve(null)),
     get backupKey() { return S.backupDir ? S.backupDir.name : null; },
     renderList: () => renderList(),
+    // set the list search of the current task (e.g. so a just-created NPC is listed)
+    setQuery(q) { S.queries[S.mode] = q; $('list-search').value = q; },
+    // switch to another task with the same folder, then run then(ctx) (e.g. select a menu);
+    // unsaved edits: Cancel / Discard / Save and switch
+    openTask: (id, then) => leaveTask(async () => { await loadTask(id); if (then && S.task === id) { then(ctx); renderAll(false); } }),
     // bytes of a file in the Client folder by relative path ('Char/char_NpcHende.tga', names matched without case), or null
     async clientFile(rel) {
       if (!S.client) return null;
@@ -8014,12 +8805,18 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
       return fh ? (await FRE.fsa.readHandle(fh)).bytes : null;
     },
     // Apply an edit op: make(text) -> splices. `key` marks what was edited (list badges).
+    // Repeated edits of the same field within 2 s (typing) are folded into one undo step.
     edit(lowerFile, make, label, key) {
       const f = S.ws.files.get(lowerFile);
       try {
         const splices = make(f.text);
+        if (!splices.length) return;
+        const before = S.ws.history[S.ws.history.length - 1];
         S.ws.apply(lowerFile, splices, label);
         tagLast(key ? [key] : [], label);
+        const now = Date.now(), last = S.ws.history[S.ws.history.length - 1];
+        if (before && before !== last && before.label === label && String(before.tags) === String(last.tags) && now - (before.at || 0) < 2000 && S.ws.mergeLast()) before.at = now;
+        else last.at = now;
       } catch (e) { toast(e.message, 'bad'); }
       renderAll(false);
     },
@@ -8119,13 +8916,17 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
 
   // back to the start screen; unsaved edits are only dropped after asking
   function changeTask() {
-    const leave = () => { S.task = null; S.ws = null; S.client = null; S.diagOpen = false; $('diag-panel').hidden = true; renderAll(false); };
+    leaveTask(() => { S.task = null; S.ws = null; S.client = null; S.diagOpen = false; $('diag-panel').hidden = true; renderAll(false); });
+  }
+  // run go() once the open task has no unsaved edit: ask first, and offer to save them
+  function leaveTask(go) {
     const dirty = S.ws ? S.ws.dirtyFiles() : [];
-    if (!dirty.length) { leave(); return; }
+    if (!dirty.length) { go(); return; }
     modal({ title: 'Unsaved changes', body: h('div',
       h('p', `${dirty.map(f => f.name).join(', ')} ${dirty.length > 1 ? 'have' : 'has'} changes that are not saved.`),
-      h('p.muted', 'To keep them, press Cancel and then Save.')),
-      buttons: [{ label: 'Cancel' }, { label: 'Discard changes', cls: 'danger', onClick: leave }] });
+      h('p.muted', 'Save and continue: the usual review, backup and write, then go on. Discard: the edits are lost.')),
+      buttons: [{ label: 'Cancel' }, { label: 'Discard changes', cls: 'danger', onClick: go },
+        { label: 'Save and continue', cls: 'primary', onClick: () => { onSave(go); } }] });
   }
 
   async function pickBackup() {
@@ -8343,6 +9144,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
     if (m.listAction) { const x = m.listAction(ctx); if (x) action.appendChild(x); }   // a button right of the search box
     if (m.listExtra) { const x = m.listExtra(ctx); if (x) extra.appendChild(x); }
     m.renderList(el, ctx);
+    const sel = el.querySelector('.sel');                 // e.g. a new NPC at the end of the list
+    if (sel && sel.scrollIntoView) sel.scrollIntoView({ block: 'nearest' });
   }
 
   // Re-rendering the same view (after an edit) keeps the scroll position; a new view starts at the top.
@@ -8355,9 +9158,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
     const m = active(), view = S.mode + '|' + JSON.stringify(m.st || {}, (k, v) => k === 'pick' ? undefined : v);
     const top = view === lastView ? el.scrollTop : 0;
     lastView = view;
-    el.className = ''; el.textContent = '';
-    if (!S.ws.available[S.mode].ok) { el.appendChild(h('p.empty-state', `Not available: missing ${S.ws.available[S.mode].missing.join(', ')}`)); return; }
-    m.renderEditor(el, ctx);
+    if (!S.ws.available[S.mode].ok) { el.className = ''; el.textContent = ''; el.appendChild(h('p.empty-state', `Not available: missing ${S.ws.available[S.mode].missing.join(', ')}`)); return; }
+    FRE.dom.keepFocus(el, () => {
+      el.className = ''; el.textContent = '';
+      m.renderEditor(el, ctx);
+    });
     el.scrollTop = top;
   }
 
@@ -8485,7 +9290,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
     return box;
   }
 
-  async function onSave() {
+  // after(): runs once the save succeeded and its log is closed (Save and continue)
+  async function onSave(after) {
+    if (typeof after !== 'function') after = null;
     const ws = S.ws;
     if (!ws || !ws.dirtyFiles().length) return;
     const nb = ws.newBlocking();
@@ -8520,11 +9327,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
       h('p.muted.small', `Backup folder: ${S.backupDir.name}/<timestamp>/` + (!S.client && client.length ? ` · After saving, also copy to Client/: ${client.join(', ')}` : '')));
     modal({ title: `Review changes (${dirty.length} file${dirty.length > 1 ? 's' : ''})`, body, wide: true, buttons: [
       { label: 'Cancel' },
-      { label: `Back up and write ${dirty.length} file${dirty.length > 1 ? 's' : ''}`, cls: 'primary', onClick: runSave },
+      { label: `Back up and write ${dirty.length} file${dirty.length > 1 ? 's' : ''}`, cls: 'primary', onClick: () => { runSave(after); } },
     ] });
   }
 
-  async function runSave() {
+  async function runSave(after) {
     const log = h('div.log');
     const client = S.ws.clientCopiesNeeded();
     const m = modal({ title: 'Saving…', body: log, buttons: [{ label: 'Close' }] });
@@ -8541,6 +9348,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "17+", "when
     }
     m.el.querySelector('header').textContent = report.ok ? 'Saved' : 'Save failed';
     renderAll(false);
+    if (report.ok && after) { m.close(); after(); }
   }
 
   // ------------------------------------------------------------------ init

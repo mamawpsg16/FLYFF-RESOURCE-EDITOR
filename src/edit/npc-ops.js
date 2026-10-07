@@ -164,5 +164,5 @@
     };
   }
 
-  FRE.npcOps = { newNpcPlan, newTagPlan, tagText, tagDefine, lastEtcId, buildRecord, insertPoint, blockText, newStrings, lastStringId, RECORD };
+  FRE.npcOps = { appendSplice, newNpcPlan, newTagPlan, tagText, tagDefine, lastEtcId, buildRecord, insertPoint, blockText, newStrings, lastStringId, RECORD };
 })(globalThis.FRE = globalThis.FRE || {});

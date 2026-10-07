@@ -30,20 +30,91 @@
 
   // Amount box: shows "1,000,000" when idle and plain digits while editing.
   // onCommit(value|null) gets a plain number; commas never reach the files.
-  function numInput({ value = null, placeholder = '', disabled = false, title = '', min = 0, max = 2147483647, onCommit }) {
+  // Live inputs commit LIVE_MS after the last keystroke (and at once on Enter / leaving the field);
+  // while typing, a value that does not parse yet just waits (no error until the field is left).
+  const LIVE_MS = 400;
+  const pending = new Map();         // input -> its waiting commit (flushLive runs them now; for tests)
+  function liveCommit(el, tryCommit) {
+    let timer = null;
+    const run = () => { pending.delete(el); if (el.isConnected && document.activeElement === el) tryCommit(true); };
+    el.addEventListener('input', () => { clearTimeout(timer); pending.set(el, run); timer = setTimeout(run, FRE.dom.LIVE_MS || LIVE_MS); });
+    el.addEventListener('change', () => { clearTimeout(timer); pending.delete(el); });
+  }
+  const flushLive = () => { for (const run of [...pending.values()]) run(); };
+
+  // key: a stable name for this field (e.g. 'ex|MMI_BOB|0|pay|1|qty'), so a re-render keeps the focus in it.
+  // Only keyed inputs update while typing (live): without a key the re-render would drop the focus mid-number.
+  function numInput({ value = null, placeholder = '', disabled = false, title = '', min = 0, max = 2147483647, onCommit, key = null, live = !!key }) {
     const el = h('input.num-input', { type: 'text', inputMode: 'numeric', placeholder, disabled, title, value: fmt(value) });
+    if (key) el.dataset.key = key;
     el.dataset.value = value === null ? '' : String(value);
-    el.addEventListener('focus', () => { el.value = el.dataset.value; el.select(); });
+    el.addEventListener('focus', () => { el.value = el.dataset.value; if (!el.dataset.restoring) el.select(); });
+    if (live) liveCommit(el, () => {
+      const r = FRE.num.parseAmount(el.value, { min, max });
+      if (!r.ok || String(r.value === null ? '' : r.value) === el.dataset.value) return;
+      el.dataset.value = r.value === null ? '' : String(r.value);
+      onCommit(r.value);
+    });
     el.addEventListener('blur', () => { el.value = fmt(el.dataset.value === '' ? null : Number(el.dataset.value)); });
     el.addEventListener('keydown', e => { if (e.key === 'Enter') el.blur(); if (e.key === 'Escape') { el.value = el.dataset.value; el.blur(); } });
     el.addEventListener('change', () => {
+      if (!el.isConnected) return;               // replaced by a re-render: its line offsets are out of date
       const r = FRE.num.parseAmount(el.value, { min, max });
+      if (r.ok && live && String(r.value === null ? '' : r.value) === el.dataset.value) { el.value = fmt(r.value); return; }
       if (!r.ok) { toast(r.error, 'bad'); el.value = document.activeElement === el ? el.dataset.value : fmt(el.dataset.value === '' ? null : Number(el.dataset.value)); return; }
       el.dataset.value = r.value === null ? '' : String(r.value);
       if (document.activeElement !== el) el.value = fmt(r.value);
       onCommit(r.value);
     });
     return el;
+  }
+
+  // A chance typed in percent ("50", "33.3333", "12.5%") and kept in the file's units: out of 1,000,000,
+  // so 1% = 10,000 and 0.0001% = 1 (the smallest step the file can hold). value / onCommit are in units.
+  const PCT_UNIT = 10000;
+  const pctText = u => (u === null || u === undefined ? '' : (u / PCT_UNIT).toLocaleString('en-US', { maximumFractionDigits: 4, useGrouping: false }));
+  function pctInput({ value = null, disabled = false, title = '', onCommit, key = null, live = !!key }) {
+    const tip = u => `${title ? title + '\n' : ''}${u === null ? '' : `= ${fmt(u)} of 1,000,000 in the file`}`;
+    const el = h('input.num-input.pct-input', { type: 'text', inputMode: 'decimal', disabled, title: tip(value), value: pctText(value), placeholder: '%' });
+    el.dataset.value = value === null ? '' : String(value);
+    if (key) el.dataset.key = key;
+    el.addEventListener('focus', () => { if (!el.dataset.restoring) el.select(); });
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') el.blur(); if (e.key === 'Escape') { el.value = pctText(el.dataset.value === '' ? null : Number(el.dataset.value)); el.blur(); } });
+    // quiet: while typing (no toast, no rewrite of what is being typed)
+    const commit = quiet => {
+      if (!el.isConnected) return;
+      const t = el.value.trim().replace(/%$/, '').trim().replace(',', '.');
+      const back = () => { el.value = pctText(el.dataset.value === '' ? null : Number(el.dataset.value)); };
+      if (!/^\d+(\.\d*)?$|^\.\d+$/.test(t)) { if (!quiet) { toast('Type a percent between 0 and 100, e.g. 50 or 12.5.', 'bad'); back(); } return; }
+      const u = Math.round(Number(t) * PCT_UNIT);
+      if (u > 100 * PCT_UNIT) { if (!quiet) { toast('A chance is at most 100%.', 'bad'); back(); } return; }
+      if (!quiet && Math.abs(u - Number(t) * PCT_UNIT) > 1e-6) toast(`Rounded to ${pctText(u)}% (the file keeps 4 decimals).`);
+      if (!quiet) el.value = pctText(u);
+      el.title = tip(u);
+      if (String(u) === el.dataset.value) return;
+      el.dataset.value = String(u);
+      onCommit(u);
+    };
+    el.addEventListener('change', () => commit(false));
+    if (live) liveCommit(el, commit);
+    return h('span.pct-wrap', el, h('span.muted', ' %'));
+  }
+
+  // Re-render(fn) inside root without losing the field being typed in: an input made with a `key`
+  // (numInput / pctInput) is found again by that key and gets the focus, its typed text and the caret back.
+  function keepFocus(root, fn) {
+    const a = document.activeElement;
+    const key = a && root.contains(a) && a.dataset ? a.dataset.key : null;
+    if (!key) { fn(); return; }
+    const text = a.value, s0 = a.selectionStart, s1 = a.selectionEnd;
+    fn();
+    const n = [...root.querySelectorAll('input[data-key]')].find(x => x.dataset.key === key);
+    if (!n || n.disabled) return;
+    n.dataset.restoring = '1';
+    n.focus();
+    delete n.dataset.restoring;
+    n.value = text;
+    try { n.setSelectionRange(s0, s1); } catch (e) { /* not a text input */ }
   }
 
   function toast(msg, kind = '') {
@@ -65,5 +136,5 @@
     return { close, el: back };
   }
 
-  FRE.dom = { h, $, fmt, toast, modal, numInput };
+  FRE.dom = { h, $, fmt, toast, modal, numInput, pctInput, pctText, keepFocus, LIVE_MS, flushLive };
 })(globalThis.FRE = globalThis.FRE || {});

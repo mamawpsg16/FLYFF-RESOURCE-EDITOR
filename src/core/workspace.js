@@ -27,8 +27,12 @@
       required: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt'],
       // character.txt.txt: a new NPC's name and tab names (appended IDS_CHARACTER_INC_ lines, like f58e56ba)
       // defineNeuz.h + etc.inc + etc.txt.txt: a new building tag (SRT_), the way b4b9a465 added four
-      editable: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'defineNeuz.h', 'etc.inc', 'etc.txt.txt'],
-      client: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'defineNeuz.h', 'etc.inc', 'etc.txt.txt'],
+      // defineText.h + textClient.inc + textClient.txt.txt + Exchange_Script.txt: a new exchange menu (edit/menu-ops.js)
+      editable: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'defineNeuz.h', 'etc.inc', 'etc.txt.txt',
+        'defineText.h', 'textClient.inc', 'textClient.txt.txt', 'Exchange_Script.txt'],
+      client: ['character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt', 'defineNeuz.h', 'etc.inc', 'etc.txt.txt',
+        'defineText.h', 'textClient.inc', 'textClient.txt.txt', 'Exchange_Script.txt'],
+      uses: ['exchange'],    // the menus' recipes (read here; a new menu's recipes are written with it)
       maps: true,            // reads World/*/ to show where each NPC stands
       editsMaps: true,       // a new NPC is a new record in World/<map>/<map>.dyo (Server + Client copies)
       parse(ws) {
@@ -284,9 +288,30 @@
         this.texts = FRE.textClient.load(this.files, this.strings.map, this.defines.defines);
         names = ['spec_item.txt', ...names];
       }
+      // textClient.inc / textClient.txt.txt (a new menu's label): the TID texts are read again
+      if (names.some(n => n === 'textclient.inc' || n === 'textclient.txt.txt')) {
+        if (names.includes('textclient.txt.txt')) this.strings = FRE.loadStrings(this.files);
+        this.texts = FRE.textClient.load(this.files, this.strings.map, this.defines.defines);
+      }
+      if (names.includes('exchange_script.txt')) {       // the "exchange" tags in NPC Shops (MMI_ names at a line start)
+        const ex = this.files.get('exchange_script.txt');
+        this.exchangeMenus = new Set(ex ? (ex.text.match(/^MMI_\w+/gm) || []) : []);
+      }
       if (names.some(n => /\.dyo$/.test(n))) this.refreshMaps();
       if (names.includes('spec_item.txt')) this.reparse('spec_item.txt');   // reparses every module
       else names.forEach(n => this.reparse(n));
+    }
+
+    // Fold the last step into the one before it (typing in one field = one undo step): only when both changed
+    // the same files and nothing was undone in between. Undo then goes straight back to before both.
+    mergeLast() {
+      const h = this.history;
+      if (h.length < 2 || this.redoStack.length) return false;
+      const a = h[h.length - 2], b = h[h.length - 1];
+      if (a.length !== b.length || a.some((n, i) => n !== b[i])) return false;
+      for (const n of b) this.files.get(n)._undo.pop();
+      h.pop();
+      return true;
     }
 
     undo() {

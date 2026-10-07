@@ -93,7 +93,7 @@
       const shown = info.filter(x => x.inGame !== false), title = (shown.length ? shown : info).map(x => plainName(x.name)).filter(Boolean).join(', ');
       el.appendChild(h('div.npc-title', h('h2', title || m.name), h('span.def', m.name),
         h('span.line', `${f.name} L${f.lineOf(m.start) + 1}`), canEdit(ctx) ? null : h('span.tag.bad', 'read-only'),
-        null));
+        canEdit(ctx) && m.closed && FRE.ui.menuForm ? h('button.small', { title: 'Add exchanges: the same ingredients, one exchange per reward', on: { click: () => FRE.ui.menuForm.openNewExchanges(ctx, m) } }, '+ New exchange') : null));
       // who opens it, and whether the WorldServer shows that NPC (map files + SetOutput / SetLang)
       // where each NPC stands (loaders/area.js), with the GM teleport command
       if (info.length) el.appendChild(h('div.ex-npcs', info.map(x => x.inGame && x.where && x.where.length
@@ -111,7 +111,7 @@
           m.description.map(d => h('div.ex-desc', h('span.def', d.name), h('div', ctx.ws.texts.get(d.name) || h('span.muted', '(no text)'))))));
       }
       if (!m.sets.length) { el.appendChild(h('p.muted', 'This menu has no exchanges the server loads, so its window opens empty and closes.')); return; }
-      el.appendChild(h('p.muted.small', 'Chances are out of 1,000,000 (= 100%). "Gives" is how many different rewards one exchange hands out, picked by chance. ',
+      el.appendChild(h('p.muted.small', 'Chances are typed in percent (the file keeps them out of 1,000,000: 50% = 500,000). "Spread evenly" splits 100% over the rewards. "Gives" is how many different rewards one exchange hands out, picked by chance. ',
         'Pick items with "+ Ingredient", "+ Reward" or "Change", then + on an item in the list on the right.'));
       m.sets.forEach((s, i) => el.appendChild(card(ctx, m, s, i)));
       const rest = exDiags(ctx).filter(d => d.start >= m.start && d.start < m.end && d.severity !== 'INFO' && !m.sets.some(s => d.start >= s.start && d.start < s.end) && !head.includes(d));
@@ -120,8 +120,9 @@
 
     addTarget(ctx) {
       if (!canEdit(ctx)) return { ok: false, title: 'Exchange_Script.txt is read-only' };
-      const m = current(ctx), p = st.pick;
+      const m = model(ctx).menus.find(x => x.name === st.menu && !x.isJunk) || null, p = st.pick;
       const s = m && p ? m.sets[p.set] : null;
+      const edit = (c, make, label) => c.edit(FILE, make, label, 'ex|' + (m ? m.name : st.menu));
       if (!s) return { ok: false, title: 'Click "+ Ingredient", "+ Reward" or "Change" on an exchange first' };
       const n = p.set + 1;
       const done = () => { st.pick = null; };
@@ -133,9 +134,8 @@
           add(info) { done(); edit(ctx, () => O().setIngredientItem(s, l, info.define), `exchange ${n} ingredient ${info.define}`); } };
       }
       if (p.line === null) {
-        const left = Math.max(0, X().PROB_TOTAL - s.pay.reduce((a, l) => a + l.prob.value, 0));
-        return { ok: true, usesPrice: false, title: `Add as a reward of exchange ${n} (quantity 1, chance ${pct(left)}: what is left of 100%)`,
-          add(info) { done(); edit(ctx, text => O().addReward(text, s, info.define, 1, left), `exchange ${n} add reward ${info.define}`); } };
+        return { ok: true, usesPrice: false, title: `Add as a reward of exchange ${n} (quantity 1, an equal share: 100% / ${s.pay.length + 1}; the others shrink to make room)`,
+          add(info) { done(); edit(ctx, text => O().addRewardKeepTotal(text, s, info.define, 1), `exchange ${n} add reward ${info.define}`); } };
       }
       const l = s.pay[p.line];
       return { ok: true, usesPrice: false, title: `Give instead of ${l.item.name} in exchange ${n}`,
@@ -164,9 +164,10 @@
   // ---------------------------------------------------------------- one recipe
   function card(ctx, m, s, i) {
     const edit_ = canEdit(ctx), n = i + 1, f = ctx.ws.files.get(FILE);
-    const picking = (kind, line) => st.pick && st.pick.set === i && st.pick.kind === kind && st.pick.line === line;
+    const edit = (c, make, label) => c.edit(FILE, make, label, 'ex|' + m.name);     // tags this card's menu (also when shown in NPC Shops)
+    const picking = (kind, line) => st.pick && st.menu === m.name && st.pick.set === i && st.pick.kind === kind && st.pick.line === line;
     const pickBtn = (kind, line, label) => h('button', { disabled: !edit_, title: 'Then press + on an item in the list on the right',
-      on: { click: () => { st.pick = picking(kind, line) ? null : { set: i, kind, line }; ctx.renderAll(true); } } }, picking(kind, line) ? 'Pick an item →' : label);
+      on: { click: () => { const on = picking(kind, line); st.menu = m.name; st.pick = on ? null : { set: i, kind, line }; ctx.renderAll(true); } } }, picking(kind, line) ? 'Pick an item →' : label);
     const lineDiags = l => inSpan(ctx, l.start, l.end);
 
     // ingredients
@@ -174,14 +175,14 @@
     s.condition.forEach((l, j) => {
       const info = itemOf(ctx, l);
       ing.appendChild(h('tr' + (picking('cond', j) ? '.changed' : ''), h('td', itemSpan(info, l.item.name)),
-        h('td.num', numInput({ value: l.num.value, min: 1, disabled: !edit_, onCommit: v => v && edit(ctx, () => O().setIngredientQty(s, l, v), `exchange ${n} ${l.item.name} qty`) })),
+        h('td.num', numInput({ value: l.num.value, min: 1, disabled: !edit_, key: `ex|${m.name}|${i}|cond|${j}|qty`, onCommit: v => v && edit(ctx, () => O().setIngredientQty(s, l, v), `exchange ${n} ${l.item.name} qty`) })),
         h('td.nowrap', pickBtn('cond', j, 'Change'), ' ', h('button.icon.danger', { disabled: !edit_ || s.condition.length < 2, title: s.condition.length < 2 ? 'An exchange needs at least one cost' : 'Remove this cost',
           on: { click: () => edit(ctx, text => O().removeIngredient(text, s, l), `exchange ${n} remove ${l.item.name}`) } }, '✕'), ' ', diagTags(lineDiags(l)))));
     });
 
     // rewards, with the chance the server really uses
     const paid = new Map((s.paid ? s.paid.lines : []).map(x => [x.line, x.prob]));
-    const rew = h('table.items.ex', h('tr', h('th', 'Reward'), h('th.num', 'Qty'), h('th.num', 'Chance (of 1,000,000)'), h('th.num', 'Server uses'), h('th', 'Bound'), h('th', '')));
+    const rew = h('table.items.ex', h('tr', h('th', 'Reward'), h('th.num', 'Qty'), h('th.num', { title: 'Type the percent; the other rewards move so the total stays 100%' }, 'Chance'), h('th.num', { title: 'What the file holds: out of 1,000,000 (1% = 10,000)' }, 'of 1,000,000'), h('th.num', 'Server uses'), h('th', 'Bound'), h('th', '')));
     s.pay.forEach((l, j) => {
       const info = itemOf(ctx, l), eff = paid.get(l);
       const flag = l.flag ? l.flag.value : 0;
@@ -190,12 +191,14 @@
           on: { change: e => edit(ctx, text => O().setRewardFlag(text, l, e.target.checked ? BINDS : 0), `exchange ${n} ${l.item.name} bound`) } })
         : h('span', { title: 'item flag value' }, String(flag));
       rew.appendChild(h('tr' + (picking('pay', j) ? '.changed' : eff === undefined ? '.dropped' : ''), h('td', itemSpan(info, l.item.name)),
-        h('td.num', numInput({ value: l.num.value, min: 1, disabled: !edit_, onCommit: v => v && edit(ctx, () => O().setRewardQty(l, v), `exchange ${n} ${l.item.name} qty`) })),
-        h('td.num', numInput({ value: l.prob.value, min: 0, max: X().PROB_TOTAL, disabled: !edit_, onCommit: v => v !== null && edit(ctx, () => O().setRewardChance(l, v), `exchange ${n} ${l.item.name} chance`) })),
+        h('td.num', numInput({ value: l.num.value, min: 1, disabled: !edit_, key: `ex|${m.name}|${i}|pay|${j}|qty`, onCommit: v => v && edit(ctx, () => O().setRewardQty(l, v), `exchange ${n} ${l.item.name} qty`) })),
+        h('td.num', FRE.dom.pctInput({ value: l.prob.value, key: `ex|${m.name}|${i}|pay|${j}|pct`, disabled: !edit_ || s.pay.length < 2, title: s.pay.length < 2 ? 'The only reward: always 100%' : 'The other rewards move so the total stays 100%',
+          onCommit: v => edit(ctx, () => O().setChanceKeepTotal(s, l, v), `exchange ${n} ${l.item.name} chance`) })),
+        h('td.num.muted', fmt(l.prob.value)),
         h('td.num', eff === undefined ? h('span.tag.bad', { title: 'The chances before this line already reach 100%' }, 'dropped') : h('span' + (eff !== l.prob.value ? '.warn-text' : ''), pct(eff))),
         h('td', bound),
         h('td.nowrap', pickBtn('pay', j, 'Change'), ' ', h('button.icon.danger', { disabled: !edit_ || s.pay.length < 2, title: s.pay.length < 2 ? 'An exchange needs at least one reward (to remove the whole exchange, use the Remove button at the top of the card)' : 'Remove this reward (the exchange stays)',
-          on: { click: () => edit(ctx, text => O().removeReward(text, s, l), `exchange ${n} remove ${l.item.name}`) } }, '✕'), ' ', diagTags(lineDiags(l)))));
+          on: { click: () => edit(ctx, text => O().removeRewardKeepTotal(text, s, l), `exchange ${n} remove ${l.item.name}`) } }, '✕'), ' ', diagTags(lineDiags(l)))));
     });
     const given = X().rewardsGiven(s);
     const sum = s.pay.reduce((a, l) => a + l.prob.value, 0);
@@ -203,9 +206,9 @@
       pickBtn('pay', null, '+ Reward'),
       s.pay.length > 1 ? h('button', { disabled: !edit_, title: 'Give every reward the same chance, adding up to exactly 1,000,000',
         on: { click: () => edit(ctx, () => O().evenChances(s), `exchange ${n} spread chances`) } }, 'Spread evenly') : null,
-      s.pay.length > 1 && s.payNum ? h('label', 'Gives ', numInput({ value: s.payNum.value, min: 1, max: s.pay.length, disabled: !edit_,
+      s.pay.length > 1 && s.payNum ? h('label', 'Gives ', numInput({ value: s.payNum.value, min: 1, max: s.pay.length, disabled: !edit_, key: `ex|${m.name}|${i}|gives`,
         onCommit: v => v && edit(ctx, () => O().setPayNum(s, v), `exchange ${n} gives ${v}`) }), ` of ${s.pay.length}`) : null,
-      h('span' + (sum === X().PROB_TOTAL ? '.muted' : '.warn-text'), `sum ${fmt(sum)} = ${pct(sum)}`),
+      h('span' + (sum === X().PROB_TOTAL ? '.muted' : '.warn-text'), `chances add up to ${pct(sum)}${sum === X().PROB_TOTAL ? '' : ' (should be 100%)'}`),
       h('span.muted', `· one exchange gives ${given} reward${given === 1 ? '' : 's'}`));
 
     // the row as the client draws it (WndControl.cpp:1980): ingredients, arrow, rewards; ~9 icons fit
@@ -257,10 +260,14 @@
     const pos = table.find(m.mmi.value) ? table.find(m.mmi.value).sets.findIndex(x => x.source === s) : -1;
     const out = h('div.ex-try-out');
     const set = (k, v) => { if (v !== null) { trial[k] = v; go(); } };      // every change runs again
-    const stockRow = h('label', 'Ingredients for ', numInput({ value: trial.stock, min: 1, max: 100000, onCommit: v => set('stock', v) }), ' exchanges');
+    const stockRow = h('label', 'Ingredients for ', numInput({ key: `try|stock`, value: trial.stock, min: 1, max: 100000, onCommit: v => set('stock', v) }), ' exchanges');
     const showStock = () => { stockRow.style.display = trial.mode === 'keep' ? '' : 'none'; };
+    const seedIn = numInput({ key: `try|seed`, value: trial.seed, min: 0, max: 4294967295, onCommit: v => set('seed', v) });
+    let runs = 0;
     function go() {
       out.textContent = '';
+      runs++;
+      out.appendChild(h('div.muted.small', `Run ${runs} · seed ${FRE.dom.fmt(trial.seed)}`));
       if (pos < 0) { out.appendChild(h('p.warn-text', 'The server does not load this exchange (a duplicate menu or over 30 exchanges).')); return; }
       let r;
       try { r = S.run(env, table, m.mmi.value, pos, trial); } catch (e) { out.appendChild(h('p.warn-text', 'Cannot run: ' + e.message)); return; }
@@ -270,14 +277,18 @@
       h('p.muted.small', 'This presses OK in the exchange window again and again, the way the server does it (CExchange::ResultExchange: check the ingredients, roll the rewards, check the bag, take, give). ',
         'It uses the exchange as it is in the editor now, saved or not.'),
       h('div.row.ex-tools',
-        h('label', 'Press OK ', numInput({ value: trial.tries, min: 1, max: 1000000, onCommit: v => set('tries', v) }), ' times'),
+        h('label', 'Press OK ', numInput({ key: `try|tries`, value: trial.tries, min: 1, max: 1000000, onCommit: v => set('tries', v) }), ' times'),
         h('select', { on: { change: e => { trial.mode = e.target.value; showStock(); go(); } } },
           h('option', { value: 'same', selected: trial.mode === 'same' }, 'Same fresh bag every time (how often each reward comes out)'),
           h('option', { value: 'keep', selected: trial.mode === 'keep' }, 'One bag that keeps the rewards (runs out, fills up)')),
         stockRow,
-        h('label', 'Empty bag slots ', numInput({ value: trial.free, min: 0, max: S.MAX_INVENTORY_FREE, onCommit: v => set('free', v) })),
-        h('label', { title: 'The same seed gives the same rolls' }, 'Seed ', numInput({ value: trial.seed, min: 0, max: 4294967295, onCommit: v => set('seed', v) })),
-        h('button.primary', { on: { click: go } }, 'Run')),
+        h('label', 'Empty bag slots ', numInput({ key: `try|free`, value: trial.free, min: 0, max: S.MAX_INVENTORY_FREE, onCommit: v => set('free', v) })),
+        h('label', { title: 'The same seed gives the same rolls (so a result can be repeated)' }, 'Seed ', seedIn),
+        h('button.primary', { title: 'Run again with the next seed: new rolls', on: { click: () => {
+          trial.seed = (trial.seed + 1) >>> 0;
+          seedIn.dataset.value = String(trial.seed); seedIn.value = FRE.dom.fmt(trial.seed);
+          go();
+        } } }, 'Run again (new rolls)')),
       out);
     showStock();
     modal({ title: `Try: ${rewardNames(ctx, s)} (${whoOpens(ctx, m)}, exchange ${i + 1})`, wide: true, body });
@@ -294,7 +305,7 @@
       R.CRASH ? h('span.tag.bad', 'the server CRASHED') : null,
       r.lost ? h('span.tag.bad', `${fmt(r.lost)} reward${r.lost > 1 ? 's' : ''} LOST`) : null,
     ];
-    const tbl = h('table.items.ex', h('tr', h('th', 'Reward'), h('th.num', 'Times'), h('th.num', 'Items'), h('th.num', 'Seen'), h('th.num', 'Server chance'), h('th.num', 'Lost')));
+    const tbl = h('table.items.ex', h('tr', h('th', 'Reward'), h('th.num', 'Times'), h('th.num', 'Items'), h('th.num', { title: 'How often this reward came out in THIS run (Times ÷ presses). Luck moves it a little around the chance you set; more presses = closer.' }, 'Got in this run'), h('th.num', { title: 'The chance you set (what the server uses for every press)' }, 'Chance set'), h('th.num', 'Lost')));
     for (const g of r.given) tbl.appendChild(h('tr', h('td', { 'data-item-id': env.prop(g.line.id) ? g.line.id : null }, `${nameOf(g.line.id)} ×${fmt(g.line.num)}`),
       h('td.num', fmt(g.times)), h('td.num', fmt(g.qty)), h('td.num', R.SUCCESS ? `${g.seenPct.toFixed(2)}%` : '-'), h('td.num', `${g.serverPct.toFixed(2)}%`),
       h('td.num', g.lost ? h('span.warn-text', fmt(g.lost)) : '')));
@@ -345,4 +356,14 @@
   }
 
   FRE.ui.modules.push(mod);
+  // The exchange cards of one menu, for other tasks (NPC Shops shows an NPC's exchange menus with them).
+  // Picking an item (+ Ingredient / + Reward / Change) goes through exchangeView.addTarget.
+  FRE.ui.exchangeView = {
+    st,
+    cards: (ctx, m) => m.sets.map((s, i) => card(ctx, m, s, i)),
+    picking: () => !!st.pick,
+    clearPick: () => { st.pick = null; },
+    addTarget: ctx => mod.addTarget(ctx),
+    menuByName: (ctx, name) => (model(ctx) ? model(ctx).menus.find(x => x.name === name && !x.isJunk) : null) || null,
+  };
 })(globalThis.FRE = globalThis.FRE || {});
