@@ -475,6 +475,11 @@ New box:  [ Infinity Treasure Box ]   Type: (•) 1 random item  ( ) everything 
   ─────────────────────────────────── 100% ✓
 ```
 
+**Amount per line (asked 2026-10-07: "a moonstone in a box, n number"):** each line has its own amount, from 1 up to that item's stack size (`dwPackMax`). For example, Moonstones, Sunstones and scrolls can go up to **999**, and gear only up to 1.
+- To give more than one stack, add another line of the same item. In a set/bundle, each line needs one free bag slot.
+- In a random box, each choice can have a different amount (e.g. Moonstone ×10 at 50%, Moonstone ×50 at 30%).
+- Show the limit next to the input ("max 999"). An amount above it is a BLOCK.
+
 **System 1: random box** (`propGiftbox.inc`, UTF-16LE + BOM, CRLF, **server only**; the client doesn't load it)
 - Loader: `CProject::LoadGiftbox`, and `CGiftboxMan::AddItem` / `Open` / `Verify` (`_Common/Project.cpp`, around 4092). Opening: `CUser::DoUseGiftbox` (`WORLDSERVER/User.cpp:2983`). It runs for ANY used item whose id is a box here.
 - 6 line types. They differ only in the chance unit and the extra columns:
