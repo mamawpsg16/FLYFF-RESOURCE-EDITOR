@@ -43,7 +43,9 @@ The user is a web developer learning C++. When server behaviour matters, explain
     | Donation Shop categories (task S part 4) | `loaders/donation-window.js` (the tree click, KeywordMatches, BuildFilteredList, DS_SortCmp, FillGrid, DS_CategoryBlurb; with / without `donation-tree.diff`), `tools/dstree-sim.js` | `tools/oracle_sim.py dstree` (600 views of the real tree, a made-up shop, 12 small trees, 20 edit scripts: byte-identical files) | done, every case agrees; 17 planted bugs caught |
     | Donation Shop (buying) | `loaders/donation-buy.js` (CWndConfirmBuyDonation: Initialize, OnChildNotify, OnChangeBuyCount, OnOK; CDPSrvr::OnBuyDonationItem with GetChipCost, GetAtItemNum, IsFull, RemoveItemA, CreateItem), `tools/dsbuy-sim.js`, 🛒 Try buying on each row | `tools/oracle_sim.py dsbuy` (2,479 buys: every item × 4-5 bags, 9 edge prices × typed / raw counts, where the chips are, stacking, overflow; 8 edit scripts: byte-identical files) | done, every case agrees; 20 of 21 planted bugs caught (the 21st, first catalog row wins, cannot change a purchase) |
     | Try it before Create (exchange forms) | `menuOps.tryTable` (the plan spliced into a scratch Exchange_Script.txt, read by the real loader) + `exchange-sim.js`; `tools/menu-sim.js` presses each new exchange before and after Create | reuses `tools/oracle_sim.py newmenu` (its presses must equal the scratch load's) | done, every press agrees; 3 planted bugs in `tryTable` caught |
+    | What each save needs (After saving) | `core/after-save.js` (who reads each file and when: WorldServer / Neuz startup loads, LoadObject `#ifdef __WORLDSERVER`, DonationShopTree on window open, NpcBoard on click; `compute` / `forWorkspace`), `tools/aftersave-sim.js` | `tools/oracle_sim.py aftersave` (8,141 cases: every file × game-copy state × patch states × checks, every two files in one save, 600 mixed saves; + the 20 cited C++ lines still say so) | done, every case agrees; 11 planted bugs caught (1 after adding the two-file cases) |
     | Monster drops (F) | — | — | build both with the editor |
+- **After saving** (`core/after-save.js`, INVESTIGATION.md §1.17): every file the editor writes is read once, at startup, by the WorldServer and/or the game; nothing reloads them. Save lists per change what is needed: a C++ patch built into Neuz (project Neuz, configuration NoGameguard; both patches are Neuz-only), "Run Stop Server.bat, then Start Server.bat" (it restarts the game too), "restart the game", or only "reopen the Donation Shop window" (DonationShopTree.inc) / "click the menu again" (NpcBoard_<id>.inc). The game never reads `.dyo`. Patch state: read from `Source/Source/_Interface/*.cpp` when FLYFF-V19-SOURCE is picked (`io/patch-state.js`, read-only), else a remembered "I built it into Neuz" tickbox. Never write "Restart the WorldServer to apply" again.
 - **Commas are for display only** (`FRE.num`). The server tokenizer splits on `,`, so files always get plain digits.
 
 ## Key facts about this server (details in docs/INVESTIGATION.md)
@@ -81,7 +83,7 @@ The user is a web developer learning C++. When server behaviour matters, explain
 src/order.txt       load/build order (classic scripts sharing globalThis.FRE)
 src/core/           bytes, num, xrandom (the server's xRand / xRandom), sourcefile (byte model + round-trip gate; binary kind for .dyo), lexer (CScanner/CScript port),
                     diff (Myers), workspace (data-module registry, apply/applyGroup/undo, newBlocking),
-                    client-sync (Client/ copy modes: identical / eol / missing / different)
+                    client-sync (Client/ copy modes: identical / eol / missing / different), after-save (what each saved change needs)
 src/loaders/        defines, strings (*.txt.txt), textclient (TID_ texts), item-tooltip (MakeToolTipText port),
                     specitem, propmover (monster name/level/rank), world (maps, .dyo NPC placement, SetOutput/SetLang),
                     area (where an NPC stands: map window name, area caption, /te), character, vendor-sim (shop contents), donation,
@@ -91,14 +93,14 @@ src/validate/       help.js (text for every diagnostic code), character.js, newn
 src/edit/           text-ops (shared row/statement splices), shop-ops (+ rules, rules -> fixed items), donation-ops, item-ops (Spec_Item chip price, dwCost, dwShopAble), battlepass-ops, exchange-ops,
                     npc-ops (a new NPC: block, IDS lines, .dyo record), menu-ops (new exchange menus / exchanges),
                     npcedit-ops (an existing NPC: name, tabs, menus, where it stands, its model)
-src/io/             fsa (File System Access), layout (finds Server/Resource + Client + backups in the ONE picked folder), save (conflict check -> verified backup -> write+verify -> restore on failure;
+src/io/             fsa (File System Access), layout (finds Server/Resource + Client + backups in the ONE picked folder), patch-state (are the client patches in the source?), save (conflict check -> verified backup -> write+verify -> restore on failure;
                     Server files, then the same change in the Client/ copies)
 src/ui/             dom, common (FRE.ui registry + helpers), tooltip (item hover), chip-price (shared price input), shop-rules (auto rows edited like the others, players pay / get back), menu-chooser (+ Menu: Shop / Exchange / Rules text, each with ← Back),
                     npc-shops, npc-place (the shared Where / Model fields), new-npc (the "+ New NPC" form), npc-edit (rename / tab / menu / where-model dialogs), menu-form ("+ Exchange menu" / "+ New exchange"), donation, donation-tree (category dialogs), battlepass, exchange, app (shell: modes, item DB, problems, save)
 tests/              run-tests.js (gjs core suite), ui-harness.js + run-ui.sh (headless Firefox, fake FS), gjs-env.js
 tools/oracle.py     independent Python reference (differential tests)
 tools/refresh-fixtures.sh  copies the real files into test-data/fixtures (tests) or test-data (manual)
-tools/bp-sim.js, tools/exchange-sim.js, tools/area-sim.js, tools/newnpc-sim.js, tools/menu-sim.js (+ jeff-menus.json), tools/npcedit-sim.js, tools/shop-sim.js, tools/board-sim.js, tools/npcmove-sim.js, tools/dstree-sim.js, tools/dsbuy-sim.js  replay the in-game behaviour by hand (gjs -m tools/<name>-sim.js)
+tools/bp-sim.js, tools/exchange-sim.js, tools/area-sim.js, tools/newnpc-sim.js, tools/menu-sim.js (+ jeff-menus.json), tools/npcedit-sim.js, tools/shop-sim.js, tools/board-sim.js, tools/npcmove-sim.js, tools/dstree-sim.js, tools/dsbuy-sim.js, tools/aftersave-sim.js  replay the in-game behaviour by hand (gjs -m tools/<name>-sim.js)
 tools/oracle_sim.py independent Python copies of the simulators (differential tests)
 docs/               INVESTIGATION.md, DESIGN.md, ROADMAP.md (what's next), patches/ (C++ changes for the user to apply in FLYFF-V19-SOURCE)
 ```

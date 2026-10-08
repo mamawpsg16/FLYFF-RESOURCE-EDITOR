@@ -2376,5 +2376,93 @@ section('donation shop buying: what the edits do in game');
   eq(B.buy(env(), bag(5000), id, 1).server.outcome, 'BOUGHT', 'back to normal after undo');
 }
 
+section('after saving: what each change needs (JS and Python copies agree; real edits)');
+{
+  const A = FRE.afterSave;
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} aftersave ${FIXTURES}`);
+  let py = { cases: [], cites: [] };
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py aftersave) gave no readable result', e.message); }
+  ok(py.cases.length > 7000, `Python made ${py.cases.length} cases`);
+  // the same shape as the Python copy's answer: ids and states only (texts are the JS copy's own)
+  const shape = r => ({ steps: r.steps.map(s => [s.id, s.state || null]), changes: r.changes.map(c => [...c.needs].sort()), notes: r.notes.map(n => [n.id, n.file]), built: r.built });
+  let bad = 0;
+  for (const c of py.cases) {
+    const js = JSON.stringify(shape(A.compute(c))), want = JSON.stringify(c.out);
+    if (js !== want && bad++ < 5) ok(false, `case ${JSON.stringify(c.changes.map(x => x.files))} ${JSON.stringify(c.client)} ${JSON.stringify(c.patches)} ${JSON.stringify(c.codes)}`, `JS ${js}\n      Python ${want}`);
+  }
+  ok(bad === 0, `every case gives the same steps, needs, notes and ticks (${bad} differ)`);
+  const missing = py.cites.filter(c => c.ok === false);
+  ok(!missing.length, `the C++ lines the reader table cites still say so (${py.cites.filter(c => c.ok).length} checked)`, JSON.stringify(missing));
+
+  // the table covers every file the editor can write
+  for (const m of FRE.Workspace.MODULES) for (const n of m.editable) ok(A.readerOf(n.toLowerCase()) !== A.readerOf('no-such-file.x'), `${n} has a reader entry`);
+  eq(A.readerOf('world/wdmadrigal/wdmadrigal.dyo').client, null, '.dyo: the game never reads it (LoadObject is #ifdef __WORLDSERVER)');
+
+  // real edits on the fixtures, with the fixtures' Client folder as the game's copies
+  const clientFiles = new Map();
+  for (const [k, e] of loadFolder(ROOT + '/test-data/fixtures/Client')) clientFiles.set(k, openSource(e));
+  const ids = r => r.steps.map(s => s.id + (s.state ? ':' + s.state : '')).join(' | ');
+  {
+    const w = new FRE.Workspace(fixtureFiles(), { only: 'npc' }).load();
+    const plan = () => FRE.clientSync.plan(w, { files: clientFiles });
+    const f = w.files.get('spec_item.txt');
+    w.apply('spec_item.txt', FRE.itemOps.setChipPrice(f.text, itemOfDef(w, 'II_SYS_SYS_SCR_BLESSEDNESS'), 75, w.defines.defines), 'Chip price of Blessing');
+    w.history[w.history.length - 1].label = 'Chip price of Blessing';
+    let r = A.forWorkspace(w, { plan: plan() });
+    eq(ids(r), 'servers', 'a chip price: Stop / Start Server.bat');
+    eq(JSON.stringify(r.changes.map(c => [c.label, c.needs.sort()])), JSON.stringify([['Chip price of Blessing', ['game', 'servers']]]), 'the change keeps its label; server and game both read Spec_Item.txt');
+    eq(r.notes.length, 0, 'Client/Spec_Item.txt gets the change (LF copy): no note');
+    r = A.forWorkspace(w, { plan: null });
+    eq(r.notes.map(n => n.id + ' ' + n.file).join(), 'none Spec_Item.txt', 'no Client folder: "copy Spec_Item.txt by hand"');
+    // a rules text: AddMenu + labels (startup) and the client-only text file (each click, with npc-board.diff)
+    const name = FRE.menuNameFromLabel(w, 'Rules');
+    const bp = FRE.menuOps.boardPlan(w, { npcKey: 'MaFl_Peach', name, label: 'Rules', text: 'Be nice.' });
+    w.applyGroup(bp.parts, 'Rules text for Peach');
+    w.history[w.history.length - 1].label = 'Rules text for Peach';
+    r = A.forWorkspace(w, { plan: plan() });
+    eq(ids(r), 'patch:npc-board:unknown | servers', 'a rules text on test-data: the npc-board patch step, then Stop / Start Server.bat');
+    eq(r.changes[1].needs.sort().join(), 'click:board,game,patch:npc-board,servers', 'the rules change: patch, servers, game, click');
+    r = A.forWorkspace(w, { plan: plan(), patches: { 'npc-board': 'built' } });
+    eq(ids(r) + ' / ' + r.built.join(), 'servers / npc-board', 'ticked as built: no patch step, the tick is listed');
+    r = A.forWorkspace(w, { plan: plan(), patches: { 'npc-board': 'in-source' } });
+    ok(/already in the source/.test(r.steps[0].text) && /NoGameguard/.test(r.steps[0].text), 'in the source: "build Neuz (NoGameguard) if not built since"');
+    w.undo();
+    eq(A.forWorkspace(w, { plan: plan() }).changes.length, 1, 'Undo: the rules change is gone from the list');
+    // a moved NPC: only the WorldServer reads the .dyo
+    while (w.undo());
+    const { dyoFiles, worldFiles } = loadWorldFiles(FIXTURES, w);
+    w.setMapFiles(dyoFiles, worldFiles);
+    const pe = w.chars.byKey.get('mafl_peach'), peach = pe[pe.length - 1], sp = FRE.npcEditOps.placementsOf(w, peach)[0];
+    w.applyGroup(FRE.npcEditOps.placePlan(w, peach, 0, { x: sp.x + 5 }).parts, 'Move Peach');
+    r = A.forWorkspace(w, { plan: plan() });
+    eq(ids(r) + ' / ' + r.changes[0].needs.join() + ' / ' + r.notes.length, 'servers / servers / 0', 'a moved NPC: server restart only, no game copy note');
+  }
+  {
+    const w = new FRE.Workspace(fixtureFiles(), { only: 'npc' }).load();
+    if (w.files.has('character-etc.inc')) {
+      const f = w.files.get('character-etc.inc');
+      w.apply('character-etc.inc', [{ start: f.text.length, end: f.text.length, insert: '' + ' ' }], 'space');
+      const r = A.forWorkspace(w, { plan: FRE.clientSync.plan(w, { files: clientFiles }) });
+      eq(r.notes.map(n => n.id).join(), 'datares', 'character-etc.inc has no loose game copy: "the game keeps data.res" note');
+      eq(A.forWorkspace(w, { plan: FRE.clientSync.plan(w, { files: clientFiles }), createMissing: new Set(['character-etc.inc']) }).notes.length, 0, 'ticked "create Client/character-etc.inc": no note');
+    }
+  }
+  if (exists(DS_TREE)) {
+    const w = new FRE.Workspace(fixtureFiles(), { only: 'donation' }).load();
+    w.setDonationTree(openSource({ name: 'DonationShopTree.inc', path: DS_TREE }));
+    const K = FRE.donationTree.KEY, O = FRE.donationOps;
+    w.applyGroup(O.addCategory(w.files.get(K).text, w.donationTree, w.donationTree.find('Fashion'), 'Hats'), 'New category Hats');
+    let r = A.forWorkspace(w, {});
+    eq(ids(r), 'patch:donation-tree:unknown | game', 'a new category: the donation-tree patch step, then restart the game (no server restart)');
+    r = A.forWorkspace(w, { patches: { 'donation-tree': 'built' } });
+    eq(ids(r), 'reopen:donation', 'patch built: only reopen the Donation Shop window');
+    ok(/DonationShopTree\.inc/.test(r.changes[0].why[0]), 'the reason names the file as on disk');
+    w.undo();
+    w.applyGroup(O.moveNode(w.files.get(K).text, w.donationTree.find('Functional'), -1), 'Move Functional up');
+    r = A.forWorkspace(w, { patches: { 'donation-tree': 'missing' } });
+    ok(r.steps.length && r.steps[r.steps.length - 1].id !== 'servers', 'a tree-only change never asks for a server restart');
+  }
+}
+
 print(`\n${pass} passed, ${fail} failed`);
 if (fail) System.exit(1);

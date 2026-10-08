@@ -220,10 +220,17 @@
     click(btnByText(document, 'Choose folder'));
     await waitFor(() => btnByText(document, 'Back up and write'), 'review dialog');
     ok(document.querySelectorAll('.diff .add').length === 1 && document.querySelectorAll('.diff .del').length === 0, 'review shows exactly one added line');
+    {
+      const t = document.querySelector('.modal .after-save');
+      ok(t && /Run Stop Server\.bat, then Start Server\.bat/.test(t.textContent) && !/C\+\+/.test(t.textContent), 'review: "After saving" says Stop / Start Server.bat, no C++ step', t && t.textContent);
+      ok(t && /Each change \(2\)/.test(t.textContent) && /server restart \+ game restart/.test(t.textContent), 'review: the two changes (add, price) and what they need', t && t.textContent);
+      ok(!/Restart the WorldServer/.test($('banners').textContent), 'banners: no fixed "Restart the WorldServer"');
+    }
     if (STOP === 'review') return;
 
     click(btnByText(document, 'Back up and write'));
     await waitFor(() => [...document.querySelectorAll('.modal header')].some(h => /^Saved|failed/.test(h.textContent)), 'save finished');
+    ok([...document.querySelectorAll('.modal .after-save')].some(x => /Run Stop Server\.bat/.test(x.textContent)), 'Saved window repeats the "After saving" list');
     const ch = res.children.get('character.inc');
     ok(ch.writes === 1, 'character.inc written once');
     ok(FRE.bytes.bytesEqual(ch.bytes, S.ws.files.get('character.inc').bytes), 'disk == editor baseline after save');
@@ -941,6 +948,20 @@
       ok(S.ws.files.get(K).text.includes('\t\t"Wings"\n\t\t"Hats"\n') && S.ws.donationTree.isLeaf('Hats'), 'Hats written at the end of Fashion, tab indent, LF');
       ok(/New Donation Shop category "Hats" in Fashion/.test($('toasts').textContent) && /Hats/.test($('editor').querySelector('.npc-title').textContent), 'standard note; the new category is selected');
       ok(S.ws.diags.some(d => d.code === 'DT_PATCH' && /Hats/.test(d.message)), 'DT_PATCH warning for Hats');
+      // Save's "After saving": the patch step (test-data: unknown, with the tickbox), then restart the game only
+      click($('btn-save'));
+      await waitFor(() => btnByText(document, 'Back up and write'), 'review dialog (tree)');
+      const as = () => document.querySelector('.modal .after-save');
+      ok(/donation-tree\.diff/.test(as().textContent) && /NoGameguard/.test(as().textContent) && /Close the game and start it again/.test(as().textContent) && !/Stop Server\.bat/.test(as().textContent),
+        'review: the donation-tree patch step + restart the game, no server restart', as().textContent);
+      const tickBox = as().querySelector('input[type=checkbox]');
+      ok(tickBox && /I built it into Neuz/.test(tickBox.parentNode.textContent), 'the patch step has "I built it into Neuz"');
+      tickBox.checked = true; tickBox.dispatchEvent(new Event('change'));
+      ok(/Close and reopen the Donation Shop window/.test(as().textContent) && !/git apply/.test(as().textContent) && /marked as built/.test(as().textContent), 'ticked: only reopen the window', as().textContent);
+      const untick = as().querySelector('input[type=checkbox]');
+      untick.checked = false; untick.dispatchEvent(new Event('change'));
+      ok(/git apply/.test(as().textContent) && !FRE.patchState.ticked('donation-tree'), 'unticked: the patch step is back');
+      click(btnByText(document, 'Cancel'));
       click($('btn-undo'));
       ok(S.ws.files.get(K).text === tree0, 'Undo: the tree is back');
       // a group with 2 categories, then delete them: the group goes with its last one

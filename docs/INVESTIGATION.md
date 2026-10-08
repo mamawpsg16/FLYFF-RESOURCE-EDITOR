@@ -278,7 +278,7 @@ Startup order (`OpenProject`):
 
 **Where the game reads it.** `CWorld::LoadObject` (`_Common/WorldFile.cpp:297`) calls `ReadObj` (`CreateObj.cpp:761`) until it returns NULL. An NPC record is the type DWORD (5), then `CObj::Read` (`Obj.cpp:474`): `m_fAngle`, `vAxis[3]`, `m_vPos[3]`, `m_vScale[3]`, `m_dwType`, `m_dwIndex`, motion, AI, AI2 (4 bytes each); `m_vPos.x` / `.z` are multiplied by `OLD_MPU` (4). Then `CMover::Read` (`Mover.cpp:3365`): name[64], dialog[32], key[32], belligerence, extra flag. Offsets from the type DWORD: facing 4, x 20, y 24, z 28, model (`m_dwIndex`, the `MI_` id given to `SetIndex`) 48, key 160.
 
-**The edit.** Only those 4-byte fields are rewritten, in place; the file keeps its size. `b6abf414` moved MaFl_Angel's record the same way (Server + Client). One spot moves at a time (14 NPCs stand in several places: Postbox 11, Helper_ver12 10…); a model change can go on every spot. The client reads its own `.dyo` too: `LoadObject` copies each keyed NPC's position into its character for the Quest Helper (`__QUEST_HELPER`), so the Client copy is changed with the Server one (client sync: identical `.dyo` copies).
+**The edit.** Only those 4-byte fields are rewritten, in place; the file keeps its size. `b6abf414` moved MaFl_Angel's record the same way (Server + Client). One spot moves at a time (14 NPCs stand in several places: Postbox 11, Helper_ver12 10…); a model change can go on every spot. The game client never reads `.dyo` files: `CWorld::LoadObject` (with its Quest Helper part, which copies each keyed NPC's position into its character) sits inside `#ifdef __WORLDSERVER` (`WorldFile.cpp:269-382`), and NPCs reach the client in server packets (`CDPClient::OnAddObj`). (Corrected 2026-10-08; this note used to say the client reads its copy.) The Client copy is still changed with the Server one, the `b6abf414` way (client sync: identical `.dyo` copies), so the two never drift.
 
 **Checks** (shared with + NPC, `validate/newnpc.js` `checkSpot` / `checkModel`): numbers, facing 0-359.9, overlap (< 4 units; the NPC's own record is skipped), height far from the nearest NPC, model defined / in propMover / in mdlDyna / files in Client/Model / used by a visible NPC. A move stays on its map (the user, 2026-10-07: "same map only"; moving to another map would remove and insert records, which no commit has done yet).
 
@@ -329,6 +329,41 @@ Ported from the client's `CWndConfirmBuyDonation` (Neuz `_Interface/WndDonationS
 - **Overflow (`DS_OVERFLOW`, BLOCK):** both sides compute the total in 32 bits. Above a price of 214,769, buying 9,999 makes `(int)` total negative. The chip check passes, and the server takes only the chips the player has: 9,999 items for 1,000 chips. Read from the C++, not seen in game. The current highest price is 600.
 - **Crash items** (`ae345504`): Nexus Shield and Icecrown Purple Shield. Their Spec_Item rows match the safe shields except the icon file and the name, so the data shows no cause. The simulator says CRASH and changes nothing; `DS_CRASH` still blocks.
 - Checked against `tools/oracle_sim.py dsbuy` (2,479 buys + 8 edit scripts with byte-identical files). 20 of 21 planted bugs were caught. The 21st, "first catalog row wins", cannot change a purchase: the server only checks that the item is listed.
+
+### 1.17 What each saved change needs: who reads each file, and when (added 2026-10-08, `core/after-save.js`, `io/patch-state.js`)
+
+**Processes.** `Start Server.bat` starts `3. Database.exe` and `7. World.exe` from `Server\Resource` (the other five servers from `Server\Program`, where no resource file lies), then the game (`Client\- Start Game.bat`, which first copies `Source\Output\Neuz\NoGameguard\Neuz.exe`). `Stop Server.bat` kills `Neuz.exe` and all seven servers. `Start Server.bat` also copies `Source\Output\WorldServer\Release\WorldServer.exe` to `7. World.exe`.
+
+**Every file the editor writes is read once, at startup.** No GM command or timer reads them again: `/loadscript` reloads WorldDialog.dll, `/rec` Constant.inc, `/lua` Event.lua / MonsterSkill.lua / RainbowRace; `__S0114_RELOADPRO` ("reload project") is not built.
+
+| File | WorldServer (startup) | DatabaseServer | Game (Neuz) |
+|---|---|---|---|
+| Spec_Item.txt | `Project.cpp:790 LoadPropItem` | reads it (`databaseserver/Project.cpp:125`) for pack max, parts, piercing; never dwReferValue1 / dwCost | startup, loose `Client/Spec_Item.txt` |
+| character.inc | `Project.cpp:796` → `LoadCharacter :3257` | no | startup, loose copy |
+| character-etc.inc, character-school.inc | same | no | startup, **no loose copy: data.res** |
+| character.txt.txt, etc.txt.txt, textClient.txt.txt | `ProjectCmn.cpp:1256 / 1259 / 1274 LoadStrings` | reads the strings (`LoadPreFiles`) | startup, loose |
+| defineNeuz.h, defineText.h | `ProjectCmn.cpp:1373 / 1383 LoadDefines` (names in scripts only) | reads them | startup, loose (names in scripts only; the code's own values are compiled from `Source/Resource/`) |
+| etc.inc | `Project.cpp:830 LoadEtc` | no | startup, loose |
+| textClient.inc | `ProjectCmn.cpp:1366 LoadText` | reads it | startup, loose |
+| Exchange_Script.txt | `Project.cpp:979` → `Exchange.cpp:34 Load_Script` | no | startup, loose (draws the window; the server decides from its own copy) |
+| DonationShop.inc | `Project.cpp:932` → `ProjectCmn.cpp:1845` | no | startup, loose (the catalog; the server's copy is the allow-list) |
+| BattlePass.inc | `Project.cpp:907` → `ProjectCmn.cpp:1682` | no | startup, loose |
+| World/&lt;map&gt;/&lt;map&gt;.dyo | `WorldFile.cpp:297 LoadObject` (`#ifdef __WORLDSERVER :269`); again for each new layer (instances, guild house) | no | **never** |
+| Client/Client/DonationShopTree.inc | no | no | **each time the Donation Shop window opens** (`WndDonationShop.cpp:346`; 409 with donation-tree.diff) |
+| Client/Client/NpcBoard_&lt;id&gt;.inc | no | no | **each click of the menu**, with `npc-board.diff` built |
+
+The game loads at startup before the login screen (`Neuz.cpp:1589 BeginLoadThread` → `LoadPreFiles :1593`, `OpenProject :1573`); a loose file wins over data.res (`file.cpp:273 CResFile::Open`, `b7645c52`). The servers never send these files' contents to the game: each side reads its own copy. Commits say the same: `08801378` "no rebuild, restart WorldServer and relaunch Neuz", `15091d5f` "the data files need a server restart and client relaunch".
+
+**So, after a save** (`afterSave.compute`):
+1. A C++ patch, once: `npc-board.diff` for any rules text, `donation-tree.diff` when the tree has a category the compiled list does not know (`DT_PATCH` / `DT_ORDER`). Both change only Neuz (`_Interface/WndWorld.cpp`, `WndField.*`, `WndDonationShop.cpp`): build the Neuz project, configuration NoGameguard; no server is rebuilt. With FLYFF-V19-SOURCE picked, the editor reads (never writes) those files for a line each patch adds (`NpcBoard_%d.inc`, `DS_LoadTreeOrder`): "in the source" / "not applied". On test-data it can't tell; "I built it into Neuz" is a tickbox remembered in the browser.
+2. Any file the WorldServer reads → **Stop Server.bat, then Start Server.bat** (this also restarts the game).
+3. Otherwise a file the game reads at startup (or a patch was just built) → restart the game.
+4. Otherwise: the Donation Shop tree → close and reopen the window; a rules text → click the menu again.
+5. Notes: a shared file whose game copy is not changed (no loose copy, a copy that differs, no Client folder) is named, since the game keeps showing the old one.
+
+**Compiled limits (a rebuild, never a data edit):** `MAX_MOVER_MENU` 350 (`Source/Resource/defineNeuz.h:483`; `Project.h:433 m_abMoverMenu`, `WORLDSERVER/npchecker.h:18`) and `MAX_STRUCTURE` 20 (`defineNeuz.h:93`; `Project.h:1046 m_aStructure`). Neither array is bounds-checked. Raising one means WorldServer (Release) + Neuz (NoGameguard); the DatabaseServer has its own `project.h` and uses neither. New `MMI_` / `TID_MMI_` / `SRT_` names in the Resource copies need no rebuild as long as no C++ code names them.
+
+**Simulator:** `gjs -m tools/aftersave-sim.js character.txt.txt client/donationshoptree.inc codes=DT_PATCH`. Python copy `oracle_sim.py aftersave` (8,141 cases: every file alone × 5 game-copy states × 16 patch states × 4 check sets, every two files in one save, 600 mixed saves; plus a check that the 20 cited C++ lines still say so, before or after a patch moves them). 11 planted bugs caught.
 
 ## Phase 2: Encoding and line-ending forensics (all 15,299 files, raw bytes)
 

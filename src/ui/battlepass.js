@@ -138,7 +138,7 @@
         ended ? h('ul.bp-effects',
           h('li', 'Nobody is put on the pass at login, and kills earn no points.'),
           h('li', h('b', 'The Donation Shop still sells the pass: '), 'a player who uses it now loses it and gets only the level 1 reward.'),
-          h('li', 'Start a new season, save, and restart the WorldServer.')) : null));
+          h('li', 'Start a new season, save, then run Stop Server.bat and Start Server.bat.')) : null));
 
       // facts
       // shown as the LAST playable day; the file gets the day after (00:00 = midnight after the last day)
@@ -158,7 +158,7 @@
         h('li', 'Every player is put on the free track at login. Killing listed monsters earns points and levels, but no rewards.'),
         h('li', 'Using the pass item (sold in the Donation Shop) pays every level already reached, then each new level as it comes.'),
         h('li', 'The end date is stamped on the character when they join. Changing it here does not move players already on the season (use /rrbp or SQL).'),
-        h('li', 'After saving, restart the WorldServer and relaunch the client.'))));
+        h('li', 'After saving, run Stop Server.bat, then Start Server.bat (servers and game read BattlePass.inc only when they start).'))));
     }
     const blocks = ['BP2', 'BP3'].filter(b => m.rows[b].length).map(b => `${b}: ${m.rows[b].length} row(s)`);
     el.appendChild(h('p.muted.small', blocks.length ? `Not edited here: ${blocks.join(', ')}.` : 'BP2 (preview pass) and BP3 (point token) are empty and not used.'));

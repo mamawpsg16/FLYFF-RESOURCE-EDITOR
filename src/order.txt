@@ -41,8 +41,10 @@ validate/newmenu.js
 loaders/newnpc-sim.js
 core/workspace.js
 core/client-sync.js
+core/after-save.js
 io/fsa.js
 io/layout.js
+io/patch-state.js
 io/save.js
 ui/dom.js
 ui/common.js

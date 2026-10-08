@@ -434,7 +434,7 @@ button.linkish { background: none; border: none; color: var(--accent); padding: 
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "45+", "when": "Thu 8 Oct 2026, 12:32", "rev": "8ab30f7", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "47+", "when": "Thu 8 Oct 2026, 14:23", "rev": "b0e461b", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -4392,7 +4392,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "45+", "when
     NN_IMAGE: ['The portrait text key is not known, so the dialog shows no picture.', 'Pick the portrait of an existing NPC, or none.'],
     NN_STRUCTURE: ['The building type (SRT_) is not defined. The server would use 0.', 'Pick one from the list, or none.'],
     NN_TAG_FILES: ['A new building tag is written to defineNeuz.h, etc.inc and etc.txt.txt, and one of them was not found.', 'Pick a folder that has all three, or pick an existing tag.'],
-    NN_TAG_FULL: ['The game keeps building tags in a table of MAX_STRUCTURE rows (20). This number is compiled into the game, and every free row is taken.', 'Pick an existing tag. A new row needs MAX_STRUCTURE raised in the C++ and a rebuild.'],
+    NN_TAG_FULL: ['The game keeps building tags in a table of MAX_STRUCTURE rows (20). This number is compiled into the game, and every free row is taken.', 'Pick an existing tag. A new row needs MAX_STRUCTURE raised in Source/Resource/defineNeuz.h (and the Server/Resource and Client copies), then a rebuild of WorldServer (Release) and Neuz (NoGameguard): both size a table with it (Project.h:1046). The DatabaseServer does not use it.'],
     NN_TAG_CHARS: ['The tag text is empty, starts or ends with a space, or has a character the game cannot show.', 'Type the tag with plain letters, without the [ ] (the game adds them).'],
     NN_TAG_LONG: ['The game copies the tag into a 32-byte field (szName[32]) without a length check. A tag of 32 characters or more overwrites the memory after it.', 'Shorten the tag to 31 characters at most.'],
     NN_TAG_DUP: ['A tag with this text, or a #define with this SRT_ name, already exists.', 'Pick the existing tag from the list.'],
@@ -4400,7 +4400,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "45+", "when
     NM_FILES: ['A new exchange menu writes defineNeuz.h, defineText.h, textClient.inc, textClient.txt.txt, Exchange_Script.txt and character.inc. One of them was not found or is read-only.', 'Pick a folder that has all six, in the NPC Shops task.'],
     NM_NPC: ['The NPC was not found, or it is in character-etc.inc / character-school.inc, which this step does not change.', 'Pick an NPC from character.inc.'],
     NM_NONE: ['There is no menu to add.', 'Add at least one menu.'],
-    NM_ID_FULL: ['Menu ids go up to MAX_MOVER_MENU - 1 (349). The limit is compiled into the game, and the ids from 282 are used up.', 'Reuse an existing menu, or raise MAX_MOVER_MENU in the C++ and rebuild.'],
+    NM_ID_FULL: ['Menu ids go up to MAX_MOVER_MENU - 1 (349). The limit is compiled into the game, and the ids from 282 are used up.', 'Reuse an existing menu, or raise MAX_MOVER_MENU in Source/Resource/defineNeuz.h (and the Server/Resource and Client copies), then rebuild WorldServer (Release) and Neuz (NoGameguard): both size tables with it (Project.h:433, WORLDSERVER/npchecker.h:18). The DatabaseServer does not use it.'],
     NM_NAME: ['A menu name is an MMI_ #define. It must be new, and so must its label TID (TID_ + the name).', 'Choose another name in capital letters, e.g. MMI_WPNPIECE_ENTANESS.'],
     NM_TEXT: ['A label or message is empty, starts or ends with a space, is longer than 255 characters, or has a character the game cannot show.', 'Use plain text.'],
     NM_EMPTY: ['The menu has no exchange, so its window would open with an empty list.', 'Press + Exchange and give it its costs and its reward.'],
@@ -7503,6 +7503,154 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "45+", "when
   FRE.clientSync = { modeOf, clientBytes, plan, MODE_TEXT, toLf };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- core/after-save.js ----
+// What each saved change needs before players see it (INVESTIGATION.md §1.17).
+// Who reads each file the editor writes, and when (C++ paths under FLYFF-V19-SOURCE/Source/Source):
+//   WorldServer: once at startup. WorldServer.cpp:397 prj.OpenProject -> Project.cpp:706 -> LoadPreFiles
+//     (ProjectCmn.cpp:1413: LoadDefines :1369, LoadStrings :1253, LoadText :1366), then the .prj lines and the
+//     fixed loads below. No GM command reloads any of these files (/loadscript = WorldDialog.dll, /rec =
+//     Constant.inc, /lua = Event / MonsterSkill; __S0114_RELOADPRO is not built).
+//   DatabaseServer: also reads Spec_Item.txt, the strings and the defines at startup (databaseserver/Project.cpp:110,
+//     :125), but none of the fields or files the editor changes (no dwReferValue1 / dwCost, no character*.inc,
+//     Exchange_Script, DonationShop.inc, BattlePass.inc). Stop / Start Server.bat restarts it anyway.
+//   The game (Neuz): the same loads once at startup, before the login screen (Neuz.cpp:1589 BeginLoadThread ->
+//     LoadPreFiles :1593, OpenProject :1573). A loose file in Client/ wins over data.res (file.cpp:273
+//     CResFile::Open, b7645c52). Never reads .dyo (WorldFile.cpp:269-382 is #ifdef __WORLDSERVER).
+//   Client/Client/DonationShopTree.inc: each time the Donation Shop window opens (WndDonationShop.cpp:346; 409 with donation-tree.diff).
+//   Client/Client/NpcBoard_<id>.inc: on every click of the menu, once docs/patches/npc-board.diff is built.
+// Stop Server.bat closes Neuz and every server; Start Server.bat starts them and then the game
+// (Client\- Start Game.bat copies Source\Output\Neuz\NoGameguard\Neuz.exe first).
+(function (FRE) {
+  'use strict';
+
+  const STARTUP = 'startup', WINDOW = 'window', CLICK = 'click';
+  // key (lowercase, as in Workspace.files) -> { server, client, cite }
+  const READERS = {
+    'spec_item.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:790 LoadPropItem' },
+    'character.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:796 / :3257 LoadCharacter' },
+    'character-etc.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:796 / :3257 LoadCharacter' },
+    'character-school.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:796 / :3257 LoadCharacter' },
+    'character.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1256 LoadStrings' },
+    'defineneuz.h': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1373 LoadDefines' },
+    'definetext.h': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1383 LoadDefines' },
+    'etc.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:830 LoadEtc' },
+    'etc.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1259 LoadStrings' },
+    'textclient.inc': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1366 LoadText' },
+    'textclient.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1274 LoadStrings' },
+    'exchange_script.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:979 -> Exchange.cpp:34 Load_Script' },
+    'donationshop.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:932 -> ProjectCmn.cpp:1845 LoadDonationShop' },
+    'battlepass.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:907 -> ProjectCmn.cpp:1682 LoadBattlePass' },
+    'client/donationshoptree.inc': { server: null, client: WINDOW, cite: 'WndDonationShop.cpp:346 (409 with donation-tree.diff) LoadTreeScript' },
+  };
+  const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };
+  const BOARD = { server: null, client: CLICK, cite: 'npc-board.diff: WndWorld.cpp OnCommand default:' };
+  // a file the table does not know: assume both read it at startup (the safe answer)
+  const UNKNOWN = { server: STARTUP, client: STARTUP, cite: '?' };
+
+  function readerOf(key) {
+    key = key.toLowerCase();
+    if (READERS[key]) return READERS[key];
+    if (/^world\/.+\.dyo$/.test(key)) return DYO;
+    if (/^client\/npcboard_\d+\.inc$/.test(key)) return BOARD;
+    return UNKNOWN;
+  }
+
+  const PATCHES = {
+    'npc-board': { file: 'docs/patches/npc-board.diff', what: 'rules text windows', marker: 'NpcBoard_%d.inc', src: '_Interface/WndWorld.cpp' },
+    'donation-tree': { file: 'docs/patches/donation-tree.diff', what: 'category order and item card text', marker: 'DS_LoadTreeOrder', src: '_Interface/WndDonationShop.cpp' },
+  };
+  const BUILD = 'build the Neuz project (Source/Source/Neuz/Neuz.sln, configuration NoGameguard). Only Neuz: no server is rebuilt. Start Server.bat then copies the new Neuz.exe (Client\\- Start Game.bat)';
+
+  // input:
+  //   changes  [{ label, files: [key] }]           one per undo step since the last save
+  //   client   { key: 'written' | 'created' | 'datares' | 'different' | 'none' }
+  //            what happens to the game's own copy of a shared file in this save
+  //            (none = no Client folder; datares = no loose copy and none created)
+  //   patches  { 'npc-board' | 'donation-tree': 'in-source' | 'missing' | 'unknown' | 'built' }
+  //   codes    [diagnostic codes present now] (DT_PATCH / DT_ORDER: the tree needs donation-tree.diff)
+  //   names    { key: file name as on disk } (optional; for the messages only)
+  // -> { steps: [{ id, state?, text, short }], changes: [{ label, needs: [id], why: [text] }], notes: [{ id, file, text }],
+  //      built: [patch ids a change needs that are ticked as built into Neuz] }
+  function compute({ changes = [], client = {}, patches = {}, codes = [], names = {} }) {
+    const nameOf = key => names[key] || key.split('/').pop();
+    const has = new Set(codes);
+    const treePatch = has.has('DT_PATCH') || has.has('DT_ORDER');
+    const outChanges = [], notes = [], noted = new Set();
+    const all = new Set(), built = new Set();
+    for (const c of changes) {
+      const needs = new Set(), why = [];
+      for (const key of c.files) {
+        const r = readerOf(key), name = nameOf(key);
+        if (r.server === STARTUP) { needs.add('servers'); why.push(`the WorldServer reads ${name} once, at startup (${r.cite})`); }
+        if (r.client === STARTUP) {
+          const st = client[key] || 'none';
+          if (st === 'written' || st === 'created') { needs.add('game'); why.push(`the game reads its own Client/${name} once, at startup`); }
+          else if (!noted.has(key)) {
+            noted.add(key);
+            notes.push({ id: st, file: name, text: st === 'datares'
+              ? `Client/${name}: there is no loose copy, so the game keeps reading its old copy packed in data.res and will not show this change. Tick "create Client/${name}" in the Client/ list to fix it.`
+              : st === 'different' ? `Client/${name} differs from the server copy, so it was not changed: the game will not show this change until you update it by hand.`
+              : `No Client folder: copy ${name} into the game's Client folder by hand, or the game will not show this change.` });
+          }
+        }
+        if (r.client === WINDOW) {
+          needs.add('reopen:donation'); why.push(`the game reads Client/Client/${name} each time the Donation Shop window opens (${r.cite})`);
+          if (treePatch) { needs.add('patch:donation-tree'); why.push('a category the game\'s code does not know sorts last and gets the wrong card text until donation-tree.diff is built into Neuz'); }
+        }
+        if (r.client === CLICK) {
+          needs.add('click:board'); needs.add('patch:npc-board');
+          why.push(`the game reads Client/Client/${name} each time the menu is clicked, but only with npc-board.diff built into Neuz`);
+        }
+      }
+      for (const id of [...needs]) if (id.startsWith('patch:') && patches[id.slice(6)] === 'built') { needs.delete(id); built.add(id.slice(6)); }
+      needs.forEach(n => all.add(n));
+      outChanges.push({ label: c.label || 'edit', needs: [...needs], why });
+    }
+
+    const steps = [];
+    for (const id of ['npc-board', 'donation-tree']) {
+      if (!all.has('patch:' + id)) continue;
+      const p = PATCHES[id], state = patches[id] || 'unknown';
+      steps.push({ id: 'patch:' + id, state, short: `build Neuz with ${p.file.split('/').pop()}`, text: state === 'in-source'
+        ? `C++ (once): ${p.file.split('/').pop()} (${p.what}) is already in the source. If Neuz was not built since, ${BUILD}.`
+        : `C++ (once): in FLYFF-V19-SOURCE run "git apply -p1 ../FLYFF-RESOURCE-EDITOR/${p.file}" (${p.what}), then ${BUILD}.` });
+    }
+    const patched = steps.length > 0;
+    if (all.has('servers')) steps.push({ id: 'servers', short: 'run Stop Server.bat, then Start Server.bat', text: 'Run Stop Server.bat, then Start Server.bat. The servers only read these files when they start, and Stop Server.bat also closes the game, so the game reads its copies again too.' });
+    else if (all.has('game') || patched) steps.push({ id: 'game', short: 'restart the game', text: 'Close the game and start it again (Client\\- Start Game.bat). No server restart is needed.' });
+    else {
+      if (all.has('reopen:donation')) steps.push({ id: 'reopen:donation', short: 'reopen the Donation Shop window', text: 'Close and reopen the Donation Shop window in the game. No restart is needed: it reads the categories each time it opens.' });
+      if (all.has('click:board')) steps.push({ id: 'click:board', short: 'click the rules menu again', text: 'Click the rules menu again in the game. No restart is needed: it reads the text on every click.' });
+    }
+    return { steps, changes: outChanges, notes, built: ['npc-board', 'donation-tree'].filter(id => built.has(id)) };
+  }
+
+  // The input of compute() for a workspace about to be saved:
+  //   plan           FRE.clientSync.plan(ws, client) (null: no Client folder)
+  //   createMissing  Set of lowercase names ticked "create Client/<name>"
+  //   patches        FRE.patchState.effective(...)
+  // One change per undo step still in ws.history (its label; only files still changed); files changed outside
+  // the history (none today) are one more change.
+  function forWorkspace(ws, { plan = null, createMissing = new Set(), patches = {} } = {}) {
+    const dirty = new Set([...ws.files].filter(([, f]) => f.dirty).map(([k]) => k));
+    const changes = ws.history.map(e => ({ label: e.label || 'edit', files: [...e].filter(k => dirty.has(k)) })).filter(c => c.files.length);
+    const covered = new Set(changes.flatMap(c => c.files));
+    const rest = [...dirty].filter(k => !covered.has(k));
+    if (rest.length) changes.push({ label: 'Other changes', files: rest });
+    const byName = plan ? new Map(plan.map(p => [p.lower, p])) : null;
+    const client = {};
+    for (const k of dirty) {
+      const p = byName && byName.get(k);
+      client[k] = !p ? 'none' : p.mode === 'identical' || p.mode === 'eol' ? 'written'
+        : p.mode === 'missing' ? (createMissing.has(k) && !p.server.dir ? 'created' : 'datares') : 'different';
+    }
+    const names = Object.fromEntries([...dirty].map(k => [k, ws.files.get(k).name]));
+    return compute({ changes, client, names, patches, codes: ws.diags.map(d => d.code) });
+  }
+
+  FRE.afterSave = { READERS, DYO, BOARD, PATCHES, readerOf, compute, forWorkspace };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- io/fsa.js ----
 // File System Access API wrapper (Chrome / Edge). See docs/DESIGN.md §2.1.
 (function (FRE) {
@@ -7670,6 +7818,55 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "45+", "when
   }
 
   FRE.layout = { detectLayout, describe, child };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- io/patch-state.js ----
+// Is a client patch (docs/patches/*.diff) built into the game? (Save's "After saving" list, core/after-save.js)
+// With FLYFF-V19-SOURCE picked, the patched C++ file is READ (never written) for one line the patch adds:
+//   npc-board.diff     -> Source/Source/_Interface/WndWorld.cpp        "NpcBoard_%d.inc"
+//   donation-tree.diff -> Source/Source/_Interface/WndDonationShop.cpp "DS_LoadTreeOrder"
+// in-source: the line is there (Neuz may still need a build); missing: not applied; unknown: no source here
+// (test-data). "I built it into Neuz" is a tickbox remembered in this browser (localStorage): 'built'.
+(function (FRE) {
+  'use strict';
+  const KEY = id => 'fre.patchBuilt.' + id;
+
+  function ticked(id) {
+    try { return localStorage.getItem(KEY(id)) === '1'; } catch (e) { return false; }
+  }
+  function setTicked(id, on) {
+    try { on ? localStorage.setItem(KEY(id), '1') : localStorage.removeItem(KEY(id)); return true; } catch (e) { return false; }
+  }
+
+  // layout: FRE.layout.detectLayout's result -> { 'npc-board': 'in-source' | 'missing' | 'unknown', ... }
+  async function inSource(layout) {
+    const out = {};
+    for (const [id, p] of Object.entries(FRE.afterSave.PATCHES)) {
+      out[id] = 'unknown';
+      if (!layout || layout.kind !== 'real') continue;
+      try {
+        const parts = ('Source/Source/' + p.src).split('/'), name = parts.pop();
+        const dir = await FRE.fsa.dirAt(layout.root, parts.join('/'));
+        const fh = dir && (await FRE.fsa.findFiles(dir, [name])).get(name.toLowerCase());
+        if (!fh) continue;
+        const text = new TextDecoder('latin1').decode((await FRE.fsa.readHandle(fh)).bytes);
+        out[id] = text.includes(p.marker) ? 'in-source' : 'missing';
+      } catch (e) { out[id] = 'unknown'; }
+    }
+    return out;
+  }
+
+  // the state compute() uses: a tick counts unless the source says the patch is not applied
+  function effective(found) {
+    const out = {};
+    for (const id of Object.keys(FRE.afterSave.PATCHES)) {
+      const s = (found && found[id]) || 'unknown';
+      out[id] = s !== 'missing' && ticked(id) ? 'built' : s;
+    }
+    return out;
+  }
+
+  FRE.patchState = { inSource, effective, ticked, setTicked };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- io/save.js ----
@@ -10935,7 +11132,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "45+", "when
         ended ? h('ul.bp-effects',
           h('li', 'Nobody is put on the pass at login, and kills earn no points.'),
           h('li', h('b', 'The Donation Shop still sells the pass: '), 'a player who uses it now loses it and gets only the level 1 reward.'),
-          h('li', 'Start a new season, save, and restart the WorldServer.')) : null));
+          h('li', 'Start a new season, save, then run Stop Server.bat and Start Server.bat.')) : null));
 
       // facts
       // shown as the LAST playable day; the file gets the day after (00:00 = midnight after the last day)
@@ -10955,7 +11152,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "45+", "when
         h('li', 'Every player is put on the free track at login. Killing listed monsters earns points and levels, but no rewards.'),
         h('li', 'Using the pass item (sold in the Donation Shop) pays every level already reached, then each new level as it comes.'),
         h('li', 'The end date is stamped on the character when they join. Changing it here does not move players already on the season (use /rrbp or SQL).'),
-        h('li', 'After saving, restart the WorldServer and relaunch the client.'))));
+        h('li', 'After saving, run Stop Server.bat, then Start Server.bat (servers and game read BattlePass.inc only when they start).'))));
     }
     const blocks = ['BP2', 'BP3'].filter(b => m.rows[b].length).map(b => `${b}: ${m.rows[b].length} row(s)`);
     el.appendChild(h('p.muted.small', blocks.length ? `Not edited here: ${blocks.join(', ')}.` : 'BP2 (preview pass) and BP3 (point token) are empty and not used.'));
@@ -11774,6 +11971,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "45+", "when
     if (layout.backups) S.backupDir = layout.backups;
     else if (S.backupDir && S.backupKind === 'test') S.backupDir = null;     // never back up real files into a test folder
     S.backupKind = layout.kind;
+    // which client patches are in FLYFF-V19-SOURCE (read-only; "unknown" on test-data): Save's "After saving" list
+    S.patchSrc = await FRE.patchState.inSource(layout);
     FRE.fsa.remember('root', dir);
     renderAll(false);
   }
@@ -12082,8 +12281,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "45+", "when
       const st = clientStatus();
       add('info', `Client sync on (${S.client.dir.name}/): every save applies the same change to the client's copies. `,
         st.map(c => h('span.tag' + (c.mode === 'different' ? '.warn' : c.mode === 'missing' ? '.info' : ''), { title: c.text }, `${c.name}: ${c.mode === 'identical' ? 'same' : c.mode === 'eol' ? 'same, LF' : c.mode === 'missing' ? 'no loose copy' : 'differs'}`)),
-        ' Restart the WorldServer to apply.');
-    } else add('warn', `No Client folder next to ${S.resDir ? S.resDir.name : 'the server files'}: the game client reads its own copy of ${ws.clientFileNames().join(', ') || 'these files'}. Copy the changed files to it by hand. Restart the WorldServer to apply.`);
+        ' Save lists what each change needs (restart, Neuz build).');
+    } else add('warn', `No Client folder next to ${S.resDir ? S.resDir.name : 'the server files'}: the game client reads its own copy of ${ws.clientFileNames().join(', ') || 'these files'}. Copy the changed files to it by hand.`);
   }
 
   function renderList() {
@@ -12291,6 +12490,30 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "45+", "when
     catch (e) { modal({ title: 'Save failed: nothing was written', body: h('div', h('p', String(e && e.message || e)), h('p.muted.small', 'Your edits are still here. Try Save again; if it fails again, send this message.')) }); }
   }
 
+  // What players need before they see the changes about to be saved (core/after-save.js): one entry per undo
+  // step still in the history (its label and files), what happens to the game's own copy of each file, the
+  // client patches' state and the checks that say the category tree needs donation-tree.diff.
+  function afterSaveResult() {
+    return FRE.afterSave.forWorkspace(S.ws, { plan: S.client ? FRE.clientSync.plan(S.ws, S.client) : null,
+      createMissing: S.createMissing, patches: FRE.patchState.effective(S.patchSrc) });
+  }
+
+  const NEED_TEXT = { servers: 'server restart', game: 'game restart', 'reopen:donation': 'reopen the Donation Shop window',
+    'click:board': 'click the menu again', 'patch:npc-board': 'npc-board.diff built into Neuz', 'patch:donation-tree': 'donation-tree.diff built into Neuz' };
+  // live: the patch steps get the "I built it into Neuz" tickbox (the review window); redraw() after a tick
+  function afterSaveBox(res, live, redraw) {
+    const tick = id => h('label.check', ' ', h('input', { type: 'checkbox', checked: FRE.patchState.ticked(id),
+      on: { change: e => { if (!FRE.patchState.setTicked(id, e.target.checked)) toast('This browser cannot remember the tick (site storage is blocked).', 'bad'); else toast(e.target.checked ? `Marked ${id}.diff as built into Neuz.` : `${id}.diff: no longer marked as built.`); redraw(); } } }),
+      ' I built it into Neuz (remembered in this browser)');
+    return h('div.after-save', h('h3', 'After saving: what players need to see it'),
+      h('ol.plan', res.steps.map(s => h('li', s.text, live && s.id.startsWith('patch:') && s.state !== 'missing' ? tick(s.id.slice(6)) : null))),
+      res.built.map(id => h('p.muted.small', `✓ ${id}.diff is marked as built into Neuz.`, live ? tick(id) : null)),
+      res.notes.map(n => h('p', { style: 'color:var(--warn)' }, '⚠ ' + n.text)),
+      res.changes.length ? h('details', h('summary', `Each change (${res.changes.length})`),
+        h('ul.plan', res.changes.map(c => h('li', h('b', c.label), ': ', c.needs.length ? c.needs.map(n => NEED_TEXT[n] || n).join(' + ') : 'nothing in the game reads it',
+          c.why.length ? h('div.muted.small', c.why.join('; ') + '.') : null)))) : null);
+  }
+
   async function reviewSave(after) {
     if (typeof after !== 'function') after = null;
     const ws = S.ws;
@@ -12319,10 +12542,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "45+", "when
         p.mode === 'missing' ? h('label.check', ' ', h('input', { type: 'checkbox', checked: S.createMissing.has(p.lower),
           on: { change: e => { e.target.checked ? S.createMissing.add(p.lower) : S.createMissing.delete(p.lower); } } }), ' create Client/' + p.name + ' as a copy of the server file') : null)))] : null;
     }
+    const afterBox = h('div');
+    const drawAfter = () => { afterBox.textContent = ''; afterBox.appendChild(afterSaveBox(afterSaveResult(), true, drawAfter)); };
+    drawAfter();
     const body = h('div',
       h('p', `These lines will change. Everything else in the file${dirty.length > 1 ? 's' : ''} stays byte-for-byte identical.`),
       dirty.map(f => [h('h3', `${f.dir ? f.dir + '/' : ''}${f.name}`), f.kind === FRE.SourceFile.KIND_BINARY ? binaryDiff(f) : renderDiff(f)]),
       clientBox,
+      afterBox,
       warns.length ? h('p.muted', `${warns.length} warning(s) (not blocking) — see the problems panel.`) : null,
       h('p.muted.small', `Backup folder: ${S.backupDir.name}/<timestamp>/` + (!S.client && client.length ? ` · After saving, also copy to Client/: ${client.join(', ')}` : '')));
     modal({ title: `Review changes (${dirty.length} file${dirty.length > 1 ? 's' : ''})`, body, wide: true, buttons: [
@@ -12332,9 +12559,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "45+", "when
   }
 
   async function runSave(after) {
-    const log = h('div.log');
+    const log = h('div.log'), next = h('div');
     const client = S.ws.clientCopiesNeeded();
-    const m = modal({ title: 'Saving…', body: log, buttons: [{ label: 'Close' }] });
+    const res = afterSaveResult();     // before the save: it clears the undo history
+    const m = modal({ title: 'Saving…', body: h('div', log, next), buttons: [{ label: 'Close' }] });
     const sync = S.client ? { dir: S.client.dir, files: S.client.files, create: S.createMissing } : null;
     const report = await FRE.save.save(S.ws, S.backupDir, msg => log.appendChild(document.createTextNode(msg + '\n')), sync)
       .catch(e => ({ ok: false, steps: [String(e && e.message || e)] }));
@@ -12344,7 +12572,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "45+", "when
       const synced = new Set((report.client || []).map(c => c.lower));
       const left = client.filter(n => !synced.has(n.toLowerCase()));
       if (left.length) log.appendChild(h('div', { style: 'color:var(--warn)' }, `\nNot in Client/ yet (copy by hand): ${left.join(', ')}`));
-      toast(left.length ? 'Saved. Copy the remaining files to Client/ and restart the WorldServer.' : `Saved${synced.size ? ' (Server and Client)' : ''}. Restart the WorldServer to apply.`, 'ok');
+      next.appendChild(afterSaveBox(res, false));
+      const todo = res.steps.map(s => s.short);
+      toast(`Saved${synced.size ? ' (Server and Client)' : ''}.${left.length ? ' Copy the remaining files to Client/.' : ''}${todo.length ? ' Next: ' + todo.join(', then ') + '.' : ''}`, 'ok');
     }
     m.el.querySelector('header').textContent = report.ok ? 'Saved' : 'Save failed';
     renderAll(false);

@@ -117,6 +117,8 @@
     if (layout.backups) S.backupDir = layout.backups;
     else if (S.backupDir && S.backupKind === 'test') S.backupDir = null;     // never back up real files into a test folder
     S.backupKind = layout.kind;
+    // which client patches are in FLYFF-V19-SOURCE (read-only; "unknown" on test-data): Save's "After saving" list
+    S.patchSrc = await FRE.patchState.inSource(layout);
     FRE.fsa.remember('root', dir);
     renderAll(false);
   }
@@ -425,8 +427,8 @@
       const st = clientStatus();
       add('info', `Client sync on (${S.client.dir.name}/): every save applies the same change to the client's copies. `,
         st.map(c => h('span.tag' + (c.mode === 'different' ? '.warn' : c.mode === 'missing' ? '.info' : ''), { title: c.text }, `${c.name}: ${c.mode === 'identical' ? 'same' : c.mode === 'eol' ? 'same, LF' : c.mode === 'missing' ? 'no loose copy' : 'differs'}`)),
-        ' Restart the WorldServer to apply.');
-    } else add('warn', `No Client folder next to ${S.resDir ? S.resDir.name : 'the server files'}: the game client reads its own copy of ${ws.clientFileNames().join(', ') || 'these files'}. Copy the changed files to it by hand. Restart the WorldServer to apply.`);
+        ' Save lists what each change needs (restart, Neuz build).');
+    } else add('warn', `No Client folder next to ${S.resDir ? S.resDir.name : 'the server files'}: the game client reads its own copy of ${ws.clientFileNames().join(', ') || 'these files'}. Copy the changed files to it by hand.`);
   }
 
   function renderList() {
@@ -634,6 +636,30 @@
     catch (e) { modal({ title: 'Save failed: nothing was written', body: h('div', h('p', String(e && e.message || e)), h('p.muted.small', 'Your edits are still here. Try Save again; if it fails again, send this message.')) }); }
   }
 
+  // What players need before they see the changes about to be saved (core/after-save.js): one entry per undo
+  // step still in the history (its label and files), what happens to the game's own copy of each file, the
+  // client patches' state and the checks that say the category tree needs donation-tree.diff.
+  function afterSaveResult() {
+    return FRE.afterSave.forWorkspace(S.ws, { plan: S.client ? FRE.clientSync.plan(S.ws, S.client) : null,
+      createMissing: S.createMissing, patches: FRE.patchState.effective(S.patchSrc) });
+  }
+
+  const NEED_TEXT = { servers: 'server restart', game: 'game restart', 'reopen:donation': 'reopen the Donation Shop window',
+    'click:board': 'click the menu again', 'patch:npc-board': 'npc-board.diff built into Neuz', 'patch:donation-tree': 'donation-tree.diff built into Neuz' };
+  // live: the patch steps get the "I built it into Neuz" tickbox (the review window); redraw() after a tick
+  function afterSaveBox(res, live, redraw) {
+    const tick = id => h('label.check', ' ', h('input', { type: 'checkbox', checked: FRE.patchState.ticked(id),
+      on: { change: e => { if (!FRE.patchState.setTicked(id, e.target.checked)) toast('This browser cannot remember the tick (site storage is blocked).', 'bad'); else toast(e.target.checked ? `Marked ${id}.diff as built into Neuz.` : `${id}.diff: no longer marked as built.`); redraw(); } } }),
+      ' I built it into Neuz (remembered in this browser)');
+    return h('div.after-save', h('h3', 'After saving: what players need to see it'),
+      h('ol.plan', res.steps.map(s => h('li', s.text, live && s.id.startsWith('patch:') && s.state !== 'missing' ? tick(s.id.slice(6)) : null))),
+      res.built.map(id => h('p.muted.small', `✓ ${id}.diff is marked as built into Neuz.`, live ? tick(id) : null)),
+      res.notes.map(n => h('p', { style: 'color:var(--warn)' }, '⚠ ' + n.text)),
+      res.changes.length ? h('details', h('summary', `Each change (${res.changes.length})`),
+        h('ul.plan', res.changes.map(c => h('li', h('b', c.label), ': ', c.needs.length ? c.needs.map(n => NEED_TEXT[n] || n).join(' + ') : 'nothing in the game reads it',
+          c.why.length ? h('div.muted.small', c.why.join('; ') + '.') : null)))) : null);
+  }
+
   async function reviewSave(after) {
     if (typeof after !== 'function') after = null;
     const ws = S.ws;
@@ -662,10 +688,14 @@
         p.mode === 'missing' ? h('label.check', ' ', h('input', { type: 'checkbox', checked: S.createMissing.has(p.lower),
           on: { change: e => { e.target.checked ? S.createMissing.add(p.lower) : S.createMissing.delete(p.lower); } } }), ' create Client/' + p.name + ' as a copy of the server file') : null)))] : null;
     }
+    const afterBox = h('div');
+    const drawAfter = () => { afterBox.textContent = ''; afterBox.appendChild(afterSaveBox(afterSaveResult(), true, drawAfter)); };
+    drawAfter();
     const body = h('div',
       h('p', `These lines will change. Everything else in the file${dirty.length > 1 ? 's' : ''} stays byte-for-byte identical.`),
       dirty.map(f => [h('h3', `${f.dir ? f.dir + '/' : ''}${f.name}`), f.kind === FRE.SourceFile.KIND_BINARY ? binaryDiff(f) : renderDiff(f)]),
       clientBox,
+      afterBox,
       warns.length ? h('p.muted', `${warns.length} warning(s) (not blocking) — see the problems panel.`) : null,
       h('p.muted.small', `Backup folder: ${S.backupDir.name}/<timestamp>/` + (!S.client && client.length ? ` · After saving, also copy to Client/: ${client.join(', ')}` : '')));
     modal({ title: `Review changes (${dirty.length} file${dirty.length > 1 ? 's' : ''})`, body, wide: true, buttons: [
@@ -675,9 +705,10 @@
   }
 
   async function runSave(after) {
-    const log = h('div.log');
+    const log = h('div.log'), next = h('div');
     const client = S.ws.clientCopiesNeeded();
-    const m = modal({ title: 'Saving…', body: log, buttons: [{ label: 'Close' }] });
+    const res = afterSaveResult();     // before the save: it clears the undo history
+    const m = modal({ title: 'Saving…', body: h('div', log, next), buttons: [{ label: 'Close' }] });
     const sync = S.client ? { dir: S.client.dir, files: S.client.files, create: S.createMissing } : null;
     const report = await FRE.save.save(S.ws, S.backupDir, msg => log.appendChild(document.createTextNode(msg + '\n')), sync)
       .catch(e => ({ ok: false, steps: [String(e && e.message || e)] }));
@@ -687,7 +718,9 @@
       const synced = new Set((report.client || []).map(c => c.lower));
       const left = client.filter(n => !synced.has(n.toLowerCase()));
       if (left.length) log.appendChild(h('div', { style: 'color:var(--warn)' }, `\nNot in Client/ yet (copy by hand): ${left.join(', ')}`));
-      toast(left.length ? 'Saved. Copy the remaining files to Client/ and restart the WorldServer.' : `Saved${synced.size ? ' (Server and Client)' : ''}. Restart the WorldServer to apply.`, 'ok');
+      next.appendChild(afterSaveBox(res, false));
+      const todo = res.steps.map(s => s.short);
+      toast(`Saved${synced.size ? ' (Server and Client)' : ''}.${left.length ? ' Copy the remaining files to Client/.' : ''}${todo.length ? ' Next: ' + todo.join(', then ') + '.' : ''}`, 'ok');
     }
     m.el.querySelector('header').textContent = report.ok ? 'Saved' : 'Save failed';
     renderAll(false);

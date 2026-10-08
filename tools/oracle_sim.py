@@ -3990,6 +3990,145 @@ def db_run(root):
     return {'chip': chip, 'stack': stack, 'single': single, 'unlisted': unlisted, 'cases': cases, 'scripts': scripts}
 
 
+# ---------------------------------------------------------------------------------------------------------
+# aftersave: what a save needs before players see it. Who loads each file the editor writes, and when,
+# read from the C++ (paths under FLYFF-V19-SOURCE/Source/Source):
+#   WorldServer at startup: WorldServer.cpp:397 OpenProject("Masquerade.prj") -> LoadPreFiles (ProjectCmn.cpp:1413:
+#     LoadDefines :1369, LoadStrings :1253, LoadText :1366) + Project.cpp's loads (propItem :790, character :796,
+#     etc :830, BattlePass :907, DonationShop :932, Exchange :979). Nothing reloads them later.
+#   World/<map>/<map>.dyo: CWorld::LoadObject (WorldFile.cpp:297), inside #ifdef __WORLDSERVER (:269): server only.
+#   Neuz at startup: Neuz.cpp:1589 BeginLoadThread -> LoadPreFiles (:1593), OpenProject (:1573); its own Client/
+#     copies, a loose file before data.res (file.cpp:273 CResFile::Open).
+#   Client/Client/DonationShopTree.inc: CWndDonationShop::OnInitialUpdate (WndDonationShop.cpp:346; 409 with donation-tree.diff), each opening.
+#   Client/Client/NpcBoard_<id>.inc: the npc-board.diff default: branch of CWndWorld::OnCommand, each click.
+#   Stop Server.bat kills Neuz.exe and all 7 servers; Start Server.bat starts them and then Client\- Start Game.bat.
+AS_SHARED = ['spec_item.txt', 'character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt',
+             'defineneuz.h', 'definetext.h', 'etc.inc', 'etc.txt.txt', 'textclient.inc', 'textclient.txt.txt',
+             'exchange_script.txt', 'donationshop.inc', 'battlepass.inc']
+AS_TREE = 'client/donationshoptree.inc'
+# (path, line, text that must be on that line): the loads this table relies on
+AS_CITES = [
+    ('WORLDSERVER/WorldServer.cpp', 397, 'OpenProject( "Masquerade.prj" )'),
+    ('_Common/Project.cpp', 790, 'LoadPropItem( "Spec_Item.txt"'),
+    ('_Common/Project.cpp', 796, '"character"'),
+    ('_Common/Project.cpp', 830, 'LoadEtc( "etc.inc" )'),
+    ('_Common/Project.cpp', 907, 'LoadBattlePass( "BattlePass.inc" )'),
+    ('_Common/Project.cpp', 932, 'LoadDonationShop( "DonationShop.inc" )'),
+    ('_Common/Project.cpp', 979, 'm_Exchange.Load_Script()'),
+    ('_Common/ProjectCmn.cpp', 1256, '"character.txt.txt"'),
+    ('_Common/ProjectCmn.cpp', 1259, '"etc.txt.txt"'),
+    ('_Common/ProjectCmn.cpp', 1274, '"textClient.txt.txt"'),
+    ('_Common/ProjectCmn.cpp', 1366, 'LoadText( "textClient.inc" )'),
+    ('_Common/ProjectCmn.cpp', 1373, '"defineNeuz.h"'),
+    ('_Common/ProjectCmn.cpp', 1383, '"defineText.h"'),
+    ('_Common/WorldFile.cpp', 269, '#ifdef __WORLDSERVER'),
+    ('_Common/WorldFile.cpp', 305, '.dyo'),
+    ('_Common/WorldFile.cpp', 382, '#endif'),
+    ('_Interface/WndDonationShop.cpp', (346, 409), 'LoadTreeScript( MakePath( DIR_CLIENT, "DonationShopTree.inc" ) )'),
+    ('Neuz/Neuz.cpp', 1573, 'prj.OpenProject( "Masquerade.prj" )'),
+    ('Neuz/Neuz.cpp', 1593, 'prj.LoadPreFiles()'),
+    ('_Common/file.cpp', 273, 'CResFile::Open'),
+]
+
+
+def as_who(key):
+    """-> (WorldServer reads it at startup, how the game reads it: 'start' / 'open' / 'click' / None)"""
+    if key in AS_SHARED:
+        return True, 'start'
+    if key == AS_TREE:
+        return False, 'open'
+    if re.fullmatch(r'client/npcboard_\d+\.inc', key):
+        return False, 'click'
+    if re.fullmatch(r'world/.+\.dyo', key):
+        return True, None
+    return True, 'start'          # unknown file: both, at startup
+
+
+def as_compute(changes, client, patches, codes):
+    tree_patch = 'DT_PATCH' in codes or 'DT_ORDER' in codes
+    every, ticked, notes, noted, per = set(), set(), [], set(), []
+    for files in changes:
+        need = set()
+        for k in files:
+            srv, cl = as_who(k)
+            if srv:
+                need.add('servers')
+            if cl == 'start':
+                st = client.get(k, 'none')
+                if st in ('written', 'created'):
+                    need.add('game')
+                elif k not in noted:
+                    noted.add(k)
+                    notes.append([st, k.split('/')[-1]])
+            elif cl == 'open':
+                need.add('reopen:donation')
+                if tree_patch:
+                    need.add('patch:donation-tree')
+            elif cl == 'click':
+                need |= {'click:board', 'patch:npc-board'}
+        for pid in ('npc-board', 'donation-tree'):
+            if 'patch:' + pid in need and patches.get(pid) == 'built':
+                need.discard('patch:' + pid)
+                ticked.add(pid)
+        every |= need
+        per.append(sorted(need))
+    steps = [['patch:' + pid, patches.get(pid, 'unknown')] for pid in ('npc-board', 'donation-tree') if 'patch:' + pid in every]
+    if 'servers' in every:
+        steps.append(['servers', None])
+    elif 'game' in every or steps:
+        steps.append(['game', None])
+    else:
+        steps += [[x, None] for x in ('reopen:donation', 'click:board') if x in every]
+    return {'steps': steps, 'changes': per, 'notes': notes, 'built': [p for p in ('npc-board', 'donation-tree') if p in ticked]}
+
+
+def as_run(root):
+    import random
+    rnd = random.Random(1019)
+    keys = AS_SHARED + [AS_TREE, 'client/npcboard_282.inc', 'client/npcboard_300.inc', 'world/wdmadrigal/wdmadrigal.dyo',
+                        'world/wdvolcane/wdvolcane.dyo', 'propskill.txt']
+    states = ['written', 'created', 'datares', 'different', 'none']
+    pstates = ['in-source', 'missing', 'unknown', 'built']
+    codesets = [[], ['DT_PATCH'], ['DT_ORDER'], ['NN_RULES_PATCH']]
+    cases = []
+    for k in keys:                                        # every file alone, every combination around it
+        for st in states:
+            for pa in pstates:
+                for pb in pstates:
+                    for cs in codesets:
+                        inp = {'changes': [{'label': k, 'files': [k]}], 'client': {k: st}, 'patches': {'npc-board': pa, 'donation-tree': pb}, 'codes': cs}
+                        cases.append(inp)
+    pairs = [{'npc-board': 'built', 'donation-tree': 'built'}, {'npc-board': 'built', 'donation-tree': 'unknown'},
+             {'npc-board': 'in-source', 'donation-tree': 'built'}]
+    for i, k1 in enumerate(keys):                         # every two files in one save: which steps win, and their order
+        for k2 in keys[i + 1:]:
+            for pa in pairs:
+                for cs in ([], ['DT_ORDER']):
+                    cases.append({'changes': [{'label': k1, 'files': [k1]}, {'label': k2, 'files': [k2]}],
+                                  'client': {k1: 'written', k2: 'written'}, 'patches': pa, 'codes': cs})
+    for i in range(600):                                  # several changes, several files each
+        ch = [{'label': 'c%d' % j, 'files': rnd.sample(keys, rnd.randint(1, 4))} for j in range(rnd.randint(1, 4))]
+        allk = sorted({k for c in ch for k in c['files']})
+        inp = {'changes': ch, 'client': {k: rnd.choice(states) for k in allk if rnd.random() < 0.9},
+               'patches': {p: rnd.choice(pstates) for p in ('npc-board', 'donation-tree') if rnd.random() < 0.85},
+               'codes': rnd.sample(['DT_PATCH', 'DT_ORDER', 'NN_RULES_PATCH', 'C_PRICE_MIN1'], rnd.randint(0, 2))}
+        cases.append(inp)
+    cases.append({'changes': [], 'client': {}, 'patches': {}, 'codes': []})
+    for c in cases:
+        c['out'] = as_compute([x['files'] for x in c['changes']], c['client'], c['patches'], set(c['codes']))
+    cites = []
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'FLYFF-V19-SOURCE', 'Source', 'Source')
+    for path, line, text in AS_CITES:
+        f = os.path.join(src, path)
+        if not os.path.exists(f):
+            cites.append({'path': path, 'line': line, 'ok': None})
+            continue
+        lines = open(f, 'rb').read().decode('latin1').splitlines()
+        at = line if isinstance(line, tuple) else (line,)     # a line a patch moves: before / after it
+        cites.append({'path': path, 'line': at[0], 'ok': any(n <= len(lines) and text in lines[n - 1] for n in at)})
+    return {'cases': cases, 'cites': cites}
+
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -4015,6 +4154,8 @@ if __name__ == '__main__':
         print(json.dumps(dt_run(root)))
     elif what == 'dsbuy':
         print(json.dumps(db_run(root)))
+    elif what == 'aftersave':
+        print(json.dumps(as_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model
         for f in sorted(os.listdir(root)):
             if f.lower().startswith('mvr_') and f.lower().endswith('.o3d'):
