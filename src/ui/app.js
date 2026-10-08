@@ -44,6 +44,20 @@
       const fh = (await FRE.fsa.findFiles(dir, [name])).get(name.toLowerCase());
       return fh ? (await FRE.fsa.readHandle(fh)).bytes : null;
     },
+    // bytes of Client/Item/<name> (item icons), or null. The folder (4,000+ files) is listed once per Client folder.
+    async clientItemFile(name) {
+      if (!S.client) return null;
+      if (!S.itemIndex || S.itemIndex.client !== S.client) {
+        const client = S.client;
+        S.itemIndex = { client, map: (async () => {
+          const dir = await FRE.fsa.dirAt(client.dir, 'Item'), map = new Map();
+          if (dir) for await (const [n, fh] of dir.entries()) if (fh.kind === 'file') map.set(n.toLowerCase(), fh);
+          return map;
+        })() };
+      }
+      const fh = (await S.itemIndex.map).get(String(name).toLowerCase());
+      return fh ? (await FRE.fsa.readHandle(fh)).bytes : null;
+    },
     // Apply an edit op: make(text) -> splices. `key` marks what was edited (list badges).
     // Repeated edits of the same field within 2 s (typing) are folded into one undo step.
     edit(lowerFile, make, label, key) {

@@ -384,6 +384,21 @@ table.dr td .dr-amt { white-space: nowrap; }
 .dr-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
 .dr-line input.num-input { width: 110px; }
 
+/* Boxes (ui/boxes.js) */
+.dds-pic canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+.bx-row { display: flex; gap: 8px; align-items: center; }
+.bx-row .bx-text { flex: 1; min-width: 0; }
+.bx-icon { width: 32px; height: 32px; flex: 0 0 32px; display: inline-block; }
+.bx-icon-big { width: 64px; height: 64px; display: inline-block; margin-right: 8px; vertical-align: middle; }
+.bx-title { align-items: center; }
+table.bx td input.num-input { width: 72px; }
+table.bx td input.pct-input { width: 80px; }
+.warn-text { color: var(--warn, #c80); }
+.bx-chat { background: var(--panel, #111); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; margin: 8px 0; font-size: 12px; }
+.dur-wrap { white-space: nowrap; }
+input.num-input.dur-input { width: 64px; }
+select.dur-unit { padding: 2px 4px; }
+button.dur-perm { padding: 2px 8px; font-size: 12px; }
 
 </style>
 </head>
@@ -440,7 +455,7 @@ table.dr td .dr-amt { white-space: nowrap; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "48+", "when": "Thu 8 Oct 2026, 15:48", "rev": "7531898", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "49+", "when": "Thu 8 Oct 2026, 17:23", "rev": "297a1c0", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -4382,6 +4397,358 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "48+", "when
   FRE.dropsSim = { penyaRange, kill, run, envFor, exactChances, levelGap, factors, penyaRoll, genRandomOpt, DEFAULTS };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/boxes.js ----
+// Boxes: random boxes (propGiftbox.inc) and sets (propPackItem.inc).
+//   loadGiftboxes = CProject::LoadGiftbox          (_Common/Project.cpp:4261-4380)
+//                   + CGiftboxMan::AddItem / Verify (Project.cpp:4116-4174, 4250-4256)
+//   loadPacks     = CProject::LoadPackItem         (Project.cpp:4492-4533) + CPackItem::AddItem (4450-4482)
+// propGiftbox.inc: UTF-16LE + BOM, CRLF, read only by the WorldServer (LoadGiftbox sits in #ifdef __WORLDSERVER,
+// Project.cpp:836-847); no Client copy. propPackItem.inc: CP949 bytes, CRLF; the game loads it too, from its own
+// LF copy Client/propPackItem.inc, for the Item Wiki's "box holds fashion" filter (e08528a5, WndWikiItems.cpp:70-125).
+// A box item is a box only because its id is in one of these files; a pack is checked first when used
+// (User.cpp:3193), so an id in both acts as a pack.
+(function (FRE) {
+  'use strict';
+  const { Script } = FRE.lexer;
+  const GIFT = 'propGiftbox.inc', PACK = 'propPackItem.inc';
+  const TOTAL = 1000000;                 // CGiftboxMan::Open: xRandom( 1000000 ) (Project.cpp:4184)
+  const MAX_GIFTBOX_ITEM = 128;          // Project.h:679; the vector path (__STL_GIFTBOX_VECTOR) never checks it
+  const MAX_ITEM_PER_PACK = 24;          // Project.h:760-766 (__VER >= 18)
+  // the line types: weight multiplier (out of 1,000,000) and the columns after item, weight, amount
+  const TYPES = {
+    GiftBox: { prec: 100, cols: [] },
+    GiftBox2: { prec: 1, cols: [] },
+    GiftBox3: { prec: 100, cols: ['flag'] },
+    GiftBox4: { prec: 100, cols: ['flag', 'minutes'] },
+    GiftBox5: { prec: 10, cols: ['flag', 'minutes'] },
+    GiftBox6: { prec: 10, cols: ['flag', 'minutes', 'upgrade'] },
+  };
+  const FLAG_BOUND = 2, FLAG_KEEP = 4;   // CItemElem::binds = 0x02 (Item.h:132); 4 = "ignore property" (User.cpp:3010)
+  const u32 = v => v >>> 0, i32 = v => v | 0;
+
+  // ---- propGiftbox.inc ----
+  // -> { file, blocks, boxes: Map(id -> box), skipped: [{start, end, text}], hung }
+  //   block = { type, kw:{start,end}, box: num, open:{start,end,ok}, close:{start,end}|null, lines }
+  //   line  = { block, item, w, num, flag, minutes, upgrade (getNumber results or null), start, end }
+  //   box   = { id, define, blocks, lines, sum, cum: [u32 per line after Verify] }
+  function loadGiftboxes(file, ctx) {
+    const s = new Script(file.text, { file: file.name, defines: ctx.defines, strings: ctx.strings, diags: [] });
+    const blocks = [], boxes = new Map(), skipped = [];
+    let hung = null, t = s.getToken(), skip = null;
+    while (t.type !== 'eof') {
+      const type = Object.prototype.hasOwnProperty.call(TYPES, t.text) ? t.text : null;   // s.Token == _T( "GiftBox" ): exact case
+      if (!type) {
+        // one run of skipped words between two boxes = one warning
+        if (!skip) { skip = { start: t.start, end: t.end, text: t.text }; skipped.push(skip); } else skip.end = t.end;
+        t = s.getToken();
+        continue;
+      }
+      skip = null;
+      const T = TYPES[type];
+      const block = { type, kw: { start: t.start, end: t.end }, box: s.getNumber(), open: null, close: null, lines: [] };
+      const ob = s.getToken();
+      block.open = { start: ob.start, end: ob.end, ok: ob.text === '{' };
+      blocks.push(block);
+      let item = s.getNumber();
+      while (s.token.text[0] !== '}') {
+        if (s.token.type === 'eof') { hung = { start: block.kw.start, end: block.kw.end }; break; }   // *token is '\0': the C++ loops forever
+        const line = { block, item, w: s.getNumber(), num: s.getNumber(), flag: null, minutes: null, upgrade: null, start: item.start, end: 0 };
+        for (const c of T.cols) line[c] = s.getNumber();
+        line.end = (line.upgrade || line.minutes || line.flag || line.num).end;
+        block.lines.push(line);
+        addGift(boxes, block, line);
+        item = s.getNumber();
+      }
+      if (hung) break;
+      block.close = { start: s.token.start, end: s.token.end };
+      t = s.getToken();
+    }
+    // CGiftboxMan::Verify: the last line's running total gets 1,000,000 - nSum (always exactly 1,000,000)
+    for (const b of boxes.values()) if (b.cum.length) b.cum[b.cum.length - 1] = u32(b.cum[b.cum.length - 1] + TOTAL - b.sum);
+    return { file: file.name, blocks, boxes, skipped, hung, lexDiags: s.diags.filter(d => d.code !== 'E_UNDEF') };
+  }
+  // CGiftboxMan::AddItem: nSum += dwProbability; adwProbability[i] = nSum (int, kept as DWORD)
+  function addGift(boxes, block, line) {
+    const id = u32(block.box.value);
+    let b = boxes.get(id);
+    if (!b) { b = { id, define: block.box.define || null, blocks: [], lines: [], sum: 0, cum: [] }; boxes.set(id, b); }
+    if (!b.blocks.includes(block)) b.blocks.push(block);
+    line.weight = u32(Math.imul(u32(line.w.value), TYPES[block.type].prec));
+    b.sum = i32(b.sum + line.weight);
+    b.cum.push(u32(b.sum));
+    b.lines.push(line);
+  }
+  const flagOf = l => (l.flag ? l.flag.value & 0xff : 0);          // BYTE nFlag
+  const minutesOf = l => (l.minutes ? l.minutes.value : 0);
+  const upgradeOf = l => (l.upgrade ? l.upgrade.value : 0);
+
+  // CGiftboxMan::Open: the first line whose running total is above the roll. -> chance (0..1) per line
+  function chances(box) {
+    const out = [];
+    let covered = 0;                     // rolls below this already picked an earlier line
+    for (const c of box.cum) {
+      const top = Math.min(c, TOTAL);
+      out.push(Math.max(0, top - covered) / TOTAL);
+      covered = Math.max(covered, top);
+    }
+    return out;
+  }
+
+  // ---- propPackItem.inc ----
+  // -> { file, blocks, boxes: Map(id -> pack), stopped: {start, end, pack} | null, hung }
+  //   block = { box, span, open, close, lines: [{ block, item, upgrade, num, start, end, loaded }] }
+  //   pack  = { id, define, blocks, lines (loaded only), span: the last block's minutes }
+  function loadPacks(file, ctx) {
+    const s = new Script(file.text, { file: file.name, defines: ctx.defines, strings: ctx.strings, diags: [] });
+    const blocks = [], boxes = new Map();
+    let stopped = null, hung = null, t = s.getToken();
+    while (t.type !== 'eof') {
+      if (t.text === 'PackItem') {
+        const block = { kw: { start: t.start, end: t.end }, box: s.getNumber(), span: s.getNumber(), open: null, close: null, lines: [] };
+        const ob = s.getToken();
+        block.open = { start: ob.start, end: ob.end, ok: ob.text === '{' };
+        blocks.push(block);
+        const id = u32(block.box.value);
+        let item = s.getNumber();
+        while (s.token.text[0] !== '}') {
+          if (s.token.type === 'eof') { hung = { start: block.kw.start, end: block.kw.end }; break; }
+          const line = { block, item, upgrade: s.getNumber(), num: s.getNumber(), start: item.start, end: 0, loaded: true };
+          line.end = line.num.end;
+          block.lines.push(line);
+          let p = boxes.get(id);
+          if (!p) { p = { id, define: block.box.define || null, blocks: [], lines: [], span: 0, spanRec: null }; boxes.set(id, p); }
+          if (!p.blocks.includes(block)) p.blocks.push(block);
+          if (p.lines.length === MAX_ITEM_PER_PACK) {         // CPackItem::AddItem returns FALSE: LoadPackItem stops here
+            line.loaded = false;
+            stopped = { start: line.start, end: line.end, pack: id };
+            break;
+          }
+          p.lines.push(line);
+          item = s.getNumber();
+        }
+        if (stopped || hung) break;
+        block.close = { start: s.token.start, end: s.token.end };
+        const p = boxes.get(id);                               // Open( dwPackItem ): only when a line was added
+        if (p) { p.span = block.span.value; p.spanRec = block.span; }
+      }
+      t = s.getToken();
+    }
+    return { file: file.name, blocks, boxes, stopped, hung, lexDiags: s.diags.filter(d => d.code !== 'E_UNDEF') };
+  }
+
+  // ---- both files ----
+  // ctx: { defines, strings } -> { gift, pack } (either null when its file is missing)
+  function loadBoxes(files, ctx) {
+    const g = files.get(GIFT.toLowerCase()), p = files.get(PACK.toLowerCase());
+    return { gift: g ? loadGiftboxes(g, ctx) : null, pack: p ? loadPacks(p, ctx) : null };
+  }
+
+  // ---- checks ----
+  // ctx: { items: Map id -> Spec_Item row, original: { gift: Set ids, pack: Set ids } (ids when the task opened) }
+  function validateBoxes(model, ctx) {
+    const out = [];
+    const items = ctx.items || new Map();
+    const add = (file, d) => out.push(Object.assign({ module: 'boxes', file }, d));
+    const nameOf = num => num.define || String(u32(num.value));
+    const packMax = id => { const it = items.get(u32(id)); return it ? u32(FRE.specItem.get(it, 'dwPackMax')) : null; };
+    function lineChecks(file, boxName, l, k) {
+      const key = `${boxName}|${nameOf(l.item)}|${k}`;
+      if (l.item.unresolved) add(file, { code: 'BX_UNDEF', severity: 'BLOCK', start: l.item.start, end: l.item.end, key: `BX_UNDEF|${key}`,
+        message: `${boxName}: ${l.item.tokens[l.item.tokens.length - 1].raw || '?'} is not defined: the server reads it as item 0 and crashes when this line is given` });
+      else if (!items.has(u32(l.item.value))) add(file, { code: 'BX_NO_PROP', severity: 'BLOCK', start: l.item.start, end: l.item.end, key: `BX_NO_PROP|${key}`,
+        message: `${boxName}: ${nameOf(l.item)} has no row in Spec_Item.txt: the server crashes when this line is given (GetProp() is NULL)` });
+      const n = l.num.value, max = packMax(l.item.value);
+      if (n < 1) add(file, { code: 'BX_NUM_ZERO', severity: 'BLOCK', start: l.num.start, end: l.num.end, key: `BX_NUM_ZERO|${key}`,
+        message: `${boxName}: ${nameOf(l.item)} has count ${n}: it must be at least 1` });
+      else if (max !== null && n > max) add(file, { code: 'BX_NUM_STACK', start: l.num.start, end: l.num.end, key: `BX_NUM_STACK|${key}`,
+        // a line already like this when the task opened works (it takes more slots): WARN; one added or changed here: BLOCK (the user's rule)
+        severity: ctx.original && ctx.original.stack && ctx.original.stack.has(`${boxName}|${nameOf(l.item)}|${n}`) ? 'WARN' : 'BLOCK',
+        message: `${boxName}: ${nameOf(l.item)} ×${FRE.num.group(n)} is more than one bag slot holds (max ${FRE.num.group(max)}): it needs ${Math.ceil(n / Math.max(1, max))} free slots, and with fewer the item is lost. Add a second line for more` });
+    }
+    const g = model.gift, p = model.pack;
+    if (g) {
+      for (const d of g.lexDiags) add(g.file, Object.assign({ key: `${d.code}|${g.file}|${d.message}` }, d));
+      if (g.hung) add(g.file, { code: 'BX_BRACES', severity: 'BLOCK', start: g.hung.start, end: g.hung.end, key: `BX_BRACES|${GIFT}`,
+        message: `${GIFT}: a box block is never closed with }: the server loops forever at startup` });
+      for (const sk of g.skipped) add(g.file, { code: 'BX_SKIPPED', severity: 'WARN', start: sk.start, end: sk.end, key: `BX_SKIPPED|${GIFT}|${sk.text}`,
+        message: `"${sk.text}" is not GiftBox / GiftBox2-6: the server skips these words one by one until the next box` });
+      for (const b of g.boxes.values()) {
+        const name = b.define || String(b.id), at = b.blocks[0].kw;
+        if (b.blocks.length > 1) add(g.file, { code: 'BX_DUP', severity: 'WARN', start: b.blocks[1].kw.start, end: b.blocks[1].kw.end, key: `BX_DUP|${name}`,
+          message: `${name} has ${b.blocks.length} blocks: the server adds their lines together into one box` });
+        if (b.lines.length > MAX_GIFTBOX_ITEM) add(g.file, { code: 'BX_TOO_MANY', severity: 'BLOCK', start: at.start, end: at.end, key: `BX_TOO_MANY|${name}`,
+          message: `${name} has ${b.lines.length} lines: a random box holds at most ${MAX_GIFTBOX_ITEM} (the server does not check and writes past the end)` });
+        if (!items.has(b.id)) add(g.file, { code: 'BX_NOT_ITEM', severity: 'WARN', start: b.blocks[0].box.start, end: b.blocks[0].box.end, key: `BX_NOT_ITEM|${name}`,
+          message: `${name} is not an item in Spec_Item.txt: nobody can own this box` });
+        if (p && p.boxes.has(b.id)) add(g.file, { code: 'BX_BOTH', severity: 'BLOCK', start: at.start, end: at.end, key: `BX_BOTH|${name}`,
+          message: `${name} is also a set in ${PACK}: the set is used first (User.cpp:3193), so these random lines are never used` });
+        if (b.sum > TOTAL) {
+          const ch = chances(b), never = b.lines.filter((l, i) => ch[i] === 0).length;
+          add(g.file, { code: 'BX_OVER_100', severity: 'WARN', start: at.start, end: at.end, key: `BX_OVER_100|${name}`,
+            message: `${name}: the chances add up to ${pctText(b.sum / TOTAL)}. The server cuts the list at 100%: ${never ? `${never} line${never > 1 ? 's' : ''} never drop${never > 1 ? '' : 's'}, and ` : ''}the last line gets less` });
+        } else if (b.sum < TOTAL) add(g.file, { code: 'BX_UNDER_100', severity: 'INFO', start: at.start, end: at.end, key: `BX_UNDER_100|${name}`,
+          message: `${name}: the chances add up to ${pctText(b.sum / TOTAL)}; the server gives the missing ${pctText((TOTAL - b.sum) / TOTAL)} to the last line` });
+        b.lines.forEach((l, k) => lineChecks(g.file, name, l, k));
+      }
+    }
+    if (p) {
+      for (const d of p.lexDiags) add(p.file, Object.assign({ key: `${d.code}|${p.file}|${d.message}` }, d));
+      if (p.hung) add(p.file, { code: 'BX_BRACES', severity: 'BLOCK', start: p.hung.start, end: p.hung.end, key: `BX_BRACES|${PACK}`,
+        message: `${PACK}: a set block is never closed with }: the server loops forever at startup` });
+      if (p.stopped) {
+        const name = (p.boxes.get(p.stopped.pack) || {}).define || String(p.stopped.pack);
+        add(p.file, { code: 'BX_PACK_TOO_MANY', severity: 'BLOCK', start: p.stopped.start, end: p.stopped.end, key: `BX_PACK_TOO_MANY|${name}`,
+          message: `${name} has more than ${MAX_ITEM_PER_PACK} items: the server stops reading ${PACK} here, so every set after it is lost` });
+      }
+      for (const b of p.boxes.values()) {
+        const name = b.define || String(b.id);
+        if (b.blocks.length > 1) add(p.file, { code: 'BX_DUP', severity: 'WARN', start: b.blocks[1].kw.start, end: b.blocks[1].kw.end, key: `BX_DUP|${name}|set`,
+          message: `${name} has ${b.blocks.length} set blocks: the server adds their items together (time limit from the last block)` });
+        if (!items.has(b.id)) add(p.file, { code: 'BX_NOT_ITEM', severity: 'WARN', start: b.blocks[0].box.start, end: b.blocks[0].box.end, key: `BX_NOT_ITEM|${name}|set`,
+          message: `${name} is not an item in Spec_Item.txt: nobody can own this set` });
+        b.lines.forEach((l, k) => lineChecks(p.file, name, l, k));
+      }
+    }
+    // contents removed since the task opened (Remove contents…): the box item stays, opening it does nothing
+    if (ctx.original) {
+      for (const [file, ids, now] of [[GIFT, ctx.original.gift, g], [PACK, ctx.original.pack, p]]) {
+        if (!ids || !now) continue;
+        for (const id of ids) if (!now.boxes.has(id) && !(g && g.boxes.has(id)) && !(p && p.boxes.has(id))) {
+          const it = items.get(id), name = it ? it.define : String(id);
+          add(file, { code: 'BX_EMPTIED', severity: 'WARN', key: `BX_EMPTIED|${name}`,
+            message: `${it && it.name ? it.name : name} has no contents any more: players who own it can no longer open it (the item stays)` });
+        }
+      }
+    }
+    return out;
+  }
+  // "box|item|amount" of every line above the item's stack size (taken when the task opens; see BX_NUM_STACK)
+  function stackKeys(model, items) {
+    const out = new Set();
+    for (const src of [model.gift, model.pack]) if (src) for (const b of src.boxes.values()) for (const l of b.lines) {
+      const it = items.get(l.item.value >>> 0);
+      if (it && l.num.value > (FRE.specItem.get(it, 'dwPackMax') >>> 0)) out.add(`${b.define || String(b.id)}|${l.item.define || String(l.item.value >>> 0)}|${l.num.value}`);
+    }
+    return out;
+  }
+  const pctText = x => `${Number((x * 100).toFixed(4))}%`;
+
+  FRE.boxes = {
+    GIFT, PACK, TOTAL, TYPES, MAX_GIFTBOX_ITEM, MAX_ITEM_PER_PACK, FLAG_BOUND, FLAG_KEEP,
+    loadGiftboxes, loadPacks, loadBoxes, validateBoxes, stackKeys, chances, flagOf, minutesOf, upgradeOf, pctText,
+  };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/dds.js ----
+// DDS pictures (Client/Item/*.dds: the item icons, mostly 32x32) for the Boxes task.
+// Formats found in Client/Item (2026-10-08): uncompressed A1R5G5B5 (4,015 files), A8R8G8B8 (179), R8G8B8 (60),
+// A8B8G8R8 (13), A4R4G4B4 (9), X1R5G5B5 (4), and DXT1 (33), DXT3 (24), DXT5 (122). The magenta key colour
+// (255, 0, 255) is drawn transparent, as the game draws item icons.
+// decode() is a plain function (tested against an independent Python decode in tools/oracle_sim.py dds).
+(function (FRE) {
+  'use strict';
+  const rd32 = (b, o) => (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
+  const rd16 = (b, o) => b[o] | (b[o + 1] << 8);
+  const DDPF_ALPHAPIXELS = 0x1, DDPF_FOURCC = 0x4, DDSD_PITCH = 0x8;
+
+  // one channel of an uncompressed pixel, scaled to 0..255 (rounded)
+  function channel(px, mask) {
+    if (!mask) return null;
+    let shift = 0;
+    while (!((mask >>> shift) & 1)) shift++;
+    const max = mask >>> shift, v = (px & mask) >>> shift;
+    return Math.floor((v * 255 + (max >>> 1)) / max);
+  }
+  const c565 = c => [((c >> 11) & 31) << 3 | ((c >> 11) & 31) >> 2, ((c >> 5) & 63) << 2 | ((c >> 5) & 63) >> 4, (c & 31) << 3 | (c & 31) >> 2];
+
+  // bytes -> { w, h, rgba: Uint8ClampedArray, format } or null (not a DDS / unknown format)
+  function decode(b) {
+    if (!b || b.length < 128 || rd32(b, 0) !== 0x20534444) return null;   // 'DDS '
+    const hdrFlags = rd32(b, 8), h = rd32(b, 12), w = rd32(b, 16), pitch = rd32(b, 20);
+    const pfFlags = rd32(b, 80), four = String.fromCharCode(b[84], b[85], b[86], b[87]);
+    const bits = rd32(b, 88), rm = rd32(b, 92), gm = rd32(b, 96), bm = rd32(b, 100), am = rd32(b, 104);
+    if (!w || !h || w > 4096 || h > 4096) return null;
+    const rgba = new Uint8ClampedArray(w * h * 4);
+    let format;
+    if (pfFlags & DDPF_FOURCC) {
+      if (four !== 'DXT1' && four !== 'DXT3' && four !== 'DXT5') return null;
+      format = four;
+      const blk = four === 'DXT1' ? 8 : 16;
+      let o = 128;
+      for (let by = 0; by < h; by += 4) for (let bx = 0; bx < w; bx += 4) {
+        if (o + blk > b.length) return null;
+        const alpha = new Array(16).fill(255);
+        let co = o;
+        if (four === 'DXT3') {
+          for (let i = 0; i < 16; i++) alpha[i] = ((b[o + (i >> 1)] >> ((i & 1) * 4)) & 15) * 17;
+          co = o + 8;
+        } else if (four === 'DXT5') {
+          const a0 = b[o], a1 = b[o + 1], pal = [a0, a1];
+          if (a0 > a1) for (let i = 2; i < 8; i++) pal.push(Math.floor(((8 - i) * a0 + (i - 1) * a1) / 7));
+          else { for (let i = 2; i < 6; i++) pal.push(Math.floor(((6 - i) * a0 + (i - 1) * a1) / 5)); pal.push(0, 255); }
+          let bitsA = 0n;
+          for (let i = 0; i < 6; i++) bitsA |= BigInt(b[o + 2 + i]) << BigInt(8 * i);
+          for (let i = 0; i < 16; i++) alpha[i] = pal[Number((bitsA >> BigInt(3 * i)) & 7n)];
+          co = o + 8;
+        }
+        const c0 = rd16(b, co), c1 = rd16(b, co + 2), p0 = c565(c0), p1 = c565(c1);
+        const cols = [p0.concat(255), p1.concat(255)];
+        if (c0 > c1 || four !== 'DXT1') {
+          cols.push([0, 1, 2].map(k => Math.floor((2 * p0[k] + p1[k]) / 3)).concat(255));
+          cols.push([0, 1, 2].map(k => Math.floor((p0[k] + 2 * p1[k]) / 3)).concat(255));
+        } else {
+          cols.push([0, 1, 2].map(k => (p0[k] + p1[k]) >> 1).concat(255));
+          cols.push([0, 0, 0, 0]);
+        }
+        const idx = rd32(b, co + 4);
+        for (let i = 0; i < 16; i++) {
+          const x = bx + (i & 3), y = by + (i >> 2);
+          if (x >= w || y >= h) continue;
+          const c = cols[(idx >>> (2 * i)) & 3], q = (y * w + x) * 4;
+          rgba[q] = c[0]; rgba[q + 1] = c[1]; rgba[q + 2] = c[2]; rgba[q + 3] = four === 'DXT1' ? c[3] : alpha[i];
+        }
+        o += blk;
+      }
+    } else {
+      if (bits !== 16 && bits !== 24 && bits !== 32) return null;
+      const bpp = bits / 8;
+      const row = (hdrFlags & DDSD_PITCH) && pitch >= w * bpp ? pitch : w * bpp;
+      if (128 + row * (h - 1) + w * bpp > b.length) return null;
+      const useA = (pfFlags & DDPF_ALPHAPIXELS) && am;
+      format = `${bits}-bit ${useA ? 'with' : 'no'} alpha`;
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const o = 128 + y * row + x * bpp;
+        const px = bpp === 2 ? rd16(b, o) : bpp === 3 ? (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16)) >>> 0 : rd32(b, o);
+        const q = (y * w + x) * 4;
+        rgba[q] = channel(px, rm) || 0; rgba[q + 1] = channel(px, gm) || 0; rgba[q + 2] = channel(px, bm) || 0;
+        rgba[q + 3] = useA ? channel(px, am) : 255;
+      }
+    }
+    for (let q = 0; q < rgba.length; q += 4) if (rgba[q] === 255 && rgba[q + 1] === 0 && rgba[q + 2] === 255) rgba[q + 3] = 0;   // the magenta key
+    return { w, h, rgba, format };
+  }
+
+  // An element that shows Client/Item/<file> once loaded (ctx.clientItemFile), drawn `scale` times bigger with
+  // crisp pixels; empty when there is no Client folder or no such file.
+  const cache = new Map();
+  function picture(ctx, file, { scale = 1, cls = '', title } = {}) {
+    const box = FRE.dom.h('span.dds-pic' + cls);
+    if (!file || !ctx.clientItemFile) return box;
+    const key = file.toLowerCase();
+    if (!cache.has(key)) cache.set(key, ctx.clientItemFile(file).then(decode).catch(() => null));
+    cache.get(key).then(img => {
+      if (!img) return;
+      const c = FRE.dom.h('canvas', { width: img.w, height: img.h, title: title || file });
+      c.style.width = img.w * scale + 'px'; c.style.height = img.h * scale + 'px';
+      c.getContext('2d').putImageData(new ImageData(img.rgba, img.w, img.h), 0, 0);
+      box.appendChild(c);
+    });
+    return box;
+  }
+
+  FRE.dds = { decode, picture };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- loaders/exchange.js ----
 // Exchange_Script.txt loader, ported from CExchange::Load_Script (_Common/Exchange.cpp:32).
 //   MMI_x { DESCRIPTION { TID.. }  SET TID { RESULTMSG { TID.. } CONDITION { II_x n .. }
@@ -5015,6 +5382,203 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "48+", "when
     resultExchange, clientReply, rowView, stockedPlayer, run, fmtText, countOf, freeSlots, bagIsFull, allSlots, short, RESULT, MAX_INVENTORY, MAX_INVENTORY_FREE, FILLER, NULL_ID };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/boxes-sim.js ----
+// What happens when a player uses a box: a port of the WorldServer's use-item path for boxes, run on what
+// loaders/boxes.js loads.
+//   open        <- CUser::OnDoUseItem (WORLDSERVER/User.cpp:3133-3217): IsUsableState (3102: in a trade
+//                  TID_GAME_TRADELIMITUSING), IsUsableItem (Item.cpp:18), expired (3151), locked
+//                  (RefuseLockedItem, __ITEM_LOCK, 3163 / 746), then the pack first (3193), then DoUseGiftbox (3208)
+//   usePack     <- CUser::DoUsePackItem (User.cpp:2937-2981) + CItemElem::IsBinds (Item.cpp:434)
+//   useGiftbox  <- CUser::DoUseGiftbox (User.cpp:2983-3042) + CGiftboxMan::Open (Project.cpp:4181-4222)
+//   addItem     <- CMover::CreateItem (Mover.cpp:2757) -> CItemContainer::IsFull / Add (Item.h:694-800): a new item
+//                  joins a stack with the same id, flag and bCharged only. The time limit and the +N are NOT compared,
+//                  so a timed or upgraded item that joins a stack takes that stack's time limit / +N.
+// Not modelled: DoUseItem, which runs before DoUseGiftbox and whose result is ignored (it can show the level
+// message; a box row copied from an existing box does nothing there); IsBinds' random-option / level-down rules
+// (no box has them); the item logs; serial numbers. The server's random generator is one global; here each run
+// has its own seed, so the rolls are repeatable.
+(function (FRE) {
+  'use strict';
+  const X = () => FRE.exchangeSim, Bx = () => FRE.boxes;
+  const NULL_ID = -1;
+  const BINDS = 0x02;                    // CItemElem::binds (Item.h:132)
+  const EXPIRED = 0x01;                  // CItemElem::expired
+  const IP_FLAG_BINDS = 0x01;            // ProjectCmn.h:360
+  const short = v => (v << 16) >> 16;
+
+  // Everything the simulator needs from the loaded files: the exchange simulator's items + a few more fields.
+  function envFor(ws, model) {
+    const base = X().envFromWorkspace(ws), D = ws.defines.defines;
+    const k = name => (D.has(name) ? D.get(name) : null);
+    return {
+      model: model || ws.models.boxes,
+      IK2_WARP: k('IK2_WARP'), IK3_EGG: k('IK3_EGG'), IK3_PET: k('IK3_PET'),
+      prop(id) {
+        const p = base.prop(id);
+        if (!p) return null;
+        const it = ws.itemById(id);
+        if (!it) return p;                                  // the FILLER stand-in
+        const g = f => FRE.specItem.get(it, f);
+        // CProject::OnAfterLoadPropItem (Project.cpp:4988-5000): dwFlag "=" (NULL_ID) becomes 0; IK3_EVENTMAIN / IK3_BINDS get IP_FLAG_BINDS
+        let flag = g('dwFlag');
+        if (flag === -1) flag = 0;
+        const ik3 = g('dwItemKind3');
+        if (ik3 !== -1 && (ik3 === k('IK3_EVENTMAIN') || ik3 === k('IK3_BINDS'))) flag |= IP_FLAG_BINDS;
+        return Object.assign({}, p, { binds: (flag & IP_FLAG_BINDS) === IP_FLAG_BINDS, ik2: g('dwItemKind2'), ik3, parts: g('dwParts') });
+      },
+      text: base.text,
+    };
+  }
+  const nameOf = (env, id) => { const p = env.prop(id); return p ? p.name : `item ${id >>> 0}`; };
+
+  // CItemContainer::Add after IsFull (Item.h:726): stacks first (same id, flag, bCharged; not when dwPackMax is 1),
+  // then empty slots. A new slot keeps the item's time limit and +N; a stack keeps its own.
+  // -> { ok, stacked: number put on existing stacks, slots: [bag positions it went to] }
+  function addItem(env, p, it) {
+    const pr = env.prop(it.id);
+    if (!pr || it.id === 0) return { ok: false, stacked: 0, slots: [] };   // CreateItem: m_dwItemId == 0 / Add: GetProp() NULL
+    const pack = short(pr.packMax), search = Math.min(p.unlocked, X().MAX_INVENTORY);
+    let n = short(it.num), stacked = 0;
+    if (X().bagIsFull(env, p, it.id, n, it.flag, it.charged)) return { ok: false, stacked: 0, slots: [] };
+    const slots = [];
+    if (pr.packMax !== 1) {
+      for (let i = 0; i < search; i++) {
+        const e = p.slots[i];
+        if (e && e.id === it.id && e.num < pack && e.flag === it.flag && e.charged === it.charged) {
+          slots.push(i);
+          if (e.num + n > pack) { stacked += pack - e.num; n -= pack - e.num; e.num = pack; }
+          else { e.num += n; stacked += n; n = 0; break; }
+        }
+      }
+    }
+    if (n > 0) {
+      for (let i = 0; i < search; i++) {
+        if (p.slots[i]) continue;
+        const put = n > pack ? pack : n;
+        p.slots[i] = { id: it.id, num: put, flag: it.flag, charged: it.charged, busy: false, keep: it.keep || 0, upgrade: it.upgrade || 0 };
+        slots.push(i);
+        n -= put;
+        if (n <= 0) break;
+      }
+    }
+    return { ok: true, stacked, slots };
+  }
+
+  // CItemElem::IsBinds for the box itself: a time limit (unless IK2_WARP), the IP_FLAG_BINDS prop flag, or the binds flag
+  function boxBinds(env, box) {
+    const pr = env.prop(box.id);
+    if (!pr) return false;
+    if (box.keep && pr.ik2 !== env.IK2_WARP) return true;
+    if (pr.binds) return true;
+    return (box.flag & BINDS) === BINDS;
+  }
+
+  // One use of the box in bag position `at`. Changes p. opts: { trading }
+  // -> { refused: null | 'trade' | 'unusable' | 'expired' | 'locked' | 'space' | 'not-a-box', texts, used, kind: 'set' | 'random',
+  //      roll, line (random: the line index picked), got: [{ line, id, num, flag, charged, keep, upgrade, stacked }], lost: [...], crash }
+  function open(env, p, at, rnd, opts = {}) {
+    const box = p.slots[at];
+    const res = { refused: null, texts: [], used: false, kind: null, roll: null, line: null, got: [], lost: [], crash: null };
+    if (!box) throw new Error('no item in that bag slot');
+    if (opts.trading) { res.refused = 'trade'; res.texts.push(env.text('TID_GAME_TRADELIMITUSING') || 'TID_GAME_TRADELIMITUSING'); return res; }
+    if (at >= p.unlocked || box.busy) { res.refused = 'unusable'; return res; }   // IsUsableItem: nothing happens, no message
+    const pr = env.prop(box.id);
+    if (pr && pr.parts === NULL_ID && (box.flag & EXPIRED)) {
+      res.refused = 'expired';
+      res.texts.push(env.text(pr.ik3 === env.IK3_EGG ? 'TID_GAME_PET_DEAD' : 'TID_GAME_ITEM_EXPIRED') || 'TID_GAME_ITEM_EXPIRED');
+      return res;
+    }
+    if (pr && pr.parts === NULL_ID && pr.ik3 !== env.IK3_EGG && pr.ik3 !== env.IK3_PET && box.locked) {
+      res.refused = 'locked';
+      res.texts.push(`${pr.name} is locked. Unlock it (Shift + left-click in your inventory) before using it.`);
+      return res;
+    }
+    const pack = env.model.pack ? env.model.pack.boxes.get(box.id >>> 0) : null;
+    if (pack) { res.kind = 'set'; usePack(env, p, at, pack, res); return res; }
+    res.kind = 'random';
+    useGiftbox(env, p, at, rnd, res);
+    return res;
+  }
+
+  function usePack(env, p, at, pack, res) {
+    const box = p.slots[at];
+    if (X().freeSlots(p) < pack.lines.length) { res.refused = 'space'; res.texts.push(env.text('TID_GAME_LACKSPACE') || 'TID_GAME_LACKSPACE'); return; }
+    const bound = boxBinds(env, box);
+    pack.lines.forEach((l, i) => {
+      const id = l.item.value >>> 0, pr = env.prop(id);
+      if (!pr) { res.crash = res.crash || `${l.item.define || id} has no Spec_Item row: GetProp()->bCharged crashes the server`; return; }
+      const it = { line: i, id, num: l.num.value, flag: bound ? BINDS : 0, charged: pr.charged, keep: pack.span, upgrade: l.upgrade.value };
+      const r = addItem(env, p, it);
+      it.stacked = r.stacked;
+      if (r.ok) { res.got.push(it); res.texts.push(fmt(env.text('TID_GAME_REAPITEM'), `"${nameOf(env, id)}"`)); }
+      else res.lost.push(it);                              // "// critical err": nothing is said
+    });
+    if (res.crash) return;
+    res.used = true;
+    take(p, at);
+  }
+
+  function useGiftbox(env, p, at, rnd, res) {
+    const box = p.slots[at];
+    res.roll = rnd.random(Bx().TOTAL);                       // Open: the roll comes before the box lookup
+    const g = env.model.gift ? env.model.gift.boxes.get(box.id >>> 0) : null;
+    if (!g) { res.refused = 'not-a-box'; return; }
+    const j = g.cum.findIndex(c => res.roll < c);
+    if (j < 0) { res.refused = 'not-a-box'; return; }        // Open returns FALSE (only with broken running totals)
+    res.line = j;
+    if (X().freeSlots(p) < 1) { res.refused = 'space'; res.texts.push(env.text('TID_GAME_LACKSPACE') || 'TID_GAME_LACKSPACE'); return; }
+    res.used = true;
+    take(p, at);                                             // the box goes first: its slot can take the item
+    const l = g.lines[j], id = l.item.value >>> 0, flag = Bx().flagOf(l);
+    const pr = env.prop(id);
+    const it = { line: j, id, num: l.num.value, flag: 0, charged: 0, keep: Bx().minutesOf(l), upgrade: Bx().upgradeOf(l) };
+    if (flag !== Bx().FLAG_KEEP) {
+      if (!pr) { res.crash = `${l.item.define || id} has no Spec_Item row: GetProp()->bCharged crashes the server`; return; }
+      it.flag = flag; it.charged = pr.charged;
+    }
+    const r = addItem(env, p, it);
+    it.stacked = r.stacked;
+    if (r.ok) { res.got.push(it); res.texts.push(fmt(env.text('TID_GAME_REAPITEM'), `"${nameOf(env, id)}"`)); }
+    else res.lost.push(it);
+  }
+  const take = (p, at) => { const b = p.slots[at]; b.num = short(b.num - 1); if (b.num <= 0) p.slots[at] = null; };   // UpdateItem( UI_NUM, n - 1 )
+  const fmt = (f, a) => (f ? X().fmtText(f, [a]) : `TID_GAME_REAPITEM ${a}`);
+
+  // A bag for a test: the box in slot 0, then `have` stacks, then filler items so exactly `free` slots stay empty.
+  // box: { id, num, bound, keep, locked, expired }
+  function bag(env, box, { free = 10, have = [], unlocked = X().MAX_INVENTORY_FREE } = {}) {
+    const items = [{ id: box.id >>> 0, num: box.num || 1, flag: (box.bound ? BINDS : 0) | (box.expired ? EXPIRED : 0), charged: (env.prop(box.id) || {}).charged || 0,
+      keep: box.keep || 0, locked: !!box.locked, upgrade: 0 }];
+    for (const h of have) items.push(Object.assign({ flag: 0, charged: (env.prop(h.id) || {}).charged || 0, keep: 0, upgrade: 0 }, h));
+    const fill = Math.max(0, unlocked - items.length - free);
+    for (let i = 0; i < fill; i++) items.push({ id: X().FILLER, num: 1 });
+    return X().player({ unlocked, items });
+  }
+
+  // "Open it N times": each open on a fresh copy of the same bag, one random sequence.
+  // -> { opens, used, refused: {why: n}, lines: Map(line -> { times, qty, lost, stacked }), lost, crash, sample, firstTexts }
+  function run(env, boxId, o = {}) {
+    const rnd = FRE.xRandom.rng(o.seed == null ? 1 : o.seed);
+    const start = bag(env, { id: boxId, num: 1, bound: o.bound, keep: o.keep, locked: o.locked, expired: o.expired }, { free: o.free, have: o.have || [] });
+    const out = { opens: 0, used: 0, refused: {}, lines: new Map(), lost: 0, crash: null, sample: null, texts: [] };
+    for (let i = 0; i < (o.n || 1000); i++) {
+      const p = X().clone(start);
+      const r = open(env, p, 0, rnd, { trading: o.trading });
+      out.opens++;
+      if (!out.sample) { out.sample = r; out.texts = r.texts; out.bag = p; }
+      if (r.crash) { out.crash = r.crash; break; }
+      if (r.refused) { out.refused[r.refused] = (out.refused[r.refused] || 0) + 1; continue; }
+      out.used++;
+      for (const it of r.got) { const e = lineStat(out, it.line); e.times++; e.qty += short(it.num); if (it.stacked) e.stacked++; }
+      for (const it of r.lost) { lineStat(out, it.line).lost++; out.lost++; }
+    }
+    return out;
+  }
+  function lineStat(out, i) { if (!out.lines.has(i)) out.lines.set(i, { times: 0, qty: 0, lost: 0, stacked: 0 }); return out.lines.get(i); }
+
+  FRE.boxesSim = { envFor, open, addItem, boxBinds, bag, run, BINDS, EXPIRED };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- loaders/donation-buy.js ----
 // What happens when a player buys in the Donation Shop: a port of the client's confirm dialog
 // and the WorldServer's handler (custom __DONATIONSHOP, commit 7d7df4f9), run on the catalog
@@ -5458,6 +6022,21 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "48+", "when
     M_NO_GOLD: ['The monster has no DropGold line, so it gives no Penya. PenyaTable.txt only changes a DropGold roll; it never adds one.', 'Add Penya if players should get some.'],
     M_GOLD_LATE: ['DropGold comes after drop lines that count toward the monster\'s max items per kill. When that many items drop first, the server stops reading the list and the Penya is skipped.', 'Move DropGold up, right after Maxitem.'],
     M_GEN_EDITED: ['This drop was written by one of the gen_*.ps1 scripts. Running that script again rewrites its block and undoes this edit.', 'Change the script too, or don\'t run it again.'],
+    // Boxes (loaders/boxes.js: propGiftbox.inc random boxes, propPackItem.inc sets)
+    BX_TOO_MANY: ['A random box holds at most 128 lines (MAX_GIFTBOX_ITEM). The server does not check it: line 129 onward writes past the end of the box in memory.', 'Remove lines, or split the items over two boxes.'],
+    BX_PACK_TOO_MANY: ['A set holds at most 24 items (MAX_ITEM_PER_PACK). At the 25th the server stops reading propPackItem.inc, so this set and every set after it in the file are lost.', 'Remove items, or split the set over two boxes.'],
+    BX_BOTH: ['The box is both a set (propPackItem.inc) and a random box (propGiftbox.inc). When it is used, the server checks sets first, so the random lines are never used.', 'Remove one of the two.'],
+    BX_UNDEF: ['The item name is not defined, so the server reads it as item 0. Giving that item crashes the server (GetProp() is NULL).', 'Fix the spelling, or pick an item that exists.'],
+    BX_NO_PROP: ['The item has no row in Spec_Item.txt. When the box gives it, the server reads the item\'s settings from nothing and crashes.', 'Pick an item that exists in Spec_Item.txt.'],
+    BX_BRACES: ['A box block is never closed with }. The server reads to the end of the file and loops forever at startup.', 'Close the block with } on its own line.'],
+    BX_NUM_ZERO: ['The count is 0 or less: the player would get nothing (or a broken stack).', 'Use a count of 1 or more.'],
+    BX_NUM_STACK: ['The count is more than one bag slot holds (the item\'s stack size, dwPackMax). The server spreads it over several slots; when the bag has fewer free slots, the box is used up and the item is lost (a random box checks for only 1 free slot; a set checks 1 slot per line).', 'Lower the count to the stack size, and add another line for more.'],
+    BX_OVER_100: ['The chances add up to more than 100%. The server rolls 0 - 999,999 and walks down the list, so lines past 100% never drop, and the last line gets what is left (the server sets its running total to exactly 100%).', 'Lower the chances; the editor keeps the total at 100% when you change one.'],
+    BX_UNDER_100: ['The chances add up to less than 100%. The server gives the missing part to the last line, so it drops more often than its number says. The table shows the real chances.', 'Nothing to do if that is fine. Changing any chance in the editor makes the numbers add up to 100%.'],
+    BX_DUP: ['The same box appears in two blocks. The server adds their lines together into one box (a set takes its time limit from the last block).', 'Move the lines into one block.'],
+    BX_NOT_ITEM: ['The box id has no row in Spec_Item.txt, so no player can own this box.', 'Nothing to do unless the box should exist; then add the item first.'],
+    BX_SKIPPED: ['The server does not know this word here (only GiftBox and GiftBox2 - GiftBox6 start a box). It skips words one by one until the next box keyword, so whatever box this was is not loaded.', 'Fix the keyword (exact case: GiftBox, GiftBox3 …).'],
+    BX_EMPTIED: ['The box no longer has any contents. Players who already own it keep the item, but using it does nothing.', 'Undo if that was not meant, or remove the box from shops and drops too.'],
   };
 })(globalThis.FRE = globalThis.FRE || {});
 
@@ -6868,6 +7447,218 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "48+", "when
   FRE.dropsOps = { addDrop, setDrop, removeEntry, setGold, setMaxitem, addKind, dropLine, MAX_COUNT, MAX_UPGRADE, MAX_MAXITEM };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- edit/boxes-ops.js ----
+// Box edits as minimal splices.
+//   propGiftbox.inc: UTF-16 (any text may be inserted), CRLF. A box is one GiftBoxN block; its type sets the
+//     chance unit and the columns (FRE.boxes.TYPES). Chances are kept at exactly 100% (1,000,000): changing one line
+//     moves the others in proportion (exchangeOps.rebalance), like the exchange chances.
+//     When an edit needs a column or a finer chance than the block's type has, the block is rewritten to the
+//     smallest type that holds it (the keyword and each line's values; comments and gaps are kept).
+//   propPackItem.inc: CP949 bytes (ASCII inserts only), CRLF; `<item> <+N> <amount>` lines and the block's minutes.
+// New lines copy the indent, the gaps and the line ending of the block's last line.
+(function (FRE) {
+  'use strict';
+  const T = FRE.textOps;
+  const Bx = () => FRE.boxes;
+  const TOTAL = 1000000;
+  const MAX_NUM = 32767;                 // CItemElem::m_nItemNum is a short
+  const MAX_UPGRADE = 20;
+  const MAX_MINUTES = 2147483647;
+  // the types that hold each set of columns, smallest first
+  const CANDIDATES = { none: ['GiftBox', 'GiftBox2'], flag: ['GiftBox3', 'GiftBox5'], minutes: ['GiftBox4', 'GiftBox5'], upgrade: ['GiftBox6'] };
+  const COL_ORDER = ['flag', 'minutes', 'upgrade'];
+
+  function onlyBlock(box, what) {
+    if (box.blocks.length !== 1) throw new Error(`${box.define || box.id} has ${box.blocks.length} ${what} blocks: merge them in the file first`);
+    const b = box.blocks[0];
+    if (!b.close) throw new Error(`${box.define || box.id}'s block is not closed with }: fix the file first`);
+    return b;
+  }
+  function checkItem(define, defines) {
+    T.checkDefine(define);
+    if (!defines.has(define)) throw new Error(`${define} is not defined`);
+  }
+  const checkNum = n => T.checkAmount(n, 1, MAX_NUM, 'The count');
+  const checkUpgrade = n => T.checkAmount(n, 0, MAX_UPGRADE, 'The upgrade (+N)');
+  const checkMinutes = n => T.checkAmount(n, 0, MAX_MINUTES, 'The time limit (minutes)');
+  const checkFlag = f => { if (![0, Bx().FLAG_BOUND, Bx().FLAG_KEEP].includes(f)) throw new Error('flag must be 0, 2 (bound) or 4 (keep the item\'s own settings)'); };
+
+  // ---------------------------------------------------------------- random boxes
+  // The box as a list the ops change: { src (line | null), define, w (out of 1,000,000), num, flag, minutes, upgrade }
+  function stateOf(box) {
+    return box.lines.map(l => ({ src: l, define: l.item.define || String(l.item.value >>> 0), w: l.weight, num: l.num.value,
+      flag: Bx().flagOf(l), minutes: Bx().minutesOf(l), upgrade: Bx().upgradeOf(l) }));
+  }
+  const colsOf = st => {
+    const has = c => st.some(x => x[c]);
+    return has('upgrade') ? 'upgrade' : has('minutes') ? 'minutes' : has('flag') ? 'flag' : 'none';
+  };
+  // the type to write: the block's own type when it still fits, else the smallest that holds the columns and the chances
+  function chooseType(current, st) {
+    const fits = ty => { const T0 = Bx().TYPES[ty], need = colsOf(st); return (need === 'none' || T0.cols.includes(need)) && st.every(x => x.w % T0.prec === 0); };
+    if (fits(current)) return current;
+    const list = CANDIDATES[colsOf(st)];
+    return list.find(fits) || list[list.length - 1];
+  }
+  // chances as multiples of `prec` that still add up to 1,000,000 (the largest line takes the rounding)
+  function quantize(ws, prec) {
+    const out = ws.map(w => Math.round(w / prec) * prec);
+    const diff = TOTAL - out.reduce((a, b) => a + b, 0);
+    if (diff && out.length) { let k = 0; out.forEach((w, i) => { if (w > out[k]) k = i; }); out[k] += diff; }
+    return out;
+  }
+  // rebalance in the finest unit the change needs: the block's own unit when the typed chance is a multiple of it
+  function balance(st, j, u, cur) {
+    const prec = Bx().TYPES[cur].prec;
+    const unit = j == null || u % prec === 0 ? prec : (u % 10 === 0 ? 10 : 1);
+    const vals = FRE.exchangeOps.rebalance(st.map(x => Math.floor(x.w / unit)), j, j == null ? 0 : Math.round(u / unit), TOTAL / unit);
+    vals.forEach((v, i) => { st[i].w = v * unit; });
+  }
+
+  // The values after the item on one line, in the type's columns, joined with the line's own gaps.
+  function valuesText(text, type, x, src) {
+    const T0 = Bx().TYPES[type], vals = [x.w / T0.prec, x.num, ...T0.cols.map(c => x[c])];
+    const toks = src ? [src.w, src.num, src.flag, src.minutes, src.upgrade].filter(Boolean) : [];
+    let s = '';
+    vals.forEach((v, i) => {
+      if (i) s += i < toks.length ? text.slice(toks[i - 1].end, toks[i].start) || '\t' : '\t';
+      s += String(v);
+    });
+    return s;
+  }
+  // a new line laid out like `sample` (the gap after the item is copied)
+  function newLineText(text, type, x, sample) {
+    const gap = sample ? text.slice(sample.item.end, sample.w.start) || '\t' : '\t';
+    return x.define + gap + valuesText(text, type, x, sample);
+  }
+
+  // Write `st` (the box after the change) over the box's block. -> splices (with .type = the type written)
+  function writeRandom(text, box, st) {
+    const b = onlyBlock(box, 'random box');
+    const type = chooseType(b.type, st);
+    const ws = quantize(st.map(x => x.w), Bx().TYPES[type].prec);
+    st.forEach((x, i) => { x.w = ws[i]; });
+    for (const x of st) {
+      T.checkAmount(x.w, 0, TOTAL, 'A chance'); checkNum(x.num); checkFlag(x.flag); checkMinutes(x.minutes); checkUpgrade(x.upgrade);
+    }
+    const out = [];
+    if (type !== b.type) out.push(...T.replaceSpan(b.kw, type));
+    const kept = new Set(st.filter(x => x.src).map(x => x.src));
+    for (const l of b.lines) if (!kept.has(l)) out.push(...T.removeRow(text, l));
+    let anchor = null;
+    for (const x of st) {
+      if (!x.src) continue;
+      anchor = x.src;
+      const was = { define: x.src.item.define || String(x.src.item.value >>> 0) };
+      if (x.define !== was.define) out.push(...T.replaceSpan({ start: x.src.item.start, end: x.src.item.end }, x.define));
+      const now = valuesText(text, type, x, x.src), old = text.slice(x.src.w.start, x.src.end);
+      if (now !== old) out.push({ start: x.src.w.start, end: x.src.end, insert: now });
+    }
+    const sample = b.lines[b.lines.length - 1] || null;
+    let rows = st.filter(x => !x.src).map(x => newLineText(text, type, x, sample));
+    if (rows.length) {
+      if (anchor) out.push(...T.insertRowAfter(text, { start: anchor.start, end: anchor.end }, rows.join(T.eolAt(text, anchor.start) + T.indentOf(text, anchor.start))));
+      else out.push(...T.insertRowBelowLine(text, b.open.start, rows.join(T.eolAt(text, b.open.start) + T.indentOf(text, b.open.start) + '\t')));
+    }
+    out.type = type;
+    out.retyped = type !== b.type ? type : null;
+    return out;
+  }
+
+  // set line j's chance to u (out of 1,000,000); the others move so the total stays 100%
+  function setChance(text, box, j, u) {
+    T.checkAmount(u, 0, TOTAL, 'The chance');
+    const st = stateOf(box);
+    balance(st, j, u, onlyBlock(box, 'random box').type);
+    return writeRandom(text, box, st);
+  }
+  // change some of { define, num, flag, minutes, upgrade } of line j (the chances stay)
+  function setLine(text, box, j, d, defines) {
+    const st = stateOf(box);
+    if (d.define != null && d.define !== st[j].define) checkItem(d.define, defines);
+    Object.assign(st[j], pick(d));
+    return writeRandom(text, box, st);
+  }
+  // a new line with chance u; the others shrink in proportion
+  function addLine(text, box, d, defines) {
+    checkItem(d.define, defines);
+    const st = stateOf(box);
+    st.push(Object.assign({ src: null, define: d.define, w: 0, num: 1, flag: 0, minutes: 0, upgrade: 0 }, pick(d)));
+    balance(st, st.length - 1, d.w, onlyBlock(box, 'random box').type);
+    return writeRandom(text, box, st);
+  }
+  // remove line j; the others grow back to 100%
+  function removeLine(text, box, j) {
+    const st = stateOf(box);
+    if (st.length < 2) throw new Error('A random box needs at least one item: use "Remove contents" to empty it');
+    st.splice(j, 1);
+    balance(st, null, 0, onlyBlock(box, 'random box').type);
+    return writeRandom(text, box, st);
+  }
+  // share 100% evenly over the lines
+  function spreadEvenly(text, box) {
+    const st = stateOf(box), n = st.length, cur = onlyBlock(box, 'random box').type, prec = Bx().TYPES[cur].prec;
+    const units = TOTAL / prec, base = Math.floor(units / n), extra = units - base * n;
+    st.forEach((x, i) => { x.w = (base + (i < extra ? 1 : 0)) * prec; });
+    return writeRandom(text, box, st);
+  }
+  function pick(d) {
+    const o = {};
+    for (const k of ['define', 'num', 'flag', 'minutes', 'upgrade']) if (d[k] != null) o[k] = d[k];
+    return o;
+  }
+
+  // ---------------------------------------------------------------- sets
+  function lineLikePack(text, sample, vals) {
+    const toks = sample ? [sample.item, sample.upgrade, sample.num] : [];
+    let s = '';
+    vals.forEach((v, i) => { if (i) s += i < toks.length ? text.slice(toks[i - 1].end, toks[i].start) || '\t' : '\t'; s += String(v); });
+    return s;
+  }
+  function addPackLine(text, box, d, defines) {
+    checkItem(d.define, defines); checkNum(d.num); checkUpgrade(d.upgrade || 0);
+    const b = box.blocks[box.blocks.length - 1];
+    if (!b.close) throw new Error(`${box.define || box.id}'s block is not closed with }: fix the file first`);
+    if (box.lines.length >= Bx().MAX_ITEM_PER_PACK) throw new Error(`A set holds at most ${Bx().MAX_ITEM_PER_PACK} items (one more stops the server reading every set after it)`);
+    const last = b.lines[b.lines.length - 1];
+    const row = lineLikePack(text, last, [d.define, d.upgrade || 0, d.num]);
+    return last ? T.insertRowAfter(text, { start: last.start, end: last.end }, row) : T.insertRowBelowLine(text, b.open.start, row);
+  }
+  function setPackLine(text, l, d, defines) {
+    const out = [];
+    if (d.define != null && d.define !== (l.item.define || String(l.item.value >>> 0))) { checkItem(d.define, defines); out.push(...T.replaceSpan(l.item, d.define)); }
+    if (d.upgrade != null && d.upgrade !== l.upgrade.value) { checkUpgrade(d.upgrade); out.push(...T.replaceSpan(l.upgrade, d.upgrade)); }
+    if (d.num != null && d.num !== l.num.value) { checkNum(d.num); out.push(...T.replaceSpan(l.num, d.num)); }
+    return out;
+  }
+  function removePackLine(text, box, l) {
+    if (box.lines.length < 2) throw new Error('A set needs at least one item: use "Remove contents" to empty it');
+    return T.removeRow(text, l);
+  }
+  // the time limit of every item (the last block's minutes are the ones the server keeps)
+  function setPackMinutes(text, box, minutes) {
+    checkMinutes(minutes);
+    const b = box.blocks[box.blocks.length - 1];
+    return minutes === b.span.value ? [] : T.replaceSpan(b.span, minutes);
+  }
+
+  // ---------------------------------------------------------------- both
+  // remove every block of the box (the box item stays in Spec_Item.txt: BX_EMPTIED)
+  function removeContents(text, box) {
+    const out = [];
+    for (const b of box.blocks) {
+      if (!b.close) throw new Error(`${box.define || box.id}'s block is not closed with }: fix the file first`);
+      out.push(...T.removeRow(text, { start: b.kw.start, end: b.close.end }));
+    }
+    return out;
+  }
+
+  FRE.boxesOps = {
+    stateOf, chooseType, quantize, setChance, setLine, addLine, removeLine, spreadEvenly,
+    addPackLine, setPackLine, removePackLine, setPackMinutes, removeContents, MAX_NUM, MAX_UPGRADE, MAX_MINUTES,
+  };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- edit/npc-ops.js ----
 // Add New NPC (docs/HANDOFF-ADD-NPC.md): the exact bytes a new NPC adds to
 //   character.inc      a new block at the end (CProject::LoadCharacter, Project.cpp:3257)
@@ -8207,6 +8998,21 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "48+", "when
         return FRE.drops.validateDrops(model, { items: ws.items.items, movers: ws.movers.movers, text: f.text, original: f.originalText });
       },
     },
+    {
+      // propGiftbox.inc (CProject::LoadGiftbox, Project.cpp:4261) = random boxes, server only (UTF-16);
+      // propPackItem.inc (CProject::LoadPackItem, Project.cpp:4492) = sets; the game reads its own LF copy (Item Wiki, e08528a5).
+      id: 'boxes', label: 'Boxes',
+      required: ['propGiftbox.inc', 'propPackItem.inc'], editable: ['propGiftbox.inc', 'propPackItem.inc'], client: ['propPackItem.inc'],
+      parse(ws) {
+        const m = FRE.boxes.loadBoxes(ws.files, { defines: ws.defines.defines, strings: ws.strings.map });
+        // the boxes when the task opened: a box whose contents are removed later gets BX_EMPTIED
+        if (!ws._boxIds) ws._boxIds = { gift: new Set(m.gift.boxes.keys()), pack: new Set(m.pack.boxes.keys()), stack: FRE.boxes.stackKeys(m, ws.items.items) };
+        return m;
+      },
+      validate(ws, model) {
+        return FRE.boxes.validateBoxes(model, { items: ws.items.items, original: ws._boxIds });
+      },
+    },
   ];
   const ALL_FILES = [...new Set([...CORE, ...MODULES.flatMap(m => [...m.required, ...(m.optional || [])]), ...OPTIONAL])];
 
@@ -8659,6 +9465,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "48+", "when
 //     CResFile::Open, b7645c52). Never reads .dyo (WorldFile.cpp:269-382 is #ifdef __WORLDSERVER).
 //   propMoverEx.inc (Monster Drops): the game reads it at startup but the drop lines are kept only #ifdef __WORLDSERVER
 //     (Project.cpp:3196 / 3218 / 3234), and it has no loose Client copy: a drop change needs only the server restart.
+//   propGiftbox.inc (Boxes): LoadGiftbox is #ifdef __WORLDSERVER (Project.cpp:836-847), no Client copy: server restart only.
+//   propPackItem.inc (Boxes): LoadPackItem (Project.cpp:855) runs in both; the game reads Client/propPackItem.inc (Item Wiki).
 //   Client/Client/DonationShopTree.inc: each time the Donation Shop window opens (WndDonationShop.cpp:346; 409 with donation-tree.diff).
 //   Client/Client/NpcBoard_<id>.inc: on every click of the menu, once docs/patches/npc-board.diff is built.
 // Stop Server.bat closes Neuz and every server; Start Server.bat starts them and then the game
@@ -8685,6 +9493,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "48+", "when
     'battlepass.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:907 -> ProjectCmn.cpp:1682 LoadBattlePass' },
     // the game parses propMoverEx.inc too, but keeps no drop lines: DropItem / DropKind / DropGold are added #ifdef __WORLDSERVER
     'propmoverex.inc': { server: STARTUP, client: null, cite: 'Project.cpp:828 LoadPropMoverEx (drops #ifdef __WORLDSERVER :3196)' },
+    // random boxes: LoadGiftbox sits in #ifdef __WORLDSERVER (Project.cpp:836-847); sets: the game loads its own copy too (Item Wiki, e08528a5)
+    'propgiftbox.inc': { server: STARTUP, client: null, cite: 'Project.cpp:842 LoadGiftbox (#ifdef __WORLDSERVER :836)' },
+    'proppackitem.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:855 LoadPackItem (the game too: Item Wiki)' },
     'client/donationshoptree.inc': { server: null, client: WINDOW, cite: 'WndDonationShop.cpp:346 (409 with donation-tree.diff) LoadTreeScript' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };
@@ -9375,7 +10186,58 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "48+", "when
     return { close, el: back };
   }
 
-  FRE.dom = { h, $, fmt, toast, toasts: () => toastCount, modal, numInput, pctInput, pctText, keepFocus, LIVE_MS, flushLive };
+  // A time limit typed as a number (decimals allowed) + a unit: minutes / hours / days. The file keeps whole minutes:
+  // 0.5 hours = 30, 1.5 days = 2,160 (rounded to the minute). The unit starts at the biggest one that fits the value;
+  // a keyed field remembers the unit chosen across re-renders. onCommit(minutes).
+  const UNITS = [['minutes', 1], ['hours', 60], ['days', 1440]];
+  const unitPref = new Map();
+  function durationText(m) {
+    if (m === null || m === undefined) return 'not set yet';
+    if (!m) return 'permanent (no time limit)';
+    const parts = [], d = Math.floor(m / 1440), hr = Math.floor((m % 1440) / 60), mi = m % 60;
+    if (d) parts.push(`${fmt(d)} day${d === 1 ? '' : 's'}`);
+    if (hr) parts.push(`${hr} hour${hr === 1 ? '' : 's'}`);
+    if (mi) parts.push(`${mi} minute${mi === 1 ? '' : 's'}`);
+    return parts.join(' ');
+  }
+  // minutes null = empty (a required field not filled yet); permanent: true adds a "Permanent" button (sets 0)
+  function durationInput({ minutes = 0, disabled = false, key = null, live = !!key, max = 2147483647, permanent = false, onCommit }) {
+    let unit = key && unitPref.has(key) ? unitPref.get(key) : !minutes ? 1440 : minutes % 1440 === 0 ? 1440 : minutes % 60 === 0 ? 60 : 1;
+    if (key) unitPref.set(key, unit);          // the unit stays what it was when the value was typed (1.5 days stays days after a re-render)
+    let cur = minutes;
+    const show = m => (m === null || m === undefined ? '' : String(Number((m / unit).toFixed(4))));
+    const el = h('input.num-input.dur-input', { type: 'text', inputMode: 'decimal', disabled, value: show(minutes), title: '0 = no time limit; decimals allowed (0.5 hours = 30 minutes)' });
+    if (key) el.dataset.key = key;
+    const hint = h('span.muted.small', ' = ' + durationText(minutes));
+    const sel = h('select.dur-unit', { disabled, on: { change: e => {
+      unit = Number(e.target.value);
+      if (key) unitPref.set(key, unit);
+      el.value = show(cur);                       // same time limit, shown in the new unit; nothing is written
+    } } }, UNITS.map(([n, v]) => h('option', { value: v, selected: v === unit }, n)));
+    const parse = () => {
+      const t = el.value.trim().replace(',', '.');
+      if (!/^\d+(\.\d*)?$|^\.\d+$/.test(t)) return null;
+      return Math.round(Number(t) * unit);
+    };
+    el.addEventListener('input', () => { const m = parse(); hint.textContent = ' = ' + (m === null ? (el.value.trim() ? '?' : 'not set yet') : m > max ? 'too long' : durationText(m)); });
+    const commit = quiet => {
+      if (!el.isConnected) return;
+      const m = parse();
+      if (m === null || m > max) { if (!quiet) { toast('Type a number, e.g. 7 or 0.5 (decimals are fine).', 'bad'); el.value = show(cur); hint.textContent = ' = ' + durationText(cur); } return; }
+      if (!quiet) el.value = show(m);
+      if (m === cur) return;
+      cur = m;
+      onCommit(m);
+    };
+    el.addEventListener('change', () => commit(false));
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') el.blur(); if (e.key === 'Escape') { el.value = show(cur); el.blur(); } });
+    if (live) liveCommit(el, commit);
+    const perm = permanent ? h('button.small.dur-perm', { type: 'button', disabled, title: 'No time limit: the item never expires (0)',
+      on: { click: () => { el.value = '0'; hint.textContent = ' = ' + durationText(0); commit(false); } } }, 'Permanent') : null;
+    return h('span.dur-wrap', el, ' ', sel, ' ', perm, hint);
+  }
+
+  FRE.dom = { h, $, fmt, toast, toasts: () => toastCount, modal, numInput, pctInput, pctText, keepFocus, LIVE_MS, flushLive, durationInput, durationText };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/common.js ----
@@ -12935,6 +13797,361 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "48+", "when
   FRE.ui.drops = { addForm, killWindow };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- ui/boxes.js ----
+// Boxes: random boxes (propGiftbox.inc: the player gets 1 of N) and sets (propPackItem.inc: the player gets
+// everything inside). Pick a box, see what it gives with the chance players really get, add / change / remove
+// items, and "🎲 Open it N times" through loaders/boxes-sim.js (CUser::DoUseGiftbox / DoUsePackItem).
+// Edits: edit/boxes-ops.js. Plain words (the user, 2026-10-07).
+(function (FRE) {
+  'use strict';
+  const { h, fmt, modal, numInput, pctInput, toast, keepFocus } = FRE.dom;
+  const { diagTags, itemCell, fieldLabel, formFooter, diagRow } = FRE.ui;
+  const GIFT = 'propgiftbox.inc', PACK = 'proppackitem.inc';
+  const st = { sel: null, show: 'all', openOpts: null };
+
+  const Bx = () => FRE.boxes, Sim = () => FRE.boxesSim, O = () => FRE.boxesOps;
+  const model = ctx => ctx.ws.models.boxes;
+  const fileOf = kind => (kind === 'random' ? GIFT : PACK);
+  const canEdit = (ctx, kind) => ctx.ws.isEditable(fileOf(kind));
+  const keyOf = (kind, id) => `boxes|${kind}:${id}`;
+  const boxOf = (ctx, sel) => (sel ? (sel.kind === 'random' ? model(ctx).gift : model(ctx).pack).boxes.get(sel.id) || null : null);
+  const pct = x => `${Number((x * 100).toFixed(4))}%`;
+  const iconOf = it => (it ? String(FRE.specItem.get(it, 'szIcon') || '').replace(/"/g, '').trim() : '');
+  const itemOf = (ctx, id) => ctx.ws.itemById(id);
+  const itemName = (ctx, id, fallback) => { const it = itemOf(ctx, id); return it && it.name ? it.name : fallback || String(id >>> 0); };
+  const boxName = (ctx, b) => itemName(ctx, b.id, b.define);
+  const lineName = (ctx, l) => itemName(ctx, l.item.value >>> 0, l.item.define);
+  const packMaxOf = (ctx, id) => { const it = itemOf(ctx, id); return it ? FRE.specItem.get(it, 'dwPackMax') >>> 0 : null; };
+  // time limits: a number (decimals allowed) + minutes / hours / days (FRE.dom.durationInput); the file keeps whole minutes
+  const daysInput = (minutes, o) => FRE.dom.durationInput(Object.assign({ minutes }, o));
+  const dayText = m => FRE.dom.durationText(m);
+  const boxDiags = ctx => ctx.ws.diags.filter(d => d.module === 'boxes');
+  const inBlocks = (d, b) => b.blocks.some(x => d.start >= x.kw.start && d.start <= (x.close ? x.close.end : x.kw.end + 1));
+  const diagsOf = (ctx, sel, b) => boxDiags(ctx).filter(d => d.file && d.file.toLowerCase() === fileOf(sel.kind) && d.start !== undefined && inBlocks(d, b));
+  const lineDiags = (ctx, sel, l) => boxDiags(ctx).filter(d => d.file && d.file.toLowerCase() === fileOf(sel.kind) && d.start >= l.start && d.start < Math.max(l.end, l.start + 1));
+  // what a box inside a box holds (shown as "then, when opened: …"; opening one box never opens the box it gives)
+  function insideText(ctx, id) {
+    const m = model(ctx), g = m.gift.boxes.get(id), p = m.pack.boxes.get(id);
+    const b = p || g;
+    if (!b) return null;
+    const names = b.lines.slice(0, 3).map(l => lineName(ctx, l));
+    return `a ${p ? 'set' : 'random box'}: then, when opened, ${p ? 'all of' : '1 of'} ${names.join(', ')}${b.lines.length > 3 ? `, … (${b.lines.length})` : ''}`;
+  }
+
+  function entries(ctx) {
+    const m = model(ctx), out = [];
+    for (const b of m.gift.boxes.values()) out.push({ kind: 'random', b });
+    for (const b of m.pack.boxes.values()) out.push({ kind: 'set', b });
+    return out.map(x => Object.assign(x, { name: boxName(ctx, x.b) })).sort((a, z) => a.name.localeCompare(z.name));
+  }
+  const SHOW = [
+    { v: 'all', label: 'All boxes', test: () => true },
+    { v: 'random', label: 'Random boxes (1 of N)', test: x => x.kind === 'random' },
+    { v: 'set', label: 'Sets (everything inside)', test: x => x.kind === 'set' },
+    { v: 'problems', label: 'With problems', test: (x, ctx) => diagsOf(ctx, x, x.b).some(d => d.severity !== 'INFO') },
+    { v: 'edited', label: 'Edited', test: (x, ctx) => ctx.edited.has(keyOf(x.kind, x.b.id)) },
+  ];
+  function edit(ctx, sel, make, label) {
+    ctx.edit(fileOf(sel.kind), t => { const sp = make(t); if (sp.retyped) toast(`The box's line format was widened to ${sp.retyped} to hold this (same items and chances).`); return sp; }, label, keyOf(sel.kind, sel.id));
+  }
+  // a typed field: the pauses while typing one value fold into one undo step
+  function typed(ctx, sel, field, make, label) {
+    ctx.editGroup(() => [{ file: fileOf(sel.kind), splices: make(ctx.ws.files.get(fileOf(sel.kind)).text) }], label, [keyOf(sel.kind, sel.id)], `bx|${sel.kind}|${sel.id}|${field}`);
+  }
+
+  const mod = {
+    id: 'boxes', label: 'Boxes', searchPlaceholder: 'Search boxes',
+    help: 'Boxes: what each random box and set gives (propGiftbox.inc, propPackItem.inc)',
+    st,
+    onLoad() { st.sel = null; st.show = 'all'; st.openOpts = null; },
+
+    listExtra(ctx) {
+      const all = entries(ctx);
+      return h('select.npc-filter', { title: 'Which boxes to list', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
+        SHOW.map(o => h('option', { value: o.v, selected: o.v === st.show }, `${o.label} (${all.filter(x => o.test(x, ctx)).length})`)));
+    },
+
+    renderList(el, ctx) {
+      const q = ctx.query.toLowerCase(), test = SHOW.find(o => o.v === st.show).test;
+      let shown = 0;
+      for (const x of entries(ctx)) {
+        if (!test(x, ctx)) continue;
+        if (q && !x.name.toLowerCase().includes(q) && !(x.b.define || '').toLowerCase().includes(q)) continue;
+        if (++shown > 600) continue;
+        const ds = diagsOf(ctx, x, x.b), nb = ds.filter(d => d.severity === 'BLOCK').length, nw = ds.filter(d => d.severity === 'WARN').length;
+        const sel = st.sel && st.sel.kind === x.kind && st.sel.id === x.b.id;
+        el.appendChild(h('div.npc.bx-row' + (sel ? '.sel' : ''), { on: { click: () => { st.sel = { kind: x.kind, id: x.b.id }; ctx.renderAll(false); } } },
+          FRE.dds.picture(ctx, iconOf(itemOf(ctx, x.b.id)), { cls: '.bx-icon' }),
+          h('div.bx-text', h('div.n', h('span', x.name), h('span', ctx.edited.has(keyOf(x.kind, x.b.id)) ? h('span.tag.edit', 'edited') : null,
+            nb ? h('span.tag.bad', '⛔' + nb) : nw ? h('span.tag.warn', '⚠' + nw) : null)),
+          h('div.k', `${x.kind === 'random' ? 'random' : 'set'} · ${x.b.lines.length} item${x.b.lines.length === 1 ? '' : 's'} · ${x.b.define || x.b.id}`))));
+      }
+      if (shown > 600) el.appendChild(h('div.pad.muted', `${shown - 600} more: search to narrow the list.`));
+      if (!shown) el.appendChild(h('div.pad.muted', 'No boxes match.'));
+    },
+
+    renderEditor(el, ctx) {
+      const m = model(ctx);
+      if (m.pack.stopped) el.appendChild(h('div.banner.bad', 'The server stops reading propPackItem.inc at a set with more than 24 items: every set after it is lost. See the problems list.'));
+      if (m.gift.hung || m.pack.hung) el.appendChild(h('div.banner.bad', 'A box block is never closed with }: the server loops forever at startup. See the problems list.'));
+      const b = boxOf(ctx, st.sel);
+      if (!b) { el.appendChild(h('p.empty-state', 'Select a box on the left.')); emptied(el, ctx); return; }
+      keepFocus(el, () => (st.sel.kind === 'random' ? randomView : setView)(el, ctx, st.sel, b));
+    },
+
+    addTarget(ctx) {
+      const b = boxOf(ctx, st.sel);
+      if (!b) return { ok: false, title: 'Select a box on the left first' };
+      if (!canEdit(ctx, st.sel.kind)) return { ok: false, title: `${st.sel.kind === 'random' ? 'propGiftbox.inc' : 'propPackItem.inc'} is read-only` };
+      const sel = st.sel;
+      return { ok: true, usesPrice: false, title: `Add to ${boxName(ctx, b)} (opens the form)`, add(info) { addForm(ctx, sel, info.define); } };
+    },
+
+    locate(d, ctx) {
+      if (d.module !== 'boxes') return false;
+      const m = model(ctx);
+      const kind = d.file && d.file.toLowerCase() === GIFT ? 'random' : 'set';
+      const src = kind === 'random' ? m.gift : m.pack;
+      for (const b of src.boxes.values()) if (d.start !== undefined && inBlocks(d, b)) { st.sel = { kind, id: b.id }; return true; }
+      return true;
+    },
+  };
+
+  // boxes whose contents were removed in this session (BX_EMPTIED): listed under the empty state
+  function emptied(el, ctx) {
+    const ds = boxDiags(ctx).filter(d => d.code === 'BX_EMPTIED');
+    if (!ds.length) return;
+    el.appendChild(h('h3', 'Emptied in this session'));
+    for (const d of ds) el.appendChild(diagRow(d));
+  }
+
+  function header(el, ctx, sel, b, what) {
+    const it = itemOf(ctx, b.id), f = ctx.ws.files.get(fileOf(sel.kind));
+    el.appendChild(h('div.npc-title.bx-title', FRE.dds.picture(ctx, iconOf(it), { scale: 2, cls: '.bx-icon-big' }),
+      h('h2', boxName(ctx, b)), h('span.def', b.define || String(b.id)), h('span.muted', ' ' + what),
+      h('span.line', `${f.name} L${f.lineOf(b.blocks[0].kw.start) + 1}`), canEdit(ctx, sel.kind) ? null : h('span.tag.bad', 'read-only')));
+    if (!it) el.appendChild(h('p.bad', 'This box is not an item in Spec_Item.txt: no player can own it.'));
+  }
+  function tools(ctx, sel, b, extra) {
+    const ed = canEdit(ctx, sel.kind);
+    return h('div.dr-line', { style: 'margin-top:10px' },
+      h('button.primary', { disabled: !ed, on: { click: () => addForm(ctx, sel) } }, '+ Add an item'),
+      h('button', { on: { click: () => openWindow(ctx, sel) } }, '🎲 Open it N times…'),
+      ...(extra || []),
+      h('button.danger', { disabled: !ed, title: 'Removes what the box gives; the box item itself stays', on: { click: () => removeWindow(ctx, sel, b) } }, 'Remove contents…'));
+  }
+  function problems(el, ctx, sel, b) {
+    const ds = diagsOf(ctx, sel, b);
+    if (ds.length) { el.appendChild(h('h3', 'Problems')); for (const d of ds) el.appendChild(diagRow(d)); }
+  }
+  function amountCell(ctx, sel, l, ed, onSet) {
+    const max = packMaxOf(ctx, l.item.value >>> 0);
+    return h('td.dr-amt', '×', numInput({ value: l.num.value, min: 1, max: O().MAX_NUM, disabled: !ed, key: `bx|${sel.id}|${l.start}|n`,
+      onCommit: v => { if (v) onSet(v); } }), max ? h('span.muted.small', ` max ${fmt(max)}`) : null);
+  }
+
+  // ------------------------------------------------------------- a random box
+  function randomView(el, ctx, sel, b) {
+    const ed = canEdit(ctx, sel.kind), name = boxName(ctx, b), ch = Bx().chances(b), block = b.blocks[b.blocks.length - 1];
+    header(el, ctx, sel, b, `random box: the player gets 1 of ${b.lines.length}`);
+    el.appendChild(h('p.muted.small', 'The server rolls once per box (0 to 999,999) and walks down the list. The chances you type always add up to 100%: changing one moves the others in proportion. ',
+      'Opening needs 1 free bag slot (the box is used up first, so its own slot counts when it was the last one).'));
+    const fileTotal = b.sum / Bx().TOTAL;
+    el.appendChild(h('p' + (b.sum === Bx().TOTAL ? '.small' : '.small.warn-text'), b.sum === Bx().TOTAL ? 'Total: 100% ✓'
+      : b.sum > Bx().TOTAL ? `The file's chances add up to ${pct(fileTotal)}: the server cuts the list at 100% (see "Players get").`
+        : `The file's chances add up to ${pct(fileTotal)}: the server gives the missing ${pct(1 - fileTotal)} to the last line (see "Players get").`));
+    el.appendChild(tools(ctx, sel, b, [h('button', { disabled: !ed || b.lines.length < 2, title: 'Give every item the same chance',
+      on: { click: () => edit(ctx, sel, t => O().spreadEvenly(t, b), `${name}: same chance for every item`) } }, 'Same chance for all')]));
+    const tb = h('table.items.dr.bx', h('tr', h('th', ''), h('th', 'Item'), h('th', { title: 'Typed in percent; the file keeps the type\'s steps (0.01% or finer)' }, 'Chance'),
+      h('th', { title: 'What the server really does with the file\'s numbers' }, 'Players get'), h('th', { title: 'How many of the item the player gets' }, 'Count'),
+      h('th', { title: 'Bound: the item cannot be traded' }, 'Bound'), h('th', { title: 'A number + minutes / hours / days; 0 = no time limit' }, 'Time limit'), h('th', 'Upgrade'), h('th', ''), h('th', 'Line')));
+    b.lines.forEach((l, j) => {
+      const id = l.item.value >>> 0, it = itemOf(ctx, id), iname = lineName(ctx, l), flag = Bx().flagOf(l), mins = Bx().minutesOf(l);
+      const set = (field, d, was) => typed(ctx, sel, `${l.start}|${field}`, t => {
+        const sp = O().setLine(t, boxOf(ctx, sel), j, d, ctx.ws.defines.defines);
+        if (sp.retyped) toast(`The box's line format was widened to ${sp.retyped} to hold this (same items and chances).`);
+        return sp;
+      }, `${name}: changed the ${field} of ${iname} (was ${was})`);
+      const inside = insideText(ctx, id);
+      tb.appendChild(h('tr',
+        h('td', FRE.dds.picture(ctx, iconOf(it), { cls: '.bx-icon' })),
+        h('td', itemCell(it ? ctx.ws.itemInfo(it) : null, l.item.define || String(id)), inside ? h('div.muted.small', inside) : null),
+        h('td', pctInput({ value: l.weight, disabled: !ed, key: `bx|${sel.id}|${l.start}|p`,
+          onCommit: u => typed(ctx, sel, `${l.start}|chance`, t => O().setChance(t, boxOf(ctx, sel), j, u), `${name}: changed the chance of ${iname} (was ${pct(l.weight / Bx().TOTAL)})`) })),
+        h('td' + (Math.abs(ch[j] * Bx().TOTAL - l.weight) > 0.5 ? '.warn-text' : ''), ch[j] ? pct(ch[j]) : h('span.bad', 'never')),
+        amountCell(ctx, sel, l, ed, v => set('count', { num: v }, `×${l.num.value}`)),
+        h('td', flag === Bx().FLAG_KEEP ? h('span.muted.small', { title: 'Flag 4: the item keeps its own settings (not bound, not "charged")' }, 'item\'s own')
+          : h('input', { type: 'checkbox', checked: flag === Bx().FLAG_BOUND, disabled: !ed, title: 'Bound: cannot be traded',
+            on: { change: e => set('bound setting', { flag: e.target.checked ? Bx().FLAG_BOUND : 0 }, flag === Bx().FLAG_BOUND ? 'bound' : 'not bound') } })),
+        h('td.dr-amt', daysInput(mins, { disabled: !ed, key: `bx|${sel.id}|${l.start}|m`,
+          onCommit: v => set('time limit', { minutes: v }, dayText(mins)) })),
+        h('td.dr-amt', '+', numInput({ value: Bx().upgradeOf(l), min: 0, max: O().MAX_UPGRADE, disabled: !ed, key: `bx|${sel.id}|${l.start}|u`,
+          onCommit: v => { if (v !== null) set('upgrade', { upgrade: v }, `+${Bx().upgradeOf(l)}`); } })),
+        h('td', h('button.icon.danger', { disabled: !ed || b.lines.length < 2, title: b.lines.length < 2 ? 'The last item: use Remove contents' : 'Remove this item (the others grow back to 100%)',
+          on: { click: () => edit(ctx, sel, t => O().removeLine(t, boxOf(ctx, sel), j), `${name}: removed ${iname}`) } }, '✕'), ' ', diagTags(lineDiags(ctx, sel, l))),
+        h('td', h('span.line', 'L' + (ctx.ws.files.get(GIFT).lineOf(l.start) + 1)))));
+    });
+    el.appendChild(tb);
+    el.appendChild(h('p.muted.small', `Line format: ${block.type} (chances in steps of ${pct(Bx().TYPES[block.type].prec / Bx().TOTAL)}${Bx().TYPES[block.type].cols.length ? `; ${Bx().TYPES[block.type].cols.join(', ')}` : ''}). `,
+      'A timed or upgraded item that lands on a stack the player already has takes that stack\'s time limit and +N (the server only compares the item, its bound flag and "charged").'));
+    problems(el, ctx, sel, b);
+  }
+
+  // ------------------------------------------------------------- a set
+  function setView(el, ctx, sel, b) {
+    const ed = canEdit(ctx, sel.kind), name = boxName(ctx, b);
+    header(el, ctx, sel, b, `set: the player gets all ${b.lines.length} item${b.lines.length === 1 ? '' : 's'}`);
+    el.appendChild(h('p.muted.small', `Opening needs ${b.lines.length} free bag slot${b.lines.length === 1 ? '' : 's'} (one per item; otherwise nothing happens). `,
+      'When the box itself is bound or has a time limit, every item comes bound.'));
+    el.appendChild(h('div.dr-line', h('b', 'Time limit for every item'),
+      daysInput(b.span, { disabled: !ed, key: `bx|${sel.id}|span`,
+        onCommit: v => typed(ctx, sel, 'span', t => O().setPackMinutes(t, boxOf(ctx, sel), v), `${name}: changed the time limit (was ${dayText(b.span)})`) })));
+    el.appendChild(tools(ctx, sel, b));
+    const tb = h('table.items.dr.bx', h('tr', h('th', ''), h('th', 'Item'), h('th', { title: 'How many of the item the player gets' }, 'Count'), h('th', 'Upgrade'), h('th', ''), h('th', 'Line')));
+    b.lines.forEach(l => {
+      const id = l.item.value >>> 0, it = itemOf(ctx, id), iname = lineName(ctx, l), inside = insideText(ctx, id);
+      const set = (field, d, was) => typed(ctx, sel, `${l.start}|${field}`, t => O().setPackLine(t, l, d, ctx.ws.defines.defines), `${name}: changed the ${field} of ${iname} (was ${was})`);
+      tb.appendChild(h('tr',
+        h('td', FRE.dds.picture(ctx, iconOf(it), { cls: '.bx-icon' })),
+        h('td', itemCell(it ? ctx.ws.itemInfo(it) : null, l.item.define || String(id)), inside ? h('div.muted.small', inside) : null),
+        amountCell(ctx, sel, l, ed, v => set('count', { num: v }, `×${l.num.value}`)),
+        h('td.dr-amt', '+', numInput({ value: l.upgrade.value, min: 0, max: O().MAX_UPGRADE, disabled: !ed, key: `bx|${sel.id}|${l.start}|u`,
+          onCommit: v => { if (v !== null) set('upgrade', { upgrade: v }, `+${l.upgrade.value}`); } })),
+        h('td', h('button.icon.danger', { disabled: !ed || b.lines.length < 2, title: b.lines.length < 2 ? 'The last item: use Remove contents' : 'Remove this item',
+          on: { click: () => edit(ctx, sel, t => O().removePackLine(t, boxOf(ctx, sel), l), `${name}: removed ${iname}`) } }, '✕'), ' ', diagTags(lineDiags(ctx, sel, l))),
+        h('td', h('span.line', 'L' + (ctx.ws.files.get(PACK).lineOf(l.start) + 1)))));
+    });
+    el.appendChild(tb);
+    problems(el, ctx, sel, b);
+  }
+
+  // ------------------------------------------------------------- + Add an item
+  function addForm(ctx, sel, define) {
+    const ws = ctx.ws, b0 = boxOf(ctx, sel), name = boxName(ctx, b0), random = sel.kind === 'random';
+    const s = { define: define || null, u: random ? Math.round(Bx().TOTAL / (b0.lines.length + 1)) : null, num: 1, bound: false, minutes: random ? null : 0, upgrade: 0 };
+    const body = h('div.nn-form'), checks = h('div'), preview = h('div');
+    let btn = null;
+    const itemOpts = ws._itemOpts || [...ws.items.items.values()].map(it => ws.itemInfo(it)).sort((a, z) => a.name.localeCompare(z.name)).map(i => ({ v: i.define, label: `${i.name} (${i.define})`, find: i.define }));
+    ws._itemOpts = itemOpts;
+    const plan = () => {
+      const t = ws.files.get(fileOf(sel.kind)).text, b = boxOf(ctx, sel), D = ws.defines.defines;
+      return random ? O().addLine(t, b, { define: s.define, w: s.u, num: s.num, flag: s.bound ? Bx().FLAG_BOUND : 0, minutes: s.minutes, upgrade: s.upgrade }, D)
+        : O().addPackLine(t, b, { define: s.define, num: s.num, upgrade: s.upgrade }, D);
+    };
+    const idOf = () => (s.define && ws.defines.defines.has(s.define) ? ws.defines.defines.get(s.define) >>> 0 : null);
+    function refresh() {
+      checks.textContent = ''; preview.textContent = '';
+      const probs = [], id = idOf(), max = id !== null ? packMaxOf(ctx, id) : null;
+      if (!s.define) probs.push(['BLOCK', 'Still needs: the item']);
+      if (random && !s.u) probs.push(['BLOCK', 'Still needs: the chance']);
+      if (random && s.minutes === null) probs.push(['BLOCK', 'Still needs: the time limit (Permanent or 0 = it never expires)']);
+      if (max !== null && s.num > max) probs.push(['BLOCK', `One bag slot holds at most ${fmt(max)} of this item: add a second line for more`]);
+      if (!random && b0.lines.length >= Bx().MAX_ITEM_PER_PACK) probs.push(['BLOCK', `A set holds at most ${Bx().MAX_ITEM_PER_PACK} items`]);
+      if (random && b0.lines.length >= Bx().MAX_GIFTBOX_ITEM) probs.push(['BLOCK', `A random box holds at most ${Bx().MAX_GIFTBOX_ITEM} items`]);
+      if (s.define && b0.lines.some(l => l.item.define === s.define)) probs.push(['WARN', `${name} already has this item: both lines stay`]);
+      if (id !== null && insideText(ctx, id)) probs.push(['WARN', `This item is a box itself: players get the box and open it later (${insideText(ctx, id)})`]);
+      for (const [sev, msg] of probs) checks.appendChild(diagRow({ severity: sev, code: '', message: msg }));
+      if (!probs.length) checks.appendChild(h('p.muted.small', 'No problems.'));
+      const ok = !probs.some(p => p[0] === 'BLOCK');
+      if (btn) btn.disabled = !ok;
+      if (!ok) { preview.appendChild(h('p.muted', random ? 'Fill in the item, the chance and the time limit.' : 'Fill in the item.')); return; }
+      try {
+        const sp = plan(), f = ws.files.get(fileOf(sel.kind));
+        const ins = sp.filter(x => x.insert && x.start === x.end);
+        preview.appendChild(h('pre.preview', `${f.name}, ${name}'s block:\n` + ins.map(x => '+' + x.insert.replace(/\r?\n$/, '').replace(/\r?\n/g, '\n+')).join('\n')));
+        if (random) {
+          const others = sp.filter(x => !(x.insert && x.start === x.end)).length;
+          preview.appendChild(h('p', `Players get it in ${pct(s.u / Bx().TOTAL)} of opens.`,
+            others ? ` The other ${b0.lines.length} chances shrink in proportion so the total stays 100%.` : '',
+            sp.retyped ? ` The box's line format becomes ${sp.retyped} to hold the time limit, bound flag, +N or a finer chance.` : ''));
+        } else preview.appendChild(h('p', `Opening the set then needs ${b0.lines.length + 1} free bag slots.`));
+      } catch (e) { preview.appendChild(h('p.bad', e.message)); if (btn) btn.disabled = true; }
+    }
+    const row = (label, req, ...el) => h('div.nn-row', fieldLabel(label, req), ...el);
+    body.appendChild(h('div',
+      row('Item', true, h('div', { style: 'flex:1' }, FRE.ui.combo({ options: itemOpts, value: s.define, placeholder: 'Type an item name…', onPick: v => { s.define = v; refresh(); } }))),
+      random ? row('Chance', true, pctInput({ value: s.u, key: 'bx|add|p', live: true, onCommit: u => { s.u = u; refresh(); } })) : null,
+      row('Count (how many they get)', true, numInput({ value: 1, min: 1, max: O().MAX_NUM, key: 'bx|add|n', onCommit: v => { s.num = v || 1; refresh(); } })),
+      random ? row('Bound', false, h('label', h('input', { type: 'checkbox', on: { change: e => { s.bound = e.target.checked; refresh(); } } }), ' the item cannot be traded')) : null,
+      random ? row('Time limit', true, daysInput(null, { key: 'bx|add|m', permanent: true, onCommit: v => { s.minutes = v; refresh(); } })) : null,
+      row('Upgrade (+N)', false, numInput({ value: 0, min: 0, max: O().MAX_UPGRADE, key: 'bx|add|u', onCommit: v => { s.upgrade = v || 0; refresh(); } }))));
+    if (!random) body.appendChild(h('p.muted.small', 'Every item of a set shares the set\'s time limit (above the table).'));
+    formFooter({ checks, action: 'Add', previewTitle: 'What will be written / what players get', preview }).forEach(x => body.appendChild(x));
+    const m = modal({ title: `Add an item: ${name}`, body, wide: true, buttons: [
+      { label: 'Cancel' },
+      { label: 'Add', cls: 'primary', id: 'bx-add-btn', onClick: () => {
+        const id = idOf(), iname = id !== null ? itemName(ctx, id, s.define) : s.define;
+        edit(ctx, sel, () => plan(), `${name}: added ${iname} ×${s.num}${random ? ` (${pct(s.u / Bx().TOTAL)})` : ''}`);
+      } },
+    ] });
+    btn = m.el.querySelector('#bx-add-btn');
+    refresh();
+  }
+
+  // ------------------------------------------------------------- Remove contents…
+  function removeWindow(ctx, sel, b) {
+    const name = boxName(ctx, b);
+    modal({ title: `Remove contents: ${name}`, body: h('div',
+      h('p', `This removes everything ${name} gives (${b.lines.length} item${b.lines.length === 1 ? '' : 's'}).`),
+      h('p.warn-text', '⚠ Players who already own this box keep it, but using it will do nothing. The box item itself stays in the game (items are never deleted).'),
+      h('p.muted.small', 'Ctrl+Z undoes it until you save.')), buttons: [
+      { label: 'Cancel' },
+      { label: 'Remove contents', cls: 'danger', onClick: () => { edit(ctx, sel, t => O().removeContents(t, b), `${name}: removed its contents`); st.sel = null; } },
+    ] });
+  }
+
+  // ------------------------------------------------------------- 🎲 Open it N times
+  function openWindow(ctx, sel) {
+    const ws = ctx.ws, b = boxOf(ctx, sel), name = boxName(ctx, b);
+    const o = st.openOpts && st.openOpts.id === b.id ? st.openOpts : { id: b.id, n: 1000, free: 10, seed: 1, bound: false, keep: 0, locked: false, expired: false, trading: false, have: false };
+    st.openOpts = o;
+    const out = h('div');
+    const run = () => {
+      out.textContent = '';
+      const env = Sim().envFor(ws);
+      const have = o.have ? b.lines.map(l => ({ id: l.item.value >>> 0, num: 1 })).filter(x => itemOf(ctx, x.id)) : [];
+      const t0 = Date.now();
+      const r = Sim().run(env, b.id, { n: o.n, free: o.free, seed: o.seed, bound: o.bound, keep: o.keep, locked: o.locked, expired: o.expired, trading: o.trading, have });
+      if (r.crash) out.appendChild(h('div.banner.bad', `The server would crash: ${r.crash}.`));
+      const refused = Object.entries(r.refused);
+      out.appendChild(h('p', `${fmt(r.opens)} opens in ${Date.now() - t0} ms: ${fmt(r.used)} used the box${refused.length ? `, refused ${refused.map(([k, v]) => `${fmt(v)}× (${WHY[k] || k})`).join(', ')}` : ''}.`));
+      if (r.texts.length) out.appendChild(h('div.bx-chat', h('b', 'The player reads: '), r.texts.slice(0, 6).map(t => h('div', t)), r.texts.length > 6 ? h('div.muted', `… ${r.texts.length - 6} more lines`) : null));
+      if (r.used) {
+        const tb = h('table.items.dr', h('tr', h('th', 'Item'), h('th.num', 'Times'), h('th.num', '% of opens'), sel.kind === 'random' ? h('th.num', 'Shown chance') : null, h('th.num', 'Items in all'), h('th', 'Notes')));
+        const ch = sel.kind === 'random' ? Bx().chances(b) : null;
+        b.lines.forEach((l, i) => {
+          const s = r.lines.get(i) || { times: 0, qty: 0, lost: 0, stacked: 0 }, id = l.item.value >>> 0, it = itemOf(ctx, id);
+          const notes = [];
+          if (s.lost) notes.push(h('span.bad', `${fmt(s.lost)}× lost (did not fit in the bag)`));
+          if (s.stacked) notes.push(h('span.muted', `${fmt(s.stacked)}× joined a stack already in the bag`));
+          const inside = insideText(ctx, id);
+          if (inside) notes.push(h('span.muted', inside));
+          tb.appendChild(h('tr', itemCell(it ? ws.itemInfo(it) : null, l.item.define || String(id)), h('td.num', fmt(s.times)), h('td.num', pct(s.times / r.opens)),
+            ch ? h('td.num', pct(ch[i])) : null, h('td.num', fmt(s.qty)), h('td', notes)));
+        });
+        out.appendChild(tb);
+      }
+    };
+    const WHY = { trade: 'in a trade', unusable: 'cannot be used', expired: 'expired', locked: 'locked', space: 'bag full', 'not-a-box': 'not a box' };
+    const body = h('div',
+      h('p.muted.small', 'Replays the server\'s box code with its random generator, each open on the same starting bag: the same seed gives the same results. Not modelled: the use-item code that runs before a random box opens (a box row copied from an existing box does nothing there), logs.'),
+      h('div.nn-row',
+        fieldLabel('Opens', true), numInput({ value: o.n, min: 1, max: 200000, onCommit: v => { o.n = v || 1; } }),
+        fieldLabel('Free bag slots', true), numInput({ value: o.free, min: 0, max: 160, onCommit: v => { o.free = v === null ? 0 : v; } }),
+        fieldLabel('Seed', false), numInput({ value: o.seed, min: 0, max: 4294967295, onCommit: v => { o.seed = v || 0; } })),
+      h('div.nn-row',
+        ...[['bound', 'The box is bound'], ['locked', 'The box is locked'], ['expired', 'The box has expired'], ['trading', 'The player is trading'],
+          ['have', 'The bag already holds 1 of each item']].map(([k, label]) => h('label', h('input', { type: 'checkbox', checked: o[k], on: { change: e => { o[k] = e.target.checked; } } }), ' ' + label)),
+        h('label', 'The box has a time limit of ', daysInput(o.keep, { onCommit: v => { o.keep = v; } }))),
+      h('button.primary', { on: { click: run } }, 'Run'), out);
+    modal({ title: `Open ${name} N times`, body, wide: true });
+    run();
+  }
+
+  FRE.ui.modules.push(mod);
+  FRE.ui.boxes = { addForm, openWindow };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- ui/exchange.js ----
 // Exchanges module (Exchange_Script.txt, CExchange::Load_Script). Left: the exchange menus,
 // named by the NPCs that open them. Centre: one card per recipe (SET): ingredients ->
@@ -13362,6 +14579,20 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "48+", "when
       const dir = await FRE.fsa.dirAt(S.client.dir, parts.join('/'));
       if (!dir) return null;
       const fh = (await FRE.fsa.findFiles(dir, [name])).get(name.toLowerCase());
+      return fh ? (await FRE.fsa.readHandle(fh)).bytes : null;
+    },
+    // bytes of Client/Item/<name> (item icons), or null. The folder (4,000+ files) is listed once per Client folder.
+    async clientItemFile(name) {
+      if (!S.client) return null;
+      if (!S.itemIndex || S.itemIndex.client !== S.client) {
+        const client = S.client;
+        S.itemIndex = { client, map: (async () => {
+          const dir = await FRE.fsa.dirAt(client.dir, 'Item'), map = new Map();
+          if (dir) for await (const [n, fh] of dir.entries()) if (fh.kind === 'file') map.set(n.toLowerCase(), fh);
+          return map;
+        })() };
+      }
+      const fh = (await S.itemIndex.map).get(String(name).toLowerCase());
       return fh ? (await FRE.fsa.readHandle(fh)).bytes : null;
     },
     // Apply an edit op: make(text) -> splices. `key` marks what was edited (list badges).

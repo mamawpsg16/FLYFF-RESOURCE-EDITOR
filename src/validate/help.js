@@ -204,5 +204,20 @@
     M_NO_GOLD: ['The monster has no DropGold line, so it gives no Penya. PenyaTable.txt only changes a DropGold roll; it never adds one.', 'Add Penya if players should get some.'],
     M_GOLD_LATE: ['DropGold comes after drop lines that count toward the monster\'s max items per kill. When that many items drop first, the server stops reading the list and the Penya is skipped.', 'Move DropGold up, right after Maxitem.'],
     M_GEN_EDITED: ['This drop was written by one of the gen_*.ps1 scripts. Running that script again rewrites its block and undoes this edit.', 'Change the script too, or don\'t run it again.'],
+    // Boxes (loaders/boxes.js: propGiftbox.inc random boxes, propPackItem.inc sets)
+    BX_TOO_MANY: ['A random box holds at most 128 lines (MAX_GIFTBOX_ITEM). The server does not check it: line 129 onward writes past the end of the box in memory.', 'Remove lines, or split the items over two boxes.'],
+    BX_PACK_TOO_MANY: ['A set holds at most 24 items (MAX_ITEM_PER_PACK). At the 25th the server stops reading propPackItem.inc, so this set and every set after it in the file are lost.', 'Remove items, or split the set over two boxes.'],
+    BX_BOTH: ['The box is both a set (propPackItem.inc) and a random box (propGiftbox.inc). When it is used, the server checks sets first, so the random lines are never used.', 'Remove one of the two.'],
+    BX_UNDEF: ['The item name is not defined, so the server reads it as item 0. Giving that item crashes the server (GetProp() is NULL).', 'Fix the spelling, or pick an item that exists.'],
+    BX_NO_PROP: ['The item has no row in Spec_Item.txt. When the box gives it, the server reads the item\'s settings from nothing and crashes.', 'Pick an item that exists in Spec_Item.txt.'],
+    BX_BRACES: ['A box block is never closed with }. The server reads to the end of the file and loops forever at startup.', 'Close the block with } on its own line.'],
+    BX_NUM_ZERO: ['The count is 0 or less: the player would get nothing (or a broken stack).', 'Use a count of 1 or more.'],
+    BX_NUM_STACK: ['The count is more than one bag slot holds (the item\'s stack size, dwPackMax). The server spreads it over several slots; when the bag has fewer free slots, the box is used up and the item is lost (a random box checks for only 1 free slot; a set checks 1 slot per line).', 'Lower the count to the stack size, and add another line for more.'],
+    BX_OVER_100: ['The chances add up to more than 100%. The server rolls 0 - 999,999 and walks down the list, so lines past 100% never drop, and the last line gets what is left (the server sets its running total to exactly 100%).', 'Lower the chances; the editor keeps the total at 100% when you change one.'],
+    BX_UNDER_100: ['The chances add up to less than 100%. The server gives the missing part to the last line, so it drops more often than its number says. The table shows the real chances.', 'Nothing to do if that is fine. Changing any chance in the editor makes the numbers add up to 100%.'],
+    BX_DUP: ['The same box appears in two blocks. The server adds their lines together into one box (a set takes its time limit from the last block).', 'Move the lines into one block.'],
+    BX_NOT_ITEM: ['The box id has no row in Spec_Item.txt, so no player can own this box.', 'Nothing to do unless the box should exist; then add the item first.'],
+    BX_SKIPPED: ['The server does not know this word here (only GiftBox and GiftBox2 - GiftBox6 start a box). It skips words one by one until the next box keyword, so whatever box this was is not loaded.', 'Fix the keyword (exact case: GiftBox, GiftBox3 …).'],
+    BX_EMPTIED: ['The box no longer has any contents. Players who already own it keep the item, but using it does nothing.', 'Undo if that was not meant, or remove the box from shops and drops too.'],
   };
 })(globalThis.FRE = globalThis.FRE || {});

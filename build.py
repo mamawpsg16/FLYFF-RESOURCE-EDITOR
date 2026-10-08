@@ -50,6 +50,9 @@ def main():
         for var, name in (('HARNESS_TEX_LIST', 'ModelTexture.list'), ('HARNESS_TEX_INDEX', 'Model.textures')):
             f = ROOT / 'test-data' / 'fixtures' / 'Client' / name
             parts.append(f'FRE.{var} = ' + json.dumps(f.read_text(encoding='latin-1') if f.exists() else None) + ';')
+        # Client/Item icons (Boxes shows each box's icon)
+        it = ROOT / 'test-data' / 'fixtures' / 'Client' / 'Item'
+        parts.append('FRE.HARNESS_ITEMS = ' + json.dumps({f.name: base64.b64encode(f.read_bytes()).decode() for f in sorted(it.iterdir())} if it.exists() else {}) + ';')
         parts.append((ROOT / 'tests' / 'ui-harness.js').read_text(encoding='utf-8'))
     js = '\n'.join(parts)
     js = re.sub(r'</(script)', r'<\\/\1', js, flags=re.I)   # never close the inline <script> early

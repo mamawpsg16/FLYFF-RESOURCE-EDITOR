@@ -19,6 +19,8 @@ cp -p $SRC/Server/Resource/Masquerade.prj $SRC/Server/Resource/character*.inc $S
 # Monster Drops: what the kill path also reads (loaders/drops.js), read-only
 cp -p $SRC/Server/Resource/propDropEvent.inc $SRC/Server/Resource/except.txt $SRC/Server/Resource/PenyaTable.txt \
   $SRC/Server/Resource/expTable.inc $SRC/Server/Resource/Event.lua $SRC/Server/Resource/propItemEtc.inc "$DST/Resource/"
+# Boxes: random boxes (server only) and sets (+ the game's LF copy below)
+cp -p $SRC/Server/Resource/propGiftbox.inc $SRC/Server/Resource/propPackItem.inc "$DST/Resource/"
 for d in $SRC/Server/Resource/World/*/; do
   n=$(basename "$d")
   # NPC placement (.dyo), area names (.rgn + the map's .txt.txt), continents (WdMadrigal.wld.cnt)
@@ -31,7 +33,7 @@ for d in $SRC/Client/World/*/; do
 done
 cp -p $SRC/Client/character.inc $SRC/Client/character.txt.txt $SRC/Client/DonationShop.inc $SRC/Client/BattlePass.inc $SRC/Client/Spec_Item.txt \
   $SRC/Client/Exchange_Script.txt $SRC/Client/defineNeuz.h $SRC/Client/etc.inc $SRC/Client/etc.txt.txt \
-  $SRC/Client/defineText.h $SRC/Client/textClient.inc $SRC/Client/textClient.txt.txt "$DST/Client/"
+  $SRC/Client/defineText.h $SRC/Client/textClient.inc $SRC/Client/textClient.txt.txt $SRC/Client/propPackItem.inc "$DST/Client/"
 cp -p $SRC/Client/Client/DonationShopTree.inc "$DST/Client/Client/"
 # Client/Model: file names only (Add New NPC checks each model's .o3d / .ani files)
 ls "$SRC/Client/Model" > "$DST/Client/Model.list"
@@ -43,6 +45,13 @@ mkdir -p "$DST/Client/Char"
 if [ "$DST" = "test-data/fixtures" ]; then cp -p "$SRC/Client/Char/char_Juria.tga" "$DST/Client/Char/"
 else cp -p "$SRC"/Client/Char/char_*.tga "$SRC"/Client/Char/char_*.TGA "$DST/Client/Char/" 2>/dev/null || true; fi
 cp -p $SRC/Client/Theme/BattlePass_*.tga "$DST/Client/Theme/"
+# item icons (Boxes shows each box's icon): all of them in a manual test copy, one per picture format for the tests
+mkdir -p "$DST/Client/Item"
+if [ "$DST" = "test-data/fixtures" ]; then
+  for f in Itm_SysSysScrBxLuck.dds itm_EveBalPbox.DDS Item_Barunasmeltbless01.dds Item_fCloDarkDragonCap.dds Item_sys_scr_VIP.dds \
+    Itm_ArmShiSHIELD_NEXUS_D_01NEXUS.dds Itm_ArmShiShield_Dalaran_D_01Metal.dds Itm_ArmShiVerendus.dds Itm_ArmShieldTurtle.dds \
+    Itm_SysSysQueAibatT.dds Itm_WeaAxeConstellation.dds Itm_WeaAxeIcedragon.dds Itm_WeaAxeSkel.dds; do cp -p "$SRC/Client/Item/$f" "$DST/Client/Item/"; done
+else cp -p "$SRC"/Client/Item/* "$DST/Client/Item/"; fi
 echo "refreshed $DST"
 # the client's menu click switch (oracle_sim.py newmenu reads which menu ids open the exchange window)
 if [ "$DST" = "test-data/fixtures" ]; then mkdir -p "$DST/src" && cp -p "$SRC/Source/Source/_Interface/WndWorld.cpp" "$DST/src/"; fi

@@ -391,6 +391,74 @@ The game loads at startup before the login screen (`Neuz.cpp:1589 BeginLoadThrea
 
 **Simulator:** `gjs -m tools/drops-sim.js MI_AIBATT1 kills=10000 show=2`. Python copy `oracle_sim.py drops`: its own readers (propMover.txt / Spec_Item.txt by header columns, defines without commented-out blocks), 761 monsters × 2 seeds × 25 kills + 9 special cases × 400 kills (1,530 cases, every roll identical), 15 loader edge scripts, 3 PenyaTable variants, 2 event files, 13 edit scripts (byte-identical files, sha256). 25 of 29 planted bugs caught; the 4 others cannot change a result (`CanAdd` `>`/`>=` with g > 0, the mode-1 `>`/`>=` tie, expDropLuck row 119/120 (needs rarity 200 at monster level 202+), an indented `{` (none in the data)).
 
+### 1.19 Boxes: random boxes, sets, and opening one (added 2026-10-08, task J part 1, `loaders/boxes.js`, `loaders/boxes-sim.js`, `edit/boxes-ops.js`, `ui/boxes.js`, `loaders/dds.js`)
+**Files.**
+- `propGiftbox.inc`: UTF-16LE + BOM, CRLF, 487 random boxes. Server only: `LoadGiftbox` sits in `#ifdef __WORLDSERVER` (`Project.cpp:836-847`), and there is no Client copy.
+- `propPackItem.inc`: CP949 bytes, CRLF, 829 sets. The game loads it too (`Project.cpp:855`, `e08528a5`, Item Wiki "box holds fashion"), from its LF copy `Client/propPackItem.inc`.
+- A box item is a box only because its id is in one of these files. No IK3 marks it.
+
+**LoadGiftbox** (`Project.cpp:4261-4380`).
+- Block: `GiftBoxN <box> { <item> <weight> <amount> [flag] [minutes] [+N] … }`, read until a token starting with `}`. At end of file the token is empty, so a missing `}` loops forever.
+- Weight × precision (out of 1,000,000) and columns:
+  - GiftBox ×100;
+  - GiftBox2 ×1;
+  - GiftBox3 ×100 + flag;
+  - GiftBox4 ×100 + flag, minutes;
+  - GiftBox5 ×10 + flag, minutes;
+  - GiftBox6 ×10 + flag, minutes, +N.
+- Flag is a BYTE: 2 = bound, 4 = "ignore property" (the item keeps flag 0 and bCharged 0).
+- Keyword match is exact case (`s.Token == _T( "GiftBox" )`). Any other word is skipped one token at a time.
+- Counts today: GiftBox 392, GiftBox3 40, GiftBox4 23, GiftBox5 1, GiftBox6 31.
+
+**CGiftboxMan** (`Project.cpp:4116-4256`).
+- `AddItem` keeps an int running total (`nSum`, stored as DWORD per line). With `__STL_GIFTBOX_VECTOR` (`WORLDSERVER/VersionCommon.h:157`) nothing checks `MAX_GIFTBOX_ITEM` 128: line 129 writes past the arrays.
+- `Verify` sets the last line's running total to exactly 1,000,000.
+  - Under 100%: the last line gets the rest (13 boxes).
+  - Over 100%: lines past 1,000,000 never drop, and the last line shrinks (7 boxes; e.g. `II_SYS_SYS_EVE_COMMERGIFTBOX27_S` 115.14%, 3 lines never drop).
+- `Open` is `xRandom(1000000)` (drawn before the box lookup), then the first line with roll < running total.
+
+**LoadPackItem / CPackItem** (`Project.cpp:4450-4533`).
+- Block: `PackItem <box> <minutes> { <item> <+N> <amount> … }`.
+- `MAX_ITEM_PER_PACK` is 24 (`__VER >= 18`, `Project.h:760`). The 25th line returns FALSE and the loader stops: every later set is lost.
+- The minutes are set after each block (`Open`), so with two blocks the last block's minutes win; a block with no lines makes no set.
+
+**Using a box** (`CUser::OnDoUseItem`, `User.cpp:3133-3217`).
+1. Refusals:
+   - in a trade: `TID_GAME_TRADELIMITUSING` (IsUsableState 3102);
+   - not usable (locked bag slot, in a shop): nothing;
+   - expired (`dwParts == NULL_ID`): `TID_GAME_ITEM_EXPIRED`;
+   - locked (`RefuseLockedItem`, `__ITEM_LOCK`): plain text "X is locked…".
+2. **The set is checked first** (3193). An id in both files acts as a set.
+3. Then `DoUseItem` (result ignored: it may show the level message and the random box still opens), then `DoUseGiftbox`.
+
+**DoUsePackItem** (2937).
+- Needs `GetEmptyCount() >= lines`, else `TID_GAME_LACKSPACE` and nothing happens.
+- Each item gets: +N, amount, `bCharged` from its prop, keep time = now + the set's minutes. If the box `IsBinds()` (a time limit unless IK2_WARP, prop `IP_FLAG_BINDS`, or its binds flag), every item gets binds.
+- A `CreateItem` failure loses the item silently. The box loses 1 at the end.
+
+**DoUseGiftbox** (2983).
+- Fewer than 1 empty slot: LACKSPACE, the box is kept.
+- Otherwise the box loses 1 BEFORE the item is made, so its slot can take the item.
+- `flag != 4` sets the flag and `bCharged`, then the time and the +N.
+- The box's own bound state is not passed on.
+- The item a random box gives is never opened by it (a box inside a box is opened later).
+
+**Bag stacking** (`CItemContainer::IsFull / Add`, `Item.h:694-800`).
+- A new item joins a stack with the same id, flag and bCharged only. The time limit and the +N are not compared, so a timed or upgraded item that lands on a stack takes that stack's.
+- An amount above `dwPackMax` spreads over several slots. A random box checks for 1 free slot and a set for 1 per line, so such a line can be lost. 101 lines today: shown as WARN, BLOCK when added or changed in the editor (the user's rule).
+
+**Bound items** (`CProject::OnAfterLoadPropItem`, `Project.cpp:4988-5000`).
+- `dwFlag` "=" (NULL_ID) becomes 0. Before this was found, both simulator copies treated every "=" item as bound (0xFFFFFFFF & IP_FLAG_BINDS).
+- IK3_EVENTMAIN / IK3_BINDS get `IP_FLAG_BINDS`.
+- 98 of 829 sets are bound boxes.
+
+**Edits** (`edit/boxes-ops.js`).
+- Chances are typed in percent and always total 100% (`exchangeOps.rebalance`), in the block's own unit when the typed value allows it.
+- When a column (flag / minutes / +N) or a finer chance is needed, the block is rewritten to the smallest type that holds it (GiftBox → 3 → 4 → 5 → 6, or 2). Only the keyword and each line's values change; gaps and comments stay.
+- "Remove contents" removes the box's blocks. The item stays (`BX_EMPTIED`).
+
+**Icons** (`loaders/dds.js`): Client/Item has 16-bit A1R5G5B5 (4,015), A4R4G4B4, X1R5G5B5, 24/32-bit and DXT1/3/5. The magenta key colour is drawn transparent. One icon per format is checked against an independent Python decode.
+
 ## Phase 2: Encoding and line-ending forensics (all 15,299 files, raw bytes)
 
 **Method:** Python read every file as bytes. For each one it checked:

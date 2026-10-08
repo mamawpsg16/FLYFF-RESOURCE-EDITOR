@@ -376,3 +376,18 @@ table.dr td .dr-amt { white-space: nowrap; }
 .dr-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
 .dr-line input.num-input { width: 110px; }
 
+/* Boxes (ui/boxes.js) */
+.dds-pic canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+.bx-row { display: flex; gap: 8px; align-items: center; }
+.bx-row .bx-text { flex: 1; min-width: 0; }
+.bx-icon { width: 32px; height: 32px; flex: 0 0 32px; display: inline-block; }
+.bx-icon-big { width: 64px; height: 64px; display: inline-block; margin-right: 8px; vertical-align: middle; }
+.bx-title { align-items: center; }
+table.bx td input.num-input { width: 72px; }
+table.bx td input.pct-input { width: 80px; }
+.warn-text { color: var(--warn, #c80); }
+.bx-chat { background: var(--panel, #111); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; margin: 8px 0; font-size: 12px; }
+.dur-wrap { white-space: nowrap; }
+input.num-input.dur-input { width: 64px; }
+select.dur-unit { padding: 2px 4px; }
+button.dur-perm { padding: 2px 8px; font-size: 12px; }

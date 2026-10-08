@@ -22,8 +22,11 @@ loaders/donation-window.js
 loaders/battlepass.js
 loaders/drops.js
 loaders/drops-sim.js
+loaders/boxes.js
+loaders/dds.js
 loaders/exchange.js
 loaders/exchange-sim.js
+loaders/boxes-sim.js
 loaders/donation-buy.js
 loaders/board-text.js
 validate/help.js
@@ -36,6 +39,7 @@ edit/item-ops.js
 edit/battlepass-ops.js
 edit/exchange-ops.js
 edit/drops-ops.js
+edit/boxes-ops.js
 edit/npc-ops.js
 edit/npcedit-ops.js
 edit/menu-ops.js
@@ -66,5 +70,6 @@ ui/donation.js
 ui/donation-tree.js
 ui/battlepass.js
 ui/drops.js
+ui/boxes.js
 ui/exchange.js
 ui/app.js

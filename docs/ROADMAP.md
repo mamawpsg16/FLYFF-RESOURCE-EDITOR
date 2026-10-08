@@ -1,8 +1,43 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-08 (F. Monster drops user-tested + committed; handoff on top)._
+_Last updated 2026-10-08 (J. Boxes part 1 user-tested + committed; next session: step-by-step IN-GAME test of everything waiting; handoff on top)._
 
-> **Handoff (2026-10-08, afternoon) — START HERE: F (Monster Drops) is user-tested in Brave (all 6 steps + the typing fix) and committed + pushed.** Plan: `/home/kevin/.claude/plans/warm-humming-swan.md`. Next: J (boxes), plan first. In game later (Windows): Stop/Start Server.bat, kill the edited monster.
+> **Handoff (2026-10-08, night) — START HERE: next session = a step-by-step IN-GAME test of everything in TODOS "Waiting for the in-game test"** (the user has time on the Windows PC). J part 1 (Boxes) is user-tested in Brave and committed + pushed. J part 2 (+ New box) waits until after the in-game session.
+> - **How to run the session:** one item at a time, in the order below. For each: what to do in the editor (on the REAL folder: the user picks FLYFF-V19-SOURCE in the editor and saves; ask before any step that writes the real Server/Resource), what to build / restart (the "After saving" list), what to do in game, and what to look for (incl. `Server/error_*.txt`, `eh_*.log`). Record each result; move passed items to TODOS "Done", keep failures in the table with what was seen, and fix in the editor afterwards.
+> - **Build once first:** Neuz (project Neuz, configuration NoGameguard) — both client patches are already in V19 (`89796d4e`, "not yet tested in game"). Then Stop Server.bat / Start Server.bat after every save.
+> - **Items, in order** (details: TODOS table, and each task's handoff below):
+>   1. Add NPC step 1 (`7cbb9c9`): the new NPC stands where placed; its shop sells the right items; `[tag]` above the name and the minimap icon.
+>   2. Add NPC step 2 (`11541cd`): exchange NPCs, Jeff's Weapon Pieces menus (test-data only so far: apply `tools/jeff-menus.json` to the real folder only after asking).
+>   3. Rules text menus (`376f694`, npc-board.diff): click the menu, the window shows the text.
+>   4. Donation Shop categories (`f1d404b`, donation-tree.diff): new category sorts in tree order, card text fits.
+>   5. Donation Shop buying (`77cc6d7`): buying acts as the simulator says (chips, bag full, 214,769 limit).
+>   6. Monster drops (`297a1c0`): kill the edited monster; the drop comes at about the shown rate.
+>   7. Save says what each change needs (`7531898`): after each save, doing what the list says is enough.
+>   8. **Boxes part 1 (this commit):** edit a random box and a set, Save, restart; `/createitem <numeric box id>`, open it: the items, counts, bound flag, time limit (7 days / 30 minutes) and +N match; a full bag refuses; a set needs one free slot per item.
+> - Part 1 extras after the user's Brave test (2026-10-08): "Amount" renamed **Count** ("how many they get"); time limits typed as a number + **minutes / hours / days** (decimals: 0.5 hours = 30 min; `FRE.dom.durationInput`, the unit stays what was typed); in + Add an item the time limit is **required** (empty until typed, **Permanent** button = 0); 0 reads "permanent (no time limit)".
+>
+> **Handoff (2026-10-08, evening) — J part 1 (Boxes: view and edit the existing random boxes and sets): user-tested in Brave and committed.** Plan: `/home/kevin/.claude/plans/read-claude-md-in-flyff-resource-editor-fluttering-taco.md`. Next after the OK: commit + push, TODOS → Waiting for the in-game test, then **J part 2** (+ New box: the box item, look picker with the picture, price / trade / stack settings).
+> - **New task card "Boxes"** (`MODULES` id `boxes`; `propGiftbox.inc` + `propPackItem.inc` editable, Client copy of the set file):
+>   - left: every box with its icon (from Client/Item), searchable; filter All / Random boxes / Sets / With problems / Edited;
+>   - random box: chance in % (always 100% in total; the others move in proportion), what players really get, amount (max = stack size), bound, time limit, +N, ✕, "Same chance for all"; the box's line format widens by itself when needed (toast);
+>   - set: time limit for every item, amount, +N, ✕;
+>   - **+ Add an item** (standard form), **🎲 Open it N times** (free slots, box bound / timed / locked / expired, trading, "already holds 1 of each": what the player reads, rates, lost items, stacks), **Remove contents…** (⚠, the item stays: `BX_EMPTIED`).
+> - **User decisions (2026-10-08):** 2 parts; a new box gets an `mdlDyna.inc` line copied from a box with the same look, and the look picker lists only looks that have one (65 of 66); no fashion-set helper; "remove" = contents only; the look shows like the + NPC model picker (combo + picture).
+> - **Found in the C++ (INVESTIGATION §1.19):** the set is checked before the random box; the random box is used up before the item is made; stacking compares id, flag and bCharged only (a timed / upgraded item that lands on a stack takes the stack's); `dwFlag` "=" means 0 after `OnAfterLoadPropItem` (both copies first got this wrong: every "=" box looked bound); 98 of 829 sets are bound boxes; 101 lines ask for more than a slot holds (WARN; BLOCK when typed in the editor).
+> - Checks: BX_TOO_MANY, BX_PACK_TOO_MANY, BX_BOTH, BX_UNDEF, BX_NO_PROP, BX_BRACES, BX_NUM_ZERO (BLOCK); BX_NUM_STACK (101 WARN, BLOCK when edited), BX_OVER_100 (7), BX_DUP, BX_NOT_ITEM, BX_SKIPPED, BX_EMPTIED (WARN); BX_UNDER_100 (13, INFO).
+> - Simulator: `gjs -m tools/boxes-sim.js II_SYS_SYS_SCR_BXPIG n=10000` (`free=`, `bound`, `keep=`, `locked`, `expired`, `trading`, `have`, `show=`). Python copy `oracle_sim.py boxes` + `dds`. 21 of 22 planted bugs caught. Tests: core all pass (new boxes section), UI harness 380 (new stages `boxes`, `boxesopen`; 5 task cards).
+>
+> **User's test:** run `tools/refresh-fixtures.sh test-data` (new: propGiftbox.inc, propPackItem.inc + Client copy, Client/Item icons) and `python3 build.py`, reload, pick `test-data`, task **Boxes**.
+> 1. The list shows icons. Search "Potion Box" (II_SYS_SYS_EVE_POTION): 15 items, Total 100%.
+> 2. Type 30 in the first chance (no click): the others shrink, the total stays 100%. Undo.
+> 3. Type 10080 in a time limit: toast "line format was widened to GiftBox4", "7 days" under it. Undo.
+> 4. + Add an item → Moonstone → the preview shows the line → Add. 🎲 Open it N times → Run; set Free bag slots 0 → "bag full".
+> 5. Golden Lucky Pig (BXPIG, 102%): "Players get" differs from the chances; the ⚠ explains it.
+> 6. A set (Box of Change, II_SYS_SYS_SCR_BXCHANGE): change the time limit, + Add an item, Remove contents… (⚠). Undo all.
+> 7. Save once: the backup holds `propGiftbox.inc` / `propPackItem.inc` (+ Client copy); After saving says "Run Stop Server.bat, then Start Server.bat" (a set change also restarts the game copy).
+> Then commit + push.
+>
+> **Handoff (2026-10-08, afternoon) — F (Monster Drops) is user-tested in Brave (all 6 steps + the typing fix) and committed + pushed.** Plan: `/home/kevin/.claude/plans/warm-humming-swan.md`. Next: J (boxes), plan first. In game later (Windows): Stop/Start Server.bat, kill the edited monster.
 > - After the first test: typing in one box now folds into one undo step (`typed()` → `ctx.editGroup` mergeKey per field; the label keeps "was <old value>"). UI harness 367.
 > - **New task card "Monster Drops"** (`MODULES` id `drops`; `propMoverEx.inc` editable; propDropEvent.inc, except.txt, PenyaTable.txt, expTable.inc, Event.lua, propItemEtc.inc read-only). Left: every monster with a block (filters: giants and bosses, with problems, edited, with script-made drops). Right: max items per kill, Penya (DropGold + what players really get from PenyaTable × rates), the drop table (real chance typed in %, per-kill chance with the Maxitem stop, amount "not counted" / 1 to N, +N, ✕, script tag), random gear (DropKind: + / ✕), the event drops (read-only, folded), problems. **+ Add a drop** (standard form: item, chance, amount, +N; checks; the line written + "players get it in x% of kills"). **🎲 Kill it N times** (kills, player level, rolls per kill, Fortune Circle, map, seed). Each edit is one undo step with a plain label ("Small Aibatt: added Red Chips as a drop (4.9%)").
 > - **User decisions (2026-10-08):** script-made lines editable with a ⚠ (`M_GEN_EDITED`, only for lines changed since loading); trust the C++ on capped chances; monsters only (item side + bulk → task H).
@@ -660,6 +695,7 @@ All five came in with the import commit `3ebc5356`. `Event.lua` was also changed
 - Python copy, as for every task.
 
 ### J. Boxes: create and edit random boxes, sets and bundles (asked 2026-10-06; widened 2026-10-07)
+> **Part 1 built 2026-10-08** (view / edit existing boxes + simulator; INVESTIGATION §1.19). **Part 2 next:** + New box. Decisions 2026-10-08: no fashion-set helper (dropped below); the look is a combo + picture like the + NPC model picker (not the gallery grid), listing only looks that have an `mdlDyna.inc` box line (65 of 66), and the new box copies that line (without one a dropped box shows the vagrant helmet, `ModelMng.cpp:42-44`; `949f2cc2` added none). Spec_Item rows have 171 tab columns = 175 tokens (`"""x"""` is 3 tokens). New ids: 31671-59999 (60000+ is used by `__NEW_STACKABLE_AMPS`, `ProjectCmn.cpp:593`); template row `II_SYS_SYS_SCR_BXMCOOK01` (FASHION_SET_TO_BOX_GUIDE); `Source/Resource/defineItem.h` only matters when C++ uses the id.
 **For players' words:** make a new box item in one form. Pick what kind of box:
 1. **Treasure box: "get 1 random item out of N".** Add items, set each one's chance in plain %, and see a bar that must add up to 100%.
 2. **Set / bundle box: "get everything inside".** E.g. a fashion set (hat, suit, gloves, shoes) or a starter pack.
@@ -714,7 +750,7 @@ New box:  [ Infinity Treasure Box ]   Type: (•) 1 random item  ( ) everything 
   - the time limit applies to every item;
   - a bound box makes every item bound.
 - **Max 24 items per pack** (`MAX_ITEM_PER_PACK`, `__VER >= 18`); more = load error (BLOCK).
-- There is no gender choice inside a pack: the existing fashion sets are separate male / female boxes (e.g. `II_SYS_SYS_SCR_BXMTUXEDO01` = suit + gloves + shoes). **Fashion-set helper:** pick a fashion item and it fills in the matching pieces (same set name; `SetItem` blocks of `propItemEtc.inc` where defined), and makes the male and female boxes in one step.
+- There is no gender choice inside a pack: the existing fashion sets are separate male / female boxes (e.g. `II_SYS_SYS_SCR_BXMTUXEDO01` = suit + gloves + shoes). ~~Fashion-set helper~~ (dropped by the user, 2026-10-08).
 
 **The box item itself** (created in the same undo step, Server + Client):
 - `Spec_Item.txt` row, copied from an existing box (e.g. "Box of Wish" `II_SYS_SYS_SCR_BXSSUIT`: `IK1_SYSTEM / IK2_SYSTEM / IK3_SCROLL`, usable, stack 1);

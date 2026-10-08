@@ -109,6 +109,21 @@
         return FRE.drops.validateDrops(model, { items: ws.items.items, movers: ws.movers.movers, text: f.text, original: f.originalText });
       },
     },
+    {
+      // propGiftbox.inc (CProject::LoadGiftbox, Project.cpp:4261) = random boxes, server only (UTF-16);
+      // propPackItem.inc (CProject::LoadPackItem, Project.cpp:4492) = sets; the game reads its own LF copy (Item Wiki, e08528a5).
+      id: 'boxes', label: 'Boxes',
+      required: ['propGiftbox.inc', 'propPackItem.inc'], editable: ['propGiftbox.inc', 'propPackItem.inc'], client: ['propPackItem.inc'],
+      parse(ws) {
+        const m = FRE.boxes.loadBoxes(ws.files, { defines: ws.defines.defines, strings: ws.strings.map });
+        // the boxes when the task opened: a box whose contents are removed later gets BX_EMPTIED
+        if (!ws._boxIds) ws._boxIds = { gift: new Set(m.gift.boxes.keys()), pack: new Set(m.pack.boxes.keys()), stack: FRE.boxes.stackKeys(m, ws.items.items) };
+        return m;
+      },
+      validate(ws, model) {
+        return FRE.boxes.validateBoxes(model, { items: ws.items.items, original: ws._boxIds });
+      },
+    },
   ];
   const ALL_FILES = [...new Set([...CORE, ...MODULES.flatMap(m => [...m.required, ...(m.optional || [])]), ...OPTIONAL])];
 

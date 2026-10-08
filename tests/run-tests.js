@@ -2608,5 +2608,148 @@ section('monster drops: loader, checks, kills (JS and Python copies agree)');
   }
 }
 
+// ---------------------------------------------------------------- boxes (task J)
+section('boxes: loader, checks, opening boxes, edits, icons (JS and Python copies agree)');
+{
+  const files = new Map();
+  for (const [k, e] of loadFolder(FIXTURES)) files.set(k, openSource(e));
+  const w = new FRE.Workspace(files, { only: 'boxes' }).load();
+  const m = w.models.boxes, Bx = FRE.boxes, Sim = FRE.boxesSim, O = FRE.boxesOps, Dm = w.defines.defines;
+  eq(m.gift.boxes.size, 487, 'propGiftbox.inc: 487 random boxes');
+  eq(m.pack.boxes.size, 829, 'propPackItem.inc: 829 sets');
+  eq(m.pack.stopped, null, 'propPackItem.inc loads to the end (no set above 24 items)');
+  const codes = {};
+  for (const d of w.diags) codes[d.code] = (codes[d.code] || 0) + 1;
+  eq(codes.BX_OVER_100, 7, '7 random boxes add up to more than 100%');
+  eq(codes.BX_UNDER_100, 13, '13 random boxes add up to less than 100% (the last line gets the rest)');
+  for (const c of Object.keys(codes)) ok(!!FRE.diagHelp[c], `help text for ${c}`);
+  eq(w.files.get('propgiftbox.inc').kind, 'utf16le-bom', 'propGiftbox.inc is read as UTF-16 (editable)');
+  eq(w.diags.filter(d => d.code === 'BX_NUM_STACK' && d.severity === 'WARN').length, 101, '101 lines ask for more than one bag slot holds: shown as warnings (they work, with more free slots)');
+  {
+    const b = m.gift.boxes.get(Dm.get('II_SYS_SYS_EVE_POTION'));
+    w.apply('propgiftbox.inc', O.setLine(w.files.get('propgiftbox.inc').text, b, 0, { num: 5000 }, Dm), 'x');
+    ok(w.newBlocking().some(d => d.code === 'BX_NUM_STACK'), 'an amount above the stack size typed in the editor blocks saving');
+    w.undo();
+  }
+
+  const out = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} boxes ${FIXTURES}`);
+  const ora = JSON.parse(new TextDecoder().decode(out[1]));
+  const loadJ = (g, p) => ({
+    gift: g ? { order: [...g.boxes.keys()], hung: !!g.hung, skipped: g.skipped.length,
+      boxes: Object.fromEntries([...g.boxes].map(([k, b]) => [String(k), [...b.lines.map(l => [l.item.value >>> 0, l.num.value, Bx.flagOf(l), Bx.minutesOf(l), Bx.upgradeOf(l), l.weight]), b.sum, b.cum]])) } : null,
+    pack: p ? { order: [...p.boxes.keys()], hung: !!p.hung, stopped: p.stopped ? p.stopped.pack : null,
+      boxes: Object.fromEntries([...p.boxes].map(([k, b]) => [String(k), [b.lines.map(l => [l.item.value >>> 0, l.upgrade.value, l.num.value]), b.span]])) } : null,
+  });
+  const keysEq = (a, b, what) => {
+    let same = 0, bad = [];
+    const ka = Object.keys(b);
+    for (const k of ka) { const x = JSON.stringify(a[k]), y = JSON.stringify(b[k]); if (x === y) same++; else if (bad.length < 3) bad.push(`${k}: js ${String(x).slice(0, 200)} py ${String(y).slice(0, 200)}`); }
+    eq(same === ka.length && Object.keys(a).length === ka.length, true, `${what}: ${same} of ${ka.length} agree`);
+    bad.forEach(x => print('   ' + x));
+  };
+  const lj = loadJ(m.gift, m.pack);
+  keysEq(lj.gift.boxes, ora.load.gift.boxes, 'random boxes: every line, weight, running total (after Verify)');
+  keysEq(lj.pack.boxes, ora.load.pack.boxes, 'sets: every line and time limit');
+  eq(JSON.stringify([lj.gift.order, lj.gift.skipped, lj.pack.order]), JSON.stringify([ora.load.gift.order, ora.load.gift.skipped, ora.load.pack.order]), 'the same box order, nothing skipped');
+  const chJ = {};
+  for (const [k, b] of m.gift.boxes) chJ[String(k)] = Bx.chances(b).map(c => Math.round(c * Bx.TOTAL));
+  keysEq(chJ, ora.chances, 'the real chance of every line');
+
+  const env = Sim.envFor(w);
+  eq(JSON.stringify([...w.items.items.keys()].filter(id => env.prop(id) && env.prop(id).binds).sort((a, b) => a - b)), JSON.stringify(ora.binds),
+    `the same ${ora.binds.length} items count as bound (dwFlag "=" becomes 0; IK3_BINDS / IK3_EVENTMAIN always bound)`);
+  const rowJ = it => [it.line, it.id, FRE.exchangeSim.short(it.num), it.flag, it.charged, it.keep, it.upgrade, it.stacked];
+  let cAgree = 0, cBad = [];
+  const allCases = ora.cases.map(c => ({ c, env }));
+  for (const wd of ora.worlds) {
+    const u16 = t => new Uint8Array([0xff, 0xfe, ...[...t].flatMap(ch => [ch.charCodeAt(0) & 255, ch.charCodeAt(0) >> 8])]);
+    const ctx2 = { defines: Dm, strings: w.strings.map };
+    const model2 = { gift: Bx.loadGiftboxes(new FRE.SourceFile('propGiftbox.inc', u16(wd.gift)), ctx2), pack: Bx.loadPacks(new FRE.SourceFile('propPackItem.inc', B.binaryStringToBytes(wd.pack)), ctx2) };
+    const env2 = Sim.envFor(w, model2);
+    for (const c of wd.cases) allCases.push({ c, env: env2 });
+  }
+  for (const { c, env } of allCases) {
+    const sp = c.spec;
+    const start = Sim.bag(env, { id: sp.box, num: sp.num, bound: sp.bound, keep: sp.keep, locked: sp.locked, expired: sp.expired }, { free: sp.free, have: sp.have || [] });
+    const rnd = FRE.xRandom.rng(sp.seed), opens = [];
+    for (let i = 0; i < sp.n; i++) {
+      const r = Sim.open(env, FRE.exchangeSim.clone(start), 0, rnd, { trading: sp.trading });
+      opens.push([r.refused, r.line, r.used, r.got.map(rowJ), r.lost.map(rowJ), r.crash ? 'no-prop' : null]);
+    }
+    const j = JSON.stringify({ opens, next: rnd.next }), p = JSON.stringify({ opens: c.opens, next: c.next });
+    if (j === p) cAgree++;
+    else if (cBad.length < 3) { const k = opens.findIndex((x, i) => JSON.stringify(x) !== JSON.stringify(c.opens[i])); cBad.push(`${JSON.stringify(sp)} open ${k + 1}: js ${JSON.stringify(opens[k])} py ${JSON.stringify(c.opens[k])}`); }
+  }
+  eq(cAgree, allCases.length, `opening boxes: every open agrees (${allCases.length} bags, ${allCases.reduce((a, x) => a + x.c.opens.length, 0)} opens: rolls, bag space, stacks, bound, time limits, locked, expired, trading, a box in both files)`);
+  cBad.forEach(x => print('   ' + x));
+
+  let sAgree = 0;
+  for (const sc of ora.small) {
+    const bytes = sc.kind === 'gift' ? new Uint8Array([0xff, 0xfe, ...[...sc.text].flatMap(ch => [ch.charCodeAt(0) & 255, ch.charCodeAt(0) >> 8])]) : B.binaryStringToBytes(sc.text);
+    const f = new FRE.SourceFile(sc.kind === 'gift' ? 'propGiftbox.inc' : 'propPackItem.inc', bytes);
+    const ctx = { defines: Dm, strings: w.strings.map };
+    const j = sc.kind === 'gift' ? loadJ(Bx.loadGiftboxes(f, ctx), null) : loadJ(null, Bx.loadPacks(f, ctx));
+    if (JSON.stringify(j) === JSON.stringify(sc.load)) sAgree++;
+    else print(`   small ${sc.kind} file ${JSON.stringify(sc.text.slice(0, 60))}: js ${JSON.stringify(j).slice(0, 300)} py ${JSON.stringify(sc.load).slice(0, 300)}`);
+  }
+  eq(sAgree, ora.small.length, `small files: the loader agrees on every edge (${ora.small.length}: 25-item set, 129-line box, missing }, unknown word, duplicates, undefined items)`);
+
+  // edit scripts: FRE.boxesOps against the Python copy's own line rules, whole files compared
+  {
+    const F = { gift: 'propgiftbox.inc', pack: 'proppackitem.inc' };
+    let same = 0;
+    for (const sc of ora.edits) {
+      let steps = 0;
+      const file = F[sc.file];
+      try {
+        for (const op of sc.ops) {
+          const id = Dm.get(op.box), M = w.models.boxes;
+          const box = sc.file === 'gift' ? M.gift.boxes.get(id) : M.pack.boxes.get(id);
+          const t = w.files.get(file).text;
+          const pk = o => { const d = {}; for (const k of ['define', 'num', 'flag', 'minutes', 'upgrade']) if (o[k] !== undefined) d[k] = o[k]; return d; };
+          let sp;
+          if (op.op === 'removeall') sp = O.removeContents(t, box);
+          else if (sc.file === 'gift') sp = op.op === 'chance' ? O.setChance(t, box, op.j, op.u) : op.op === 'set' ? O.setLine(t, box, op.j, pk(op), Dm)
+            : op.op === 'add' ? O.addLine(t, box, Object.assign(pk(op), { w: op.u }), Dm) : op.op === 'remove' ? O.removeLine(t, box, op.j) : O.spreadEvenly(t, box);
+          else sp = op.op === 'add' ? O.addPackLine(t, box, pk(op), Dm) : op.op === 'minutes' ? O.setPackMinutes(t, box, op.minutes)
+            : op.op === 'set' ? O.setPackLine(t, box.lines[op.j], pk(op), Dm) : O.removePackLine(t, box, box.lines[op.j]);
+          w.apply(file, sp, op.op);
+          steps++;
+        }
+        const bytes = w.files.get(file).serialize();
+        const sha = GLib.compute_checksum_for_bytes(GLib.ChecksumType.SHA256, new GLib.Bytes(bytes));
+        if (sha === sc.sha256 && bytes.length === sc.size) same++;
+        else print(`   edit script ${JSON.stringify(sc.ops).slice(0, 220)}: js ${bytes.length} bytes, py ${sc.size}`);
+      } catch (e) { print(`   edit script ${JSON.stringify(sc.ops).slice(0, 220)}: ${e.message}`); }
+      while (steps--) w.undo();
+    }
+    eq(same, ora.edits.length, `edit scripts: byte-identical files (${ora.edits.length}: chances kept at 100%, wider box types, add / change / remove, sets, remove contents)`);
+    eq(w.files.get(F.gift).dirty || w.files.get(F.pack).dirty, false, 'every edit undone: both files are back to their original bytes');
+  }
+
+  // the shown chances against 20,000 opens
+  for (const name of ['II_SYS_SYS_SCR_BXPIG', 'II_SYS_SYS_SCR_BXSSUIT', 'II_SYS_SYS_EVE_COMMERGIFTBOX27_S']) {
+    const id = Dm.get(name), b = m.gift.boxes.get(id), ch = Bx.chances(b);
+    const r = Sim.run(env, id, { n: 20000, free: 5, seed: 3 });
+    let worst = 0;
+    ch.forEach((c, i) => { if (c * r.used < 20) return; const got = (r.lines.get(i) || { times: 0 }).times, exp = c * r.used; worst = Math.max(worst, Math.abs(got - exp) / Math.sqrt(exp * (1 - c))); });
+    ok(worst < 5, `${name}: the shown chances match 20,000 opens`, `worst z ${worst.toFixed(2)}`);
+  }
+
+  // item icons: FRE.dds.decode against the Python decode (one icon per pixel format)
+  {
+    const dir = ROOT + '/test-data/fixtures/Client/Item';
+    const o2 = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} dds ${dir}`);
+    const py = JSON.parse(new TextDecoder().decode(o2[1]));
+    let same = 0;
+    for (const [f, exp] of Object.entries(py)) {
+      const img = FRE.dds.decode(readBytes(dir + '/' + f));
+      const got = img ? [img.w, img.h, GLib.compute_checksum_for_bytes(GLib.ChecksumType.SHA256, new GLib.Bytes(new Uint8Array(img.rgba.buffer)))] : null;
+      if (JSON.stringify(got) === JSON.stringify(exp)) same++; else print(`   icon ${f}: js ${JSON.stringify(got)} py ${JSON.stringify(exp)}`);
+    }
+    eq(same, Object.keys(py).length, `item icons: the same pixels for every format (${Object.keys(py).length} icons: 16/24/32-bit, DXT1/3/5)`);
+  }
+}
+
 print(`\n${pass} passed, ${fail} failed`);
 if (fail) System.exit(1);

@@ -4004,7 +4004,7 @@ def db_run(root):
 #   Stop Server.bat kills Neuz.exe and all 7 servers; Start Server.bat starts them and then Client\- Start Game.bat.
 AS_SHARED = ['spec_item.txt', 'character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt',
              'defineneuz.h', 'definetext.h', 'etc.inc', 'etc.txt.txt', 'textclient.inc', 'textclient.txt.txt',
-             'exchange_script.txt', 'donationshop.inc', 'battlepass.inc']
+             'exchange_script.txt', 'donationshop.inc', 'battlepass.inc', 'proppackitem.inc']
 AS_TREE = 'client/donationshoptree.inc'
 # (path, line, text that must be on that line): the loads this table relies on
 AS_CITES = [
@@ -4017,6 +4017,9 @@ AS_CITES = [
     ('_Common/Project.cpp', 979, 'm_Exchange.Load_Script()'),
     ('_Common/Project.cpp', 828, 'LoadPropMoverEx( "PropMoverEx.inc" )'),
     ('_Common/Project.cpp', 3196, '#ifdef __WORLDSERVER'),
+    ('_Common/Project.cpp', 842, 'LoadGiftbox( "propGiftbox.inc" )'),
+    ('_Common/Project.cpp', 836, '#ifdef __WORLDSERVER'),
+    ('_Common/Project.cpp', 855, 'LoadPackItem( "propPackItem.inc" )'),
     ('_Common/ProjectCmn.cpp', 1256, '"character.txt.txt"'),
     ('_Common/ProjectCmn.cpp', 1259, '"etc.txt.txt"'),
     ('_Common/ProjectCmn.cpp', 1274, '"textClient.txt.txt"'),
@@ -4044,6 +4047,8 @@ def as_who(key):
     if re.fullmatch(r'world/.+\.dyo', key):
         return True, None
     if key == 'propmoverex.inc':          # drops are kept only in the WorldServer (Project.cpp:3196)
+        return True, None
+    if key == 'propgiftbox.inc':          # LoadGiftbox sits in #ifdef __WORLDSERVER (Project.cpp:836-847)
         return True, None
     return True, 'start'          # unknown file: both, at startup
 
@@ -4090,7 +4095,7 @@ def as_run(root):
     import random
     rnd = random.Random(1019)
     keys = AS_SHARED + [AS_TREE, 'client/npcboard_282.inc', 'client/npcboard_300.inc', 'world/wdmadrigal/wdmadrigal.dyo',
-                        'world/wdvolcane/wdvolcane.dyo', 'propmoverex.inc', 'propskill.txt']
+                        'world/wdvolcane/wdvolcane.dyo', 'propmoverex.inc', 'propgiftbox.inc', 'propskill.txt']
     states = ['written', 'created', 'datares', 'different', 'none']
     pstates = ['in-source', 'missing', 'unknown', 'built']
     codesets = [[], ['DT_PATCH'], ['DT_ORDER'], ['NN_RULES_PATCH']]
@@ -5219,6 +5224,695 @@ def dr_run(root):
     return out
 
 
+# ---- boxes: propGiftbox.inc (random boxes) + propPackItem.inc (sets), and what happens when a player uses one ----
+# CProject::LoadGiftbox (Project.cpp:4261-4380) with CGiftboxMan::AddItem / Verify / Open (4116-4256),
+# CProject::LoadPackItem / CPackItem::AddItem (4450-4533), CUser::OnDoUseItem (User.cpp:3133-3217),
+# DoUsePackItem (2937), DoUseGiftbox (2983), CItemElem::IsBinds (Item.cpp:434),
+# CMover::CreateItem (Mover.cpp:2757) -> CItemContainer::IsFull / Add (Item.h:694-800).
+BX_TYPES = {'GiftBox': (100, 0), 'GiftBox2': (1, 0), 'GiftBox3': (100, 1), 'GiftBox4': (100, 2), 'GiftBox5': (10, 2), 'GiftBox6': (10, 3)}
+BX_TOTAL = 1000000
+BX_PER_PACK = 24              # MAX_ITEM_PER_PACK, __VER >= 18
+
+
+def bx_gift(data, D):
+    """-> {'boxes': {id: {'lines': [[item, w, num, flag, span, ab]], 'sum', 'cum'}}, 'order', 'hung', 'skipped'}"""
+    s = DrScript(nn_text16(data).encode('utf-8', 'replace'), D)
+    boxes, order, hung, skipped, inskip = {}, [], False, 0, False
+    s.get()
+    while not s.eof:
+        if s.tok in BX_TYPES and s.typ == 'id':
+            inskip = False
+            prec, ncol = BX_TYPES[s.tok]
+            box = s.number() & 0xFFFFFFFF
+            s.get()                                   # {
+            item = s.number()
+            while s.tok[:1] != '}':
+                if s.eof:
+                    hung = True
+                    break
+                p, n = s.number(), s.number()
+                ex = [s.number() for _ in range(ncol)]
+                b = boxes.get(box)
+                if b is None:
+                    b = boxes[box] = {'lines': [], 'sum': 0, 'cum': []}
+                    order.append(box)
+                w = (p * prec) & 0xFFFFFFFF
+                b['sum'] = s32(b['sum'] + w)
+                b['cum'].append(b['sum'] & 0xFFFFFFFF)
+                b['lines'].append([item & 0xFFFFFFFF, p, n, (ex[0] & 0xFF) if ncol > 0 else 0, ex[1] if ncol > 1 else 0, ex[2] if ncol > 2 else 0, w])
+                item = s.number()
+            if hung:
+                break
+        else:
+            if not inskip:
+                skipped += 1
+            inskip = True
+        s.get()
+    for b in boxes.values():                          # Verify
+        b['cum'][-1] = (b['cum'][-1] + BX_TOTAL - b['sum']) & 0xFFFFFFFF
+    return {'boxes': boxes, 'order': order, 'hung': hung, 'skipped': skipped}
+
+
+def bx_pack(data, D):
+    """-> {'boxes': {id: {'lines': [[item, ab, num]], 'span'}}, 'order', 'stopped', 'hung'}"""
+    s = DrScript(data, D)
+    boxes, order, stopped, hung = {}, [], None, False
+    s.get()
+    while not s.eof:
+        if s.tok == 'PackItem':
+            box = s.number() & 0xFFFFFFFF
+            span = s.number()
+            s.get()
+            item = s.number()
+            while s.tok[:1] != '}':
+                if s.eof:
+                    hung = True
+                    break
+                ab, n = s.number(), s.number()
+                b = boxes.get(box)
+                if b is None:
+                    b = boxes[box] = {'lines': [], 'span': 0}
+                    order.append(box)
+                if len(b['lines']) == BX_PER_PACK:
+                    stopped = box
+                    break
+                b['lines'].append([item & 0xFFFFFFFF, ab, n])
+                item = s.number()
+            if stopped is not None or hung:
+                break
+            if box in boxes:
+                boxes[box]['span'] = span
+        s.get()
+    return {'boxes': boxes, 'order': order, 'stopped': stopped, 'hung': hung}
+
+
+def bx_chances(cum):
+    out, covered = [], 0
+    for c in cum:
+        top = min(c, BX_TOTAL)
+        out.append(max(0, top - covered))
+        covered = max(covered, top)
+    return out
+
+
+def bx_items(root, D):
+    rows = dr_columns(os.path.join(root, 'Spec_Item.txt'), ['ver6', 'dwID', 'dwPackMax', 'dwItemKind2', 'dwItemKind3', 'dwFlag', 'dwParts', 'bCharged'])
+    it = {}
+    for r in rows:
+        if dr_val(r['ver6'], D) > 19:
+            continue
+        i = dr_val(r['dwID'], D) & 0xFFFFFFFF
+        flag = dr_val(r['dwFlag'], D) & 0xFFFFFFFF
+        if flag == 0xFFFFFFFF:                       # OnAfterLoadPropItem (Project.cpp:4988): NULL_ID -> 0
+            flag = 0
+        ik3 = dr_val(r['dwItemKind3'], D)
+        if ik3 in (D.get('IK3_EVENTMAIN'), D.get('IK3_BINDS')):     # Project.cpp:4996-4999
+            flag |= 1
+        it[i] = {'pm': dr_val(r['dwPackMax'], D) & 0xFFFFFFFF, 'ik2': dr_val(r['dwItemKind2'], D), 'ik3': ik3,
+                 'flag': flag, 'parts': dr_val(r['dwParts'], D), 'ch': 1 if dr_val(r['bCharged'], D) else 0}
+    it[FILLER] = {'pm': 1, 'ik2': 0, 'ik3': 0, 'flag': 0, 'parts': -1, 'ch': 0}
+    return it
+
+
+class BxBag:
+    """the bag: 336 positions, `unlocked` usable; the box in position 0"""
+    def __init__(self, W, spec):
+        self.unlocked = FREE
+        self.slot = [None] * BAG
+        box = spec['box']
+        items = [{'id': box, 'n': spec.get('num', 1), 'flag': (2 if spec.get('bound') else 0) | (1 if spec.get('expired') else 0),
+                  'ch': W.items.get(box, {'ch': 0})['ch'], 'keep': spec.get('keep', 0), 'up': 0, 'locked': bool(spec.get('locked'))}]
+        for hv in spec.get('have', []):
+            items.append({'id': hv['id'], 'n': hv['num'], 'flag': 0, 'ch': W.items.get(hv['id'], {'ch': 0})['ch'], 'keep': 0, 'up': 0, 'locked': False})
+        for _ in range(max(0, self.unlocked - len(items) - spec.get('free', 10))):
+            items.append({'id': FILLER, 'n': 1, 'flag': 0, 'ch': 0, 'keep': 0, 'up': 0, 'locked': False})
+        for i, x in enumerate(items):
+            self.slot[i] = x
+
+    def copy(self):
+        b = BxBag.__new__(BxBag)
+        b.unlocked = self.unlocked
+        b.slot = [dict(x) if x else None for x in self.slot]
+        return b
+
+    def empty(self):
+        return sum(1 for i in range(min(self.unlocked, BAG)) if self.slot[i] is None)
+
+
+def bx_create(W, bag, it):
+    """CMover::CreateItem -> CItemContainer::Add: (ok, number put on stacks)"""
+    pr = W.items.get(it['id'])
+    if it['id'] == 0 or pr is None:
+        return False, 0
+    pm = s16(pr['pm'])
+    n = s16(it['n'])
+    search = min(bag.unlocked, BAG)
+    t = n                                             # IsFull
+    full = True
+    for i in range(search):
+        e = bag.slot[i]
+        if e is None:
+            if t > pm:
+                t -= pm
+            else:
+                full = False
+                break
+        elif e['id'] == it['id'] and e['flag'] == it['flag'] and e['ch'] == it['ch']:
+            if e['n'] + t > pm:
+                t -= pm - e['n']
+            else:
+                full = False
+                break
+    if full:
+        return False, 0
+    stacked = 0
+    if pr['pm'] != 1:
+        for i in range(search):
+            e = bag.slot[i]
+            if e is not None and e['id'] == it['id'] and e['n'] < pm and e['flag'] == it['flag'] and e['ch'] == it['ch']:
+                if e['n'] + n > pm:
+                    stacked += pm - e['n']
+                    n -= pm - e['n']
+                    e['n'] = pm
+                else:
+                    e['n'] += n
+                    stacked += n
+                    n = 0
+                    break
+    if n > 0:
+        for i in range(search):
+            if bag.slot[i] is not None:
+                continue
+            put = pm if n > pm else n
+            bag.slot[i] = {'id': it['id'], 'n': put, 'flag': it['flag'], 'ch': it['ch'], 'keep': it['keep'], 'up': it['up'], 'locked': False}
+            n -= put
+            if n <= 0:
+                break
+    return True, stacked
+
+
+def bx_open(W, bag, rnd, trading=False):
+    """CUser::OnDoUseItem on bag position 0 -> [refused, line, used, got, lost, crash]"""
+    box = bag.slot[0]
+    if trading:
+        return ['trade', None, False, [], [], None]          # IsUsableState: TID_GAME_TRADELIMITUSING
+    pr = W.items.get(box['id'])
+    if pr is not None and pr['parts'] == -1 and box['flag'] & 1:
+        return ['expired', None, False, [], [], None]
+    if pr is not None and pr['parts'] == -1 and pr['ik3'] not in (W.D.get('IK3_EGG'), W.D.get('IK3_PET')) and box['locked']:
+        return ['locked', None, False, [], [], None]
+    got, lost = [], []
+    pk = W.pack['boxes'].get(box['id'])
+    if pk is not None:                                       # DoUsePackItem
+        if bag.empty() < len(pk['lines']):
+            return ['space', None, False, [], [], None]
+        bound = False                                        # IsBinds of the box
+        if box['keep'] and (pr or {}).get('ik2') != W.D.get('IK2_WARP'):
+            bound = True
+        elif pr is not None and (pr['flag'] & 1) == 1:
+            bound = True
+        elif box['flag'] & 2:
+            bound = True
+        for k, (iid, ab, n) in enumerate(pk['lines']):
+            ip = W.items.get(iid)
+            if ip is None:
+                return [None, None, False, got, lost, 'no-prop']
+            it = {'id': iid, 'n': n, 'flag': 2 if bound else 0, 'ch': ip['ch'], 'keep': pk['span'], 'up': ab}
+            ok, st = bx_create(W, bag, it)
+            row = [k, iid, s16(n), it['flag'], it['ch'], it['keep'], ab, st]
+            (got if ok else lost).append(row)
+        box['n'] = s16(box['n'] - 1)
+        if box['n'] <= 0:
+            bag.slot[0] = None
+        return [None, None, True, got, lost, None]
+    roll = rnd(BX_TOTAL)                                     # CGiftboxMan::Open
+    gb = W.gift['boxes'].get(box['id'])
+    if gb is None:
+        return ['not-a-box', None, False, [], [], None]
+    j = next((k for k, c in enumerate(gb['cum']) if roll < c), None)
+    if j is None:
+        return ['not-a-box', None, False, [], [], None]
+    if bag.empty() < 1:
+        return ['space', j, False, [], [], None]
+    box['n'] = s16(box['n'] - 1)
+    if box['n'] <= 0:
+        bag.slot[0] = None
+    iid, p, n, flag, span, ab, w = gb['lines'][j]
+    it = {'id': iid, 'n': n, 'flag': 0, 'ch': 0, 'keep': span, 'up': ab}
+    if flag != 4:
+        ip = W.items.get(iid)
+        if ip is None:
+            return [None, j, True, [], [], 'no-prop']
+        it['flag'], it['ch'] = flag, ip['ch']
+    ok, st = bx_create(W, bag, it)
+    row = [j, iid, s16(n), it['flag'], it['ch'], span, ab, st]
+    (got if ok else lost).append(row)
+    return [None, j, True, got, lost, None]
+
+
+class BxWorld:
+    def __init__(self, root):
+        self.D = dr_defines(root)
+        self.items = bx_items(root, self.D)
+        self.gift = bx_gift(open(os.path.join(root, 'propGiftbox.inc'), 'rb').read(), self.D)
+        self.pack = bx_pack(open(os.path.join(root, 'propPackItem.inc'), 'rb').read(), self.D)
+
+
+def bx_case(W, spec):
+    """spec: {box, num, bound, keep, locked, expired, free, have, trading, seed, n} -> the opens on fresh copies of one bag"""
+    start = BxBag(W, spec)
+    rnd = Rand(spec['seed'])
+    res = []
+    for _ in range(spec['n']):
+        res.append(bx_open(W, start.copy(), rnd, spec.get('trading', False)))
+    return {'spec': spec, 'opens': res, 'next': rnd.g}
+
+
+# ---- box edits, written independently: line rules on the decoded text (one entry per line) ----
+def bx_rebalance(values, j, v, total):
+    out = list(values)
+    others = [i for i in range(len(values)) if i != j]
+    if j is not None:
+        out[j] = max(0, min(total, v))
+    if not others:
+        return out
+    rest = total - (0 if j is None else out[j])
+    old = sum(max(0, values[i]) for i in others)
+    given = 0
+    for i in others:
+        out[i] = (max(0, values[i]) * rest // old) if old > 0 else rest // len(others)
+        given += out[i]
+    k = 0
+    while given < rest:
+        out[others[k]] += 1
+        given += 1
+        k = (k + 1) % len(others)
+    return out
+
+
+def bx_round(a, b):
+    """Math.round(a / b) for a >= 0"""
+    return (2 * a + b) // (2 * b)
+
+
+BX_LINE = re.compile(r'^([ \t]*)(\w+)([ \t]+)(\d+)((?:[ \t]+\d+)*)([^\r\n]*)$')
+
+
+def bxe_block(text, kw_re):
+    """the block whose header matches kw_re: (header match, [(line start, line end with eol, content)] for every line up to the }-line)"""
+    dead = [(c.start(), c.end()) for c in re.finditer(r'/\*.*?\*/', text, re.S)]      # a block inside /* */ is not loaded
+    m = next((x for x in re.finditer(kw_re, text, re.M) if not any(a <= x.start() < b for a, b in dead)), None)
+    if not m:
+        raise ValueError('no block ' + kw_re)
+    hs = text.rfind('\n', 0, m.start()) + 1
+    i = text.find('\n', m.start()) + 1
+    lines = []
+    while i < len(text):
+        j = text.find('\n', i)
+        j = len(text) if j < 0 else j + 1
+        c = text[i:j].rstrip('\r\n')
+        lines.append((i, j, c))
+        if c.strip().startswith('}'):
+            break
+        i = j
+    return hs, m, lines
+
+
+def bxe_entries(lines):
+    """entry lines of a block: (index into lines, match)"""
+    out = []
+    for k, (a, b, c) in enumerate(lines):
+        mm = BX_LINE.match(c)
+        if mm and mm.group(2).startswith('II_'):
+            out.append((k, mm))
+    return out
+
+
+def bxe_vals(mm):
+    head = [mm.group(4)] + re.findall(r'\d+', mm.group(5))
+    gaps = [mm.group(3)] + re.findall(r'[ \t]+', mm.group(5))
+    return [int(x) for x in head], gaps
+
+
+def bxe_gift(text, box, op):
+    hs, m, lines = bxe_block(text, r'^(GiftBox\d?)[ \t]+' + re.escape(box) + r'\b')
+    typ = m.group(1)
+    ents = bxe_entries(lines)
+    st = []
+    for k, mm in ents:
+        vals, gaps = bxe_vals(mm)
+        prec, ncol = BX_TYPES[typ]
+        ex = vals[2:2 + ncol] + [0] * (3 - ncol)
+        st.append({'k': k, 'mm': mm, 'gaps': gaps, 'define': mm.group(2), 'w': vals[0] * prec, 'num': vals[1], 'flag': ex[0], 'minutes': ex[1], 'upgrade': ex[2]})
+    cur = BX_TYPES[typ][0]
+
+    def balance(j, u):
+        unit = cur if (j is None or u % cur == 0) else (10 if u % 10 == 0 else 1)
+        vals = bx_rebalance([x['w'] // unit for x in st], j, 0 if j is None else bx_round(u, unit), BX_TOTAL // unit)
+        for x, v in zip(st, vals):
+            x['w'] = v * unit
+    if op['op'] == 'chance':
+        balance(op['j'], op['u'])
+    elif op['op'] == 'set':
+        for f in ('define', 'num', 'flag', 'minutes', 'upgrade'):
+            if f in op:
+                st[op['j']][f] = op[f]
+    elif op['op'] == 'add':
+        st.append({'k': None, 'mm': None, 'gaps': None, 'define': op['define'], 'w': 0, 'num': op.get('num', 1), 'flag': op.get('flag', 0),
+                   'minutes': op.get('minutes', 0), 'upgrade': op.get('upgrade', 0)})
+        balance(len(st) - 1, op['u'])
+    elif op['op'] == 'remove':
+        st.pop(op['j'])
+        balance(None, 0)
+    elif op['op'] == 'even':
+        units = BX_TOTAL // cur
+        base, extra = units // len(st), units % len(st)
+        for i, x in enumerate(st):
+            x['w'] = (base + (1 if i < extra else 0)) * cur
+    # the type: keep it when it fits, else the smallest that holds the columns and the chances
+    need = 'upgrade' if any(x['upgrade'] for x in st) else 'minutes' if any(x['minutes'] for x in st) else 'flag' if any(x['flag'] for x in st) else 'none'
+    cols = {'none': 0, 'flag': 1, 'minutes': 2, 'upgrade': 3}[need]
+
+    def fits(t):
+        prec, ncol = BX_TYPES[t]
+        holds = need == 'none' or (ncol >= cols and not (t in ('GiftBox3',) and cols > 1))
+        return holds and all(x['w'] % prec == 0 for x in st)
+    cand = {'none': ['GiftBox', 'GiftBox2'], 'flag': ['GiftBox3', 'GiftBox5'], 'minutes': ['GiftBox4', 'GiftBox5'], 'upgrade': ['GiftBox6']}[need]
+    new = typ if fits(typ) else next((t for t in cand if fits(t)), cand[-1])
+    prec, ncol = BX_TYPES[new]
+    q = [bx_round(x['w'], prec) * prec for x in st]
+    diff = BX_TOTAL - sum(q)
+    if diff and q:
+        big = q.index(max(q))
+        q[big] += diff
+    for x, w in zip(st, q):
+        x['w'] = w
+    # write: bottom-up so earlier offsets stay
+    edits = []                                        # (start, end, text)
+    kept = set(x['k'] for x in st if x['k'] is not None)
+
+    def vtext(x, gaps):
+        vals = [x['w'] // prec, x['num']] + [x[c] for c in ('flag', 'minutes', 'upgrade')[:ncol]]
+        s = str(vals[0])
+        for i in range(1, len(vals)):
+            g = gaps[i + 0] if gaps and i < len(gaps) else '\t'
+            s += g + str(vals[i])
+        return s
+    for k, mm in ents:
+        if k not in kept:
+            a, b, c = lines[k]
+            edits.append((a, b, ''))
+    anchor = None
+    for x in st:
+        if x['k'] is None:
+            continue
+        anchor = x
+        a = lines[x['k']][0]
+        mm = x['mm']
+        if x['define'] != mm.group(2):
+            edits.append((a + mm.start(2), a + mm.end(2), x['define']))
+        vstart = a + mm.start(4)
+        vend = a + (mm.end(5) if mm.group(5) else mm.end(4))
+        new_v = vtext(x, x['gaps'][1:] and [None] + x['gaps'][1:])
+        if new_v != text[vstart:vend]:
+            edits.append((vstart, vend, new_v))
+    sample = st and next((x for x in reversed([y for y in st if y['k'] is not None]) if True), None)
+    last_ent = ents[-1][1] if ents else None
+    rows = []
+    for x in st:
+        if x['k'] is not None:
+            continue
+        gaps = [last_ent.group(3)] + re.findall(r'[ \t]+', last_ent.group(5)) if last_ent else ['\t']
+        rows.append(x['define'] + gaps[0] + vtext(x, [None] + gaps[1:]))
+    if rows:
+        if anchor is not None:
+            a, b, c = lines[anchor['k']]
+            eol = text[a + len(c):b]
+            ind = re.match(r'[ \t]*', c).group(0)
+            edits.append((b, b, ''.join(ind + r + eol for r in rows)))
+        else:
+            a, b, c = lines[0]                        # the {-line
+            eol = text[a + len(c):b]
+            ind = re.match(r'[ \t]*', c).group(0) + '\t'
+            edits.append((b, b, ''.join(ind + r + eol for r in rows)))
+    if new != typ:
+        edits.append((m.start(1), m.end(1), new))
+    for a, b, t in sorted(edits, key=lambda e: (e[0], e[1]), reverse=True):
+        text = text[:a] + t + text[b:]
+    return text
+
+
+def bxe_pack(text, box, op):
+    hs, m, lines = bxe_block(text, r'^[ \t]*PackItem[ \t]+' + re.escape(box) + r'\b')
+    ents = bxe_entries(lines)
+    if op['op'] == 'minutes':
+        hl = text[hs:text.find('\n', hs)]
+        mm = re.match(r'([ \t]*PackItem[ \t]+\w+[ \t]+)(\d+)', hl)
+        return text[:hs + mm.start(2)] + str(op['minutes']) + text[hs + mm.end(2):]
+    if op['op'] == 'set':
+        k, mm = ents[op['j']]
+        a = lines[k][0]
+        vals, gaps = bxe_vals(mm)
+        nv = [op.get('upgrade', vals[0]), op.get('num', vals[1])]
+        reps = [(mm.start(4), mm.end(4), str(nv[0]))]
+        nums = list(re.finditer(r'\d+', mm.group(5)))
+        reps.append((mm.start(5) + nums[0].start(), mm.start(5) + nums[0].end(), str(nv[1])))
+        if 'define' in op:
+            reps.append((mm.start(2), mm.end(2), op['define']))
+        for s_, e_, t in sorted(reps, reverse=True):
+            text = text[:a + s_] + t + text[a + e_:]
+        return text
+    if op['op'] == 'remove':
+        k, mm = ents[op['j']]
+        a, b, c = lines[k]
+        return text[:a] + text[b:]
+    if op['op'] == 'add':
+        k, mm = ents[-1]
+        a, b, c = lines[k]
+        gaps = [mm.group(3)] + re.findall(r'[ \t]+', mm.group(5))
+        row = mm.group(1) + op['define'] + gaps[0] + str(op.get('upgrade', 0)) + (gaps[1] if len(gaps) > 1 else '\t') + str(op['num'])
+        return text[:b] + row + text[a + len(c):b] + text[b:]
+    raise ValueError(op)
+
+
+def bxe_remove_block(text, kw_re):
+    hs, m, lines = bxe_block(text, kw_re)
+    end = lines[-1][1]
+    return text[:hs] + text[end:]
+
+
+def bx_edit_scripts(root):
+    import hashlib
+    gtext = nn_text16(open(os.path.join(root, 'propGiftbox.inc'), 'rb').read())
+    ptext = open(os.path.join(root, 'propPackItem.inc'), 'rb').read().decode('latin-1')
+    scripts = [
+        ('gift', [{'box': 'II_SYS_SYS_EVE_POTION', 'op': 'chance', 'j': 0, 'u': 300000}]),
+        ('gift', [{'box': 'II_SYS_SYS_EVE_POTION', 'op': 'chance', 'j': 3, 'u': 123456}]),
+        ('gift', [{'box': 'II_SYS_SYS_EVE_POTION', 'op': 'set', 'j': 1, 'minutes': 10080}]),
+        ('gift', [{'box': 'II_SYS_SYS_EVE_POTION', 'op': 'add', 'define': 'II_GEN_MAT_MOONSTONE', 'u': 50000, 'num': 10}]),
+        ('gift', [{'box': 'II_SYS_SYS_EVE_POTION', 'op': 'remove', 'j': 2}, {'box': 'II_SYS_SYS_EVE_POTION', 'op': 'even'}]),
+        ('gift', [{'box': 'II_SYS_SYS_EVE_CONEPISEEDING', 'op': 'set', 'j': 0, 'flag': 2}]),
+        ('gift', [{'box': 'II_SYS_SYS_EVE_CONEPISEEDING', 'op': 'chance', 'j': 1, 'u': 5}]),
+        ('gift', [{'box': 'II_SYS_SYS_SCR_BXSSUIT', 'op': 'set', 'j': 0, 'upgrade': 5, 'num': 1}, {'box': 'II_SYS_SYS_SCR_BXSSUIT', 'op': 'chance', 'j': 2, 'u': 7770}]),
+        ('gift', [{'box': 'II_SYS_SYS_SCR_VALENTINE', 'op': 'set', 'j': 2, 'define': 'II_GEN_MAT_MOONSTONE', 'flag': 0}]),
+        ('gift', [{'box': 'II_SYS_SYS_SCR_BXPIG', 'op': 'chance', 'j': 0, 'u': 100000}]),
+        ('gift', [{'box': 'II_SYS_SYS_EVE_COMMERGIFTBOX27_S', 'op': 'remove', 'j': 0}]),
+        ('gift', [{'box': 'II_SYS_SYS_SCR_BXSANTA', 'op': 'add', 'define': 'II_GEN_MAT_ORICHALCUM01', 'u': 12340, 'num': 3, 'upgrade': 0, 'minutes': 60}]),
+        ('giftrm', [{'box': 'II_SYS_SYS_SCR_BXPIG', 'op': 'removeall'}]),
+        ('pack', [{'box': 'II_SYS_SYS_SCR_BXCHANGE', 'op': 'add', 'define': 'II_GEN_MAT_MOONSTONE', 'num': 5}]),
+        ('pack', [{'box': 'II_SYS_SYS_SCR_BXCHANGE', 'op': 'minutes', 'minutes': 10080}, {'box': 'II_SYS_SYS_SCR_BXCHANGE', 'op': 'set', 'j': 0, 'upgrade': 3, 'num': 2}]),
+        ('pack', [{'box': 'II_SYS_SYS_SCR_BXMBLKDRAGON01', 'op': 'remove', 'j': 1}, {'box': 'II_SYS_SYS_SCR_BXMBLKDRAGON01', 'op': 'set', 'j': 0, 'define': 'II_ARM_F_CHR_BLKDRAGONHAT'}]),
+        ('packrm', [{'box': 'II_SYS_SYS_SCR_BXCHANGE', 'op': 'removeall'}]),
+    ]
+    out = []
+    for kind, ops in scripts:
+        t = gtext if kind.startswith('gift') else ptext
+        for op in ops:
+            if op['op'] == 'removeall':
+                t = bxe_remove_block(t, (r'^GiftBox\d?[ \t]+' if kind == 'giftrm' else r'^[ \t]*PackItem[ \t]+') + re.escape(op['box']) + r'\b')
+            elif kind.startswith('gift'):
+                t = bxe_gift(t, op['box'], op)
+            else:
+                t = bxe_pack(t, op['box'], op)
+        b = (b'\xff\xfe' + t.encode('utf-16-le', 'surrogatepass')) if kind.startswith('gift') else t.encode('latin-1')
+        out.append({'file': 'gift' if kind.startswith('gift') else 'pack', 'ops': ops, 'sha256': hashlib.sha256(b).hexdigest(), 'size': len(b)})
+    return out
+
+
+def bx_small_files():
+    """small built files the loader must read the way the C++ does"""
+    def g(body):
+        return {'kind': 'gift', 'text': body}
+    def p(body):
+        return {'kind': 'pack', 'text': body}
+    ln = lambda n, a='II_GEN_MAT_MOONSTONE': ''.join('\t%s\t0\t1\r\n' % a for _ in range(n))
+    out = [
+        p('PackItem II_SYS_SYS_SCR_BXCHANGE 0\r\n{\r\n' + ln(25) + '}\r\nPackItem II_SYS_SYS_SCR_BXVITAL 60\r\n{\r\n' + ln(2) + '}\r\n'),
+        p('PackItem II_SYS_SYS_SCR_BXCHANGE 0\r\n{\r\n' + ln(24) + '}\r\nPackItem II_SYS_SYS_SCR_BXVITAL 60\r\n{\r\n' + ln(2) + '}\r\n'),
+        p('PackItem II_SYS_SYS_SCR_BXCHANGE 5\r\n{\r\n' + ln(3) + '}\r\nPackItem II_SYS_SYS_SCR_BXCHANGE 7\r\n{\r\n' + ln(2, 'II_GEN_MAT_SUNSTONE') + '}\r\n'),
+        p('PackItem II_SYS_SYS_SCR_BXCHANGE 0\r\n{\r\n}\r\nPackItem II_SYS_SYS_SCR_BXVITAL 0 {\tII_NOT_DEFINED_X 0 1\r\n}\r\n'),
+        p('PackItem II_SYS_SYS_SCR_BXCHANGE 0\r\n{\r\n\tII_GEN_MAT_MOONSTONE 0 1\r\n'),
+        g('GiftBox II_SYS_SYS_SCR_BXPIG\r\n{\r\n' + ''.join('\tII_GEN_MAT_MOONSTONE\t%d\t1\r\n' % (60 if i else 9000) for i in range(129)) + '}\r\n'),
+        g('GiftBox II_SYS_SYS_SCR_BXPIG\r\n{\r\n\tII_GEN_MAT_MOONSTONE 6000 1\r\n\tII_GEN_MAT_SUNSTONE 6000 2\r\n\tII_GEN_MAT_ORICHALCUM01 10 1\r\n}\r\n'),
+        g('GiftBox2 II_SYS_SYS_SCR_BXPIG\r\n{\r\n\tII_GEN_MAT_MOONSTONE 300000 1\r\n\tII_GEN_MAT_SUNSTONE 100 2\r\n}\r\n'),
+        g('Giftbox II_SYS_SYS_SCR_BXPIG\r\n{\r\n\tII_GEN_MAT_MOONSTONE 3000 1\r\n}\r\nGiftBox3 II_SYS_SYS_SCR_BXSANTA\r\n{\r\n\tII_GEN_MAT_MOONSTONE 5000 1 2\r\n\tII_GEN_MAT_SUNSTONE 5000 1 4\r\n}\r\n'),
+        g('GiftBox6 II_SYS_SYS_SCR_BXPIG // c\r\n{\r\n\tII_GEN_MAT_MOONSTONE 50000 1 0 60 3 // x\r\n\tII_GEN_MAT_SUNSTONE 50000 2 2 0 0\r\n}\r\nGiftBox6 II_SYS_SYS_SCR_BXPIG\r\n{\r\n\tII_GEN_MAT_ORICHALCUM01 1 1 0 0 0\r\n}\r\n'),
+        g('GiftBox4 II_SYS_SYS_SCR_BXPIG\r\n{\r\n\tII_GEN_MAT_MOONSTONE 5000 1 0 10080\r\n\tII_GEN_MAT_SUNSTONE 5000 1 0 0\r\n'),
+        g('GiftBox5 II_SYS_SYS_SCR_BXPIG\r\n{\r\n\tII_NOT_DEFINED_X 50000 1 0 0\r\n\tII_GEN_MAT_SUNSTONE -5 0 300 0\r\n}\r\n'),
+    ]
+    return out
+
+
+def bx_load_json(gift, pack):
+    return {
+        'gift': None if gift is None else {'order': gift['order'], 'hung': gift['hung'], 'skipped': gift['skipped'],
+                                            'boxes': {str(k): [[l[0], l[2], l[3], l[4], l[5], l[6]] for l in b['lines']] + [b['sum'], b['cum']] for k, b in gift['boxes'].items()}},
+        'pack': None if pack is None else {'order': pack['order'], 'hung': pack['hung'], 'stopped': pack['stopped'],
+                                            'boxes': {str(k): [b['lines'], b['span']] for k, b in pack['boxes'].items()}},
+    }
+
+
+def bx_run(root):
+    W = BxWorld(root)
+    out = {'load': bx_load_json(W.gift, W.pack), 'chances': {}, 'cases': [], 'small': [], 'edits': bx_edit_scripts(root),
+           'binds': sorted(i for i, x in W.items.items() if i != FILLER and x['flag'] & 1)}
+    for k, b in W.gift['boxes'].items():
+        out['chances'][str(k)] = bx_chances(b['cum'])
+    # every box, 4 bags, 8 opens each
+    ids = list(W.gift['order']) + list(W.pack['order'])
+    for n, box in enumerate(ids):
+        gb = W.gift['boxes'].get(box)
+        pb = W.pack['boxes'].get(box)
+        first = (gb['lines'][0][0] if gb else pb['lines'][0][0])
+        bags = [{'free': 5}, {'free': 1, 'num': 3}, {'free': 0}, {'free': 3, 'bound': True, 'have': [{'id': first, 'num': 1}]}]
+        for v, bg in enumerate(bags):
+            spec = dict(bg, box=box, seed=1000 + n * 7 + v, n=8)
+            if first not in W.items:
+                spec['have'] = []
+            out['cases'].append(bx_case(W, spec))
+    # refusals, timed boxes, locked / expired / trading, a bigger run on a few boxes
+    D = W.D
+    special = ['II_SYS_SYS_SCR_BXPIG', 'II_SYS_SYS_SCR_BXSSUIT', 'II_SYS_SYS_SCR_BXMBLKDRAGON01', 'II_SYS_SYS_SCR_BXCHANGE', 'II_SYS_SYS_SCR_BXSANTA', 'II_SYS_SYS_EVE_COMMERGIFTBOX27_S']
+    for k, name in enumerate(special):
+        box = D[name]
+        for v, extra in enumerate([{'locked': True}, {'expired': True}, {'trading': True}, {'keep': 10080}, {'keep': 10080, 'bound': True}, {'free': 2, 'num': 2}, {'free': 40, 'n': 300}]):
+            spec = dict({'box': box, 'free': 6, 'seed': 77 + k * 13 + v, 'n': 6}, **extra)
+            out['cases'].append(bx_case(W, spec))
+    # small worlds: one box id in both files (the set is used first, User.cpp:3193), a random box giving a set
+    out['worlds'] = []
+    worlds = [
+        ('GiftBox II_SYS_SYS_SCR_BXCHANGE\r\n{\r\n\tII_GEN_MAT_MOONSTONE 5000 1\r\n\tII_GEN_MAT_SUNSTONE 5000 1\r\n}\r\n',
+         'PackItem II_SYS_SYS_SCR_BXCHANGE 0\r\n{\r\n\tII_GEN_MAT_ORICHALCUM01 0 2\r\n}\r\n'),
+        ('GiftBox3 II_SYS_SYS_SCR_BXPIG\r\n{\r\n\tII_SYS_SYS_SCR_BXCHANGE 5000 1 2\r\n\tII_GEN_MAT_MOONSTONE 5000 3 4\r\n}\r\n',
+         'PackItem II_SYS_SYS_SCR_BXCHANGE 60\r\n{\r\n\tII_GEN_MAT_ORICHALCUM01 0 2\r\n\tII_GEN_MAT_MOONSTONE 1 5\r\n}\r\n'),
+        # more than one stack: whether a stack with another bound flag is used decides got / lost
+        ('GiftBox II_SYS_SYS_SCR_BXPIG\r\n{\r\n\tII_GEN_MAT_MOONSTONE 10000 1500\r\n}\r\n',
+         'PackItem II_SYS_SYS_SCR_BXCHANGE 0\r\n{\r\n\tII_GEN_MAT_MOONSTONE 0 1500\r\n}\r\n'),
+    ]
+    for wi, (gt, pt) in enumerate(worlds):
+        W2 = BxWorld.__new__(BxWorld)
+        W2.D, W2.items = W.D, W.items
+        W2.gift = bx_gift(b'\xff\xfe' + gt.encode('utf-16-le'), D)
+        W2.pack = bx_pack(pt.encode('latin-1'), D)
+        cs = []
+        mo = {'id': D['II_GEN_MAT_MOONSTONE'], 'num': 1}
+        for v, extra in enumerate([{}, {'bound': True}, {'keep': 60}, {'free': 1}, {'have': [{'id': D['II_GEN_MAT_ORICHALCUM01'], 'num': 1}]}, {'bound': True, 'have': [{'id': D['II_GEN_MAT_ORICHALCUM01'], 'num': 1}]},
+                                   {'free': 1, 'num': 2, 'have': [mo]}, {'free': 1, 'num': 2, 'bound': True, 'have': [mo]}, {'free': 2, 'have': [mo]}]):
+            for name in ('II_SYS_SYS_SCR_BXCHANGE', 'II_SYS_SYS_SCR_BXPIG'):
+                cs.append(bx_case(W2, dict({'box': D[name], 'free': 6, 'seed': 500 + wi * 31 + v, 'n': 12}, **extra)))
+        out['worlds'].append({'gift': gt, 'pack': pt, 'cases': cs})
+    # small files
+    for f in bx_small_files():
+        if f['kind'] == 'gift':
+            data = b'\xff\xfe' + f['text'].encode('utf-16-le')
+            j = bx_load_json(bx_gift(data, D), None)
+        else:
+            data = f['text'].encode('latin-1')
+            j = bx_load_json(None, bx_pack(data, D))
+        out['small'].append({'kind': f['kind'], 'text': f['text'], 'load': j})
+    return out
+
+
+# ---- DDS item icons (Client/Item): an independent decode, compared by the hash of the RGBA pixels ----
+def dds_decode(b):
+    if len(b) < 128 or b[:4] != b'DDS ':
+        return None
+    u32 = lambda o: struct.unpack_from('<I', b, o)[0]
+    hflags, h, w, pitch = u32(8), u32(12), u32(16), u32(20)
+    pff, four, bits = u32(80), b[84:88], u32(88)
+    masks = [u32(92), u32(96), u32(100), u32(104)]
+    px = bytearray(w * h * 4)
+    if pff & 4:
+        blk = 8 if four == b'DXT1' else 16
+        o = 128
+        e5 = lambda v: (v << 3) | (v >> 2)
+        e6 = lambda v: (v << 2) | (v >> 4)
+        for by in range(0, h, 4):
+            for bx_ in range(0, w, 4):
+                al = [255] * 16
+                co = o
+                if four == b'DXT3':
+                    for i in range(16):
+                        al[i] = ((b[o + i // 2] >> (4 * (i % 2))) & 15) * 17
+                    co = o + 8
+                elif four == b'DXT5':
+                    a0, a1 = b[o], b[o + 1]
+                    if a0 > a1:
+                        pal = [a0, a1] + [((8 - i) * a0 + (i - 1) * a1) // 7 for i in range(2, 8)]
+                    else:
+                        pal = [a0, a1] + [((6 - i) * a0 + (i - 1) * a1) // 5 for i in range(2, 6)] + [0, 255]
+                    bitsA = int.from_bytes(b[o + 2:o + 8], 'little')
+                    for i in range(16):
+                        al[i] = pal[(bitsA >> (3 * i)) & 7]
+                    co = o + 8
+                c0, c1 = struct.unpack_from('<HH', b, co)
+                rgb = lambda c: (e5(c >> 11), e6((c >> 5) & 63), e5(c & 31))
+                p0, p1 = rgb(c0), rgb(c1)
+                if c0 > c1 or four != b'DXT1':
+                    cols = [p0 + (255,), p1 + (255,), tuple((2 * p0[k] + p1[k]) // 3 for k in range(3)) + (255,), tuple((p0[k] + 2 * p1[k]) // 3 for k in range(3)) + (255,)]
+                else:
+                    cols = [p0 + (255,), p1 + (255,), tuple((p0[k] + p1[k]) // 2 for k in range(3)) + (255,), (0, 0, 0, 0)]
+                idx = u32(co + 4)
+                for i in range(16):
+                    x, y = bx_ + i % 4, by + i // 4
+                    if x < w and y < h:
+                        c = cols[(idx >> (2 * i)) & 3]
+                        q = (y * w + x) * 4
+                        px[q:q + 4] = bytes([c[0], c[1], c[2], c[3] if four == b'DXT1' else al[i]])
+                o += blk
+    else:
+        bpp = bits // 8
+        row = pitch if (hflags & 8) and pitch >= w * bpp else w * bpp
+        use_a = bool(pff & 1) and masks[3]
+
+        def ch(v, m):
+            if not m:
+                return 0
+            sh = (m & -m).bit_length() - 1
+            mx = m >> sh
+            return ((v & m) >> sh) * 255 // mx if False else (((v & m) >> sh) * 255 + mx // 2) // mx
+        for y in range(h):
+            for x in range(w):
+                o = 128 + y * row + x * bpp
+                v = int.from_bytes(b[o:o + bpp], 'little')
+                q = (y * w + x) * 4
+                px[q:q + 4] = bytes([ch(v, masks[0]), ch(v, masks[1]), ch(v, masks[2]), ch(v, masks[3]) if use_a else 255])
+    for q in range(0, len(px), 4):
+        if px[q] == 255 and px[q + 1] == 0 and px[q + 2] == 255:
+            px[q + 3] = 0
+    return w, h, px
+
+
+def dds_run(folder):
+    import hashlib
+    out = {}
+    for f in sorted(os.listdir(folder)):
+        if f.lower().endswith('.dds'):
+            r = dds_decode(open(os.path.join(folder, f), 'rb').read())
+            out[f] = None if r is None else [r[0], r[1], hashlib.sha256(bytes(r[2])).hexdigest()]
+    return out
+
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -5248,6 +5942,10 @@ if __name__ == '__main__':
         print(json.dumps(as_run(root)))
     elif what == 'drops':
         print(json.dumps(dr_run(root)))
+    elif what == 'boxes':
+        print(json.dumps(bx_run(root)))
+    elif what == 'dds':                         # a folder of .dds icons -> {file: [w, h, sha256 of the RGBA]}
+        print(json.dumps(dds_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model
         for f in sorted(os.listdir(root)):
             if f.lower().startswith('mvr_') and f.lower().endswith('.o3d'):

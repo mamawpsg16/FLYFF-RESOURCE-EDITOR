@@ -145,5 +145,56 @@
     return { close, el: back };
   }
 
-  FRE.dom = { h, $, fmt, toast, toasts: () => toastCount, modal, numInput, pctInput, pctText, keepFocus, LIVE_MS, flushLive };
+  // A time limit typed as a number (decimals allowed) + a unit: minutes / hours / days. The file keeps whole minutes:
+  // 0.5 hours = 30, 1.5 days = 2,160 (rounded to the minute). The unit starts at the biggest one that fits the value;
+  // a keyed field remembers the unit chosen across re-renders. onCommit(minutes).
+  const UNITS = [['minutes', 1], ['hours', 60], ['days', 1440]];
+  const unitPref = new Map();
+  function durationText(m) {
+    if (m === null || m === undefined) return 'not set yet';
+    if (!m) return 'permanent (no time limit)';
+    const parts = [], d = Math.floor(m / 1440), hr = Math.floor((m % 1440) / 60), mi = m % 60;
+    if (d) parts.push(`${fmt(d)} day${d === 1 ? '' : 's'}`);
+    if (hr) parts.push(`${hr} hour${hr === 1 ? '' : 's'}`);
+    if (mi) parts.push(`${mi} minute${mi === 1 ? '' : 's'}`);
+    return parts.join(' ');
+  }
+  // minutes null = empty (a required field not filled yet); permanent: true adds a "Permanent" button (sets 0)
+  function durationInput({ minutes = 0, disabled = false, key = null, live = !!key, max = 2147483647, permanent = false, onCommit }) {
+    let unit = key && unitPref.has(key) ? unitPref.get(key) : !minutes ? 1440 : minutes % 1440 === 0 ? 1440 : minutes % 60 === 0 ? 60 : 1;
+    if (key) unitPref.set(key, unit);          // the unit stays what it was when the value was typed (1.5 days stays days after a re-render)
+    let cur = minutes;
+    const show = m => (m === null || m === undefined ? '' : String(Number((m / unit).toFixed(4))));
+    const el = h('input.num-input.dur-input', { type: 'text', inputMode: 'decimal', disabled, value: show(minutes), title: '0 = no time limit; decimals allowed (0.5 hours = 30 minutes)' });
+    if (key) el.dataset.key = key;
+    const hint = h('span.muted.small', ' = ' + durationText(minutes));
+    const sel = h('select.dur-unit', { disabled, on: { change: e => {
+      unit = Number(e.target.value);
+      if (key) unitPref.set(key, unit);
+      el.value = show(cur);                       // same time limit, shown in the new unit; nothing is written
+    } } }, UNITS.map(([n, v]) => h('option', { value: v, selected: v === unit }, n)));
+    const parse = () => {
+      const t = el.value.trim().replace(',', '.');
+      if (!/^\d+(\.\d*)?$|^\.\d+$/.test(t)) return null;
+      return Math.round(Number(t) * unit);
+    };
+    el.addEventListener('input', () => { const m = parse(); hint.textContent = ' = ' + (m === null ? (el.value.trim() ? '?' : 'not set yet') : m > max ? 'too long' : durationText(m)); });
+    const commit = quiet => {
+      if (!el.isConnected) return;
+      const m = parse();
+      if (m === null || m > max) { if (!quiet) { toast('Type a number, e.g. 7 or 0.5 (decimals are fine).', 'bad'); el.value = show(cur); hint.textContent = ' = ' + durationText(cur); } return; }
+      if (!quiet) el.value = show(m);
+      if (m === cur) return;
+      cur = m;
+      onCommit(m);
+    };
+    el.addEventListener('change', () => commit(false));
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') el.blur(); if (e.key === 'Escape') { el.value = show(cur); el.blur(); } });
+    if (live) liveCommit(el, commit);
+    const perm = permanent ? h('button.small.dur-perm', { type: 'button', disabled, title: 'No time limit: the item never expires (0)',
+      on: { click: () => { el.value = '0'; hint.textContent = ' = ' + durationText(0); commit(false); } } }, 'Permanent') : null;
+    return h('span.dur-wrap', el, ' ', sel, ' ', perm, hint);
+  }
+
+  FRE.dom = { h, $, fmt, toast, toasts: () => toastCount, modal, numInput, pctInput, pctText, keepFocus, LIVE_MS, flushLive, durationInput, durationText };
 })(globalThis.FRE = globalThis.FRE || {});

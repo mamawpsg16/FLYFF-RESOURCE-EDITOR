@@ -78,6 +78,12 @@
     clientDir.children.set('World', cw);
   }
   clientDir.children.set('Exchange_Script.txt', new FakeFile('Exchange_Script.txt', lfOnly(original.get('Exchange_Script.txt'))));
+  clientDir.children.set('propPackItem.inc', new FakeFile('propPackItem.inc', lfOnly(original.get('propPackItem.inc'))));
+  {
+    const items = new FakeDir('Item');
+    for (const [n, b64] of Object.entries(FRE.HARNESS_ITEMS || {})) items.children.set(n, new FakeFile(n, Uint8Array.from(atob(b64), c => c.charCodeAt(0))));
+    clientDir.children.set('Item', items);
+  }
   {                                       // Client/Theme: Battle Pass textures (names only)
     const th = new FakeDir('Theme');
     for (const n of ['BattlePass_New.tga', 'BattlePass_Fire.tga', 'BattlePass_Image0.tga']) th.children.set(n, new FakeFile(n, new Uint8Array(0)));
@@ -148,7 +154,7 @@
     click($('btn-root'));
     await waitFor(() => S.layout, 'folder detected');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
-    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 4 && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]'), 'real-files tag; 4 tasks to pick (exchanges are in NPC Shops; Monster Drops)');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 5 && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]'), 'real-files tag; 5 tasks to pick (exchanges are in NPC Shops; Monster Drops; Boxes)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     await openTask('npc');
@@ -1105,6 +1111,71 @@
       if (STOP === 'dropsgen') { $('toasts').textContent = ''; return; }
       while (S.ws.history.length) click($('btn-undo'));
       ok(S.ws.files.get('propmoverex.inc').text === f0 && !S.ws.dirtyFiles().length, 'every edit undone');
+      listSearch.value = ''; listSearch.dispatchEvent(new Event('input'));
+    }
+
+    // ---- Boxes (propGiftbox.inc + propPackItem.inc)
+    await openTask('boxes');
+    ok(S.mode === 'boxes' && document.querySelectorAll('#list .npc').length >= 600, 'Boxes: the box list (600 shown, search for more)');
+    {
+      const listSearch = $('list-search'), ed = () => $('editor');
+      const g0 = S.ws.files.get('propgiftbox.inc').text, p0 = S.ws.files.get('proppackitem.inc').text;
+      listSearch.value = 'II_SYS_SYS_EVE_POTION'; listSearch.dispatchEvent(new Event('input'));
+      click(document.querySelector('#list .npc'));
+      ok(/random box: the player gets 1 of 15/.test(ed().textContent) && /Total: 100%|add up to/.test(ed().textContent), 'a random box: 15 items and the total');
+      await waitFor(() => document.querySelector('#list .bx-icon canvas'), 'box icons drawn from Client/Item');
+      const row = k => [...ed().querySelectorAll('table.bx tr')][k + 1];
+      const p1 = row(0).querySelector('input.pct-input');
+      p1.value = '30'; p1.dispatchEvent(new Event('change'));
+      ok(/II_SYS_SYS_SCR_STRONG_STA\t\t3000\t1\t2/.test(S.ws.files.get('propgiftbox.inc').text) && /Total: 100%/.test(ed().textContent), 'typing 30% writes 3000 (GiftBox3 steps) and the total stays 100%');
+      ok(/^[^:]+: changed the chance of [^(]+\(was /.test(S.ws.history[S.ws.history.length - 1].label) && !/II_/.test(S.ws.history[S.ws.history.length - 1].label), 'undo label names the box and item in plain words');
+      const mins = row(1).querySelector('input.dur-input');
+      ok(row(1).querySelector('select.dur-unit').value === '1440', 'time limits are typed in days by default');
+      mins.value = '7'; mins.dispatchEvent(new Event('change'));
+      ok(/^GiftBox4 II_SYS_SYS_EVE_POTION/m.test(S.ws.files.get('propgiftbox.inc').text) && /7 days/.test(ed().textContent), 'a time limit typed in days (7) widens the box to GiftBox4');
+      ok(/II_SYS_SYS_SCR_STRONG_INT\t\t\d+\t1\t2\t10080/.test(S.ws.files.get('propgiftbox.inc').text), '7 days are written as 10080 minutes');
+      {
+        const r2 = row(2), u = r2.querySelector('select.dur-unit');
+        u.value = '60'; u.dispatchEvent(new Event('change'));
+        const i2 = r2.querySelector('input.dur-input'); i2.value = '.5'; i2.dispatchEvent(new Event('change'));
+        ok(/II_SYS_SYS_SCR_STRONG_DEX\t\t\d+\t1\t2\t30\r\n/.test(S.ws.files.get('propgiftbox.inc').text), '0.5 hours are written as 30 minutes');
+        const r3 = () => row(3), i3 = r3().querySelector('input.dur-input');
+        i3.value = '1.5'; i3.dispatchEvent(new Event('change'));
+        ok(/II_SYS_SYS_SCR_STRONG_STR\t\t\d+\t1\t2\t2160\r\n/.test(S.ws.files.get('propgiftbox.inc').text) && r3().querySelector('select.dur-unit').value === '1440'
+          && r3().querySelector('input.dur-input').value === '1.5', '1.5 days are written as 2160 and the field still says 1.5 days after the re-render');
+      }
+      // + Add an item
+      click(btnByText(ed(), '+ Add an item'));
+      await waitFor(() => lastModalAny() && /Add an item/.test(lastModalAny().querySelector('header').textContent), 'add form');
+      const fm = lastModalAny(), add = () => fm.querySelector('#bx-add-btn');
+      ok(add().disabled && /Still needs: the item/.test(fm.textContent), 'Add greyed until an item is picked');
+      const ci = fm.querySelector('.combo input');
+      ci.dispatchEvent(new Event('focus')); ci.value = 'II_GEN_MAT_MOONSTONE'; ci.dispatchEvent(new Event('input'));
+      [...fm.querySelectorAll('.combo-opt')].find(o => /II_GEN_MAT_MOONSTONE\)/.test(o.textContent)).dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      await waitFor(() => /Still needs: the time limit/.test(fm.textContent), 'the time limit is required');
+      ok(add().disabled, 'Add greyed until the time limit is set');
+      click(btnByText(fm, 'Permanent'));
+      await waitFor(() => !add().disabled && /Players get it in/.test(fm.textContent), 'add form ready');
+      ok(/= permanent/.test(fm.textContent), 'Permanent sets 0: "= permanent"');
+      ok(/\+\tII_GEN_MAT_MOONSTONE/.test(fm.textContent), 'preview: the line that will be written');
+      if (STOP === 'boxes') { $('toasts').textContent = ''; return; }
+      click(add());
+      ok(/the player gets 1 of 16/.test(ed().textContent), 'item added: 16 items');
+      click(btnByText(ed(), 'Open it'));
+      await waitFor(() => lastModalAny() && /opens in \d+ ms/.test(lastModalAny().textContent), 'open window');
+      ok(/The player reads/.test(lastModalAny().textContent) && /% of opens/.test(lastModalAny().textContent), 'open window: what the player reads, rates per item');
+      if (STOP === 'boxesopen') { $('toasts').textContent = ''; return; }
+      click(btnByText(lastModalAny().querySelector('footer'), 'Close'));
+      // a set
+      listSearch.value = 'II_SYS_SYS_SCR_BXCHANGE'; listSearch.dispatchEvent(new Event('input'));
+      click(document.querySelector('#list .npc'));
+      ok(/set: the player gets all 2 items/.test(ed().textContent) && /needs 2 free bag slots/.test(ed().textContent), 'a set: all items, the bag slots it needs');
+      click(btnByText(ed(), 'Remove contents'));
+      await waitFor(() => lastModalAny() && /Remove contents/.test(lastModalAny().querySelector('header').textContent), 'remove window');
+      click(btnByText(lastModalAny().querySelector('footer'), 'Remove contents'));
+      ok(S.ws.diags.some(d => d.code === 'BX_EMPTIED'), 'removing the contents warns: players who own it can no longer open it');
+      while (S.ws.history.length) click($('btn-undo'));
+      ok(S.ws.files.get('propgiftbox.inc').text === g0 && S.ws.files.get('proppackitem.inc').text === p0 && !S.ws.dirtyFiles().length, 'every edit undone');
       listSearch.value = ''; listSearch.dispatchEvent(new Event('input'));
     }
 
