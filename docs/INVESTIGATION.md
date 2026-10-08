@@ -284,6 +284,32 @@ Startup order (`OpenProject`):
 
 **Simulator:** `tools/npcmove-sim.js MaFl_Postbox spot=7 x=+6 model=MI_MAFL_JURIA!`; Python copy `oracle_sim.py npcmove` (391 cases: Peach moves, unchanged, negative / tiny values, another body, Postbox spot 7 + all spots, and every placed NPC moved once): same bytes and same read-back.
 
+### 1.15 Donation Shop categories (added 2026-10-08, task S part 4, `loaders/donation-tree.js`, `loaders/donation-window.js`, `edit/donation-ops.js`, `ui/donation-tree.js`, `docs/patches/donation-tree.diff`)
+
+**Where the game reads it.** Only the client: `CWndDonationShop::OnInitialUpdate` (`_Interface/WndDonationShop.cpp:343`) calls `CWndTreeCtrl::LoadTreeScript("DonationShopTree.inc")` (`WndControl.cpp:1029`). `InterpriteScript`: a name, then `{ children }` if the next token's FIRST character is `{`; a list ends on a token whose first character is `}`. So a name starting with `{` or `}` breaks the tree. After a top-level `}`, `LoadTreeScript` skips two tokens. The server never reads the tree; `OnBuyDonationItem` only checks the item is in `DonationShop.inc`. Categories are display only.
+
+**What a click shows.** `OnChildNotify` (`:795`): a category shows rows whose keyword matches its name (any case, `KeywordMatches` `:408`); a group shows the rows of all its categories (`DS_CollectLeafKeywords` `:171`); "All Items" (exact case, `FindTreeElem`) shows everything. A row filed under a group's name shows only under "All Items" (`DS_NO_LEAF`).
+
+**Compiled in C++ (found 2026-10-08).** The order of items in "All Items" and in a group (`DS_SortCmp` Default: category rank, then name) comes from `s_szDonationCatOrder` (`:226`), and the card text from `DS_CategoryBlurb` (`:204`). `ae345504` had to add "Shields" to that list. A new or renamed category sorts last and its items say "A cosmetic weapon skin".
+- **The user's choice:** one client patch, `docs/patches/donation-tree.diff` (WndDonationShop.cpp only). It reads the order and each category's top group from the tree when the window opens. An unknown category gets its group's card text (Fashion / Premium / Weapon Skins), else "A Donation Shop item.". The user applies it in FLYFF-V19-SOURCE and builds Neuz once (`git apply --check -p1` passes on HEAD). Without it the editor warns (`DT_PATCH`, `DT_ORDER`).
+
+**The edits** (tree = `Client/Client/DonationShopTree.inc`, LF, tab indent, one name per line; a client-only file the editor now writes, like the rules texts):
+- + Category: a name plus optional categories inside it (none = it holds items; one or more = a group: an empty group is read as a category);
+- ✎ rename (a category's `DSItem` rows follow, Server + Client copy) and move into another group;
+- ✎ add categories inside an entry: a group gets them at its end; a category becomes a group and its items move into the first new one (a group's own name shows no items in game);
+- ↑ ↓ among siblings;
+- delete: its items move to a chosen category or leave the shop (the user's choice, 2026-10-08).
+- When a group loses its last category, its `{ }` lines go too; the delete window offers (ticked) to delete the group with it.
+Checks: `DT_ROOT`, `DT_DUP`, `DT_BRACE`, `DT_CHARS` (BLOCK), `DT_PATCH` (WARN), `DT_ORDER` (INFO).
+
+**Simulator:** `tools/dstree-sim.js "Weapon Skins" sort=price-high sex=female patched` (`loaders/donation-window.js`: the click, `BuildFilteredList`, `DS_SortCmp`, `FillGrid` 96 a page + count line, `DS_CategoryBlurb`, with and without the patch). Python copy `oracle_sim.py dstree`:
+- 600 window views of the real tree;
+- 9 searches and pages;
+- a made-up shop (648 views: case ties, no price, sexes);
+- 12 small tree files;
+- 20 edit scripts: byte-identical files and the same views.
+17 planted bugs caught (5 after adding cases). Not modelled: Windows `lstrcmpi` word sort (names with `-` or `'` may order differently), unstable `qsort` ties.
+
 ## Phase 2: Encoding and line-ending forensics (all 15,299 files, raw bytes)
 
 **Method:** Python read every file as bytes. For each one it checked:

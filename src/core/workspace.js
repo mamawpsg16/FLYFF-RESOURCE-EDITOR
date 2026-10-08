@@ -52,12 +52,16 @@
     {
       id: 'donation', label: 'Donation Shop', editsSpec: true,
       required: ['DonationShop.inc'], editable: ['DonationShop.inc'], client: ['DonationShop.inc'],
+      deps: ['Client/DonationShopTree.inc'],   // the client-only category tree (setDonationTree), edited here too
       maps: true,            // where MaFl_DONATION stands (the client opens the shop for that key, WndWorld.cpp:5835)
       parse(ws) {
+        const tf = ws.files.get(FRE.donationTree.KEY);
+        ws.donationTree = tf ? FRE.donationTree.loadTree(tf) : null;
         return FRE.donation.loadDonation(ws.files.get('donationshop.inc'), { defines: ws.defines.defines, strings: ws.strings.map });
       },
       validate(ws, model) {
-        return FRE.donation.validateDonation(model, { items: ws.items.items, textOf: n => ws.textOf(n), defines: ws.defines.defines, tree: ws.donationTree });
+        const out = FRE.donation.validateDonation(model, { items: ws.items.items, textOf: n => ws.textOf(n), defines: ws.defines.defines, tree: ws.donationTree });
+        return ws.donationTree ? out.concat(FRE.donationTree.validateTree(ws.donationTree)) : out;
       },
     },
     {
@@ -165,9 +169,19 @@
       this.diags = [...Object.values(this.moduleDiags).flat(), ...specDiags];
     }
 
-    // Client/Client/DonationShopTree.inc (client-only; read from the Client folder when chosen)
-    setDonationTree(tree) {
-      this.donationTree = tree || null;
+    // Client/Client/DonationShopTree.inc (client-only; read from the Client folder when chosen): a SourceFile,
+    // kept in this.files as 'client/donationshoptree.inc' (written into the Client folder by io/save.js),
+    // editable in the Donation Shop task. The donation module parses it (this.donationTree).
+    setDonationTree(file) {
+      const key = FRE.donationTree.KEY;
+      if (this.files.has(key)) { this.files.delete(key); this.editable.delete(key); }
+      if (file) {
+        file.clientOnly = true;
+        file.dir = 'Client';
+        this.files.set(key, file);
+        if (this.shown.has('donation') && !file.readOnly) this.editable.add(key);
+      }
+      this.donationTree = null;
       if (this.available.donation && this.available.donation.ok) this.reparse('donationshop.inc');
     }
 
@@ -281,7 +295,10 @@
     needsMaps() { return MODULES.some(m => m.maps && this.shown.has(m.id) && this.available[m.id].ok); }
 
     textOf(name) { return (this.files.get(String(name).toLowerCase()) || { text: '' }).text; }
-    moduleOfFile(name) { const l = String(name).toLowerCase(); return MODULES.find(m => m.required.some(n => n.toLowerCase() === l)) || null; }
+    moduleOfFile(name) {
+      const l = String(name).toLowerCase(), has = list => (list || []).some(n => n.toLowerCase() === l);
+      return MODULES.find(m => has(m.required)) || MODULES.find(m => m.id === 'donation' && has(m.deps)) || null;   // + the client-only tree
+    }
 
     isEditable(lowerName) {
       const f = this.files.get(lowerName);

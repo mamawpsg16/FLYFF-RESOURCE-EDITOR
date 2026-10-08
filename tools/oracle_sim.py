@@ -3261,6 +3261,475 @@ def nv_run(root):
 
 
 
+# ---------------------------------------------------------------- dstree: the Donation Shop window + its category tree
+# Written from Neuz _Interface/WndDonationShop.cpp (7d7df4f9, ae345504), WndControl.cpp:1029
+# (CWndTreeCtrl::LoadTreeScript / InterpriteScript) and docs/patches/donation-tree.diff.
+# lstrcmpi is taken as a plain case-insensitive compare; qsort ties keep the map (id) order.
+DS_ROOT = 'All Items'
+DS_GRID = 96                                         # DS_GRID_MAX (WndDonationShop.h:11)
+DS_COMPILED = ['Consumables', 'Functional', 'Suits', 'Cloaks', 'Masks', 'Wings', 'Sword', 'Great Sword', 'Axe',
+               'Battle Axe', 'Bow', 'Staff', 'Wand', 'Stick', 'Knuckle', 'Yo-Yo', 'Shields', 'Pets', 'Battle Pass', 'VIP']
+
+
+def dt_lex(text):
+    """the tree file's tokens with offsets: "quoted" (text without quotes, stops at " or CR), { }, words"""
+    out, i, n = [], 0, len(text)
+    while True:
+        while i < n and '\x00' < text[i] <= ' ':
+            i += 1
+        if text.startswith('//', i):
+            while i < n and text[i] not in '\r\n':
+                i += 1
+            continue
+        if text.startswith('/*', i):
+            j = text.find('*/', i + 2)
+            i = n if j < 0 else j + 2
+            continue
+        if i >= n:
+            return out
+        if text[i] == '"':
+            j = i + 1
+            while j < n and text[j] not in '"\r':
+                j += 1
+            out.append((text[i + 1:j], i, j + 1 if j < n and text[j] == '"' else j))
+            i = j + 1
+            continue
+        if text[i] in '{}':
+            out.append((text[i], i, i + 1)); i += 1
+            continue
+        j = i
+        while j < n and not ('\x00' < text[j] <= ' ') and text[j] not in '{}"':
+            j += 1
+        out.append((text[i:j], i, j)); i = j
+
+
+def dt_parse(text):
+    """InterpriteScript: name [ { children } ] ... ; only the first character is tested for { and }"""
+    toks = dt_lex(text)
+    k = [0]
+    def get():
+        t = toks[k[0]] if k[0] < len(toks) else None
+        k[0] += 1
+        return t
+    def interp(lst, parent):
+        t = get()
+        while t is not None and t[0][:1] != '}':
+            node = dict(name=t[0], tok=(t[1], t[2]), open=None, close=None, kids=[], parent=parent)
+            lst.append(node)
+            t = get()
+            if t is not None and t[0][:1] == '{':
+                node['open'] = (t[1], t[2])
+                t = interp(node['kids'], node)
+        if t is None:
+            return None
+        if parent is not None:
+            parent['close'] = (t[1], t[2])
+        return get()
+    roots = []
+    while True:
+        t = interp(roots, None)          # LoadTreeScript: InterpriteScript (ends on the token after its '}'),
+        if t is None:                     # then one more GetToken, until FINISHED: both tokens are skipped
+            break
+        if get() is None:
+            break
+    return roots
+
+
+def dt_all(roots):
+    out = []
+    def w(n):
+        out.append(n)
+        for c in n['kids']:
+            w(c)
+    for r in roots:
+        w(r)
+    return out
+
+
+def dt_leaves(n):                                     # DS_CollectLeafKeywords
+    if not n['kids']:
+        return [n['name']]
+    return [x for c in n['kids'] for x in dt_leaves(c)]
+
+
+def dt_find_root(lst):                                # FindTreeElem("All Items"): depth first, exact
+    for n in lst:
+        if n['name'] == DS_ROOT:
+            return n
+        r = dt_find_root(n['kids'])
+        if r:
+            return r
+    return None
+
+
+def dt_order(roots):                                  # donation-tree.diff DS_LoadTreeOrder
+    r = dt_find_root(roots)
+    return [] if r is None else [(leaf, top['name']) for top in r['kids'] for leaf in dt_leaves(top)]
+
+
+def dt_shape(lst):
+    return [[n['name'], dt_shape(n['kids'])] for n in lst]
+
+
+def ds_catalog(text, D):
+    """CProject::LoadDonationShop: DONATIONSHOP { DSItem "<kw>" <item> ... } -> {id: kw}, later rows win"""
+    t = [x.decode('latin-1') for x in tokens(text.encode('latin-1'))]
+    cat, k = {}, 0
+    while k < len(t):
+        if t[k] == 'DONATIONSHOP':
+            k += 2
+            while k < len(t) and t[k][:1] != '}':
+                if t[k] == 'DSItem':
+                    kw = t[k + 1].strip('"') if t[k + 1].startswith('"') else t[k + 1]
+                    x = t[k + 2]
+                    iid = D.get(x, 0) if not x[:1].isdigit() else atoi(x)
+                    if iid:
+                        cat[iid & 0xFFFFFFFF] = kw
+                    k += 3
+                    continue
+                k += 1
+        k += 1
+    return cat
+
+
+def ds_props(root, D):
+    """Spec_Item.txt (rows of version <= 19, by header columns): id -> (szName text, dwItemSex, dwReferValue1, dwPackMax)"""
+    S = {}
+    nn_strings_add(S, nn_text16(open(os.path.join(root, 'propItem.txt.txt'), 'rb').read()))
+    lines = open(os.path.join(root, 'Spec_Item.txt'), 'rb').read().decode('latin-1').split('\r\n')
+    col = {h.lstrip('/'): i for i, h in enumerate(lines[1].split('\t'))}
+    def v(x):
+        x = x.strip()
+        if x == '=': return 0xFFFFFFFF
+        if x in D: return D[x] & 0xFFFFFFFF
+        return atoi(x) & 0xFFFFFFFF
+    P = {}
+    for l in lines:
+        if not l.strip() or l.lstrip().startswith('//'):
+            continue
+        c = l.split('\t')
+        if s32(v(c[0])) > 19:
+            continue
+        nm = c[col['szName']].strip()
+        nm = S.get(nm, nm.strip('"')).rstrip()
+        P[v(c[col['dwID']])] = (nm, v(c[col['dwItemSex']]), v(c[col['dwReferValue1']]), v(c[col['dwPackMax']]))
+    return P
+
+
+def ds_view(cat, P, roots, node, sort=0, sex=0, search='', patched=False, page=0):
+    """OnChildNotify -> ApplyFilters: BuildFilteredList, SortFiltered (DS_SortCmp), FillGrid"""
+    if node is None:
+        kw, parent, kset = DS_ROOT, False, []
+    else:
+        kw, parent = node['name'], bool(node['kids'])
+        kset = dt_leaves(node) if parent else []
+    def matches(x):                                   # KeywordMatches
+        if kw == '' or kw == DS_ROOT:
+            return True
+        if parent:
+            return any(a.lower() == x.lower() for a in kset)
+        return kw.lower() == x.lower()
+    order = dt_order(roots) if patched else []
+    def rank(x):                                      # DS_CatRank
+        names = [a for a, _ in order] if order else DS_COMPILED
+        for i, a in enumerate(names):
+            if a.lower() == x.lower():
+                return i
+        return len(names)
+    lst = []
+    for iid in sorted(cat):
+        if not matches(cat[iid]):
+            continue
+        p = P.get(iid)
+        if p is None:
+            continue
+        if sex > 0 and p[1] != 0xFFFFFFFF and p[1] != sex - 1:
+            continue
+        if search and search.lower() not in p[0].lower():
+            continue
+        lst.append(iid)
+    chip = lambda p: 0 if p[2] == 0xFFFFFFFF else p[2]
+    if sort == 0:
+        key = lambda i: (rank(cat[i]), P[i][0].lower())
+    elif sort == 1:
+        key = lambda i: P[i][0].lower()
+    elif sort == 2:
+        key = lambda i: (chip(P[i]), P[i][0].lower())
+    else:
+        key = lambda i: (-chip(P[i]), P[i][0].lower())
+    lst.sort(key=key)
+    total = len(lst)
+    pages = (total + DS_GRID - 1) // DS_GRID if total else 1
+    page = max(0, min(page, pages - 1))
+    a = page * DS_GRID
+    b = min(a + DS_GRID, total)
+    name = 'All' if kw == '' else kw
+    if total == 0:
+        line = '%s - 0 items' % name
+    elif pages > 1:
+        line = '%s - %d/%d  (%d/%d)' % (name, a + 1, total, page + 1, pages)
+    else:
+        line = '%s - %d items' % (name, total)
+    return dict(ids=lst, page=page, pages=pages, grid=lst[a:b], count=line)
+
+
+def ds_blurb(kw, roots, patched):                    # DS_CategoryBlurb (+ the patch's group lookup)
+    if kw in ('Suits', 'Cloaks', 'Masks', 'Wings', 'Fashion'):
+        return 'A cosmetic outfit piece. Changes your look only - no stat effect.'
+    if kw == 'Shields':
+        return 'A cosmetic shield skin. Appearance only - no stat effect.'
+    if kw == 'Pets':
+        return 'A companion pet.'
+    if kw in ('Battle Pass', 'VIP', 'Premium'):
+        return 'A premium account item.'
+    if kw == 'Consumables':
+        return 'A single-use donation consumable.'
+    if kw == 'Functional':
+        return 'A utility donation item.'
+    order = dt_order(roots) if patched else []
+    if order:
+        g = next((grp for a, grp in order if a.lower() == kw.lower()), '')
+        if g == 'Fashion':
+            return 'A cosmetic outfit piece. Changes your look only - no stat effect.'
+        if g == 'Premium':
+            return 'A premium account item.'
+        if g != 'Weapon Skins':
+            return 'A Donation Shop item.'
+    return "A cosmetic weapon skin. Changes your weapon's look only - no stat effect."
+
+
+# -- edits, written as the user asked for them (one line per name, tab indent, the file's EOL)
+def dt_ls(t, i):
+    while i > 0 and t[i - 1] not in '\r\n':
+        i -= 1
+    return i
+
+
+def dt_le(t, i):
+    while i < len(t) and t[i] not in '\r\n':
+        i += 1
+    if t.startswith('\r\n', i):
+        return i + 2
+    return i + 1 if i < len(t) else i
+
+
+def dt_ind(t, i):
+    a = dt_ls(t, i)
+    b = a
+    while b < len(t) and t[b] in ' \t':
+        b += 1
+    return t[a:b]
+
+
+def dt_ext(t, n):
+    end = (n['close'] or n['tok'])[1]
+    return dt_ls(t, n['tok'][0]), dt_le(t, end)
+
+
+def dt_cut(t, n):
+    """the lines a node leaves; the last child of a group (not the top) takes the group's { } lines with it"""
+    p = n['parent']
+    if p is not None and p['parent'] is not None and len(p['kids']) == 1:
+        return dt_ls(t, p['open'][0]), dt_le(t, p['close'][1])
+    return dt_ext(t, n)
+
+
+def dt_end_of(t, g, after):
+    if after == 'first' or (after is None and not g['kids']):
+        return dt_le(t, g['open'][1])
+    a = after if after is not None else g['kids'][-1]
+    return dt_ext(t, a)[1]
+
+
+def ds_rows(text):
+    """DSItem rows: (line start, line end, category span start, end, category, item)"""
+    out = []
+    for m in re.finditer(r'^[ \t]*DSItem[ \t]+("([^"\r\n]*)")[ \t]+(\w+)[^\r\n]*(\r\n|\n|$)', text, re.M):
+        out.append((m.start(), m.end(), m.start(1), m.end(1), m.group(2), m.group(3)))
+    return out
+
+
+def dt_splice(t, edits):
+    for a, b, ins in sorted(edits, key=lambda e: (e[0], e[1]), reverse=True):
+        t = t[:a] + ins + t[b:]
+    return t
+
+
+def dt_apply(tree, ds, op):
+    roots = dt_parse(tree)
+    nodes = dt_all(roots)
+    by = lambda nm: next(n for n in nodes if n['name'].lower() == nm.lower())
+    eol = '\r\n' if '\r\n' in tree else '\n'
+    o = op['op']
+    if o in ('add', 'group'):
+        g = by(op['group'])
+        after = op.get('after')
+        after = after if after in (None, 'first') else by(after)
+        at = dt_end_of(tree, g, after)
+        ind = dt_ind(tree, g['open'][0]) + '\t'
+        if o == 'add':
+            ins = '%s"%s"%s' % (ind, op['name'], eol)
+        else:
+            cats = op['first'] if isinstance(op['first'], list) else [op['first']]
+            ins = '%s"%s"%s%s{%s' % (ind, op['name'], eol, ind, eol) + ''.join('%s\t"%s"%s' % (ind, c, eol) for c in cats) + '%s}%s' % (ind, eol)
+        return dt_splice(tree, [(at, at, ins)]), ds
+    if o == 'inside':                               # categories added inside an entry; a category's items go to the first
+        n = by(op['node'])
+        if n['kids']:
+            at = dt_end_of(tree, n, None)
+            ind = dt_ind(tree, n['open'][0]) + '\t'
+            return dt_splice(tree, [(at, at, ''.join('%s"%s"%s' % (ind, c, eol) for c in op['cats']))]), ds
+        at = dt_ext(tree, n)[1]
+        ind = dt_ind(tree, n['tok'][0])
+        block = '%s{%s' % (ind, eol) + ''.join('%s\t"%s"%s' % (ind, c, eol) for c in op['cats']) + '%s}%s' % (ind, eol)
+        to = op.get('dest') or op['cats'][0]          # the user picks where the items go (the first by default)
+        ds = dt_splice(ds, [(r[2], r[3], '"%s"' % to) for r in ds_rows(ds) if r[4].lower() == n['name'].lower()])
+        return dt_splice(tree, [(at, at, block)]), ds
+    if o == 'rename':
+        n = by(op['node'])
+        tree2 = dt_splice(tree, [(n['tok'][0], n['tok'][1], '"%s"' % op['name'])])
+        if not n['kids']:
+            ds = dt_splice(ds, [(r[2], r[3], '"%s"' % op['name']) for r in ds_rows(ds) if r[4].lower() == n['name'].lower()])
+        return tree2, ds
+    if o == 'move':
+        n = by(op['node'])
+        sib = n['parent']['kids']
+        i = sib.index(n)
+        a, b = (sib[i - 1], n) if op['dir'] < 0 else (n, sib[i + 1])
+        (a0, a1), (b0, b1) = dt_ext(tree, a), dt_ext(tree, b)
+        return tree[:a0] + tree[b0:b1] + tree[a1:b0] + tree[a0:a1] + tree[b1:], ds
+    if o == 'into':
+        n, g = by(op['node']), by(op['group'])
+        e0, e1 = dt_ext(tree, n)
+        c0, c1 = dt_cut(tree, n)
+        block = ''.join((dt_ind(tree, g['open'][0]) + '\t' + l[len(dt_ind(tree, n['tok'][0])):]) if l.startswith(dt_ind(tree, n['tok'][0])) else l
+                        for l in re.split(r'(?<=\n)', tree[e0:e1]) if l)
+        at = dt_end_of(tree, g, None)
+        return dt_splice(tree, [(c0, c1, ''), (at, at, block)]), ds
+    if o == 'delete':
+        n = by(op['node'])
+        c0, c1 = dt_cut(tree, n)
+        names = [x.lower() for x in dt_leaves(n)]
+        rows = [r for r in ds_rows(ds) if r[4].lower() in names]
+        dest = op.get('dest')
+        ds = dt_splice(ds, [(r[2], r[3], '"%s"' % dest) if dest else (r[0], r[1], '') for r in rows])
+        return dt_splice(tree, [(c0, c1, '')]), ds
+    if o == 'item':
+        r = next(r for r in ds_rows(ds) if r[5] == op['define'])
+        return tree, dt_splice(ds, [(r[2], r[3], '"%s"' % op['cat'])])
+    raise ValueError(o)
+
+
+DT_SMALL = [
+    '"All Items"\n{\n\t"A"\n\t"B"\n}\n',
+    '"All Items"\n{\n\t"G"\n\t{\n\t\t"x"\n\t\t"y"\n\t}\n\t"z"\n}\n',
+    '"All Items"\r\n{\r\n\t"G"\r\n\t{\r\n\t}\r\n\t"H"\r\n}\r\n',             # an empty group is a category
+    '"Shop"\n{\n\t"A"\n}\n"All Items"\n{\n\t"B"\n}\n',                       # two tops; "All Items" found second
+    '"Top"\n{\n\t"All Items"\n\t{\n\t\t"A"\n\t}\n}\n',                       # "All Items" nested
+    '"All Items"\n{\n\t"{x"\n\t"y"\n}\n',                                     # a name starting with {
+    '"All Items"\n{\n\t"A"\n\t"}x"\n\t"B"\n}\n"C"\n',                         # a name starting with }
+    '"All Items"\n{\n\t"A" // note\n\t/* old "Q" */ "B"\n}\n',
+    '"All Items"\n{\n\t"A"\n',                                                # never closed
+    '"all items"\n{\n\t"A"\n}\n',                                             # wrong case: not the root
+    '"All Items"\n{\n\t"A"\n}\n}\n"X"\n"Y"\n"Z"\n"W"\n',                       # a stray }: LoadTreeScript skips 2 tokens
+    '',
+]
+
+DT_SCRIPTS = [
+    [dict(op='add', group='Fashion', name='Hats'), dict(op='item', define='II_SYS_SYS_SCR_AMPESS', cat='Hats')],
+    [dict(op='add', group='Fashion', name='Hats', after='first'), dict(op='add', group='All Items', name='Mounts', after='Pets')],
+    [dict(op='group', group='All Items', name='Mounts', first='Boards', after='Pets'),
+     dict(op='add', group='Mounts', name='Brooms', after='Boards'), dict(op='item', define='II_SYS_SYS_SCR_SMELTING', cat='Brooms')],
+    [dict(op='group', group='Weapon Skins', name='Two-handed', first='Long Swords')],
+    [dict(op='group', group='All Items', name='Mounts', first=['Boards', 'Brooms', 'Carpets'], after='first'),
+     dict(op='item', define='II_SYS_SYS_SCR_AMPESS', cat='Brooms'), dict(op='delete', node='Boards', dest=None)],
+    [dict(op='rename', node='Masks', name='Face Masks')],
+    [dict(op='rename', node='Weapon Skins', name='Skins')],
+    [dict(op='rename', node='consumables', name='Potions')],
+    [dict(op='move', node='Masks', dir=-1), dict(op='move', node='Fashion', dir=1), dict(op='move', node='Consumables', dir=1)],
+    [dict(op='move', node='Premium', dir=-1), dict(op='move', node='VIP', dir=-1)],
+    [dict(op='into', node='Shields', group='Fashion')],
+    [dict(op='into', node='Battle Pass', group='Weapon Skins'), dict(op='into', node='VIP', group='Fashion')],
+    [dict(op='into', node='Premium', group='Fashion')],
+    [dict(op='delete', node='Masks', dest='Suits')],
+    [dict(op='delete', node='Masks', dest=None)],
+    [dict(op='delete', node='Premium', dest='Consumables')],
+    [dict(op='delete', node='Weapon Skins', dest=None)],
+    [dict(op='delete', node='VIP', dest='Functional'), dict(op='delete', node='Battle Pass', dest='Functional')],
+    [dict(op='group', group='All Items', name='Mounts', first='Boards'), dict(op='rename', node='Boards', name='Hover Boards'),
+     dict(op='item', define='II_SYS_SYS_SCR_AMPESS', cat='Hover Boards'), dict(op='move', node='Mounts', dir=-1),
+     dict(op='into', node='Hover Boards', group='Fashion'), dict(op='delete', node='Fashion', dest='Pets')],
+    [dict(op='item', define='II_SYS_SYS_SCR_AMPESS', cat='suits'), dict(op='item', define='II_SYS_SYS_SCR_SMELTING', cat='PETS')],  # any case matches
+    [dict(op='item', define='II_SYS_SYS_SCR_AMPESS', cat='Fashion'), dict(op='rename', node='Fashion', name='Outfits')],   # a group's name on a row stays
+    [dict(op='inside', node='Pets', cats=['Buff Pets', 'Raised Pets'], dest='Raised Pets'), dict(op='inside', node='Premium', cats=['Coupons'])],   # a category with items becomes a group
+    [dict(op='add', group='All Items', name='Mounts'), dict(op='item', define='II_SYS_SYS_SCR_AMPESS', cat='Mounts'),
+     dict(op='inside', node='Mounts', cats=['Air', 'Land']), dict(op='inside', node='Air', cats=['Gliders'])],
+]
+
+# a made-up shop for the sort ties: same prices, names that differ in case, no price, both sexes
+DT_SYNTH = dict(
+    catalog={1: 'Sword', 2: 'Sword', 3: 'Axe', 4: 'Bow', 5: 'Hats', 6: 'sword', 7: 'Pets', 8: 'Wings', 9: 'Nowhere'},
+    items={1: ['apple blade', 0xFFFFFFFF, 50, 1], 2: ['Banana blade', 0, 50, 1], 3: ['cherry axe', 1, 50, 1], 4: ['Apple bow', 0, 0xFFFFFFFF, 1],
+           5: ['ZED hat', 1, 10, 1], 6: ['Apple Blade', 1, 50, 1], 7: ['dog', 0xFFFFFFFF, 10, 1], 8: ['Dog wings', 0, 10, 1], 9: ['aaa', 0, 99, 1]})
+DT_SYNTH_TREE = '"All Items"\n{\n\t"Weapon Skins"\n\t{\n\t\t"Bow"\n\t\t"Sword"\n\t\t"Axe"\n\t}\n\t"Hats"\n\t"Pets"\n\t"Wings"\n}\n'
+
+
+
+def dt_run(root):
+    D = defines(root)
+    tpath = os.path.join(root, '..', 'Client', 'Client', 'DonationShopTree.inc')
+    tree = open(tpath, 'rb').read().decode('latin-1')
+    ds = open(os.path.join(root, 'DonationShop.inc'), 'rb').read().decode('latin-1')
+    P = ds_props(root, D)
+    def views(tree, ds, extra=()):
+        roots = dt_parse(tree)
+        cat = ds_catalog(ds, D)
+        out = []
+        for nm in [None] + [n['name'] for n in dt_all(roots)] + list(extra):
+            node = None if nm is None else next((n for n in dt_all(roots) if n['name'].lower() == nm.lower()), None)
+            if nm is not None and node is None:
+                continue
+            for patched in (False, True):
+                for sort in range(4):
+                    for sex in range(3):
+                        v = ds_view(cat, P, roots, node, sort, sex, '', patched)
+                        out.append(dict(node=nm, patched=patched, sort=sort, sex=sex, ids=v['ids'], count=v['count'], pages=v['pages']))
+        return out
+    roots = dt_parse(tree)
+    cat = ds_catalog(ds, D)
+    extra = []
+    for nm, q, pg in ((None, 'set', 0), (None, 'SHIELD', 0), ('Fashion', 'zzz', 0), ('Weapon Skins', 'a', 1), (None, '', 1),
+                      (None, '', 3), (None, '', 9), (None, '', -1), ('Suits', 'set(f', 0)):
+        node = None if nm is None else next(n for n in dt_all(roots) if n['name'] == nm)
+        v = ds_view(cat, P, roots, node, 0, 0, q, False, pg)
+        extra.append(dict(node=nm, search=q, page=pg, grid=v['grid'], page_out=v['page'], count=v['count']))
+    names = [n['name'] for n in dt_all(roots)] + ['Hats', 'sword', 'Premium', 'Boards', '']
+    small = [dict(text=t, shape=dt_shape(dt_parse(t)), order=[list(x) for x in dt_order(dt_parse(t))]) for t in DT_SMALL]
+    for s in small:
+        s['blurbs'] = {nm: [ds_blurb(nm, dt_parse(s['text']), False), ds_blurb(nm, dt_parse(s['text']), True)] for nm in ('A', 'x', 'B', 'Suits')}
+    scripts = []
+    for ops in DT_SCRIPTS:
+        t, d = tree, ds
+        for op in ops:
+            t, d = dt_apply(t, d, op)
+        r = dt_parse(t)
+        scripts.append(dict(ops=ops, tree=t, ds=d, shape=dt_shape(r), views=views(t, d),
+                            blurbs={n['name']: [ds_blurb(n['name'], r, False), ds_blurb(n['name'], r, True)] for n in dt_all(r) if not n['kids']}))
+    sr = dt_parse(DT_SYNTH_TREE)
+    SP = {k: tuple(v) for k, v in DT_SYNTH['items'].items()}
+    synth = []
+    for nm in [None] + [n['name'] for n in dt_all(sr)]:
+        node = None if nm is None else next(n for n in dt_all(sr) if n['name'] == nm)
+        for patched in (False, True):
+            for sort in range(4):
+                for sex in range(3):
+                    for q in ('', 'APPLE', 'dog'):
+                        v = ds_view(DT_SYNTH['catalog'], SP, sr, node, sort, sex, q, patched)
+                        synth.append(dict(node=nm, patched=patched, sort=sort, sex=sex, search=q, ids=v['ids'], count=v['count']))
+    return dict(views=views(tree, ds), extra=extra, shape=dt_shape(roots), synth=dict(shop=DT_SYNTH, tree=DT_SYNTH_TREE, views=synth),
+                blurbs={nm: [ds_blurb(nm, roots, False), ds_blurb(nm, roots, True)] for nm in names},
+                small=small, scripts=scripts, items=len(cat))
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -3282,6 +3751,8 @@ if __name__ == '__main__':
         print(json.dumps(bd_run(root)))
     elif what == 'npcmove':
         print(json.dumps(nv_run(root)))
+    elif what == 'dstree':
+        print(json.dumps(dt_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model
         for f in sorted(os.listdir(root)):
             if f.lower().startswith('mvr_') and f.lower().endswith('.o3d'):

@@ -472,7 +472,7 @@ editCase('donation: missing closing brace', w => {
 editCase('donation: category not in the client tree', w => {
   const TREE = ROOT + '/test-data/fixtures/Client/Client/DonationShopTree.inc';
   if (!exists(TREE)) return;
-  w.setDonationTree(FRE.donationTree.loadTree(openSource({ name: 'DonationShopTree.inc', path: TREE })));
+  w.setDonationTree(openSource({ name: 'DonationShopTree.inc', path: TREE }));
   eq(w.diags.filter(d => d.code === 'DS_NO_LEAF').length, 0, 'no DS_NO_LEAF with the real tree');
   const f = ds(w);
   w.apply('donationshop.inc', FRE.donationOps.setCategory(f.text, dsRows(w, 'II_SYS_SYS_SCR_PET_LIFE')[0], 'Fashion'), 'move');
@@ -480,6 +480,129 @@ editCase('donation: category not in the client tree', w => {
   ok(d && d.severity === 'WARN', 'parent "Fashion" is not a leaf -> DS_NO_LEAF warning');
   eq(w.newBlocking().length, 0, 'DS_NO_LEAF does not block');
 });
+
+// ---------------------------------------------------------------- Donation Shop categories (task S part 4)
+// The tree file is edited (edit/donation-ops.js); the window (loaders/donation-window.js, a port of
+// CWndDonationShop) is replayed against the independent Python copy (tools/oracle_sim.py dstree).
+const DS_TREE = ROOT + '/test-data/fixtures/Client/Client/DonationShopTree.inc';
+const dsWs = () => {
+  const w = new FRE.Workspace(fixtureFilesDs(), { only: 'donation' }).load();
+  w.setDonationTree(openSource({ name: 'DonationShopTree.inc', path: DS_TREE }));
+  return w;
+};
+function fixtureFilesDs() { const m = new Map(); for (const [k, e] of loadFolder(FIXTURES)) m.set(k, openSource(e)); return m; }
+const dsTexts = w => ({ [FRE.donationTree.KEY]: w.files.get(FRE.donationTree.KEY).text, 'donationshop.inc': w.files.get('donationshop.inc').text });
+// one Python op through the editor's ops
+function dsApply(w, op) {
+  const O = FRE.donationOps, t = () => w.donationTree, K = FRE.donationTree.KEY, tt = () => w.files.get(K).text, m = () => w.models.donation;
+  const after = op.after == null || op.after === 'first' ? op.after || null : t().find(op.after);
+  const parts = op.op === 'add' ? O.addCategory(tt(), t(), t().find(op.group), op.name, after)
+    : op.op === 'group' ? O.addGroup(tt(), t(), t().find(op.group), op.name, op.first, after)
+    : op.op === 'rename' ? O.renameNode(dsTexts(w), t(), m(), t().find(op.node), op.name)
+    : op.op === 'inside' ? O.addInside(dsTexts(w), t(), m(), t().find(op.node), op.cats, op.dest || null)
+    : op.op === 'move' ? O.moveNode(tt(), t().find(op.node), op.dir)
+    : op.op === 'into' ? O.moveToGroup(tt(), t().find(op.node), t().find(op.group))
+    : op.op === 'delete' ? O.removeNode(dsTexts(w), t(), m(), t().find(op.node), op.dest || null)
+    : [{ file: 'donationshop.inc', splices: O.setCategory(w.files.get('donationshop.inc').text, m().rows.find(r => r.define === op.define), op.cat) }];
+  w.applyGroup(parts, op.op);
+}
+const dsShape = list => list.map(n => [n.name, dsShape(n.children)]);
+function dsViews(w, py, label) {
+  const shop = FRE.donationWindow.shopOf(w.models.donation, w.items.items), tree = w.donationTree;
+  let bad = 0, first = '';
+  for (const c of py) {
+    const node = c.node == null ? null : tree.find(c.node);
+    const v = FRE.donationWindow.view(shop, tree, { node, sort: c.sort, sex: c.sex, patched: c.patched });
+    if (JSON.stringify(v.ids) !== JSON.stringify(c.ids) || v.count !== c.count || v.pages !== c.pages) { bad++; if (!first) first = `${c.node} sort ${c.sort} sex ${c.sex} patched ${c.patched}: ${v.count} vs ${c.count}`; }
+  }
+  ok(bad === 0, `${label}: ${py.length} window views agree with the Python copy`, `${bad} differ, first: ${first}`);
+}
+section('donation shop categories: JS and Python copies agree');
+if (exists(DS_TREE)) {
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} dstree ${FIXTURES}`);
+  const py = JSON.parse(new TextDecoder().decode(out));
+  const w = dsWs(), J = JSON.stringify;
+  eq(J(dsShape(w.donationTree.roots)), J(py.shape), 'tree read the same way');
+  eq(w.models.donation.catalog.size, py.items, 'catalog size');
+  dsViews(w, py.views, 'real tree');
+  const shop = FRE.donationWindow.shopOf(w.models.donation, w.items.items);
+  for (const e of py.extra) {
+    const v = FRE.donationWindow.view(shop, w.donationTree, { node: e.node == null ? null : w.donationTree.find(e.node), search: e.search, page: e.page });
+    ok(J(v.grid) === J(e.grid) && v.page === e.page_out && v.count === e.count, `search "${e.search}" page ${e.page} on ${e.node || 'All Items'}: ${e.count}`, `${v.count} page ${v.page}`);
+  }
+  {
+    const sy = py.synth, st = FRE.donationTree.loadTree({ name: 's', text: sy.tree });
+    const sshop = { catalog: new Map(Object.entries(sy.shop.catalog).map(([k, v]) => [Number(k), v])),
+      items: new Map(Object.entries(sy.shop.items).map(([k, v]) => [Number(k), { name: v[0], sex: v[1], chip: v[2], packMax: v[3] }])) };
+    let bad = 0, first = '';
+    for (const c of sy.views) {
+      const v = FRE.donationWindow.view(sshop, st, { node: c.node == null ? null : st.find(c.node), sort: c.sort, sex: c.sex, search: c.search, patched: c.patched });
+      if (J(v.ids) !== J(c.ids) || v.count !== c.count) { bad++; if (!first) first = J(c); }
+    }
+    ok(bad === 0, `made-up shop: ${sy.views.length} views agree (ties, case, no price, sexes)`, `${bad} differ, first ${first}`);
+  }
+  let bb = 0;
+  for (const [nm, [a, b]] of Object.entries(py.blurbs)) if (FRE.donationWindow.blurb(nm, w.donationTree, false) !== a || FRE.donationWindow.blurb(nm, w.donationTree, true) !== b) bb++;
+  eq(bb, 0, `${Object.keys(py.blurbs).length} card lines agree (compiled and patched)`);
+  for (const [i, sm] of py.small.entries()) {
+    const t = FRE.donationTree.loadTree(new FRE.SourceFile('t.inc', new TextEncoder().encode(sm.text)));
+    eq(J(dsShape(t.roots)), J(sm.shape), `small tree ${i + 1}: same shape`);
+    eq(J(FRE.donationWindow.treeOrder(t).map(o => [o.leaf, o.group])), J(sm.order), `small tree ${i + 1}: same patched order`);
+    const bl = Object.entries(sm.blurbs).every(([nm, [a, b]]) => FRE.donationWindow.blurb(nm, t, false) === a && FRE.donationWindow.blurb(nm, t, true) === b);
+    ok(bl, `small tree ${i + 1}: card lines agree`);
+  }
+  for (const [i, sc] of py.scripts.entries()) {
+    const ws = dsWs(), label = `edit script ${i + 1} (${sc.ops.map(o => o.op + ' ' + (o.node || o.name || o.define)).join(', ')})`;
+    try {
+      for (const op of sc.ops) dsApply(ws, op);
+      const t = dsTexts(ws);
+      ok(t[FRE.donationTree.KEY] === sc.tree, `${label}: DonationShopTree.inc byte-identical`);
+      ok(t['donationshop.inc'] === sc.ds, `${label}: DonationShop.inc byte-identical`);
+      eq(J(dsShape(ws.donationTree.roots)), J(sc.shape), `${label}: same tree`);
+      dsViews(ws, sc.views, label);
+      ok(Object.entries(sc.blurbs).every(([nm, [a, b]]) => FRE.donationWindow.blurb(nm, ws.donationTree, false) === a && FRE.donationWindow.blurb(nm, ws.donationTree, true) === b), `${label}: card lines agree`);
+      eq(ws.newBlocking().length, 0, `${label}: no new blocking problem`);
+      while (ws.undo());
+      ok(ws.files.get(FRE.donationTree.KEY).text === openSource({ name: 'x', path: DS_TREE }).text, `${label}: undo gives the tree back`);
+    } catch (e) { ok(false, label, e.message); }
+  }
+} else print('   (skipped: no fixture tree)');
+
+section('donation shop categories: checks');
+if (exists(DS_TREE)) {
+  const w = dsWs(), O = FRE.donationOps, T = FRE.donationTree, K = T.KEY;
+  ok(w.isEditable(K), 'the tree is editable in the Donation Shop task');
+  eq(w.diags.filter(d => /^DT_/.test(d.code)).length, 0, 'the real tree has no DT_ problem');
+  const np = n => T.nameProblems(w.donationTree, n).map(p => p.code).join(',');
+  eq(np('Hats'), '', 'a free name is fine');
+  eq(np('masks'), 'DT_DUP', 'a taken name (any case) is DT_DUP');
+  eq(np('{Hats'), 'DT_BRACE', 'a name starting with { is DT_BRACE');
+  eq(np('}'), 'DT_BRACE', 'a name starting with } is DT_BRACE');
+  ok(np('a"b').includes('DT_CHARS') && np(' Hats').includes('DT_CHARS') && np('Hüte').includes('DT_CHARS') && np('').includes('DT_CHARS'), 'quote, outer space, non-ASCII, empty -> DT_CHARS');
+  throws(() => O.addCategory(w.files.get(K).text, w.donationTree, w.donationTree.find('Fashion'), 'Masks'), 'adding a taken name throws');
+  throws(() => O.addCategory(w.files.get(K).text, w.donationTree, w.donationTree.find('Pets'), 'Hats'), 'a category can\'t hold categories');
+  throws(() => O.renameNode(dsTexts(w), w.donationTree, w.models.donation, w.donationTree.find('All Items'), 'Shop'), 'the top can\'t be renamed');
+  throws(() => O.removeNode(dsTexts(w), w.donationTree, w.models.donation, w.donationTree.find('Fashion'), 'Masks'), 'items can\'t go to a category being deleted');
+  throws(() => O.moveToGroup(w.files.get(K).text, w.donationTree.find('Fashion'), w.donationTree.find('Fashion')), 'a group can\'t go into itself');
+  throws(() => O.moveNode(w.files.get(K).text, w.donationTree.find('Consumables'), -1), 'the first can\'t move up');
+  w.applyGroup(O.addCategory(w.files.get(K).text, w.donationTree, w.donationTree.find('Fashion'), 'Hats'), 'add');
+  const d = w.diags.find(x => x.code === 'DT_PATCH');
+  ok(d && d.severity === 'WARN' && /Hats/.test(d.message), 'a new category -> DT_PATCH warning (needs donation-tree.diff)');
+  w.undo();
+  w.applyGroup(O.moveNode(w.files.get(K).text, w.donationTree.find('Functional'), -1), 'move');
+  ok(w.diags.some(x => x.code === 'DT_ORDER' && x.severity === 'INFO'), 'a new order -> DT_ORDER note');
+  w.undo();
+  const raw = (text, ins) => w.applyGroup([{ file: K, splices: [{ start: text.indexOf('"Pets"'), end: text.indexOf('"Pets"') + 6, insert: ins }] }], 'raw');
+  raw(w.files.get(K).text, '"Masks"');
+  ok(w.newBlocking().some(x => x.code === 'DT_DUP'), 'a duplicate in the file -> DT_DUP (blocks saving)');
+  w.undo();
+  const top = w.files.get(K).text.indexOf('"All Items"');
+  w.applyGroup([{ file: K, splices: [{ start: top, end: top + 11, insert: '"Shop"' }] }], 'raw');
+  ok(w.newBlocking().some(x => x.code === 'DT_ROOT'), 'no "All Items" -> DT_ROOT (blocks saving)');
+  w.undo();
+  for (const c of ['DT_ROOT', 'DT_DUP', 'DT_BRACE', 'DT_CHARS', 'DT_PATCH', 'DT_ORDER']) ok(!!FRE.diagHelp[c], `help text for ${c}`);
+  eq(w.moduleOfFile(T.DIAG_FILE).id, 'donation', 'tree problems belong to the Donation Shop');
+}
 
 // ---------------------------------------------------------------- Battle Pass (BattlePass.inc, commit cc73ccdd)
 section('battle pass');

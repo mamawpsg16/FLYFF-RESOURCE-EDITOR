@@ -18,6 +18,7 @@ loaders/vendor-sim.js
 loaders/shop-window.js
 loaders/donation.js
 loaders/donation-tree.js
+loaders/donation-window.js
 loaders/battlepass.js
 loaders/exchange.js
 loaders/exchange-sim.js
@@ -56,6 +57,7 @@ ui/menu-form.js
 ui/npc-edit.js
 ui/menu-chooser.js
 ui/donation.js
+ui/donation-tree.js
 ui/battlepass.js
 ui/exchange.js
 ui/app.js

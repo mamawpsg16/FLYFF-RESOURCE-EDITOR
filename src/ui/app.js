@@ -230,7 +230,7 @@
     try {
       const sub = await dir.getDirectoryHandle('Client');
       const th = (await FRE.fsa.findFiles(sub, ['DonationShopTree.inc'])).get('donationshoptree.inc');
-      if (th) tree = FRE.donationTree.loadTree(new FRE.SourceFile(th.name, (await FRE.fsa.readHandle(th)).bytes));
+      if (th) { const { bytes, stamp } = await FRE.fsa.readHandle(th); tree = new FRE.SourceFile(th.name, bytes, { handle: th, stamp, dir: 'Client' }); }
     } catch (e) { if (e.name !== 'NotFoundError' && e.name !== 'TypeMismatchError') toast('DonationShopTree.inc: ' + e.message, 'bad'); }
     // rules windows (docs/patches/npc-board.diff): Client/Client/NpcBoard_<menu id>.inc, edited in NPC Shops
     const boards = [];

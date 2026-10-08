@@ -1,0 +1,95 @@
+diff -ru a/Source/Source/_Interface/WndDonationShop.cpp b/Source/Source/_Interface/WndDonationShop.cpp
+--- a/Source/Source/_Interface/WndDonationShop.cpp	2026-10-08 09:21:25.368498589 +0800
++++ b/Source/Source/_Interface/WndDonationShop.cpp	2026-10-08 09:21:56.841614425 +0800
+@@ -198,6 +198,49 @@
+ 	return 0xffb0b0b0;
+ }
+ 
++// donation-tree: the category order and each category's top group, read from
++// DonationShopTree.inc when the window opens (CWndDonationShop::OnInitialUpdate),
++// so a category added or renamed in the tree needs no rebuild. InterpriteScript
++// leaves m_lpParent unset, so the group is passed down while walking.
++static CStringArray s_aDsTreeLeaf;		// leaf keywords, file order
++static CStringArray s_aDsTreeGroup;		// the "All Items" child each leaf sits under
++
++static void DS_CollectTreeOrder( LPTREEELEM lp, const CString& strGroup )
++{
++	if( lp == NULL )
++		return;
++	if( lp->m_ptrArray.GetSize() == 0 )
++	{
++		s_aDsTreeLeaf.Add( lp->m_strKeyword );
++		s_aDsTreeGroup.Add( strGroup );
++		return;
++	}
++	for( int i = 0; i < lp->m_ptrArray.GetSize(); i++ )
++		DS_CollectTreeOrder( (LPTREEELEM)lp->m_ptrArray.GetAt( i ), strGroup );
++}
++
++static void DS_LoadTreeOrder( LPTREEELEM lpRoot )
++{
++	s_aDsTreeLeaf.RemoveAll();
++	s_aDsTreeGroup.RemoveAll();
++	if( lpRoot == NULL )
++		return;
++	for( int i = 0; i < lpRoot->m_ptrArray.GetSize(); i++ )
++	{
++		LPTREEELEM lp = (LPTREEELEM)lpRoot->m_ptrArray.GetAt( i );
++		DS_CollectTreeOrder( lp, CString( lp->m_strKeyword ) );
++	}
++}
++
++// The top group of a leaf ("Weapon Skins" for "Sword"); empty when not in the tree.
++static CString DS_GroupOf( const CString& kw )
++{
++	for( int i = 0; i < s_aDsTreeLeaf.GetSize(); i++ )
++		if( kw.CompareNoCase( s_aDsTreeLeaf.GetAt( i ) ) == 0 )
++			return s_aDsTreeGroup.GetAt( i );
++	return CString();
++}
++
+ // Generated flavour line for the detail card - there is no description field in
+ // the item data (verified: ItemProp has none, no loader parses one). Keyed off the
+ // clicked tree keyword, which is the item's family (leaf) or its parent.
+@@ -216,6 +259,18 @@
+ 		return _T( "A single-use donation consumable." );
+ 	if( kw == _T( "Functional" ) )
+ 		return _T( "A utility donation item." );
++	// donation-tree: any other category takes its group's line; one outside
++	// Weapon Skins / Fashion / Premium gets a neutral line, not the weapon one.
++	if( s_aDsTreeLeaf.GetSize() > 0 )
++	{
++		const CString strGroup = DS_GroupOf( kw );
++		if( strGroup == _T( "Fashion" ) )
++			return _T( "A cosmetic outfit piece. Changes your look only - no stat effect." );
++		if( strGroup == _T( "Premium" ) )
++			return _T( "A premium account item." );
++		if( strGroup != _T( "Weapon Skins" ) )
++			return _T( "A Donation Shop item." );
++	}
+ 	return _T( "A cosmetic weapon skin. Changes your weapon's look only - no stat effect." );
+ }
+ 
+@@ -232,6 +287,14 @@
+ 
+ static int DS_CatRank( const CString& strKeyword )
+ {
++	// donation-tree: the tree's own leaf order; the list above only when the tree is missing
++	if( s_aDsTreeLeaf.GetSize() > 0 )
++	{
++		for( int i = 0; i < s_aDsTreeLeaf.GetSize(); i++ )
++			if( strKeyword.CompareNoCase( s_aDsTreeLeaf.GetAt( i ) ) == 0 )
++				return i;
++		return s_aDsTreeLeaf.GetSize();
++	}
+ 	const int nCount = sizeof( s_szDonationCatOrder ) / sizeof( s_szDonationCatOrder[0] );
+ 	for( int i = 0; i < nCount; i++ )
+ 		if( strKeyword.CompareNoCase( s_szDonationCatOrder[i] ) == 0 )
+@@ -345,6 +408,7 @@
+ 	{
+ 		pTree->LoadTreeScript( MakePath( DIR_CLIENT, "DonationShopTree.inc" ) );
+ 		LPTREEELEM lpRoot = pTree->FindTreeElem( "All Items" );
++		DS_LoadTreeOrder( lpRoot );		// donation-tree
+ 		if( lpRoot )
+ 			lpRoot->m_bOpen = TRUE;
+ 		pTree->SetCurSel( "All Items" );

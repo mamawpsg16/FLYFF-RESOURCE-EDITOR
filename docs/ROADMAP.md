@@ -1,12 +1,35 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-08 (+ NPC inline menus, exchange cards, NM_COND_TWICE; all pushed; handoff on top)._
+_Last updated 2026-10-08 (S part 4: Donation Shop categories user-tested + committed; next the Donation Shop simulator; handoff on top)._
 
-> **Handoff (2026-10-08, end of session) — START HERE: everything is user-tested, committed and pushed (`b510b01` on origin/main). Nothing is pending.**
+> **Handoff (2026-10-08, evening) — START HERE: S part 4 (Donation Shop categories) is user-tested in Brave and committed (not pushed).** Plan: `/home/kevin/.claude/plans/compressed-marinating-adleman.md`. In game still to do (Windows): apply `docs/patches/donation-tree.diff`, build Neuz, check the window. **Next: the Donation Shop simulator (buy flow: `CDPSrvr::OnBuyDonationItem`, price = dwReferValue1, chip check, the crash items), JS + Python copy. Plan it first.** Then F (monster drops), then J (boxes).
+> - **Categories editable** in the Donation Shop task (`Client/Client/DonationShopTree.inc`, client-only; written into the Client folder like the rules texts):
+>   - **+ Category** at the top of the list: one form, a name plus optional "categories inside it". None = it holds items itself (like Mounts); one or more = a group (like Weapon Skins). The user's idea after the first test (2026-10-08), replacing a separate + Group;
+>   - on a selected entry: **✎ Edit category / group** (name, Inside, + Add a category inside it: a category with items becomes a group and its items move into the new category you pick under "Its N items go to"), **↑ ↓**, and **Delete…**;
+>   - a rename takes the category's `DSItem` rows with it;
+>   - a delete asks where the items go: another category, or remove them from the shop (the user's choice);
+>   - deleting a group's only category also deletes the group (a ticked box; before, it stayed as an empty category: found in the user's test).
+>   - Groups: the ▾ / ▸ arrow opens and closes the list (the user, 2026-10-08); the name selects the group and lists the items of all its categories, like the game.
+>   - Every dialog shows the sidebar as it will look and the lines written. One undo step each.
+> - **Found in the client:** the category order and each item's card text are compiled in C++ (`s_szDonationCatOrder`, `DS_CategoryBlurb`, WndDonationShop.cpp; `ae345504` had to add "Shields" there). Without a change, a new or renamed category sorts last and says "A cosmetic weapon skin".
+>   - The user chose **one patch**: `docs/patches/donation-tree.diff`, which reads both from the tree. The user applies it (`git apply -p1 ../FLYFF-RESOURCE-EDITOR/docs/patches/donation-tree.diff` in FLYFF-V19-SOURCE; `--check` passes) and builds Neuz once.
+>   - New checks: `DT_PATCH` (WARN) and `DT_ORDER` (INFO) until then. `DT_ROOT`, `DT_DUP`, `DT_BRACE` (a name starting with `{` / `}` breaks the client's tree reader) and `DT_CHARS` block saving. INVESTIGATION §1.15.
+> - Simulator: `gjs -m tools/dstree-sim.js "Weapon Skins" sort=price-high sex=female patched`. Python copy `oracle_sim.py dstree` (600 views, 9 searches/pages, 648 made-up views, 12 small trees, 20 edit scripts). 17 planted bugs caught (5 after adding cases). UI harness: new stage `dstree`, 302 pass.
+>
+> **User's test:** `python3 build.py`, reload, pick `test-data`, task Donation Shop.
+> 1. Click "▾ Fashion": 85 items (all 4 categories).
+> 2. + Category → type "masks": refused; "Hats" → the preview shows it under Fashion → Create → it is selected; add an item with +. Undo.
+>    + Category → "Mounts" + Add a category inside it ×2 ("Boards", "Brooms") → one group. Delete Boards, then Brooms: the box "Also delete the group Mounts" is ticked.
+> 3. Masks → ✎ Edit category → "Face Masks" → Apply: its 5 items follow. Undo. ↑ on Masks. Undo.
+> 4. Masks → Delete category… → Move them to Suits → Delete. Undo.
+> 5. Save once: the backup holds `Client/Client/DonationShopTree.inc`.
+> In game later (Windows): apply `donation-tree.diff`, build Neuz; a new category sorts in tree order and its card text fits.
+>
+> **Earlier handoff (2026-10-08, end of session), now done: everything was user-tested, committed and pushed (`b510b01` on origin/main).**
 > - **Next: S part 4, Donation Shop categories** (`Client/Client/DonationShopTree.inc`, `DonationShop.inc`; follow `7d7df4f9` / `ae345504`). **Plan it first** (plan mode; the user approved this way of working).
 > - Then, per the order below: the Donation Shop simulator (buy flow, JS + Python copy), F (monster drops), J (boxes: see "### J.", with the 5 C++ findings of 2026-10-08).
 > - In-game test of Add New NPC + the npc-board patch still waits for the user's Windows PC (Fri 2026-10-09 / Sat 2026-10-10).
-> - The remote branch `ccr-25b694d1-jie3e1` is merged into main (`4de36fc`); delete it only if the user asks.
+> - The branch `ccr-25b694d1-jie3e1` was merged into main in this repo (`4de36fc`), V19 (`7337fd0f`) and the guides (`fab7911`), then deleted on GitHub in all three at the user's request (2026-10-08).
 >
 > **Earlier handoff (2026-10-08), now done:** Last commit: `a87805f` (S part 3). Plan: `/home/kevin/.claude/plans/kind-riding-bonbon.md`.
 > - **Update after the user's first look (2026-10-08): the Exchange and Rules text forms are now INSIDE + NPC** (the user: "why the rules form is not showing in the modal… like its 1 step at a time?"). Ticking a card shows its fields under the cards (`menuForm.menusSection`, `menuChooser.boardSection`, shared with + Menu). **One Create, one undo step**: `ctx.editSteps` applies the exchange menus, then the rules menu, then the NPC (its block lists every AddMenu), each planned on the files the step before left, and `Workspace.foldLast` makes them one step. `newMenusPlan` takes `newNpc` (no character.inc part) and `offset` (the preview of a rules menu after the exchange menus). The preview shows everything that will be written; the checks include the menus' (`NN_RULES`, `NN_RULES_PATCH`). **Shop off with items in its tabs** is now a WARN ("Shop is off: the N items … won't be added"), the items are kept, and the old "tick Trade" BLOCK is gone (Python `NN_BLOCKING` too). Tests: core 733, UI harness 285 (new stop `nnmenus`).
@@ -359,7 +382,7 @@ Python copy, as for every task.
 1. Name, tabs, menus: **built 2026-10-07**, committed `1a59e97`.
 2. Rule rows editable + what players pay / get back: **built 2026-10-07** (handoff above).
 3. Move NPC / change model: **built 2026-10-07** (same map, one spot at a time, model on all spots optional; handoff above).
-4. Donation Shop categories: add / rename / move / remove groups and leaves of `Client/Client/DonationShopTree.inc` (+ the rows in DonationShop.inc), simulator of the tree and keyword match.
+4. Donation Shop categories: **built + user-tested 2026-10-08** (handoff above; needs `docs/patches/donation-tree.diff` in the client for order + card text).
 Also built in part 1: the item list's own categories (Pets › Raised / Pickup / Buff…).
 
 **Why:** today only fixed items (`AddShopItem` / `AddVenderItem2`) are editable. Items that come from an `AddVendorItem` rule show in the shop but can't be priced or removed.

@@ -652,7 +652,7 @@
       click([...lastModal().querySelectorAll('.menu-card')][2]);
       await waitFor(() => lastModal() && lastModal().querySelector('textarea.board-text'), 'rules text form');
       box = lastModal();
-      const typeIn = (el, v) => { el.value = v; el.dispatchEvent(new Event('input')); };
+      const typeIn = (el, v) => { el.value = v; el.dispatchEvent(new Event('input')); el.dispatchEvent(new Event('change')); };
       ok(/⛔ The name is empty/.test(box.textContent) && box.querySelector('footer button.primary').disabled, 'Create greyed until a name is typed');
       typeIn(box.querySelector('input[type=text]'), 'Guild Rules');
       typeIn(box.querySelector('textarea.board-text'), '#b#cffffcc00How to win#nc#nb\nKill players for points');
@@ -805,7 +805,7 @@
     await openTask('donation');
     ok(S.mode === 'donation', 'Donation Shop mode');
     ok(/MaFl_DONATION/.test($('editor').textContent) && /Flaris — Flarine \/ Central Flarine/.test($('editor').querySelector('.where').textContent), 'Donation Shop: where Adrian (MaFl_DONATION) stands');
-    ok([...document.querySelectorAll('#list .group')].some(g => g.textContent === 'Weapon Skins'), 'categories follow the client tree');
+    ok([...document.querySelectorAll('#list .npc')].some(g => g.textContent.startsWith('▾ Weapon Skins')), 'categories follow the client tree (groups clickable)');
     click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.startsWith('Consumables')));
     ok(/Items \(14\)/.test($('editor').textContent), 'Consumables lists 14 items');
     const dsText0 = S.ws.files.get('donationshop.inc').text;
@@ -844,6 +844,113 @@
     ok(sc.scrollTop === 0 && document.body.scrollTop === 0 && $('toolbar').getBoundingClientRect().top === 0, 'the page itself never scrolls (toolbar stays on screen)');
     ok($('layout').getBoundingClientRect().bottom <= window.innerHeight + 1 && lastIn.getBoundingClientRect().bottom <= window.innerHeight + 1, 'focused last row is visible inside the window');
     lastIn.blur();
+
+    // ---- Donation Shop categories (task S part 4): Client/Client/DonationShopTree.inc
+    {
+      const K = FRE.donationTree.KEY, tree0 = S.ws.files.get(K).text, ds0 = S.ws.files.get('donationshop.inc').text;
+      const pickEntry = t => click([...document.querySelectorAll('#list .npc')].find(n => n.querySelector('.n span').textContent === t));
+      const typeIn = (el, v) => { el.value = v; el.dispatchEvent(new Event('input')); el.dispatchEvent(new Event('change')); };
+      ok(S.ws.isEditable(K), 'the category tree is editable in the Donation Shop task');
+      pickEntry('▾ Fashion');
+      ok(/Items \(85\)/.test($('editor').textContent) && /In game a group shows the items of its 4 categories/.test($('editor').textContent), 'a group lists the items of its 4 categories, like the game');
+      click(btnByText($('list'), '+ Category'));
+      await waitFor(() => lastModalAny() && /^\+ Category in the Donation Shop/.test(lastModalAny().querySelector('header').textContent), '+ Category dialog');
+      let box = lastModalAny();
+      const create = () => btnByText(box.querySelector('footer'), 'Create');
+      ok(!btnByText($('list'), '+ Group') && btnByText(box, '+ Add a category inside it'), 'one + Category button; categories inside are optional');
+      ok(create().disabled && /Type a name/.test(box.textContent), 'Create greyed until a name is typed');
+      typeIn(box.querySelector('input'), 'masks');
+      ok(create().disabled && /already exists/.test(box.textContent), 'a taken name (any case) is refused');
+      typeIn(box.querySelector('input'), 'Hats');
+      ok(!create().disabled && /Sidebar of the Donation Shop window/.test(box.textContent) && /· Hats {2}\(0\)/.test(box.textContent) && /donation-tree\.diff/.test(box.textContent), 'live preview: the sidebar with Hats, and the patch warning');
+      if (STOP === 'dstree') return;
+      click(create());
+      ok(S.ws.files.get(K).text.includes('\t\t"Wings"\n\t\t"Hats"\n') && S.ws.donationTree.isLeaf('Hats'), 'Hats written at the end of Fashion, tab indent, LF');
+      ok(/New Donation Shop category "Hats" in Fashion/.test($('toasts').textContent) && /Hats/.test($('editor').querySelector('.npc-title').textContent), 'standard note; the new category is selected');
+      ok(S.ws.diags.some(d => d.code === 'DT_PATCH' && /Hats/.test(d.message)), 'DT_PATCH warning for Hats');
+      click($('btn-undo'));
+      ok(S.ws.files.get(K).text === tree0, 'Undo: the tree is back');
+      // a group with 2 categories, then delete them: the group goes with its last one
+      click(btnByText($('list'), '+ Category'));
+      await waitFor(() => lastModalAny() && /^\+ Category in the Donation Shop/.test(lastModalAny().querySelector('header').textContent), '+ Category dialog (group)');
+      box = lastModalAny();
+      typeIn(box.querySelectorAll('input')[0], 'Mounts');
+      click(btnByText(box, '+ Add a category inside it'));
+      ok(document.activeElement === box.querySelectorAll('.dt-inside')[0] && !box.querySelector('.combo-list:not([hidden])'), 'the new category box gets the focus (not the Inside search box)');
+      typeIn(box.querySelectorAll('input')[1], 'Boards');
+      click(btnByText(box, '+ Add a category inside it'));
+      typeIn(box.querySelectorAll('input')[2], 'boards');
+      ok(create().disabled && /used twice/.test(box.textContent), 'the same category twice is refused');
+      typeIn(box.querySelectorAll('input')[2], 'Brooms');
+      ok(!create().disabled && /2 categories/.test(box.textContent), 'a group with 2 categories: Create on');
+      click(create());
+      ok(S.ws.donationTree.find('Mounts').children.map(n => n.name).join(',') === 'Boards,Brooms' && S.ws.history.length > 0, 'Mounts › Boards, Brooms written in one step');
+      // ✎ Edit on a category with items: + Add a category inside it makes it a group, the items move into the first one
+      pickEntry('Pets');
+      click(btnByText($('editor'), 'Edit category')); box = lastModalAny();
+      click(btnByText(box, '+ Add a category inside it'));
+      typeIn(box.querySelector('.dt-inside'), 'Buff Pets');
+      ok(/13 items move to "Buff Pets"/.test(box.textContent), 'the preview says Pets\' 13 items move into Buff Pets');
+      click(btnByText(box, '+ Add a category inside it'));
+      typeIn(box.querySelectorAll('.dt-inside')[1], 'Raised Pets');
+      const dsel = box.querySelector('select.dt-dest');
+      ok(dsel && [...dsel.options].map(o => o.textContent).join(',') === 'Buff Pets,Raised Pets', '"Its 13 items go to" lists the new categories');
+      dsel.value = '1'; dsel.dispatchEvent(new Event('change'));
+      ok(/13 items move to "Raised Pets"/.test(box.textContent), 'pick Raised Pets: the preview follows');
+      click(btnByText(box.querySelector('footer'), 'Apply changes'));
+      ok(S.ws.donationTree.find('Pets').children.map(n => n.name).join(',') === 'Buff Pets,Raised Pets' && S.ws.models.donation.rows.filter(r => r.category === 'Raised Pets').length === 13, 'Pets is a group, its items are in Raised Pets');
+      const arrow = [...document.querySelectorAll('#list .npc')].find(n => /Pets/.test(n.textContent) && n.querySelector('.fold')).querySelector('.fold');
+      click(arrow);
+      ok(![...document.querySelectorAll('#list .npc')].some(n => /Raised Pets/.test(n.textContent)) && /Raised Pets/.test($('editor').querySelector('.npc-title').textContent), 'the arrow closes the group list; the selection stays');
+      click([...document.querySelectorAll('#list .fold')].find(f => f.textContent === '▸'));
+      ok([...document.querySelectorAll('#list .npc')].some(n => /Raised Pets/.test(n.textContent)), 'and opens it again');
+      click($('btn-undo'));
+      ok(!S.ws.donationTree.find('Buff Pets') && S.ws.models.donation.rows.filter(r => r.category === 'Pets').length === 13, 'one Undo: Pets holds its items again');
+      pickEntry('Boards');
+      click(btnByText($('editor'), 'Delete category')); box = lastModalAny();
+      ok(!/Also delete the group/.test(box.textContent), 'Boards is not the only category: no group box');
+      click(btnByText(box.querySelector('footer'), 'Delete category'));
+      pickEntry('Brooms');
+      click(btnByText($('editor'), 'Delete category')); box = lastModalAny();
+      const gbox = [...box.querySelectorAll('label')].find(l => /Also delete the group "Mounts"/.test(l.textContent));
+      ok(gbox && gbox.querySelector('input').checked, 'the last category: "Also delete the group" box, ticked');
+      click(btnByText(box.querySelector('footer'), 'Delete category'));
+      ok(!S.ws.donationTree.find('Mounts') && !S.ws.donationTree.find('Brooms'), 'one Delete removes Brooms and its group');
+      click($('btn-undo')); click($('btn-undo')); click($('btn-undo'));
+      ok(S.ws.files.get(K).text === tree0, 'three Undos: the tree is back');
+      // rename: the items follow
+      pickEntry('Masks');
+      click(btnByText($('editor'), 'Edit category'));
+      await waitFor(() => lastModalAny() && /^Edit category: Masks/.test(lastModalAny().querySelector('header').textContent), 'Edit category dialog');
+      box = lastModalAny();
+      const apply = () => btnByText(box.querySelector('footer'), 'Apply changes');
+      ok(apply().disabled && /No change/.test(box.textContent), 'opens with "No change", Apply greyed');
+      typeIn(box.querySelector('input'), 'Face Masks');
+      click(apply());
+      ok(S.ws.donationTree.isLeaf('Face Masks') && S.ws.models.donation.rows.filter(r => r.category === 'Face Masks').length === 5 && !S.ws.models.donation.rows.some(r => r.category === 'Masks'), 'renamed: the 5 mask items follow');
+      click($('btn-undo'));
+      ok(S.ws.files.get(K).text === tree0 && S.ws.files.get('donationshop.inc').text === ds0, 'one Undo restores both files');
+      // ↑: one click
+      pickEntry('Masks');
+      click([...$('editor').querySelectorAll('button')].find(b => b.textContent === '↑'));
+      ok(S.ws.donationTree.find('Fashion').children.map(n => n.name).join(',') === 'Suits,Masks,Cloaks,Wings', '↑ moves Masks above Cloaks');
+      click($('btn-undo'));
+      // delete: the items move
+      pickEntry('Masks');
+      click(btnByText($('editor'), 'Delete category'));
+      await waitFor(() => lastModalAny() && /^Delete category: Masks/.test(lastModalAny().querySelector('header').textContent), 'Delete dialog');
+      box = lastModalAny();
+      const del = () => btnByText(box.querySelector('footer'), 'Delete category');
+      ok(del().disabled && /holds 5 items/.test(box.textContent), 'lists its 5 items; Delete greyed until a choice');
+      const cin = box.querySelector('.combo input');
+      cin.dispatchEvent(new Event('focus')); cin.value = 'suits'; cin.dispatchEvent(new Event('input'));
+      [...box.querySelectorAll('.combo-opt')].find(o => o.textContent === 'Suits').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      ok(!del().disabled && /moved to "Suits"/.test(box.textContent), 'pick Suits: preview says the items move there');
+      click(del());
+      ok(!S.ws.donationTree.find('Masks') && S.ws.models.donation.rows.filter(r => r.category === 'Suits').length === 75, 'Masks gone, Suits now holds 75');
+      click($('btn-undo'));
+      ok(S.ws.files.get(K).text === tree0 && S.ws.files.get('donationshop.inc').text === ds0 && S.ws.dirtyFiles().length === 0, 'Undo restores both files');
+    }
 
     // ---- Battle Pass
     await openTask('battlepass');

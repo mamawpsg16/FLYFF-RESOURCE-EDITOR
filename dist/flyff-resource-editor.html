@@ -434,7 +434,7 @@ button.linkish { background: none; border: none; color: var(--accent); padding: 
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when": "Thu 8 Oct 2026, 09:17", "rev": "272603a", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "41+", "when": "Thu 8 Oct 2026, 10:41", "rev": "842195d", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -2833,32 +2833,47 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
 
 // ---- loaders/donation-tree.js ----
 // Client/Client/DonationShopTree.inc: the Donation Shop's category tree. Client-only
-// (commit 7d7df4f9); read from the chosen Client folder, never edited here.
+// (commit 7d7df4f9), LF; edited in the Donation Shop task (task S part 4).
 // Ported from CWndTreeCtrl::LoadTreeScript / InterpriteScript (Neuz
 // _Interface/WndControl.cpp:1029). Shape: "Name" [ { children } ] ...
+// Only the first character is tested for '{' / '}', so a name starting with one breaks the tree.
 // A DSItem keyword should be a LEAF: the client matches it case-insensitively
-// (CWndDonationShop::KeywordMatches); an unknown keyword only shows under
-// "All Items", sorted last (DS_CatRank, WndDonationShop.cpp:233).
+// (CWndDonationShop::KeywordMatches, WndDonationShop.cpp:408); a group shows the items
+// of all its leaves (DS_CollectLeafKeywords :171); an unknown keyword only shows under
+// "All Items", sorted last (DS_CatRank :233).
+// The category order and the item-card text are compiled in C++ (s_szDonationCatOrder :226,
+// DS_CategoryBlurb :204; ae345504 added "Shields" there). docs/patches/donation-tree.diff
+// reads both from this file instead.
 (function (FRE) {
   'use strict';
   const { Script } = FRE.lexer;
+  const ROOT = 'All Items';
+  const KEY = 'client/donationshoptree.inc';     // its key in Workspace.files
+  const DIAG_FILE = 'Client/DonationShopTree.inc';
+  // s_szDonationCatOrder (WndDonationShop.cpp:226, as of ae345504): the order without the patch
+  const COMPILED_ORDER = ['Consumables', 'Functional', 'Suits', 'Cloaks', 'Masks', 'Wings',
+    'Sword', 'Great Sword', 'Axe', 'Battle Axe', 'Bow', 'Staff', 'Wand', 'Stick', 'Knuckle', 'Yo-Yo', 'Shields',
+    'Pets', 'Battle Pass', 'VIP'];
 
+  // node: { name, tok: {start, end} (with the quotes), open, close (brace tokens or null), parent, children }
   function interprite(script, list, parent) {
     let t = script.getToken();
     while (t.text[0] !== '}' && !script.eof) {
-      const node = { name: t.text, children: [], parent };
+      const node = { name: t.text, tok: { start: t.start, end: t.end }, quoted: t.type === 'string', open: null, close: null, children: [], parent };
       list.push(node);
       t = script.getToken();
       if (t.text[0] === '{') {
+        node.open = { start: t.start, end: t.end };
         interprite(script, node.children, node);
         t = script.token;
       }
     }
     if (script.eof) return;
+    if (parent) parent.close = { start: t.start, end: t.end };
     script.getToken();
   }
 
-  // -> { roots, leaves: [name] in file order, isLeaf(name), pathOf(name) }
+  // -> { file, roots, nodes (file order), leaves: [name] in file order, isLeaf(name), pathOf(name), find(name) }
   function loadTree(file) {
     const script = new Script(file.text, { file: file.name, diags: [] });
     const roots = [];
@@ -2866,21 +2881,227 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
       interprite(script, roots, null);
       if (!script.eof) script.getToken();
     } while (!script.eof);
-    const leaves = [], byLower = new Map();
+    const leaves = [], nodes = [], byLower = new Map();
     const walk = n => {
-      if (!n.children.length) { leaves.push(n.name); byLower.set(n.name.toLowerCase(), n); }
+      nodes.push(n);
+      if (!byLower.has(n.name.toLowerCase())) byLower.set(n.name.toLowerCase(), n);
+      if (!n.children.length) leaves.push(n.name);
       n.children.forEach(walk);
     };
     roots.forEach(walk);
+    const leafByLower = new Map();
+    for (const n of nodes) if (!n.children.length && !leafByLower.has(n.name.toLowerCase())) leafByLower.set(n.name.toLowerCase(), n);
     const pathOf = name => {
-      const parts = []; let n = byLower.get(String(name).toLowerCase());
+      const parts = []; let n = leafByLower.get(String(name).toLowerCase());
       while (n) { parts.unshift(n.name); n = n.parent; }
       return parts;
     };
-    return { file: file.name, roots, leaves, isLeaf: name => byLower.has(String(name).toLowerCase()), pathOf };
+    return {
+      file: file.name, text: file.text, roots, nodes, leaves, diags: script.diags,
+      isLeaf: name => leafByLower.has(String(name).toLowerCase()),
+      find: name => byLower.get(String(name).toLowerCase()) || null,
+      pathOf,
+    };
   }
 
-  FRE.donationTree = { loadTree };
+  const isGroup = n => n.children.length > 0;
+  const root = tree => tree.roots.find(n => n.name === ROOT) || null;       // FindTreeElem("All Items"): exact case
+  // the "All Items" child a node sits under (itself when it is one)
+  function topGroup(node) {
+    while (node && node.parent && node.parent.parent) node = node.parent;
+    return node;
+  }
+  // the leaves under a node (itself when it is a leaf), file order
+  function leavesUnder(node) {
+    const out = [];
+    const walk = n => { if (!n.children.length) out.push(n); n.children.forEach(walk); };
+    walk(node);
+    return out;
+  }
+  const isUnder = (node, anc) => { for (let n = node; n; n = n.parent) if (n === anc) return true; return false; };
+
+  // Problems with a name typed for a node (except: the node being renamed). [{ code, severity, message }]
+  function nameProblems(tree, name, except = null) {
+    const out = [];
+    const add = (code, severity, message) => out.push({ code, severity, message });
+    if (!name) { add('DT_CHARS', 'BLOCK', 'Type a name.'); return out; }
+    if (name !== name.trim()) add('DT_CHARS', 'BLOCK', 'The name starts or ends with a space: items would not match it.');
+    if (/["\r\n]/.test(name)) add('DT_CHARS', 'BLOCK', 'A name can\'t hold a " or a line break.');
+    if (!/^[\x20-\x7e]*$/.test(name)) add('DT_CHARS', 'BLOCK', 'Use plain English letters, digits and signs only (the file is plain ASCII).');
+    if (/^[{}]/.test(name)) add('DT_BRACE', 'BLOCK', `A name can't start with "${name[0]}": the client reads it as the start or end of a group and the tree breaks.`);
+    if (name.length > 64) add('DT_CHARS', 'BLOCK', 'Keep the name to 64 characters: it has to fit the sidebar.');
+    const other = tree && tree.nodes.find(n => n !== except && n.name.toLowerCase() === name.toLowerCase());
+    if (other) add('DT_DUP', 'BLOCK', `"${other.name}" already exists (${other.children.length ? 'a group' : 'a category'}): the client would mix their items.`);
+    return out;
+  }
+
+  function validateTree(tree) {
+    const out = [];
+    const add = d => out.push(Object.assign({ file: DIAG_FILE, module: 'donation' }, d));
+    for (const d of tree.diags) add(Object.assign({}, d, { key: `${d.code}|tree|${d.message}` }));
+    const r = root(tree);
+    if (!r || tree.roots.length !== 1) add({ code: 'DT_ROOT', severity: 'BLOCK', start: r ? r.tok.start : 0, end: r ? r.tok.end : 0, key: 'DT_ROOT',
+      message: `DonationShopTree.inc must hold one top entry "${ROOT}" with every group and category inside it (found ${tree.roots.map(n => '"' + n.name + '"').join(', ') || 'nothing'})` });
+    const seen = new Map();
+    for (const n of tree.nodes) {
+      const k = n.name.toLowerCase();
+      if (seen.has(k)) add({ code: 'DT_DUP', severity: 'BLOCK', start: n.tok.start, end: n.tok.end, key: `DT_DUP|${k}`,
+        message: `"${n.name}" is in the category tree twice: the client mixes the items of both` });
+      else seen.set(k, n);
+      if (/^[{}]/.test(n.name)) add({ code: 'DT_BRACE', severity: 'BLOCK', start: n.tok.start, end: n.tok.end, key: `DT_BRACE|${k}`,
+        message: `"${n.name}" starts with ${n.name[0]}: the client reads it as the start or end of a group` });
+    }
+    // without docs/patches/donation-tree.diff the client sorts by its compiled list and gives
+    // unknown categories the weapon-skin card text
+    const compiled = COMPILED_ORDER.map(s => s.toLowerCase());
+    const leafNodes = tree.nodes.filter(n => !n.children.length && n !== r);
+    for (const n of leafNodes) if (!compiled.includes(n.name.toLowerCase())) add({ code: 'DT_PATCH', severity: 'WARN', start: n.tok.start, end: n.tok.end,
+      key: `DT_PATCH|${n.name.toLowerCase()}`,
+      message: `Category "${n.name}" needs the client change docs/patches/donation-tree.diff built into Neuz; without it its items sort last and their card says "A cosmetic weapon skin"` });
+    const known = leafNodes.map(n => compiled.indexOf(n.name.toLowerCase())).filter(i => i >= 0);
+    if (known.some((v, i) => i && v < known[i - 1])) add({ code: 'DT_ORDER', severity: 'INFO', start: 0, end: 0, key: 'DT_ORDER',
+      message: 'The categories are in a new order: the client follows it only with docs/patches/donation-tree.diff built into Neuz (without it, "All Items" and groups list items in the old order)' });
+    return out;
+  }
+
+  FRE.donationTree = { loadTree, validateTree, nameProblems, isGroup, root, topGroup, leavesUnder, isUnder, ROOT, KEY, DIAG_FILE, COMPILED_ORDER };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/donation-window.js ----
+// What players see in the Donation Shop window (task S part 4 simulator). Port of the client's
+// CWndDonationShop (Neuz _Interface/WndDonationShop.cpp, commit 7d7df4f9, ae345504):
+//   OnChildNotify tree click (:795)  -> keyword, parent flag, DS_CollectLeafKeywords (:171)
+//   KeywordMatches (:408)            -> "All Items" / empty = everything; a group = any of its leaves; case-insensitive
+//   BuildFilteredList (:469)         -> prj.mapDonationShop (id order), sex filter, search on the lower-case name
+//   SortFiltered / DS_SortCmp (:256) -> Default (category rank, then name), Name, Price low, Price high
+//   DS_CatRank (:233)                -> compiled s_szDonationCatOrder, or (docs/patches/donation-tree.diff) the tree's leaf order
+//   DS_CategoryBlurb (:204)          -> the item card's line, compiled or patched
+//   FillGrid (:509)                  -> 96 items a page (DS_GRID_MAX), the count line
+// prj.mapDonationShop is CProject::LoadDonationShop's map (FRE.donation catalog: id -> last row).
+// Not modelled: Windows lstrcmpi's word sort (here: case-insensitive, by character code, so names with
+// '-' or '\'' may order differently in game); qsort is not stable (here: equal names keep id order);
+// icons, the selected item, the Buy button and the purchase (OnBuyDonationItem: the Donation Shop simulator, next task).
+(function (FRE) {
+  'use strict';
+  const GRID_MAX = 96;
+  const SORTS = ['Default', 'Name (A-Z)', 'Price (low)', 'Price (high)'];
+  const SEXES = ['Any sex', 'Male', 'Female'];
+  const ROOT = 'All Items';
+  const lower = s => String(s).toLowerCase();        // CString::MakeLower / CompareNoCase on ASCII names
+  const cmpi = (a, b) => { a = lower(a); b = lower(b); return a < b ? -1 : a > b ? 1 : 0; };   // lstrcmpi (see above)
+
+  // the leaf keywords under a node, file order (DS_CollectLeafKeywords)
+  function leafKeywords(node, out = []) {
+    if (!node.children.length) out.push(node.name);
+    else node.children.forEach(c => leafKeywords(c, out));
+    return out;
+  }
+  // FindTreeElem("All Items"): depth-first, exact case
+  function findRoot(list) {
+    for (const n of list) {
+      if (n.name === ROOT) return n;
+      const r = findRoot(n.children);
+      if (r) return r;
+    }
+    return null;
+  }
+  // donation-tree.diff DS_LoadTreeOrder: [{ leaf, group }] under "All Items" (empty without it)
+  function treeOrder(tree) {
+    const r = tree ? findRoot(tree.roots) : null, out = [];
+    if (r) for (const top of r.children) for (const leaf of leafKeywords(top)) out.push({ leaf, group: top.name });
+    return out;
+  }
+
+  // view state of the window: OnInitialUpdate starts on "All Items" (keyword, not a parent)
+  function clickState(node) {
+    if (!node) return { keyword: ROOT, parent: false, set: [] };
+    const parent = node.children.length > 0;
+    return { keyword: node.name, parent, set: parent ? leafKeywords(node) : [] };
+  }
+  function keywordMatches(st, kw) {
+    if (st.keyword === '' || st.keyword === ROOT) return true;
+    if (st.parent) return st.set.some(k => lower(k) === lower(kw));
+    return lower(st.keyword) === lower(kw);
+  }
+
+  // shop: { catalog: Map id -> keyword, items: Map id -> { name, sex, chip, packMax } }
+  // opts: { node (tree node or null), search, sort 0-3, sex 0-2, patched, page }
+  function view(shop, tree, opts = {}) {
+    const st = clickState(opts.node || null);
+    const patched = !!opts.patched, order = patched ? treeOrder(tree) : [];
+    const rankOf = kw => {
+      if (order.length) { const i = order.findIndex(o => lower(o.leaf) === lower(kw)); return i < 0 ? order.length : i; }
+      const i = FRE.donationTree.COMPILED_ORDER.findIndex(c => lower(c) === lower(kw));
+      return i < 0 ? FRE.donationTree.COMPILED_ORDER.length : i;
+    };
+    const search = lower(opts.search || ''), sex = opts.sex || 0, sort = opts.sort || 0;
+    const list = [];
+    for (const id of [...shop.catalog.keys()].sort((a, b) => a - b)) {          // std::map: ascending id
+      const kw = shop.catalog.get(id);
+      if (!keywordMatches(st, kw)) continue;
+      const p = shop.items.get(id);
+      if (!p) continue;
+      if (sex > 0 && p.sex !== 0xFFFFFFFF && p.sex !== sex - 1) continue;
+      if (search && !lower(p.name).includes(search)) continue;
+      list.push(id);
+    }
+    const chip = p => (p.chip === 0xFFFFFFFF ? 0 : p.chip);
+    const cmp = (a, b) => {
+      const pa = shop.items.get(a), pb = shop.items.get(b);
+      if (sort === 0) {
+        const ra = rankOf(shop.catalog.get(a)), rb = rankOf(shop.catalog.get(b));
+        if (ra !== rb) return ra < rb ? -1 : 1;
+        return cmpi(pa.name, pb.name);
+      }
+      if (sort === 1) return cmpi(pa.name, pb.name);
+      const ca = chip(pa), cb = chip(pb);
+      if (ca === cb) return cmpi(pa.name, pb.name);
+      if (sort === 2) return ca < cb ? -1 : 1;
+      return ca > cb ? -1 : 1;
+    };
+    if (list.length > 1) list.sort(cmp);
+    const total = list.length, pages = total > 0 ? Math.floor((total + GRID_MAX - 1) / GRID_MAX) : 1;
+    let page = opts.page || 0;
+    if (page >= pages) page = pages - 1;
+    if (page < 0) page = 0;
+    const start = page * GRID_MAX, end = Math.min(start + GRID_MAX, total);
+    const cat = st.keyword === '' ? 'All' : st.keyword;
+    const count = total === 0 ? `${cat} - 0 items` : pages > 1 ? `${cat} - ${start + 1}/${total}  (${page + 1}/${pages})` : `${cat} - ${total} items`;
+    return { keyword: st.keyword, ids: list, page, pages, grid: list.slice(start, end), count };
+  }
+
+  // the card line of an item filed under `kw` (DS_CategoryBlurb, unpatched or patched)
+  function blurb(kw, tree, patched) {
+    if (['Suits', 'Cloaks', 'Masks', 'Wings', 'Fashion'].includes(kw)) return 'A cosmetic outfit piece. Changes your look only - no stat effect.';
+    if (kw === 'Shields') return 'A cosmetic shield skin. Appearance only - no stat effect.';
+    if (kw === 'Pets') return 'A companion pet.';
+    if (['Battle Pass', 'VIP', 'Premium'].includes(kw)) return 'A premium account item.';
+    if (kw === 'Consumables') return 'A single-use donation consumable.';
+    if (kw === 'Functional') return 'A utility donation item.';
+    const order = patched ? treeOrder(tree) : [];
+    if (order.length) {
+      const o = order.find(x => lower(x.leaf) === lower(kw)), g = o ? o.group : '';
+      if (g === 'Fashion') return 'A cosmetic outfit piece. Changes your look only - no stat effect.';
+      if (g === 'Premium') return 'A premium account item.';
+      if (g !== 'Weapon Skins') return 'A Donation Shop item.';
+    }
+    return 'A cosmetic weapon skin. Changes your weapon\'s look only - no stat effect.';
+  }
+
+  // the window's inputs from a workspace: the catalog (DonationShop.inc) and each item's props
+  function shopOf(model, items) {
+    const catalog = new Map(), props = new Map();
+    for (const [id, r] of model.catalog) catalog.set(id, r.category);
+    for (const id of catalog.keys()) {
+      const it = items.get(id);
+      if (!it) continue;
+      const g = f => FRE.specItem.get(it, f) >>> 0;
+      props.set(id, { name: it.name, sex: g('dwItemSex'), chip: g('dwReferValue1'), packMax: g('dwPackMax') });
+    }
+    return { catalog, items: props };
+  }
+
+  FRE.donationWindow = { view, blurb, shopOf, treeOrder, leafKeywords, GRID_MAX, SORTS, SEXES };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- loaders/battlepass.js ----
@@ -3927,7 +4148,19 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
     DS_CRASH: ['Buying this item in the Donation Shop crashed the server every time in live tests; the cause was never found (commit ae345504). It is left out of the shop on purpose.',
       'Remove the row. Only add it back after the crash is fixed and tested in game.'],
     DS_NO_LEAF: ['The client\'s category tree (Client/Client/DonationShopTree.inc) has no category with this name, so the item is listed only under "All Items" (sorted last), not in any category.',
-      'Move the item to one of the existing categories, or add the category to DonationShopTree.inc in the Client folder by hand.'],
+      'Move the item to one of the existing categories, or add the category with "+ Category" on the left.'],
+    DT_ROOT: ['The Donation Shop window opens on the entry "All Items" and looks it up by its exact name. Every group and category must sit inside it.',
+      'Put "All Items" back as the one top entry (Undo, or fix Client/Client/DonationShopTree.inc).'],
+    DT_DUP: ['The client finds a category by its name, ignoring case. Two entries with the same name show each other\'s items.',
+      'Rename one of them.'],
+    DT_BRACE: ['The client only looks at the first letter to spot the { and } that open and close a group, so a name starting with one breaks the whole tree.',
+      'Start the name with another letter.'],
+    DT_CHARS: ['Names are written in quotes in a plain-ASCII file: a quote, a line break, a letter outside plain English, or a space at either end would break the file or stop items from matching.',
+      'Use plain letters, digits and signs, without spaces at the ends.'],
+    DT_PATCH: ['Without the client change docs/patches/donation-tree.diff, the order of the categories and the line on each item\'s card are fixed in the game\'s code. A category it does not know sorts last and its items say "A cosmetic weapon skin".',
+      'Apply docs/patches/donation-tree.diff in FLYFF-V19-SOURCE and build Neuz once; after that every category change works without a rebuild.'],
+    DT_ORDER: ['Without the client change docs/patches/donation-tree.diff the game lists items in its own fixed category order, not the order in the sidebar.',
+      'Apply docs/patches/donation-tree.diff and build Neuz once.'],
     D_BRACE: ['A define header contains {. The server stops reading defines from that file there.', 'Remove the {.'],
     // Battle Pass (BattlePass.inc, CProject::LoadBattlePass)
     BP_BRACES: ['A BP block is never closed with }. The server keeps looking for it and hangs at startup.', 'Add the missing } .'],
@@ -4722,7 +4955,141 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
     return T.replaceSpan(row.cat, `"${category}"`);
   }
 
-  FRE.donationOps = { addItem, removeItem, setCategory };
+  // ---------------------------------------------------------------- the category tree
+  // Client/Client/DonationShopTree.inc (FRE.donationTree; task S part 4). Every op returns
+  // [{ file, splices }] for Workspace.applyGroup: the tree, plus DonationShop.inc when items follow
+  // (a rename) or move / leave (a delete). New lines copy the siblings' tab indent and the file's EOL.
+  const TREE = () => FRE.donationTree.KEY;
+  const DS = 'donationshop.inc';
+  const DT = () => FRE.donationTree;
+
+  function checkName(tree, name, except) {
+    const bad = DT().nameProblems(tree, name, except).filter(p => p.severity === 'BLOCK');
+    if (bad.length) throw new Error(bad[0].message);
+  }
+  // whole lines of a node, from its name to its closing brace
+  function extent(text, node) {
+    const s = T.lineStart(text, node.tok.start), endTok = node.close || node.tok;
+    if (!T.prefixIsBlank(text, node.tok.start) || !T.restOfLineIsFree(text, endTok.end))
+      throw new Error(`"${node.name}" shares its line with something else in DonationShopTree.inc; change that by hand`);
+    return { start: s, end: T.lineEnd(text, endTok.end) };
+  }
+  const eolOf = text => (text.includes('\r\n') ? '\r\n' : '\n');
+  const childIndent = (text, group) => T.indentOf(text, group.open.start) + '\t';
+  // where a new child of `group` goes: after `after` (a child), at the start (after = 'first'), or at the end (null)
+  function insertAt(text, group, after) {
+    if (!group.open || !group.close) throw new Error(`"${group.name}" is a category, not a group: it can't hold other categories`);
+    if (after === 'first' || (!after && !group.children.length)) return T.lineEnd(text, group.open.end);
+    const a = after || group.children[group.children.length - 1];
+    return extent(text, a).end;
+  }
+  // lines of a block re-indented from `from` to `to`
+  function reindent(block, from, to) {
+    return block.split(/(?<=\n)/).map(l => (l.startsWith(from) ? to + l.slice(from.length) : l)).join('');
+  }
+  // removing the last child of a group: its { } lines go too, so it reads as a plain category
+  function removeSpan(text, node) {
+    const p = node.parent;
+    if (p && p.parent && p.children.length === 1 && p.open && p.close &&
+        T.prefixIsBlank(text, p.open.start) && T.restOfLineIsFree(text, p.open.end) && T.prefixIsBlank(text, p.close.start) && T.restOfLineIsFree(text, p.close.end))
+      return { start: T.lineStart(text, p.open.start), end: T.lineEnd(text, p.close.end), emptied: p };
+    return Object.assign(extent(text, node), { emptied: null });
+  }
+  const rowsOf = (model, names) => {
+    const set = new Set(names.map(n => n.toLowerCase()));
+    return model.rows.filter(r => set.has(r.category.toLowerCase()));
+  };
+
+  // + Category: a new leaf inside `group` (after `after`, or at the end)
+  function addCategory(text, tree, group, name, after = null) {
+    checkName(tree, name);
+    const at = insertAt(text, group, after);
+    return [{ file: TREE(), splices: [{ start: at, end: at, insert: `${childIndent(text, group)}"${name}"${eolOf(text)}` }] }];
+  }
+  // a group with its categories (at least one: a group without one is read as a category)
+  function addGroup(text, tree, group, name, cats, after = null) {
+    cats = [].concat(cats);
+    if (!cats.length) throw new Error('A group needs at least one category');
+    checkName(tree, name);
+    const seen = new Set([name.toLowerCase()]);
+    for (const c of cats) {
+      checkName(tree, c);
+      if (seen.has(c.toLowerCase())) throw new Error(`"${c}" is used twice: every name must be different`);
+      seen.add(c.toLowerCase());
+    }
+    const at = insertAt(text, group, after), i = childIndent(text, group), e = eolOf(text);
+    const kids = cats.map(c => `${i}\t"${c}"${e}`).join('');
+    return [{ file: TREE(), splices: [{ start: at, end: at, insert: `${i}"${name}"${e}${i}{${e}${kids}${i}}${e}` }] }];
+  }
+  // categories added inside an existing entry. A group gets them at the end of its list; a category
+  // becomes a group: { } lines under its name, and its items move into `dest` (one of the new
+  // categories, the first by default; the user picks it) - a group's own name shows no items in game (KeywordMatches).
+  function addInside(texts, tree, model, node, cats, dest = null) {
+    cats = [].concat(cats);
+    if (!cats.length) return [];
+    if (!node.parent) throw new Error(`Use + Category to add at the top level`);
+    const seen = new Set([node.name.toLowerCase()]);
+    for (const c of cats) {
+      checkName(tree, c);
+      if (seen.has(c.toLowerCase())) throw new Error(`"${c}" is used twice: every name must be different`);
+      seen.add(c.toLowerCase());
+    }
+    const text = texts[TREE()], e = eolOf(text);
+    if (node.children.length) {
+      const at = insertAt(text, node, null), i = childIndent(text, node);
+      return [{ file: TREE(), splices: [{ start: at, end: at, insert: cats.map(c => `${i}"${c}"${e}`).join('') }] }];
+    }
+    const to = dest || cats[0];
+    if (!cats.some(c => c === to)) throw new Error(`"${to}" is not one of the new categories`);
+    const ex = extent(text, node), ind = T.indentOf(text, node.tok.start);
+    const block = `${ind}{${e}${cats.map(c => `${ind}\t"${c}"${e}`).join('')}${ind}}${e}`;
+    return [{ file: TREE(), splices: [{ start: ex.end, end: ex.end, insert: block }] },
+      { file: DS, splices: rowsOf(model, [node.name]).flatMap(r => setCategory(texts[DS], r, to)) }];
+  }
+  // rename: the tree line; a category's DSItem rows follow it (Server; the Client copy by the save sync)
+  function renameNode(texts, tree, model, node, name) {
+    if (!node.parent) throw new Error(`"${node.name}" is the top of the tree; the client looks for it by name`);
+    checkName(tree, name, node);
+    const parts = [{ file: TREE(), splices: T.replaceSpan(node.tok, `"${name}"`) }];
+    if (!node.children.length) parts.push({ file: DS, splices: rowsOf(model, [node.name]).flatMap(r => setCategory(texts[DS], r, name)) });
+    return parts;
+  }
+  // ↑ / ↓ among its siblings (dir -1 / +1): the two blocks swap, whatever lies between them stays
+  function moveNode(text, node, dir) {
+    const sib = node.parent ? node.parent.children : null;
+    const i = sib ? sib.indexOf(node) : -1, j = i + dir;
+    if (i < 0 || j < 0 || j >= sib.length) throw new Error(`"${node.name}" can't move ${dir < 0 ? 'up' : 'down'}`);
+    const [a, b] = dir < 0 ? [sib[j], node] : [node, sib[j]];
+    const ea = extent(text, a), eb = extent(text, b);
+    const blockA = text.slice(ea.start, ea.end), blockB = text.slice(eb.start, eb.end), mid = text.slice(ea.end, eb.start);
+    return [{ file: TREE(), splices: [{ start: ea.start, end: eb.end, insert: blockB + mid + blockA }] }];
+  }
+  // into another group (at its end)
+  function moveToGroup(text, node, group) {
+    if (!node.parent) throw new Error(`"${node.name}" is the top of the tree`);
+    if (DT().isUnder(group, node)) throw new Error(`"${group.name}" is inside "${node.name}"`);
+    if (group === node.parent) throw new Error(`"${node.name}" is already in "${group.name}"`);
+    const ex = extent(text, node), rm = removeSpan(text, node), at = insertAt(text, group, null);
+    if (at > rm.start && at < rm.end) throw new Error(`"${group.name}" can't take it`);
+    const block = reindent(text.slice(ex.start, ex.end), T.indentOf(text, node.tok.start), childIndent(text, group));
+    // the group losing its last child keeps its name line; its { } lines go (removeSpan)
+    const cut = rm.emptied ? [{ start: rm.start, end: rm.end, insert: '' }] : [{ start: ex.start, end: ex.end, insert: '' }];
+    const ins = { start: at, end: at, insert: block };
+    return [{ file: TREE(), splices: at <= cut[0].start ? [ins, ...cut] : [...cut, ins] }];
+  }
+  // delete a category or a group: its items go to `dest` (a category name) or leave the shop (dest null)
+  function removeNode(texts, tree, model, node, dest) {
+    if (!node.parent) throw new Error(`"${node.name}" is the top of the tree and can't be deleted`);
+    const leaves = DT().leavesUnder(node).map(n => n.name);
+    if (dest && leaves.some(n => n.toLowerCase() === dest.toLowerCase())) throw new Error(`"${dest}" is being deleted too`);
+    if (dest && !tree.isLeaf(dest)) throw new Error(`"${dest}" is not a category`);
+    const text = texts[TREE()], rm = removeSpan(text, node);
+    const rows = rowsOf(model, leaves);
+    const ds = rows.flatMap(r => (dest ? setCategory(texts[DS], r, dest) : removeItem(texts[DS], r)));
+    return [{ file: TREE(), splices: [{ start: rm.start, end: rm.end, insert: '' }] }, { file: DS, splices: ds }];
+  }
+
+  FRE.donationOps = { addItem, removeItem, setCategory, addCategory, addGroup, addInside, renameNode, moveNode, moveToGroup, removeNode, rowsOf };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- edit/item-ops.js ----
@@ -6476,12 +6843,16 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
     {
       id: 'donation', label: 'Donation Shop', editsSpec: true,
       required: ['DonationShop.inc'], editable: ['DonationShop.inc'], client: ['DonationShop.inc'],
+      deps: ['Client/DonationShopTree.inc'],   // the client-only category tree (setDonationTree), edited here too
       maps: true,            // where MaFl_DONATION stands (the client opens the shop for that key, WndWorld.cpp:5835)
       parse(ws) {
+        const tf = ws.files.get(FRE.donationTree.KEY);
+        ws.donationTree = tf ? FRE.donationTree.loadTree(tf) : null;
         return FRE.donation.loadDonation(ws.files.get('donationshop.inc'), { defines: ws.defines.defines, strings: ws.strings.map });
       },
       validate(ws, model) {
-        return FRE.donation.validateDonation(model, { items: ws.items.items, textOf: n => ws.textOf(n), defines: ws.defines.defines, tree: ws.donationTree });
+        const out = FRE.donation.validateDonation(model, { items: ws.items.items, textOf: n => ws.textOf(n), defines: ws.defines.defines, tree: ws.donationTree });
+        return ws.donationTree ? out.concat(FRE.donationTree.validateTree(ws.donationTree)) : out;
       },
     },
     {
@@ -6589,9 +6960,19 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
       this.diags = [...Object.values(this.moduleDiags).flat(), ...specDiags];
     }
 
-    // Client/Client/DonationShopTree.inc (client-only; read from the Client folder when chosen)
-    setDonationTree(tree) {
-      this.donationTree = tree || null;
+    // Client/Client/DonationShopTree.inc (client-only; read from the Client folder when chosen): a SourceFile,
+    // kept in this.files as 'client/donationshoptree.inc' (written into the Client folder by io/save.js),
+    // editable in the Donation Shop task. The donation module parses it (this.donationTree).
+    setDonationTree(file) {
+      const key = FRE.donationTree.KEY;
+      if (this.files.has(key)) { this.files.delete(key); this.editable.delete(key); }
+      if (file) {
+        file.clientOnly = true;
+        file.dir = 'Client';
+        this.files.set(key, file);
+        if (this.shown.has('donation') && !file.readOnly) this.editable.add(key);
+      }
+      this.donationTree = null;
       if (this.available.donation && this.available.donation.ok) this.reparse('donationshop.inc');
     }
 
@@ -6705,7 +7086,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
     needsMaps() { return MODULES.some(m => m.maps && this.shown.has(m.id) && this.available[m.id].ok); }
 
     textOf(name) { return (this.files.get(String(name).toLowerCase()) || { text: '' }).text; }
-    moduleOfFile(name) { const l = String(name).toLowerCase(); return MODULES.find(m => m.required.some(n => n.toLowerCase() === l)) || null; }
+    moduleOfFile(name) {
+      const l = String(name).toLowerCase(), has = list => (list || []).some(n => n.toLowerCase() === l);
+      return MODULES.find(m => has(m.required)) || MODULES.find(m => m.id === 'donation' && has(m.deps)) || null;   // + the client-only tree
+    }
 
     isEditable(lowerName) {
       const f = this.files.get(lowerName);
@@ -9615,13 +9999,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
 // (in the client's DonationShopTree.inc order when the Client folder is chosen).
 // Middle: the items of a category. Prices are each item's chip price in
 // Spec_Item.txt (dwReferValue1), paid in Donate Chips (CDPSrvr::OnBuyDonationItem).
+// The categories (Client/Client/DonationShopTree.inc) are edited here too (task S part 4): + Category,
+// + Group, ✎ Edit (name, inside which group), ↑ ↓, Delete (its items move or leave the shop).
 (function (FRE) {
   'use strict';
   const { h } = FRE.dom;
   const { diagTags, diagRow, itemCell, jobCell } = FRE.ui;
   const FILE = 'donationshop.inc';
   const ALL = '*';
-  const st = { cat: ALL };
+  const st = { cat: ALL, folded: new Set() };      // folded: groups whose list is closed (lowercase names)
 
   const model = ctx => ctx.ws.models.donation;
   const tree = ctx => ctx.ws.donationTree;
@@ -9634,8 +10020,18 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
   }
 
   function rowDiags(ctx, r) {
-    return ctx.ws.diags.filter(d => d.module === 'donation' && d.start !== undefined && d.start >= r.start && d.start < Math.max(r.end, r.start + 1));
+    return ctx.ws.diags.filter(d => d.module === 'donation' && d.file === model(ctx).file && d.start !== undefined && d.start >= r.start && d.start < Math.max(r.end, r.start + 1));
   }
+  // the selected tree entry (a category or a group), or null
+  const nodeOf = ctx => (st.cat !== ALL && tree(ctx) ? tree(ctx).find(st.cat) : null);
+  // the rows a click on the entry shows in game: a group = any of its categories (KeywordMatches)
+  function rowsOf(ctx) {
+    const m = model(ctx), n = nodeOf(ctx);
+    if (st.cat === ALL) return m.rows;
+    if (n && n.children.length) return FRE.donationOps.rowsOf(m, FRE.donationTree.leavesUnder(n).map(x => x.name));
+    return m.rows.filter(r => same(r.category, st.cat));
+  }
+  const treeEditable = ctx => !!tree(ctx) && ctx.ws.isEditable(FRE.donationTree.KEY);
 
   function edit(ctx, make, label) { ctx.edit(FILE, make, label, 'ds|' + st.cat); }
 
@@ -9644,7 +10040,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
     help: 'Donation Shop: the catalog of the Donation Shop window (DonationShop.inc), its categories and Donate Chip prices',
     st,
 
-    onLoad() { st.cat = ALL; },
+    onLoad() { st.cat = ALL; st.folded = new Set(); },
 
     renderList(el, ctx) {
       const m = model(ctx), q = ctx.query.toLowerCase();
@@ -9661,25 +10057,33 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
         if (!hits.length) el.appendChild(h('div.pad.muted', 'No items match.'));
         return;
       }
+      if (treeEditable(ctx)) el.appendChild(h('div.pad', { style: 'display:flex;gap:6px' },
+        h('button', { title: 'A new category (like Consumables) or a group with categories inside (like Weapon Skins) in the Donation Shop window\'s sidebar',
+          on: { click: () => FRE.ui.donationTree.add(ctx) } }, '+ Category')));
       const count = new Map(), bad = new Map();
       for (const r of m.rows) count.set(r.category.toLowerCase(), (count.get(r.category.toLowerCase()) || 0) + 1);
       for (const d of ctx.ws.diags) if (d.module === 'donation' && d.severity !== 'INFO') {
-        const r = m.rows.find(x => x.start === d.start);
+        const r = d.file === m.file && m.rows.find(x => x.start === d.start);
         if (r) { const k = r.category.toLowerCase(); bad.set(k, (bad.get(k) || 0) + 1); }
       }
-      const entry = (name, label, depth = 0) => {
-        const k = name.toLowerCase(), n = name === ALL ? m.rows.length : count.get(k) || 0, b = name === ALL ? 0 : bad.get(k) || 0;
+      const entry = (name, label, depth = 0, leaves = null) => {
+        const sum = f => (leaves || [name]).reduce((a, x) => a + (f.get(x.toLowerCase()) || 0), 0);
+        const n = name === ALL ? m.rows.length : sum(count), b = name === ALL ? 0 : sum(bad);
         el.appendChild(h('div.npc' + (st.cat === name || (name !== ALL && st.cat !== ALL && same(st.cat, name)) ? '.sel' : ''),
           { style: depth ? `padding-left:${12 + depth * 14}px` : '', on: { click: () => { st.cat = name; ctx.renderAll(false); } } },
-          h('div.n', h('span', label), h('span', ctx.edited.has('ds|' + name) ? h('span.tag.edit', 'edited') : null,
+          h('div.n', h('span', leaves ? h('b', h('span.fold', { title: st.folded.has(name.toLowerCase()) ? 'Open this group' : 'Close this group',
+              style: 'cursor:pointer;padding-right:2px', on: { click: e => { e.stopPropagation(); const k = name.toLowerCase();
+                if (st.folded.has(k)) st.folded.delete(k); else st.folded.add(k); ctx.renderAll(false); } } }, st.folded.has(name.toLowerCase()) ? '▸' : '▾'), ' ' + label) : label), h('span', ctx.edited.has('ds|' + name) ? h('span.tag.edit', 'edited') : null,
             b ? h('span.tag.warn', '⚠' + b) : null, h('span.count', String(n))))));
       };
       entry(ALL, 'All items');
       const t = tree(ctx);
       if (t) {
+        // a group is clickable: in game it shows the items of all its categories
         const walk = (node, depth) => {
           if (node.children.length) {
-            if (node.parent) el.appendChild(h('div.group', { style: `padding-left:${12 + depth * 14}px` }, node.name));
+            if (node.parent) entry(node.name, node.name, depth, FRE.donationTree.leavesUnder(node).map(x => x.name));
+            if (node.parent && st.folded.has(node.name.toLowerCase())) return;      // closed with its arrow
             node.children.forEach(c => walk(c, node.parent ? depth + 1 : depth));
           } else entry(node.name, node.name, depth);
         };
@@ -9695,11 +10099,21 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
     renderEditor(el, ctx) {
       const ws = ctx.ws, m = model(ctx), f = ws.files.get(FILE);
       const canEdit = ws.isEditable(FILE);
-      const rows = st.cat === ALL ? m.rows : m.rows.filter(r => same(r.category, st.cat));
-      const t = tree(ctx);
+      const rows = rowsOf(ctx);
+      const t = tree(ctx), node = nodeOf(ctx), isGroup = !!(node && node.children.length);
+      const path = n => { const p = []; for (let x = n; x; x = x.parent) p.unshift(x.name); return p.join(' › '); };
       el.appendChild(h('div.npc-title', h('h2', 'Donation Shop'),
-        h('span.def', st.cat === ALL ? 'All items' : (t && t.isLeaf(st.cat) ? t.pathOf(st.cat).join(' › ') : st.cat)),
+        h('span.def', st.cat === ALL ? 'All items' : (node ? path(node) : st.cat)),
         h('span.line', `${f.name}`), canEdit ? null : h('span.tag.bad', 'read-only')));
+      if (node && node.parent && treeEditable(ctx)) {
+        const sib = node.parent.children, i = sib.indexOf(node), what = isGroup ? 'group' : 'category';
+        el.appendChild(h('div', { style: 'display:flex;gap:6px;align-items:center;margin:4px 0 8px' },
+          h('button', { title: `Edit ${what}: ${node.name} (name, inside which group)`, on: { click: () => FRE.ui.donationTree.edit(ctx, node) } }, FRE.ui.pencil(), ` Edit ${what}`),
+          h('button', { disabled: i === 0, title: `Move ${node.name} up in the sidebar`, on: { click: () => FRE.ui.donationTree.move(ctx, node, -1) } }, '↑'),
+          h('button', { disabled: i === sib.length - 1, title: `Move ${node.name} down in the sidebar`, on: { click: () => FRE.ui.donationTree.move(ctx, node, 1) } }, '↓'),
+          h('button.danger', { title: `Delete ${what} ${node.name}`, on: { click: () => FRE.ui.donationTree.remove(ctx, node) } }, `Delete ${what}…`),
+          isGroup ? h('span.muted.small', (k => `In game a group shows the items of its ${k === 1 ? 'category' : `${k} categories`}.`)(FRE.donationTree.leavesUnder(node).length)) : null));
+      }
       // the client opens the shop from its taskbar button (7d7df4f9) or for the NPC with key MaFl_DONATION (WndWorld.cpp:5835)
       if (ws.area) el.appendChild(h('div', h('span.muted.small', 'Players open it from the taskbar, or by talking to MaFl_DONATION. '),
         FRE.ui.whereLine(ws.whereOf('MaFl_DONATION'))));
@@ -9708,7 +10122,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
       if (!t) el.appendChild(h('p.muted.small', 'Choose the Client folder (toolbar) to check the categories against the client\'s DonationShopTree.inc.'));
 
       el.appendChild(h('h3', `Items (${rows.length})`));
-      if (!rows.length) el.appendChild(h('p.muted', st.cat === ALL ? 'The shop is empty.' : 'Empty. Use + in the item list on the right to add an item to this category.'));
+      if (!rows.length) el.appendChild(h('p.muted', st.cat === ALL ? 'The shop is empty.' : isGroup ? 'Its categories are empty.' : 'Empty. Use + in the item list on the right to add an item to this category.'));
       else {
         const choices = categoryChoices(ctx);
         const here = id => u => u.kind === 'donation' && u.row.id === id;
@@ -9728,7 +10142,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
         });
         el.appendChild(tb);
       }
-      const nd = ws.diags.filter(d => d.module === 'donation' && (st.cat === ALL || rows.some(r => r.start === d.start)));
+      const nd = ws.diags.filter(d => d.module === 'donation' && (st.cat === ALL || (d.file === m.file && rows.some(r => r.start === d.start))
+        || (node && d.file === FRE.donationTree.DIAG_FILE && d.start >= node.tok.start && d.start < node.tok.end)));
       if (nd.length) {
         el.appendChild(h('h3', 'Problems'));
         nd.forEach(d => el.appendChild(diagRow(d)));
@@ -9738,6 +10153,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
     addTarget(ctx) {
       if (!ctx.ws.isEditable(FILE)) return { ok: false, title: 'DonationShop.inc is read-only' };
       if (st.cat === ALL) return { ok: false, title: 'Pick a category on the left first' };
+      if (nodeOf(ctx) && nodeOf(ctx).children.length) return { ok: false, title: `"${st.cat}" is a group: pick one of its categories` };
       return {
         ok: true, title: `Add to the Donation Shop, "${st.cat}"`, usesPrice: false,
         add(info) { edit(ctx, text => FRE.donationOps.addItem(text, model(ctx), st.cat, info.define), `add ${info.define}`); },
@@ -9746,6 +10162,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
 
     locate(d, ctx) {
       if (d.module !== 'donation') return false;
+      if (d.file === FRE.donationTree.DIAG_FILE) {
+        const n = tree(ctx) && tree(ctx).nodes.find(x => d.start >= x.tok.start && d.start < x.tok.end);
+        st.cat = n && n.parent ? n.name : ALL;
+        return true;
+      }
       const r = model(ctx).rows.find(x => x.start === d.start);
       st.cat = r ? r.category : ALL;
       return true;
@@ -9753,6 +10174,312 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
   };
 
   FRE.ui.modules.push(mod);
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- ui/donation-tree.js ----
+// Donation Shop categories (task S part 4): the dialogs that change Client/Client/DonationShopTree.inc
+// (edit/donation-ops.js). + Category / + Group, ✎ Edit (name + inside which group), ↑ ↓, Delete
+// (its items move to another category or leave the shop; the user's choice, 2026-10-08).
+// Every dialog: standard form pieces, live checks, a preview of the sidebar as the game draws it,
+// and the lines that will be written. One undo step each.
+(function (FRE) {
+  'use strict';
+  const { h } = FRE.dom;
+  const O = () => FRE.donationOps, DT = () => FRE.donationTree;
+  const KEY = () => FRE.donationTree.KEY, DS = 'donationshop.inc';
+  const ui = () => FRE.ui.modules.find(m => m.id === 'donation');
+
+  const treeOf = ctx => ctx.ws.donationTree;
+  const texts = ctx => ({ [KEY()]: ctx.ws.files.get(KEY()).text, [DS]: ctx.ws.files.get(DS).text });
+  // groups a node can go into: "All Items" and every group (not the node itself or anything inside it)
+  function groupChoices(tree, node = null) {
+    return tree.nodes.filter(n => (n.children.length || !n.parent) && !(node && DT().isUnder(n, node)))
+      .map(n => ({ v: n.name, label: n.parent ? n.name : `${n.name} (top level)` }));
+  }
+  const leafChoices = (tree, except = null) => tree.nodes.filter(n => !n.children.length && n.parent && !(except && DT().isUnder(n, except)))
+    .map(n => ({ v: n.name, label: n.name, group: n.parent.parent ? n.parent.name : '' }));
+  const itemCount = (ctx, names) => O().rowsOf(ctx.ws.models.donation, names).length;
+
+  // the sidebar after the change, drawn from the new tree text (counts from the new DonationShop.inc)
+  function sidebar(ctx, treeText, dsText, mark) {
+    const t = DT().loadTree({ name: 'DonationShopTree.inc', text: treeText });
+    const m = FRE.donation.loadDonation({ name: 'DonationShop.inc', text: dsText }, { defines: ctx.ws.defines.defines, strings: ctx.ws.strings.map });
+    const box = h('div.small', { style: 'font-family:monospace;line-height:1.5' });
+    const walk = (n, d) => {
+      const leaves = DT().leavesUnder(n).map(x => x.name), cnt = O().rowsOf(m, leaves).length;
+      box.appendChild(h('div', { style: `padding-left:${d * 16}px;${mark && mark.has(n.name.toLowerCase()) ? 'color:var(--warn);font-weight:bold' : ''}` },
+        (n.children.length ? '▾ ' : '· ') + n.name + (n.parent ? `  (${cnt})` : '')));
+      n.children.forEach(c => walk(c, d + 1));
+    };
+    t.roots.forEach(n => walk(n, 0));
+    return box;
+  }
+  // the preview of a list of steps (each planned on the texts the one before left): sidebar + lines
+  function plan(ctx, steps) {
+    let tx = texts(ctx);
+    for (const make of steps) {
+      const tree = DT().loadTree({ name: 'DonationShopTree.inc', text: tx[KEY()] });
+      const model = FRE.donation.loadDonation({ name: 'DonationShop.inc', text: tx[DS] }, { defines: ctx.ws.defines.defines, strings: ctx.ws.strings.map });
+      for (const part of make(tx, tree, model)) {
+        const f = ctx.ws.files.get(part.file);
+        tx = Object.assign({}, tx, { [part.file]: FRE.SourceFile.spliceText(tx[part.file], part.splices, f.kind, f.name) });
+      }
+    }
+    return tx;
+  }
+  function previewOf(ctx, tx, mark, say) {
+    const box = h('div');
+    if (say) box.appendChild(h('p', say));
+    box.appendChild(h('h4', 'Sidebar of the Donation Shop window'));
+    box.appendChild(sidebar(ctx, tx[KEY()], tx[DS], mark));
+    for (const k of [KEY(), DS]) {
+      const f = ctx.ws.files.get(k);
+      if (tx[k] === f.text) continue;
+      box.appendChild(h('h4', f.clientOnly ? 'Client/Client/' + f.name : f.name + ' (Server, and the Client copy when saving)'));
+      box.appendChild(FRE.ui.renderDiff(f, f.text, tx[k]));
+    }
+    return box;
+  }
+  // the standard dialog: fields, Checks (⛔ / ⚠), preview; check() -> { problems, steps, say, mark, label, select }
+  function dialog(ctx, { title, action, fields, check }) {
+    const checks = h('div'), preview = h('div');
+    let btn = null, cur = null;
+    function refresh() {
+      checks.textContent = ''; preview.textContent = '';
+      cur = null;
+      let r;
+      try { r = check(); } catch (e) { r = { problems: [{ severity: 'BLOCK', message: e.message }] }; }
+      const probs = r.problems || [];
+      for (const p of probs) checks.appendChild(h(p.severity === 'BLOCK' ? 'div.bad' : 'div.warn', (p.severity === 'BLOCK' ? '⛔ ' : '⚠ ') + p.message));
+      if (probs.some(p => p.severity === 'BLOCK') || !r.steps) { if (btn) btn.disabled = true; return; }
+      let tx;
+      try { tx = plan(ctx, r.steps); } catch (e) { checks.appendChild(h('div.bad', '⛔ ' + e.message)); if (btn) btn.disabled = true; return; }
+      if (!probs.length) checks.appendChild(h('div.ok', '✓ No problem found.'));
+      for (const n of r.notes || []) checks.appendChild(h('div.muted.small', n));
+      preview.appendChild(previewOf(ctx, tx, r.mark, r.say));
+      cur = r;
+      if (btn) btn.disabled = false;
+    }
+    let timer = null;
+    const live = () => { clearTimeout(timer); timer = setTimeout(refresh, 250); };
+    const body = h('div', fields(live, refresh), FRE.ui.formFooter({ checks, action, previewTitle: 'What players will see / what will be written', preview }));
+    const m = FRE.dom.modal({ title, body, wide: true, buttons: [
+      { label: 'Cancel' },
+      { label: action, cls: 'primary', onClick: () => {
+        refresh();
+        if (!cur) return false;
+        const r = cur, keys = (r.keys || []).map(k => 'ds|' + k);
+        const ok = ctx.editSteps(r.steps.map(make => () => {
+          const ws = ctx.ws;
+          const model = ws.models.donation;
+          return make(texts(ctx), ws.donationTree, model);
+        }), r.label, keys);
+        if (ok && r.select !== undefined) { ui().st.cat = r.select; ctx.renderAll(false); }
+      } },
+    ] });
+    btn = m.el.querySelector('footer button.primary');
+    refresh();
+    setTimeout(() => { const i = m.el.querySelector('input'); if (i) i.focus(); }, 0);
+    return m;
+  }
+  const nameProblems = (tree, name, except) => DT().nameProblems(tree, name, except);
+  const patchNote = 'Needs the client change docs/patches/donation-tree.diff built into Neuz once (order and card text read from the tree); without it a new category sorts last and its items say "A cosmetic weapon skin".';
+  // a text box: typing checks after a short pause (live), leaving the box (change) at once
+  const input = (value, set, live, now) => {
+    const i = h('input', { type: 'text', value, style: 'width:100%', maxlength: 64 });
+    i.addEventListener('input', () => { set(i.value); live(); });
+    i.addEventListener('change', () => { set(i.value); now(); });
+    return i;
+  };
+  const row = (label, req, el) => h('label.nn-row', FRE.ui.fieldLabel(label, req), el);
+
+  // "Category N inside it" rows + the "+ Add a category inside it" button (+ Category and ✎ Edit)
+  function insideRows(form, cats, live, refresh, paint, hint) {
+    const boxes = cats.map((c, i) => {
+      const box = input(c, v => {
+        cats[i] = v;
+        const sel = form.querySelector('.dt-dest');            // the "items go to" list follows the typed names
+        if (sel && sel.options[i]) sel.options[i].textContent = v || `Category ${i + 1} (no name yet)`;
+      }, live, refresh);
+      form.appendChild(row(`Category ${i + 1} inside it`, true, h('span', { style: 'display:flex;gap:6px' }, box,
+        h('button.icon.danger', { title: 'Remove this category', on: { click: () => { cats.splice(i, 1); paint(); refresh(); } } }, '✕'))));
+      return box;
+    });
+    form.appendChild(h('div', { style: 'margin:4px 0 8px' }, h('button', { on: { click: () => {
+      cats.push(''); paint(); refresh();
+      const all = form.querySelectorAll('.dt-inside');                   // the new category box, never the Inside search box
+      if (all.length) all[all.length - 1].focus();
+    } } }, '+ Add a category inside it'), h('span.muted.small', ' ' + hint)));
+    boxes.forEach(b => b.classList.add('dt-inside'));
+  }
+  // problems of the names typed in the rows (each one, and twice among them / with `taken`)
+  function insideProblems(t, cats, taken) {
+    const out = [], seen = new Set(taken.map(x => x.toLowerCase()));
+    cats.forEach((c, i) => {
+      out.push(...nameProblems(t, c).map(p => Object.assign({}, p, { message: `Category ${i + 1}: ${p.message}` })));
+      if (c && seen.has(c.toLowerCase())) out.push({ severity: 'BLOCK', message: `Category ${i + 1}: "${c}" is used twice; every name must be different.` });
+      seen.add(c.toLowerCase());
+    });
+    return out;
+  }
+
+  // + Category: one button, one form (the user, 2026-10-08: "+ Parent, then optionally add a child, or the
+  // parent holds the items like Mounts"). No categories inside = it holds items itself (like Mounts, Pets);
+  // with categories inside = a group (like Weapon Skins › Sword, Axe…).
+  // Placed inside the selected group (or next to the selected category).
+  function add(ctx) {
+    const tree = treeOf(ctx), sel = ui().st.cat !== '*' ? tree.find(ui().st.cat) : null;
+    let name = '', cats = [];
+    let inside = sel ? (sel.children.length ? sel.name : sel.parent.name) : DT().ROOT, after = sel && !sel.children.length ? sel.name : '';
+    const g = () => treeOf(ctx).find(inside);
+    const form = h('div');
+    return dialog(ctx, {
+      title: '+ Category in the Donation Shop', action: 'Create',
+      fields(live, refresh) {
+        const paint = () => {
+          form.textContent = '';
+          form.appendChild(row('Name', true, input(name, v => { name = v; }, live, refresh)));
+          insideRows(form, cats, live, refresh, paint, cats.length ? 'It is a group (like Weapon Skins): items go into the categories inside it.'
+            : 'Optional. Without one it holds items itself (like Mounts or Pets); with one it becomes a group (like Weapon Skins › Sword, Axe…).');
+          const kids = g() ? g().children : [];
+          if (!kids.some(k => k.name === after)) after = '';
+          form.appendChild(row('Inside', true, FRE.ui.combo({ options: groupChoices(treeOf(ctx)), value: inside, wordStart: true,
+            onPick: v => { inside = v; after = ''; paint(); refresh(); } })));
+          form.appendChild(row('Position', false, h('select', { on: { change: e => { after = e.target.value; refresh(); } } },
+            h('option', { value: '', selected: !after }, 'At the end'), h('option', { value: 'first', selected: after === 'first' }, 'At the top'),
+            kids.map(k => h('option', { value: k.name, selected: after === k.name }, `After "${k.name}"`)))));
+        };
+        paint();
+        return form;
+      },
+      check() {
+        const t = treeOf(ctx), problems = [...nameProblems(t, name)];
+        const list = cats, kind = cats.length ? 'group' : 'category';
+        if (kind === 'group') problems.push(...insideProblems(t, list, [name]));
+        if (!g()) problems.push({ severity: 'BLOCK', message: 'Pick where it goes.' });
+        if (problems.some(p => p.severity === 'BLOCK')) return { problems };
+        problems.push({ severity: 'WARN', message: patchNote });
+        const af = after === 'first' ? 'first' : after || null;
+        const names = list.map(c => `"${c}"`).join(', ');
+        return {
+          problems, select: kind === 'group' ? list[0] : name, keys: [name, ...list],
+          mark: new Set([name, ...list].map(x => x.toLowerCase())),
+          label: kind === 'group' ? `New Donation Shop group "${name}" (${names}) in ${inside}` : `New Donation Shop category "${name}" in ${inside}`,
+          say: `The sidebar gets ${kind === 'group' ? `a group "${name}" with ${list.length === 1 ? 'the category' : `${list.length} categories:`} ${names}` : `a category "${name}"`}. Add items with + in the item list on the right.`,
+          steps: [(tx, tr) => {
+            const grp = tr.find(inside), a = af && af !== 'first' ? tr.find(af) : af;
+            return kind === 'group' ? O().addGroup(tx[KEY()], tr, grp, name, list, a) : O().addCategory(tx[KEY()], tr, grp, name, a);
+          }],
+        };
+      },
+    });
+  }
+
+  // ✎ Edit category / group: its name (a category's items follow) and the group it sits in
+  function edit(ctx, node) {
+    const tree = treeOf(ctx), isGroup = node.children.length > 0, what = isGroup ? 'group' : 'category';
+    const old = node.name, oldInside = node.parent.name;
+    let name = old, inside = oldInside;
+    const cats = [];
+    let dest = 0;                                     // which new category the items go to (index into cats)
+    const n = itemCount(ctx, DT().leavesUnder(node).map(x => x.name));
+    const form = h('div');
+    return dialog(ctx, {
+      title: `Edit ${what}: ${old}`, action: 'Apply changes',
+      fields(live, refresh) {
+        const paint = () => {
+          form.textContent = '';
+          form.appendChild(row('Name players see', true, input(name, v => { name = v; }, live, refresh)));
+          if (!isGroup && n && !cats.length) form.appendChild(h('p.muted.small', `Its ${n} item${n === 1 ? '' : 's'} follow a new name (their DSItem lines change too).`));
+          insideRows(form, cats, live, refresh, paint, isGroup ? `New categories go at the end of "${old}".`
+            : n ? `Optional. "${old}" becomes a group (like Weapon Skins); a group can't hold items itself, so its ${n} item${n === 1 ? '' : 's'} move into one of the new categories.`
+              : `Optional. "${old}" becomes a group (like Weapon Skins).`);
+          if (!isGroup && n && cats.length) {
+            if (dest >= cats.length) dest = 0;
+            form.appendChild(row(`Its ${n} item${n === 1 ? '' : 's'} go to`, true, h('select.dt-dest', { on: { change: e => { dest = Number(e.target.value); refresh(); } } },
+              cats.map((c, i) => h('option', { value: i, selected: i === dest }, c || `Category ${i + 1} (no name yet)`)))));
+          }
+          form.appendChild(row('Inside', true, FRE.ui.combo({ options: groupChoices(treeOf(ctx), node), value: inside, wordStart: true, onPick: v => { inside = v; refresh(); } })));
+        };
+        paint();
+        return form;
+      },
+      check() {
+        const t = treeOf(ctx), renamed = name !== old, moved = inside.toLowerCase() !== oldInside.toLowerCase(), adding = cats.length > 0;
+        if (!renamed && !moved && !adding) return { problems: [{ severity: 'BLOCK', message: 'No change: this is already its name and its group.' }] };
+        const problems = renamed ? nameProblems(t, name, node) : [];
+        if (adding) problems.push(...insideProblems(t, cats, [name]));
+        if (problems.some(p => p.severity === 'BLOCK')) return { problems };
+        if ((renamed && !isGroup && !DT().COMPILED_ORDER.some(c => c.toLowerCase() === name.toLowerCase())) || adding) problems.push({ severity: 'WARN', message: patchNote });
+        if (moved && !isGroup) problems.push({ severity: 'WARN', message: 'A new order in the sidebar: the items follow it in game only with docs/patches/donation-tree.diff built into Neuz.' });
+        const steps = [];
+        if (renamed) steps.push((tx, tr, m) => O().renameNode(tx, tr, m, tr.find(old), name));
+        const to = cats[dest] || cats[0];
+        if (adding) steps.push((tx, tr, m) => O().addInside(tx, tr, m, tr.find(name), cats, to));
+        if (moved) steps.push((tx, tr) => O().moveToGroup(tx[KEY()], tr.find(name), tr.find(inside)));
+        const list = cats.map(c => `"${c}"`).join(', ');
+        const said = [renamed ? `renamed from "${old}" to "${name}"${!isGroup && n && !adding ? ` (${n} item${n === 1 ? '' : 's'} follow)` : ''}` : null,
+          adding ? `${list} added inside${!isGroup && n ? ` (its ${n} item${n === 1 ? '' : 's'} move to "${to}")` : ''}` : null,
+          moved ? `moved into "${inside}"` : null].filter(Boolean).join(', ');
+        const leaving = moved && node.parent.parent && node.parent.children.length === 1;
+        return {
+          problems, steps, select: adding ? (isGroup ? cats[0] : to) : name, keys: [name, ...cats], mark: new Set([name, ...cats].map(x => x.toLowerCase())),
+          notes: leaving ? [`"${oldInside}" has no other category: it becomes a plain (empty) category.`] : [],
+          label: `Donation Shop ${what} "${old}": ${said}`, say: `${what === 'group' ? 'Group' : 'Category'} "${old}": ${said}.`,
+        };
+      },
+    });
+  }
+
+  function move(ctx, node, dir) {
+    const name = node.name;
+    ctx.editGroup(() => O().moveNode(ctx.ws.files.get(KEY()).text, treeOf(ctx).find(name), dir),
+      `Moved Donation Shop ${node.children.length ? 'group' : 'category'} "${name}" ${dir < 0 ? 'up' : 'down'}`, ['ds|' + name]);
+  }
+
+  // Delete: the items go to another category, or leave the shop (the user's choice, 2026-10-08)
+  function remove(ctx, node) {
+    const isGroup = node.children.length > 0, what = isGroup ? 'group' : 'category', name = node.name;
+    const leaves = DT().leavesUnder(node).map(x => x.name);
+    const rows = O().rowsOf(ctx.ws.models.donation, leaves);
+    let dest = null, mode = rows.length ? 'move' : 'none';
+    // the last category of a group: the group goes too unless unticked (the user, 2026-10-08: it stayed as an empty category)
+    const lastOfGroup = !!(node.parent && node.parent.parent && node.parent.children.length === 1);
+    let alsoGroup = lastOfGroup;
+    const groupBox = refresh => (lastOfGroup ? h('label', { style: 'display:block;margin-top:8px' },
+      h('input', { type: 'checkbox', checked: alsoGroup, on: { change: e => { alsoGroup = e.target.checked; refresh(); } } }),
+      ` Also delete the group "${node.parent.name}" (this is its only category; otherwise it stays as an empty category)`) : null);
+    const list = h('ul.plan.small', rows.slice(0, 15).map(r => { const it = ctx.ws.itemById(r.id); return h('li', `${it ? it.name : r.define} (${r.category})`); }),
+      rows.length > 15 ? h('li', `… ${rows.length - 15} more`) : null);
+    return dialog(ctx, {
+      title: `Delete ${what}: ${name}`, action: `Delete ${what}`,
+      fields: (live, refresh) => {
+        if (!rows.length) return h('div', h('p', `"${name}" has no items${isGroup ? ` (categories: ${leaves.join(', ')})` : ''}.`), groupBox(refresh));
+        const radio = (v, label) => h('label', { style: 'display:block' }, h('input', { type: 'radio', name: 'dsdel', checked: mode === v, on: { change: () => { mode = v; refresh(); } } }), ' ', label);
+        return h('div',
+          h('p', `"${name}" holds ${rows.length} item${rows.length === 1 ? '' : 's'}${isGroup ? ` in ${leaves.length === 1 ? '1 category' : `${leaves.length} categories`}` : ''}. Where do they go?`), list,
+          radio('move', 'Move them to another category'),
+          h('div', { style: 'margin-left:24px' }, FRE.ui.combo({ options: leafChoices(treeOf(ctx), node), value: null, wordStart: true, placeholder: 'Type a category…', onPick: v => { dest = v; mode = 'move'; refresh(); } })),
+          radio('drop', 'Remove them from the Donation Shop'), groupBox(refresh));
+      },
+      check() {
+        if (mode === 'move' && !dest) return { problems: [{ severity: 'BLOCK', message: 'Pick the category the items move to, or choose "Remove them from the Donation Shop".' }] };
+        const d = mode === 'move' ? dest : null;
+        const leaving = lastOfGroup && !alsoGroup, gone = lastOfGroup && alsoGroup ? node.parent.name : null;
+        const said = rows.length ? (d ? `its ${rows.length} item${rows.length === 1 ? '' : 's'} moved to "${d}"` : `its ${rows.length} item${rows.length === 1 ? '' : 's'} removed from the shop`) : 'it had no items';
+        return {
+          problems: d || !rows.length ? [] : [{ severity: 'WARN', message: `${rows.length} item${rows.length === 1 ? '' : 's'} can no longer be bought.` }],
+          notes: leaving ? [`"${node.parent.name}" has no other category: it becomes a plain (empty) category.`] : [],
+          steps: [(tx, tr, m) => O().removeNode(tx, tr, m, tr.find(gone || name), d)],
+          select: d || '*', keys: d ? [d] : [], mark: new Set(d ? [d.toLowerCase()] : []),
+          label: `Deleted Donation Shop ${what} "${name}"${gone ? ` and its group "${gone}"` : ''} (${said})`,
+          say: `"${name}"${gone ? ` and its group "${gone}" leave` : ' leaves'} the sidebar; ${said}.`,
+        };
+      },
+    });
+  }
+
+  FRE.ui.donationTree = { add, edit, move, remove };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/battlepass.js ----
@@ -10837,7 +11564,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "39+", "when
     try {
       const sub = await dir.getDirectoryHandle('Client');
       const th = (await FRE.fsa.findFiles(sub, ['DonationShopTree.inc'])).get('donationshoptree.inc');
-      if (th) tree = FRE.donationTree.loadTree(new FRE.SourceFile(th.name, (await FRE.fsa.readHandle(th)).bytes));
+      if (th) { const { bytes, stamp } = await FRE.fsa.readHandle(th); tree = new FRE.SourceFile(th.name, bytes, { handle: th, stamp, dir: 'Client' }); }
     } catch (e) { if (e.name !== 'NotFoundError' && e.name !== 'TypeMismatchError') toast('DonationShopTree.inc: ' + e.message, 'bad'); }
     // rules windows (docs/patches/npc-board.diff): Client/Client/NpcBoard_<menu id>.inc, edited in NPC Shops
     const boards = [];
