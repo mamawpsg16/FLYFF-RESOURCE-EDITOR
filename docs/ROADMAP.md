@@ -1,8 +1,8 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-08 (Try it before Create built, waiting for the user's test; handoff on top)._
+_Last updated 2026-10-08 (Try it before Create user-tested + committed 30ad400; handoff on top)._
 
-> **Handoff (2026-10-08, late night) — START HERE: "Try it" inside the exchange forms is built, NOT committed, waiting for the user's Brave test.** Plan: `/home/kevin/.claude/plans/read-claude-md-in-flyff-resource-editor-eager-kay.md`. Next after the OK: request 2 below ("what to do after saving" per change), plan first.
+> **Handoff (2026-10-08, late night) — START HERE: "Try it" inside the exchange forms is user-tested in Brave (all of A-F) and committed + pushed (`30ad400`). Next: request 2 below ("what to do after saving" per change): research who reads each file, then plan mode.** Plan: `/home/kevin/.claude/plans/read-claude-md-in-flyff-resource-editor-eager-kay.md`. Next after the OK: request 2 below ("what to do after saving" per change), plan first.
 > - Every exchange card in **+ Menu → Exchange**, the Exchange part of **+ NPC**, and the ⇄ tab's **+ New exchange** has **Try it** (greyed until the card has a cost and a reward). It opens the same Try window as the ⇄ tab's cards, on top of the form; Close returns to the form.
 > - It runs on exactly what Create would write: `menuOps.tryTable` splices the plan (`newMenusPlan` / `addSetsPlan`) into a scratch copy of Exchange_Script.txt, loads it with the real loader (new `MMI_` names defined), and shows the new success / failure texts. No file, define or undo step changes. Before the form is complete, a missing label / taken name get stand-ins ("no label yet", `MMI_TRY_n`). The card's ⛔ problems show at the top of the window.
 > - Tests: core 1015 (the scratch load gives the same presses as Python's `newmenu` for every case; Collins + New exchange: same results before and after Add, 3 seeds × 2 bag modes), UI harness 342 (new stage `mftry`). 3 planted bugs in `tryTable` caught. `gjs -m tools/menu-sim.js` now prints "Try it before Create: 61 of 61 give the same result as after Create".
