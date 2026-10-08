@@ -105,7 +105,7 @@ tools/oracle.py     independent Python reference (differential tests)
 tools/refresh-fixtures.sh  copies the real files into test-data/fixtures (tests) or test-data (manual)
 tools/bp-sim.js, tools/exchange-sim.js, tools/area-sim.js, tools/newnpc-sim.js, tools/menu-sim.js (+ jeff-menus.json), tools/npcedit-sim.js, tools/shop-sim.js, tools/board-sim.js, tools/npcmove-sim.js, tools/dstree-sim.js, tools/dsbuy-sim.js, tools/aftersave-sim.js, tools/drops-sim.js, tools/boxes-sim.js  replay the in-game behaviour by hand (gjs -m tools/<name>-sim.js)
 tools/oracle_sim.py independent Python copies of the simulators (differential tests)
-docs/               INVESTIGATION.md, DESIGN.md, ROADMAP.md (what's next), patches/ (C++ changes for the user to apply in FLYFF-V19-SOURCE)
+docs/               INVESTIGATION.md, DESIGN.md, ROADMAP.md (what's next), IN-GAME-TEST.md (points to the in-game test steps in the guides repo), patches/ (C++ changes for the user to apply in FLYFF-V19-SOURCE)
 ```
 
 **Adding an editor ("module"):**
