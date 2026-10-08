@@ -140,7 +140,7 @@ python3 tools/oracle.py test-data/Resource
 - After changing UI code, syntax-check the bundle with gjs if the harness shows nothing: an inline-script syntax error kills the whole page.
 
 ## Git
-- Repo-local identity `Kevin <kevinmensah114@gmail.com>`. Commit per finished step after the user's OK; end messages with the Co-Authored-By trailer. Don't push unless asked.
+- Repo-local identity `Kevin <kevinmensah114@gmail.com>`. Commit per finished step after the user's OK, **then push to origin main right away** (the user, 2026-10-08: "always commit and push them already in the remote"); end messages with the Co-Authored-By trailer.
 - `test-data/` and `backups/` are git-ignored.
 
 ## Status / next
