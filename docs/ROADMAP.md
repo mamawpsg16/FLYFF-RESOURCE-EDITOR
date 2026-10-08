@@ -1,8 +1,8 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-08 (Donation Shop buy simulator built, waiting for the user's test; handoff on top)._
+_Last updated 2026-10-08 (Donation Shop buy simulator user-tested + committed 77cc6d7; handoff on top)._
 
-> **Handoff (2026-10-08, night) — START HERE: the Donation Shop buy simulator is built, NOT committed, waiting for the user's Brave test.** Plan: `/home/kevin/.claude/plans/joyful-petting-sunrise.md`.
+> **Handoff (2026-10-08, night) — START HERE: the Donation Shop buy simulator is user-tested in Brave and committed (`77cc6d7`, not pushed).** Next: the two requests below, plan first. Plan: `/home/kevin/.claude/plans/joyful-petting-sunrise.md`.
 > - `loaders/donation-buy.js` ports the client's confirm box (`CWndConfirmBuyDonation`) and `CDPSrvr::OnBuyDonationItem`. It reuses the exchange simulator's bag code: `bagIsFull` was split out of `createItem`, and `createItem` takes the new item's `charged`. The exchange results are unchanged.
 > - **Found in the C++:** price × count is an `int`. Above 214,769 chips, buying 9,999 overflows, and the player gets them for the chips they have. New ⛔ `DS_OVERFLOW` (the user's choice: it blocks saving); the price box turns red while typing. Other findings: chips in a locked slot or a trade still pay (`GetAtItemNum`); the bag is checked before the chips are taken. INVESTIGATION §1.16.
 > - The crash items have Spec_Item rows identical to the safe shields except the icon and name. The simulator says CRASH.
