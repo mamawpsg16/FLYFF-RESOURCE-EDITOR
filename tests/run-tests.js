@@ -1672,6 +1672,19 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
   eq(FRE.validateNewMenus(w, jeff).length, 0, "Jeff's 6 menus: no problem");
   const plan = FRE.menuOps.newMenusPlan(w, jeff);
   eq(plan.ids.join(), '282,283,284,285,286,287', 'Jeff: menu ids 282-287');
+  {
+    // Try it before Create (menuOps.tryTable): a scratch load, the workspace untouched, the new texts shown
+    const snap = names.map(n => w.files.get(n).text), hist = w.history.length, defs = w.defines.defines.size;
+    const T0 = FRE.menuOps.tryTable(w, plan, jeff.menus.map(m => m.name));
+    ok(names.every((n, i) => w.files.get(n).text === snap[i]) && w.history.length === hist && w.defines.defines.size === defs && !w.defines.defines.has('MMI_WPNPIECE_ENTANESS'),
+      'Try before Create: no file, undo step or define changes');
+    eq(plan.ids.map(id => T0.table.find(id) ? T0.table.find(id).sets.length : 0).join(), '10,10,10,10,11,10', "Try before Create: the scratch load has Jeff's 6 menus with all their exchanges");
+    eq(T0.env.text(plan.results[0]), 'You received your weapon.', 'Try before Create: the new success message is shown (not yet in textClient)');
+    const r0 = XS0 => XS0.resultExchange(T0.env, T0.table, XS0.stockedPlayer(T0.env, T0.table.find(286).sets[0], { free: 1 }), 286, 0, XS0.rng(1));
+    const rr = r0(FRE.exchangeSim);
+    ok(rr.result === 'SUCCESS' && rr.given[0].id === w.defines.defines.get('II_WEA_SWO_BEHESWORD'), 'Try before Create: Ankou #1 gives Curtana on the scratch load');
+    eq(FRE.exchangeSim.clientReply(T0.env, T0.table, 286, 0, rr).box, 'You received your weapon.', 'Try before Create: the player reads the new success message');
+  }
   w.applyGroup(plan.parts, 'Jeff');
   const txt = n => w.files.get(n).text;
   ok(txt('defineneuz.h').includes('#define MMI_COLLECTOR_DETAILS\t281\t// Collins: Collector Details window (collecting drop rates)\r\n#define MMI_WPNPIECE_ENTANESS\t282\t// MaFl_Jeff exchange menu\r\n'), 'defineNeuz.h: MMI_WPNPIECE_ENTANESS 282 right after MMI_COLLECTOR_DETAILS 281');
@@ -1709,7 +1722,7 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
     return { gold: p.gold, fill: all.filter(x => x && x.id === XS.FILLER).length, items: all.map((x, i) => x && x.id !== XS.FILLER ? [i, x.id, x.num, x.flag] : null).filter(Boolean) };
   };
   const norm = o => JSON.stringify({ counts: Object.keys(o.counts).sort().map(k => [k, o.counts[k]]), lines: o.lines, trace: o.trace, end: o.end });
-  let agree = 0, xagree = 0, xall = 0;
+  let agree = 0, xagree = 0, xall = 0, tagree = 0;
   for (const c of py.cases) {
     const realDefs = new Map(Object.keys(c.defs).map(k => [k, w.defines.defines.get(k)]));
     for (const [k, v] of Object.entries(c.defs)) w.defines.defines.set(k, v);
@@ -1721,25 +1734,33 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
       mine.build = Object.fromEntries(p.parts.map(x => [fname[x.file], x.splices.map(sp => [sp.start, sp.insert])]));
       mine.ids = p.ids;
       if (c.inGame) {
+        // Try it before Create (ui/menu-form.js): the scratch table, built before anything is applied
+        const scratch = FRE.menuOps.tryTable(w, p, c.spec.menus.map(m => m.name));
         w.applyGroup(p.parts, 'case');
         mine.inGame = FRE.newNpcSim.inGame(w, c.spec.npcKey).menus.map(m => [m.id, m.label, m.opens ? m.opens.sets : null]);
         const t = XS.serverTable(w.models.exchange), en = XS.envFromWorkspace(w);
         for (const x of py.exchanges.filter(x => x.spec === c.name)) {
           xall++;
-          const set = t.find(x.mmi).sets[x.set];
           // x.tries presses (1, or 1,500 for the reward rates of a random exchange), a fresh bag each ('same')
-          const rng = XS.rng(x.seed), counts = {}, lines = set.pay.map(() => [0, 0]), trace = [];
-          let pl = build(x.bag);
-          for (let k = 0; k < (x.tries || 1); k++) {
-            if (k) pl = build(x.bag);
-            const r = XS.resultExchange(en, t, pl, x.mmi, x.set, rng);
-            counts[r.result] = (counts[r.result] || 0) + 1;
-            r.given.forEach(y => lines[set.pay.indexOf(y)][0]++); r.lost.forEach(y => lines[set.pay.indexOf(y)][1]++);
-            if ((x.tries || 1) <= 20) trace.push([r.result, r.given.map(y => set.pay.indexOf(y)), r.lost.map(y => set.pay.indexOf(y))]);
-          }
-          const res = { counts, lines, trace, end: dump(pl) };
+          const press = (tb, ev) => {
+            const set = tb.find(x.mmi).sets[x.set];
+            const rng = XS.rng(x.seed), counts = {}, lines = set.pay.map(() => [0, 0]), trace = [];
+            let pl = build(x.bag);
+            for (let k = 0; k < (x.tries || 1); k++) {
+              if (k) pl = build(x.bag);
+              const r = XS.resultExchange(ev, tb, pl, x.mmi, x.set, rng);
+              counts[r.result] = (counts[r.result] || 0) + 1;
+              r.given.forEach(y => lines[set.pay.indexOf(y)][0]++); r.lost.forEach(y => lines[set.pay.indexOf(y)][1]++);
+              if ((x.tries || 1) <= 20) trace.push([r.result, r.given.map(y => set.pay.indexOf(y)), r.lost.map(y => set.pay.indexOf(y))]);
+            }
+            return { counts, lines, trace, end: dump(pl) };
+          };
+          const res = press(t, en);
           if (norm(res) === norm(x.expect)) xagree++;
           else ok(false, `exchange ${c.name} ${x.mmi} #${x.set + 1} ${x.name}`, `JS ${norm(res).slice(0, 300)}\n      PY ${norm(x.expect).slice(0, 300)}`);
+          const tres = press(scratch.table, scratch.env);
+          if (norm(tres) === norm(x.expect)) tagree++;
+          else ok(false, `Try before Create: ${c.name} ${x.mmi} #${x.set + 1} ${x.name}`, `JS ${norm(tres).slice(0, 300)}\n      PY ${norm(x.expect).slice(0, 300)}`);
         }
         w.undo();
       }
@@ -1753,6 +1774,7 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
   }
   eq(agree, py.cases.length, `JS and Python agree on all ${py.cases.length} new-menu cases (rules, every inserted line and offset, right-click list)`);
   eq(xagree, xall, `JS and Python agree on all ${xall} OK presses on the new exchanges (exact / one short / full bag)`);
+  eq(tagree, xall, `Try before Create (menuOps.tryTable, nothing applied): all ${xall} presses = Python`);
   ok(xall >= 183, 'the presses cover all 61 of Jeff\'s exchanges');
   ok(names.every((n, i) => B.bytesEqual(w.files.get(n).serialize(), before[i])), 'files unchanged after the cases');
   // the name filled from the label (ui/menu-form.js)
@@ -1795,6 +1817,26 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
     eq(t.find(col().mmi.value).sets[0].pay.map(p => p.prob).join(), '250000,750000', 'the server (exchange-sim Load_Script) reads the same chances');
     w.undo(); w.undo(); w.undo(); w.undo();
     ok(ex.text === t0, 'undo x4: Exchange_Script.txt back');
+  }
+  {
+    // ⇄ tab "+ New exchange" Try it: addSetsPlan on a scratch copy = the same presses as after Add
+    const col = w.models.exchange.menus.find(m => m.name === 'MMI_COLLECT01'), n0 = col.sets.length, mmi = col.mmi.value;
+    const sets = [{ cond: [['II_SYS_SYS_SCR_SCRAPTOPAZ', 3]], pay: [['II_SYS_SYS_SCR_HOLY', 2, 700000], ['II_SYS_SYS_SCR_AMPESS', 1, 300000]], payNum: 1 },
+      { cond: [['II_SYS_SYS_SCR_SCRAPTOPAZ', 1], ['II_SYS_SYS_SCR_HOLY', 1]], pay: [['II_SYS_SYS_SCR_AMPESS', 5, 1000000]], payNum: 1 }];
+    const parts = FRE.menuOps.addSetsPlan(w, col, sets), hist = w.history.length, t0 = w.files.get('exchange_script.txt').text;
+    const T1 = FRE.menuOps.tryTable(w, { parts });
+    ok(w.history.length === hist && w.files.get('exchange_script.txt').text === t0, '+ New exchange Try it: the workspace is untouched');
+    const posOf = (tb, model, k) => tb.find(mmi).sets.findIndex(x => x.source === model.byId.get(mmi).sets[n0 + k]);
+    const runs = (tb, ev, model) => sets.map((x, k) => [1, 2, 3].map(seed => ['same', 'keep'].map(mode => {
+      const r = XS.run(ev, tb, mmi, posOf(tb, model, k), { tries: 300, seed, mode, free: mode === 'keep' ? 3 : 10, stock: 50 });
+      return JSON.stringify([r.results, r.given.map(g => [g.times, g.qty, g.lost]), [...r.taken.values()], r.lost]);
+    })));
+    const before = JSON.stringify(runs(T1.table, T1.env, T1.model));
+    w.applyGroup(parts, 'add sets');
+    const after = JSON.stringify(runs(XS.serverTable(w.models.exchange), XS.envFromWorkspace(w), w.models.exchange));
+    w.undo();
+    eq(before, after, '+ New exchange Try it: 2 new Collins exchanges × 3 seeds × 2 bag modes, same results before and after Add');
+    ok(posOf(T1.table, T1.model, 0) === n0, `+ New exchange Try it: the first new card is exchange ${n0 + 1} in the window`);
   }
   // typing in one field = one undo step (Workspace.mergeLast)
   {

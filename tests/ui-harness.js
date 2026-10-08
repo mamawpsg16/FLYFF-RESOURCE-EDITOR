@@ -114,6 +114,18 @@
   const renderAllForTest = () => FRE.app.ctx.renderAll(false);
   const btnByText = (root, t) => [...root.querySelectorAll('button')].find(b => b.textContent.includes(t));
   const lastModalAny = () => [...document.querySelectorAll('.modal')].pop();
+  // Try it on a form's exchange card (ui/menu-form.js, before Create): the shared Try window opens on top,
+  // presses OK on a scratch load, and nothing in the workspace changes. -> the Try window's text
+  async function tryCard(cardEl, what, keepOpen = false) {
+    const S = FRE.app.state, steps = S.ws.history.length, dirty = S.ws.dirtyFiles().length, forms = document.querySelectorAll('.modal').length;
+    click(cardEl.querySelector('button.mf-try'));
+    await waitFor(() => document.querySelectorAll('.modal').length === forms + 1 && lastModalAny().querySelector('.ex-try-out'), `Try window (${what})`);
+    const tw = lastModalAny(), text = tw.textContent;
+    ok(/exchanged/.test(text) && /Taken from the player: \S/.test(text) && /not (created|added) yet/.test(tw.querySelector('header').textContent) && /as Create would write it/.test(text)
+      && S.ws.history.length === steps && S.ws.dirtyFiles().length === dirty, `${what}: Try it presses OK before Create; no edit, no file changed`);
+    if (!keepOpen) { click(btnByText(tw.querySelector('footer'), 'Close')); ok(document.querySelectorAll('.modal').length === forms, `${what}: closing Try returns to the form`); }
+    return { text, tw, header: tw.querySelector('header').textContent };
+  }
 
   // [Change task] (when a task is open) then the task's card on the start screen
   async function openTask(id) {
@@ -477,6 +489,20 @@
         && /SMELPROT/.test(card(2).textContent) && /SMELPROT3/.test(card(3).textContent), 'same costs, 2 other rewards: cards 3 and 4 cost what card 2 costs, one reward each');
       click(card(3).querySelector('.mf-card-tools .danger')); click(card(2).querySelector('.mf-card-tools .danger'));
       if (STOP === 'mfcards') { $('toasts').textContent = ''; return; }
+      // Try it on a card, before Create (the user, 2026-10-08)
+      click(btnByText(box, '+ Exchange'));
+      ok(card(2).querySelector('button.mf-try').disabled && /Add a cost and a reward first/.test(card(2).querySelector('button.mf-try').title), 'Try it is greyed on an empty card');
+      click(card(2).querySelector('.mf-card-tools .danger'));
+      const t0 = await tryCard(card(0), '+ Menu › Exchange card 1');
+      const rates = [...t0.tw.querySelectorAll('tr')].slice(1).map(r => r.children[4] && r.children[4].textContent).join();
+      ok(/1,000 exchanged/.test(t0.text) && rates === '70.00%,30.00%' && /Test Weapons", exchange 1/.test(t0.header), 'Try on the random card: 1,000 presses, chance set 70% (the form\'s 70 / 30), titled with the label');
+      ok(box.querySelectorAll('.mf-card').length === 2 && /SCRAPTOPAZ/.test(costsOf(0)), 'the form keeps its 2 cards after Try');
+      const lab0 = lab.value, nm0 = nm.value;
+      inp(lab, ''); inp(nm, 'MMI_TRADE');
+      const t1 = await tryCard(card(1), '+ Menu › Exchange card 2, no label and a taken name');
+      ok(/no label yet/.test(t1.header) && /exchanged/.test(t1.text), 'Try works before the label / name are fixed (stand-ins)');
+      inp(lab, lab0); inp(nm, nm0);
+      if (STOP === 'mftry') { $('toasts').textContent = ''; click(card(0).querySelector('button.mf-try')); return; }
       click(box.querySelector('#mf-create'));
       await waitFor(() => !document.querySelector('.modal .mf-recipe'), 'menu dialog closed');
       ok(S.ws.dirtyFiles().length === 6 && S.ws.files.get('exchange_script.txt').dirty && S.ws.files.get('definetext.h').dirty, '6 files changed (incl. Exchange_Script.txt, defineText.h)');
@@ -484,6 +510,18 @@
       // the exchange tab in NPC Shops: the Exchanges cards, before saving
       click([...$('editor').querySelectorAll('.tabs button')].find(b => b.textContent.includes('⇄ Test Weapons')));
       ok($('editor').querySelectorAll('.ex-card').length === 2 && /You get/.test($('editor').textContent), 'NPC Shops: the menu\'s tab shows its 2 exchange cards (before saving)');
+      // ⇄ tab + New exchange: Try it on the card that would become exchange 3
+      {
+        click(btnByText($('editor'), '+ New exchange'));
+        await waitFor(() => lastModalAny() && lastModalAny().querySelector('.mf-recipe'), '+ New exchange form');
+        const nx = lastModalAny(), c0 = nx.querySelector('.mf-card');
+        c0.querySelector('.mf-ing .combo').pick('II_SYS_SYS_SCR_SCRAPMOONSTONE'); await tick();
+        await pickItems(btnByText(c0, '+ Reward'), ['II_SYS_SYS_SCR_AMPESS']);
+        const tn = await tryCard(nx.querySelector('.mf-card'), '⇄ tab + New exchange');
+        ok(/exchange 3 — not added yet/.test(tn.header) && /1,000 exchanged/.test(tn.text), '+ New exchange Try: it is exchange 3 of the menu, its reward comes out');
+        click(btnByText(nx.querySelector('footer'), 'Close'));
+        ok($('editor').querySelectorAll('.ex-card').length === 2, '+ New exchange closed without Add: still 2 exchanges');
+      }
       // typing a percent updates by itself after a short pause, and the cursor stays in the box
       const tp = $('editor').querySelector('.ex-card input.pct-input');
       tp.focus(); tp.value = '25'; tp.dispatchEvent(new Event('input'));
@@ -776,6 +814,7 @@
       ok(document.getElementById('nn-create').disabled && /NM_RECIPE|no ingredient|no reward|has no exchange/.test(probs()), 'an empty exchange card blocks Create');
       nf().querySelector('.mf-card .mf-ing .combo').pick('II_SYS_SYS_SCR_SCRAPTOPAZ'); await tick();
       await pick1(btnByText(nf().querySelector('.mf-card'), '+ Reward'), 'II_SYS_SYS_SCR_AWAKE');
+      await tryCard(nf().querySelector('.mf-card'), '+ NPC inline Exchange');
       // Rules text: name + text right in this form
       click(ncards()[2]);
       ok(nf().querySelector('textarea.board-text'), 'Rules text on: its fields show right here');

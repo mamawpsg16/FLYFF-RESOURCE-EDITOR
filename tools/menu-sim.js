@@ -3,7 +3,8 @@
 // (src/validate/newmenu.js), loads the changed files the way the game does and prints the NPC's
 // right-click menu, then presses OK on every new exchange (src/loaders/exchange-sim.js):
 // with exactly the ingredients (and 1 free slot), one ingredient short, and a full bag (succeeds when the
-// used-up ingredients free a slot: IsFull counts a stack the exchange takes whole as empty).
+// used-up ingredients free a slot: IsFull counts a stack the exchange takes whole as empty). Each press is also
+// made before Create, on the scratch load the form's Try it uses (menuOps.tryTable), and must give the same result.
 //   no argument   tools/jeff-menus.json (Jeff's Weapon Pieces menus, handoff section 5)
 //   --fixtures    read test-data/fixtures instead of test-data
 //   --write       also write the result to test-data/Resource and test-data/Client, after a backup in
@@ -38,6 +39,8 @@ else {
   show('character.inc gets', plan.lines.character);
   print(`Exchange_Script.txt gets ${plan.lines.exchange.split(/\r?\n/).length} lines (the first menu):\n` +
     plan.lines.exchange.replace(/\r/g, '').split('\n').slice(0, 30).join('\n') + '\n  …\n');
+  // Try it before Create (ui/menu-form.js): the same presses on a scratch load, before anything is applied
+  const scratch = FRE.menuOps.tryTable(ws, plan, spec.menus.map(m => m.name));
   ws.applyGroup(plan.parts, 'new menus');
 
   const name = id => { const it = ws.itemById(id); return it ? (it.name || it.define) : String(id); };
@@ -45,7 +48,8 @@ else {
   for (const l of FRE.newNpcSim.describe(FRE.newNpcSim.inGame(ws, spec.npcKey), name)) print('  ' + l);
 
   const XS = FRE.exchangeSim, env = XS.envFromWorkspace(ws), table = XS.serverTable(ws.models.exchange);
-  let ok = 0, bad = 0;
+  let ok = 0, bad = 0, same = 0;
+  const sig = r => JSON.stringify([r.result, r.given.map(g => [g.id, g.num]), r.taken.map(t => [t.id, t.num]), r.lost.length]);
   print('\nPressing OK on every new exchange (exact ingredients + 1 free slot / one short / full bag, whose used-up ingredients free a slot):');
   plan.ids.forEach((mmi, i) => {
     const m = table.find(mmi);
@@ -56,12 +60,15 @@ else {
       const r2 = XS.resultExchange(env, table, short, mmi, k, XS.rng(1));
       const full = XS.stockedPlayer(env, set, { free: 0 });
       const r3 = XS.resultExchange(env, table, full, mmi, k, XS.rng(1));
+      const s1 = XS.resultExchange(scratch.env, scratch.table, XS.stockedPlayer(scratch.env, scratch.table.find(mmi).sets[k], { free: 1 }), mmi, k, XS.rng(1));
+      if (sig(s1) === sig(r1)) same++; else print(`  ${spec.menus[i].label} #${k + 1}: Try it before Create gives ${sig(s1)}, after Create ${sig(r1)}   <-- DIFFERENT`);
       const good = r1.result === 'SUCCESS' && r1.given.length === 1 && r2.result === 'CONDITION_FAILED' && r3.result === 'SUCCESS';
       good ? ok++ : bad++;
       if (!good || k === 0) print(`  ${spec.menus[i].label} #${k + 1}: ${r1.result} -> ${r1.given.map(g => name(g.id)).join(', ')} · short: ${r2.result} · full bag: ${r3.result}${good ? '' : '   <-- WRONG'}`);
     });
   });
   print(`  ${ok} exchanges behave as expected, ${bad} do not.`);
+  print(`  Try it before Create: ${same} of ${ok + bad} give the same result as after Create.`);
 
   if (write) {
     if (bad) throw new Error('not writing: some exchanges do not behave as expected');

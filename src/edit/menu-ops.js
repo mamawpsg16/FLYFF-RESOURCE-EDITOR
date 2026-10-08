@@ -207,5 +207,25 @@
     return [{ file: 'textclient.txt.txt', splices: [{ start, end: start + line[2].length, insert: text }] }];
   }
 
-  FRE.menuOps = { setLabel, boardPlan, checkBoardText, setBoardText, boardFileName, boardText, BOARD_EOL, addSetsPlan, newMenusPlan, freeMenuIds, nextTid, nextTextId, menuText, setText, defineLines, FIRST_ID, MAX_MOVER_MENU, TID_MMI_DIALOG, FILES };
+  // Try it before Create (ui/menu-form.js): what the server would load after a plan, without touching the
+  // workspace. The plan's Exchange_Script.txt splices go into a scratch copy of the text, which the real loader
+  // reads (CExchange::Load_Script port) with the new MMI_ names defined; exchange-sim.js then presses OK on it.
+  // plan: newMenusPlan(..) (ids + texts) or { parts } from addSetsPlan. names: the new menus' MMI_ names.
+  // -> { env, table, model }
+  function tryTable(ws, plan, names = []) {
+    const ex = ws.files.get('exchange_script.txt');
+    if (!ex) throw new Error('Exchange_Script.txt is not loaded');
+    const part = plan.parts.find(p => p.file === 'exchange_script.txt');
+    const text = part ? ex.preview(part.splices) : ex.text;
+    const defines = new Map(ws.defines.defines);
+    names.forEach((n, i) => { if (plan.ids && plan.ids[i] !== undefined) defines.set(n, plan.ids[i]); });
+    const model = FRE.exchange.loadExchange({ name: ex.name, text }, { defines });
+    const env = FRE.exchangeSim.envFromWorkspace(ws);
+    const added = new Map((plan.texts || []).map(t => [t.tid, t.text]));
+    const base = env.text;
+    env.text = name => (added.has(name) ? added.get(name) : base(name));
+    return { env, table: FRE.exchangeSim.serverTable(model), model };
+  }
+
+  FRE.menuOps = { setLabel, tryTable, boardPlan, checkBoardText, setBoardText, boardFileName, boardText, BOARD_EOL, addSetsPlan, newMenusPlan, freeMenuIds, nextTid, nextTextId, menuText, setText, defineLines, FIRST_ID, MAX_MOVER_MENU, TID_MMI_DIALOG, FILES };
 })(globalThis.FRE = globalThis.FRE || {});

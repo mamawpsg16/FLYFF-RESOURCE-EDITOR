@@ -1,8 +1,20 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-08 (Donation Shop buy simulator user-tested + committed 77cc6d7; handoff on top)._
+_Last updated 2026-10-08 (Try it before Create built, waiting for the user's test; handoff on top)._
 
-> **Handoff (2026-10-08, night) — START HERE: the Donation Shop buy simulator is user-tested in Brave and committed (`77cc6d7`, not pushed).** Next: the two requests below, plan first. Plan: `/home/kevin/.claude/plans/joyful-petting-sunrise.md`.
+> **Handoff (2026-10-08, late night) — START HERE: "Try it" inside the exchange forms is built, NOT committed, waiting for the user's Brave test.** Plan: `/home/kevin/.claude/plans/read-claude-md-in-flyff-resource-editor-eager-kay.md`. Next after the OK: request 2 below ("what to do after saving" per change), plan first.
+> - Every exchange card in **+ Menu → Exchange**, the Exchange part of **+ NPC**, and the ⇄ tab's **+ New exchange** has **Try it** (greyed until the card has a cost and a reward). It opens the same Try window as the ⇄ tab's cards, on top of the form; Close returns to the form.
+> - It runs on exactly what Create would write: `menuOps.tryTable` splices the plan (`newMenusPlan` / `addSetsPlan`) into a scratch copy of Exchange_Script.txt, loads it with the real loader (new `MMI_` names defined), and shows the new success / failure texts. No file, define or undo step changes. Before the form is complete, a missing label / taken name get stand-ins ("no label yet", `MMI_TRY_n`). The card's ⛔ problems show at the top of the window.
+> - Tests: core 1015 (the scratch load gives the same presses as Python's `newmenu` for every case; Collins + New exchange: same results before and after Add, 3 seeds × 2 bag modes), UI harness 342 (new stage `mftry`). 3 planted bugs in `tryTable` caught. `gjs -m tools/menu-sim.js` now prints "Try it before Create: 61 of 61 give the same result as after Create".
+>
+> **User's test:** `python3 build.py`, reload, pick `test-data`, NPC Shops.
+> 1. Lui → + Menu → Exchange: Try it is greyed on the empty card. Add a cost and a reward (no label yet) → Try it → "1,000 exchanged", "Taken from the player". Close: the form is unchanged and no "not saved" note appears.
+> 2. Add a 2nd reward and type 70 → Try it: Chance set 70% / 30%, "Got in this run" near it. Empty bag slots 0 → "refused: bag full".
+> 3. + NPC, tick Exchange, fill a card → Try it.
+> 4. Collins → ⇄ tab → + New exchange → fill a card → Try it: the title says exchange N+1 "not added yet".
+> Then commit + push.
+>
+> **Handoff (2026-10-08, night) — the Donation Shop buy simulator is user-tested in Brave and committed (`77cc6d7`, not pushed).** Next: the two requests below, plan first. Plan: `/home/kevin/.claude/plans/joyful-petting-sunrise.md`.
 > - `loaders/donation-buy.js` ports the client's confirm box (`CWndConfirmBuyDonation`) and `CDPSrvr::OnBuyDonationItem`. It reuses the exchange simulator's bag code: `bagIsFull` was split out of `createItem`, and `createItem` takes the new item's `charged`. The exchange results are unchanged.
 > - **Found in the C++:** price × count is an `int`. Above 214,769 chips, buying 9,999 overflows, and the player gets them for the chips they have. New ⛔ `DS_OVERFLOW` (the user's choice: it blocks saving); the price box turns red while typing. Other findings: chips in a locked slot or a trade still pay (`GetAtItemNum`); the bag is checked before the chips are taken. INVESTIGATION §1.16.
 > - The crash items have Spec_Item rows identical to the safe shields except the icon and name. The simulator says CRASH.

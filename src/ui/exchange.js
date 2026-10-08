@@ -258,6 +258,14 @@
   function tryIt(ctx, m, s, i) {
     const S = FRE.exchangeSim, env = S.envFromWorkspace(ctx.ws), table = S.serverTable(model(ctx));
     const pos = table.find(m.mmi.value) ? table.find(m.mmi.value).sets.findIndex(x => x.source === s) : -1;
+    openTry({ env, table, mmi: m.mmi.value, pos, title: `Try: ${rewardNames(ctx, s)} (${whoOpens(ctx, m)}, exchange ${i + 1})`,
+      note: 'It uses the exchange as it is in the editor now, saved or not.' });
+  }
+  // The Try window, shared with the exchange forms (ui/menu-form.js: before Create, on a scratch table from
+  // menuOps.tryTable). pos: the recipe's place in the server's list (-1 = not loaded). top: elements shown first
+  // (a form's ⛔ problems on that card).
+  function openTry({ env, table, mmi, pos, title, note, top = null, error = null }) {
+    const S = FRE.exchangeSim;
     const out = h('div.ex-try-out');
     const set = (k, v) => { if (v !== null) { trial[k] = v; go(); } };      // every change runs again
     const stockRow = h('label', 'Ingredients for ', numInput({ key: `try|stock`, value: trial.stock, min: 1, max: 100000, onCommit: v => set('stock', v) }), ' exchanges');
@@ -268,14 +276,16 @@
       out.textContent = '';
       runs++;
       out.appendChild(h('div.muted.small', `Run ${runs} · seed ${FRE.dom.fmt(trial.seed)}`));
+      if (error) { out.appendChild(h('p.warn-text', 'Cannot run: ' + error)); return; }
       if (pos < 0) { out.appendChild(h('p.warn-text', 'The server does not load this exchange (a duplicate menu or over 30 exchanges).')); return; }
       let r;
-      try { r = S.run(env, table, m.mmi.value, pos, trial); } catch (e) { out.appendChild(h('p.warn-text', 'Cannot run: ' + e.message)); return; }
+      try { r = S.run(env, table, mmi, pos, trial); } catch (e) { out.appendChild(h('p.warn-text', 'Cannot run: ' + e.message)); return; }
       out.appendChild(trialResult(env, r));
     }
     const body = h('div.ex-try',
       h('p.muted.small', 'This presses OK in the exchange window again and again, the way the server does it (CExchange::ResultExchange: check the ingredients, roll the rewards, check the bag, take, give). ',
-        'It uses the exchange as it is in the editor now, saved or not.'),
+        note || ''),
+      top,
       h('div.row.ex-tools',
         h('label', 'Press OK ', numInput({ key: `try|tries`, value: trial.tries, min: 1, max: 1000000, onCommit: v => set('tries', v) }), ' times'),
         h('select', { on: { change: e => { trial.mode = e.target.value; showStock(); go(); } } },
@@ -291,7 +301,7 @@
         } } }, 'Run again (new rolls)')),
       out);
     showStock();
-    modal({ title: `Try: ${rewardNames(ctx, s)} (${whoOpens(ctx, m)}, exchange ${i + 1})`, wide: true, body });
+    modal({ title, wide: true, body });
     go();
   }
 
@@ -361,6 +371,7 @@
   FRE.ui.exchangeView = {
     st,
     cards: (ctx, m) => m.sets.map((s, i) => card(ctx, m, s, i)),
+    openTry,
     picking: () => !!st.pick,
     clearPick: () => { st.pick = null; },
     addTarget: ctx => mod.addTarget(ctx),

@@ -26,10 +26,11 @@
   //   1 reward   the player gets it (each card is one row in the window, the player picks the row)
   //   2+ rewards the server rolls payNum of them by their chances (GetPayItemList), shown as "one of"
   // state: { cards: [{ cond: [[define, n]], rewards: [{ define, qty, prob }], payNum }] }
-  // -> element; onChange() after every change
+  // -> element; onChange() after every change. opts.tryCard(ci): the card's "Try it" (presses OK on the exchange
+  // as Create would write it: menuOps.tryTable + loaders/exchange-sim.js, in the ⇄ tab's Try window).
   const blankCard = (cond = [['', 1]]) => ({ cond: cond.map(c => [c[0], c[1]]), rewards: [], payNum: 1, uid: ++uid });
   const usedCond = card => card.cond.filter(c => c[0]);
-  function recipeBuilder(ws, state, onChange) {
+  function recipeBuilder(ws, state, onChange, opts = {}) {
     const { fieldLabel } = FRE.ui;
     const el = h('div.mf-recipe');
     const changed = () => { FRE.dom.keepFocus(el, paint); onChange(); };
@@ -59,6 +60,9 @@
         h('b', `Exchange ${ci + 1}`),
         h('span.mf-card-gets', `You get ${gets}  ←  ${cond.map(c => `${nm(c[0])} ×${c[1]}`).join(' + ') || 'nothing'}`),
         h('span.mf-card-tools',
+          opts.tryCard ? h('button.small.mf-try', { disabled: missing.length > 0,
+            title: missing.length ? `Add ${missing.join(' and ')} first` : 'Press OK in the exchange window many times, the way the server does it (before Create)',
+            on: { click: () => opts.tryCard(ci) } }, 'Try it') : null,
           h('button.icon', { title: 'Move up (earlier in the window)', disabled: ci === 0, on: { click: () => { cards.splice(ci - 1, 0, cards.splice(ci, 1)[0]); changed(); } } }, '↑'),
           h('button.icon', { title: 'Move down', disabled: ci === cards.length - 1, on: { click: () => { cards.splice(ci + 1, 0, cards.splice(ci, 1)[0]); changed(); } } }, '↓'),
           h('button.small', { title: 'A new exchange with the same costs and rewards', on: { click: () => {
@@ -150,6 +154,50 @@
     });
   }
 
+  // ---------------------------------------------------------------- Try it before Create
+  // A card's ⛔ problems (the form's checks that name this exchange), shown at the top of the Try window.
+  // field = "menu <i> exchange <k>" (validate/newmenu.js)
+  function cardProblems(diags, mi, ci) {
+    const mine = diags.filter(d => d.severity === 'BLOCK' && d.field === `menu ${mi + 1} exchange ${ci + 1}`);
+    return mine.length ? h('div.nn-problems', h('p.warn-text', 'Create is blocked by this exchange; the presses below show what the server would do anyway:'), mine.map(d => diagRow(d))) : null;
+  }
+  const rewardsOf = (ws, card) => card.rewards.map(r => (r.define === 'PENYA' ? 'Penya' : itemName(ws, r.define))).join(' / ') || 'nothing';
+  function openTryOn(args) {
+    if (!FRE.ui.exchangeView) { toast('Try it is not available (the exchange view is not loaded).', 'bad'); return; }
+    FRE.ui.exchangeView.openTry(Object.assign({ note: 'It uses the exchange as Create would write it (nothing is created or changed).' }, args));
+  }
+  // New menus (+ Menu › Exchange, + NPC): the spec with stand-ins for what is not filled yet, so Try works early:
+  // a missing / taken name -> MMI_TRY_<n>, an empty label -> "(no label yet)", message pair not picked -> two new texts.
+  function trySpec(ws, st) {
+    const taken = [];
+    const menus = st.menus.map((m, i) => {
+      let name = m.name && !FRE.menuNameProblem(ws, m.name, taken) ? m.name : `MMI_TRY_${i + 1}`;
+      while (ws.defines.defines.has(name) || taken.includes(name)) name += '_X';
+      taken.push(name);
+      return { name, label: m.label.trim() || '(no label yet)', sets: setsOf(m) };
+    });
+    const base = menus[0].name.replace(/^MMI_/, '');
+    const pickedTids = st.resMode === 'tids' && st.resTids.length >= 2 && st.resTids.every(Boolean);
+    const results = pickedTids ? { tids: st.resTids }
+      : { add: [0, 1].map(i => ({ name: (st.resMode === 'add' && st.resNames[i]) || `TID_GAME_${base}_${i ? 'FAIL' : 'SUCCESS'}`,
+        text: st.resMode === 'add' ? st.resTexts[i] : blankMenus().resTexts[i] })) };
+    return { npcKey: 'TRY', newNpc: true, menus, results };
+  }
+  function tryNewMenu(ctx, st, mi, ci) {
+    const ws = ctx.ws, m = st.menus[mi], card = m.cards[ci];
+    const title = `Try: ${rewardsOf(ws, card)} ("${m.label.trim() || 'no label yet'}", exchange ${ci + 1} — not created yet)`;
+    let args;
+    try {
+      const spec = trySpec(ws, st), plan = FRE.menuOps.newMenusPlan(ws, spec);
+      const { env, table, model } = FRE.menuOps.tryTable(ws, plan, spec.menus.map(x => x.name));
+      const mmi = plan.ids[mi], src = model.byId.get(mmi), t = table.find(mmi);
+      const pos = src && t ? t.sets.findIndex(x => x.source === src.sets[ci]) : -1;
+      const diags = FRE.validateNewMenus(ws, menusSpec(st, { key: 'TRY', newNpc: true }));
+      args = { env, table, mmi, pos, title, top: cardProblems(diags, mi, ci) };
+    } catch (e) { args = { title, pos: -1, error: e.message }; }
+    openTryOn(args);
+  }
+
   // ---------------------------------------------------------------- NPC Shops: + Exchange menu
   const blankMenu = () => Object.assign({ name: '', label: '', nameTouched: false }, blankRecipe());
   const blankMenus = () => ({ menus: [blankMenu()], resMode: 'add', resNames: ['', ''],
@@ -205,7 +253,7 @@
         nameViews[i] = { input, status };
         el.appendChild(h('div.nn-row', fieldLabel('Name', true), input, status));
         el.appendChild(h('div.muted.small.mf-hint', 'Internal name the server needs (an MMI_ #define); players never see it. It is filled from the label and must be new; change it only if you want another.'));
-        el.appendChild(recipeBuilder(ws, m, changed));
+        el.appendChild(recipeBuilder(ws, m, changed, { tryCard: ci => tryNewMenu(ctx, st, st.menus.indexOf(m), ci) }));
       });
       el.appendChild(h('button.small', { on: { click: () => { st.menus.push(blankMenu()); render(); changed(); } } }, '+ Another exchange menu'));
       el.appendChild(h('h4', 'Messages after an exchange'));
@@ -292,7 +340,21 @@
       setLines(ws, sets).forEach((l, i) => players.appendChild(h('div.mf-line', l.replace(/^Exchange \d+/, `Exchange ${menu.sets.length + i + 1}`))));
     };
     body.appendChild(h('p.muted.small', menu.sets.length ? `New exchanges reuse the text and the messages of ${menu.name}'s first exchange.` : `${menu.name} has no exchange yet: its text and messages come from its description.`));
-    body.appendChild(recipeBuilder(ws, st, refresh));
+    // Try it: the new exchanges added at the end of this menu, on a scratch copy (addSetsPlan + menuOps.tryTable)
+    const tryCard = ci => {
+      const card = st.cards[ci];
+      const title = `Try: ${rewardsOf(ws, card)} (${menu.name}, exchange ${menu.sets.length + ci + 1} — not added yet)`;
+      let args;
+      try {
+        const mmi = menu.mmi.value, { env, table, model } = FRE.menuOps.tryTable(ws, { parts: FRE.menuOps.addSetsPlan(ws, menu, setsOf(st)) });
+        const src = model.byId.get(mmi), t = table.find(mmi);
+        const pos = src && t ? t.sets.findIndex(x => x.source === src.sets[menu.sets.length + ci]) : -1;
+        const fake = { npcKey: '-', menus: [{ name: menu.name, label: '', sets: setsOf(st) }], results: { tids: ['x', 'y'] } };
+        args = { env, table, mmi, pos, title, top: cardProblems(FRE.validateNewMenus(ws, fake), 0, ci) };
+      } catch (e) { args = { title, pos: -1, error: e.message }; }
+      openTryOn(args);
+    };
+    body.appendChild(recipeBuilder(ws, st, refresh, { tryCard }));
     body.append(...FRE.ui.formFooter({ checks, action: 'Add', previewTitle: 'What players will see (added at the end of the window)', preview: players }));
     const m = modal({ title: `New exchange — ${menu.name}`, body, wide: true, buttons: [
       { label: 'Close' },
