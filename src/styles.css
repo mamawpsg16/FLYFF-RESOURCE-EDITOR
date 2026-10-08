@@ -309,7 +309,7 @@ button.place-edit { display: inline-flex; align-items: center; gap: 6px; padding
 .combo-opt.hi, .combo-opt:hover { background: var(--line); } .combo-opt.sel { font-weight: 600; }
 .combo-group { padding: 4px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
 .combo-more { padding: 4px 10px; font-size: 12px; color: var(--muted); }
-.nn-col { display: flex; flex-direction: column; gap: 4px; }
+.nn-col { display: flex; flex-direction: column; gap: 4px; flex: 1 1 0; min-width: 0; }
 .tga-pic canvas { width: 100px; height: 120px; border: 1px solid var(--line); border-radius: 6px; background: #000; }
 .tga-pic.small canvas { width: 60px; height: 72px; }
 
@@ -358,3 +358,15 @@ button.place-edit { display: inline-flex; align-items: center; gap: 6px; padding
 /* the coloured edit pencil (FRE.ui.pencil) */
 .pencil { display: inline-flex; vertical-align: middle; }
 button.edit-btn { display: inline-flex; align-items: center; padding: 4px 8px; }
+.menu-card.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.nn-cards { margin: 6px 0 8px; }
+.nn-cards .menu-card { min-height: 80px; }
+button.linkish { background: none; border: none; color: var(--accent); padding: 2px 0; }
+/* exchange form cards (ui/menu-form.js): one per exchange, its own costs and reward(s) */
+.mf-card { border: 1px solid var(--border, #2a3140); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+.mf-card.bad { border-color: var(--bad, #e05561); }
+.mf-card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mf-card-gets { flex: 1; color: var(--muted); font-size: 12px; }
+.mf-card-tools { display: inline-flex; gap: 4px; }
+.mf-ing .combo { flex: 1 1 420px; max-width: 560px; }
+.mf-card label input.num-input { width: 70px; min-width: 0; }

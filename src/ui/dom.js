@@ -127,9 +127,11 @@
   }
 
   // modal({ title, body: Node, buttons: [{ label, cls, onClick -> false keeps open }] })
-  function modal({ title, body, buttons = [{ label: 'Close' }], wide }) {
+  // onClose: called once when the window closes (any button), e.g. to open the next form
+  function modal({ title, body, buttons = [{ label: 'Close' }], wide, onClose }) {
     const back = h('div.modal-back');
-    const close = () => back.remove();
+    let closed = false;
+    const close = () => { back.remove(); if (!closed && onClose) { closed = true; onClose(); } };
     const foot = h('footer', buttons.map(b => h('button' + (b.cls ? '.' + b.cls : ''), {
       disabled: b.disabled, id: b.id,
       on: { click: async () => { const r = b.onClick ? await b.onClick() : undefined; if (r !== false) close(); } },

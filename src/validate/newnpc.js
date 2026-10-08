@@ -80,7 +80,7 @@
       else if (!used.has(v)) add('NN_MENU_NEW', 'WARN', 'menus', `Menu ${m} is used by no other NPC: untested in this game.`);
     }
     if (new Set(menus).size !== menus.length) add('NN_MENU_TWICE', 'WARN', 'menus', 'A menu is ticked twice: it is listed once in game.');
-    if (!menus.length) add('NN_NO_MENU', 'WARN', 'menus', 'No menu is ticked: right-clicking the NPC does nothing.');
+    if (!menus.length && !(form.add && (form.add.exchange || form.add.rules))) add('NN_NO_MENU', 'WARN', 'menus', 'No menu is ticked: right-clicking the NPC does nothing.');
     if (menus.includes('MMI_DIALOG')) add('NN_DIALOG', 'WARN', 'menus', 'Dialog needs a C++ dialog script (WorldDialog.dll); without one the menu does nothing.');
 
     checkModel(ws, form.model, add);
@@ -106,7 +106,7 @@
     const trade = menus.includes('MMI_TRADE');
     const tabs = form.tabs || [];
     if (!trade && tabs.some(t => (t.items || []).length || (t.rules || []).length))
-      add('NN_SHOP_NO_TRADE', 'BLOCK', 'tabs', 'The shop has items but the Trade menu is not ticked: tick Trade or remove the items.');
+      add('NN_SHOP_NO_TRADE', 'WARN', 'tabs', 'Shop is off: the items in its tabs won\'t be added. Turn Shop on again to keep them.');
     if (trade && !tabs.some(t => (t.items || []).length || (t.rules || []).length))
       add('NN_SHOP_EMPTY', 'BLOCK', 'tabs', 'Trade is ticked but no tab has an item: Trade would open an empty shop.');
     const slots = new Set();

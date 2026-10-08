@@ -1948,6 +1948,47 @@ section('rules windows: + Menu → Rules text (the npc-board client change; JS a
   throws(() => O.boardPlan(w, { npcKey: 'MaFl_Peach', name: 'MMI_X_RULES', label: 'Rules', text: 'café' }), 'a character the client can\'t show is refused');
 }
 
+section('+ NPC with an exchange and a rules text: one Create, one undo step; the preview = what is written');
+{
+  const w = new FRE.Workspace(fixtureFiles(), { only: 'npc' }).load();
+  const { dyoFiles, worldFiles } = loadWorldFiles(FIXTURES, w);
+  w.setMapFiles(dyoFiles, worldFiles);
+  const O = FRE.menuOps;
+  const form = { key: 'MaFl_Mixer', name: 'Mixer', model: 'MI_MAFL_JURIA', image: null, structure: null, map: 'WdMadrigal', x: 6966, y: 100, z: 3220, angle: 180,
+    menus: ['MMI_TRADE'], tabs: [{ slot: 0, title: 'Goods', rules: [], items: [{ define: 'II_SYS_SYS_SCR_BLESSEDNESS' }] }] };
+  const ex = { npcKey: form.key, newNpc: true, extraIds: 1, menus: [{ name: 'MMI_MIXER_SWAPS', label: 'Mixer Swaps',
+    sets: [{ cond: [['II_SYS_SYS_SCR_BLESSEDNESS', 2]], pay: [['II_SYS_SYS_SCR_AWAKE', 1, 1000000]], payNum: 1 }] }],
+    results: { add: [{ name: 'TID_GAME_MIXER_SWAPS_SUCCESS', text: 'Done.' }, { name: 'TID_GAME_MIXER_SWAPS_FAIL', text: 'Not enough.' }] } };
+  eq(FRE.validateNewMenus(w, ex).filter(d => d.severity === 'BLOCK').map(d => d.code).join(','), '', 'an exchange menu for an NPC not created yet: no NM_NPC block');
+  ok(FRE.validateNewMenus(w, Object.assign({}, ex, { newNpc: false })).some(d => d.code === 'NM_NPC'), 'without newNpc the missing NPC is still a block');
+  // the preview: exchange plan, then the rules plan offset by what the exchange takes
+  const pEx = O.newMenusPlan(w, ex);
+  ok(!pEx.parts.some(p => p.file === 'character.inc'), 'newNpc: no character.inc part (the new block lists the AddMenu)');
+  const boardName = FRE.menuNameFromLabel(w, 'Mixer Rules', ['MMI_MIXER_SWAPS']);
+  const pBoard = O.newMenusPlan(w, { npcKey: form.key, newNpc: true, kind: 'board', offset: { ids: 1, tids: 2, texts: pEx.texts.length },
+    menus: [{ name: boardName, label: 'Mixer Rules', sets: [] }] });
+  eq(pBoard.ids[0], pEx.ids[0] + 1, 'the rules menu takes the next free id after the exchange menu');
+  // Create: the same three steps, each planned on the files the step before left
+  const before = w.history.length;
+  w.applyGroup(O.newMenusPlan(w, ex).parts, 'x');
+  const realName = FRE.menuNameFromLabel(w, 'Mixer Rules');
+  eq(realName, boardName, 'the rules menu name at Create = the name in the preview');
+  const realBoard = O.boardPlan(w, { npcKey: form.key, newNpc: true, name: realName, label: 'Mixer Rules', text: 'Be nice.' });
+  w.applyGroup(realBoard.parts, 'x');
+  eq(JSON.stringify([realBoard.ids, realBoard.lines.defineNeuz, realBoard.lines.defineText, realBoard.lines.textTxt]),
+    JSON.stringify([pBoard.ids, pBoard.lines.defineNeuz, pBoard.lines.defineText, pBoard.lines.textTxt]), 'rules menu: id, defineNeuz / defineText / textClient lines = the preview');
+  w.applyGroup(FRE.npcOps.newNpcPlan(w, Object.assign({}, form, { menus: [...form.menus, 'MMI_MIXER_SWAPS', realName] })).parts, 'x');
+  ok(w.foldLast(w.history.length - before, 'new NPC MaFl_Mixer'), 'the three steps fold into one');
+  eq(w.history.length, before + 1, 'one undo step');
+  const npc = w.chars.byKey.get('mafl_mixer').slice(-1)[0];
+  const rc = FRE.newNpcSim.rightClick(w, npc.menus).map(m => m.label);
+  ok(['Mixer Swaps', 'Mixer Rules'].every(l => rc.includes(l)), `right-click: ${rc.join(', ')}`);
+  ok(/AddMenu\( MMI_TRADE \);\r\n\t\tAddMenu\( MMI_MIXER_SWAPS \);\r\n\t\tAddMenu\( MMI_MIXER_RULES \);/.test(w.files.get('character.inc').text), 'the block lists Trade, the exchange and the rules menu');
+  eq(w.boardTextOf(pBoard.ids[0]), 'Be nice.', 'the rules text file exists');
+  w.undo();
+  ok(w.dirtyFiles().length === 0 && !w.chars.byKey.has('mafl_mixer') && w.boardTextOf(pBoard.ids[0]) === null && !w.defines.defines.has('MMI_MIXER_SWAPS'), 'one Undo: no NPC, no menus, no rules file, nothing to save');
+}
+
 section('move an NPC / change its model: same-length .dyo rewrite (JS and Python copies agree)');
 {
   const w = new FRE.Workspace(fixtureFiles(), { only: 'npc' }).load();
@@ -1955,7 +1996,8 @@ section('move an NPC / change its model: same-length .dyo rewrite (JS and Python
   w.setMapFiles(dyoFiles, worldFiles);
   const E = FRE.npcEditOps;
   const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} npcmove ${FIXTURES}`);
-  const py = JSON.parse(new TextDecoder().decode(out));
+  let py = { cases: [], small: [] };
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py npcmove) gave no readable result', e.message); }
   ok(py.cases.length > 380, `Python moved / re-modelled ${py.cases.length} cases (every placed NPC once)`);
   const sha = b => GLib.compute_checksum_for_bytes(GLib.ChecksumType.SHA1, b);
   const npcOf = key => { const l = w.chars.byKey.get(key.toLowerCase()); return l && l[l.length - 1]; };
@@ -1987,6 +2029,12 @@ section('move an NPC / change its model: same-length .dyo rewrite (JS and Python
   }
   eq(bad, 0, `${py.cases.length} moves / model changes: same bytes and same read-back as the Python copy`);
   ok([...w.mapFiles].every(([m, lower]) => FRE.bytes.bytesEqual(w.files.get(lower).serialize(), before.get(m))), 'after every undo the map files are the originals');
+  // built files with an OT_CTRL record of each version ahead of an NPC: same record offsets and read-back
+  for (const c of py.small) {
+    const bytes = new Uint8Array(c.hex.match(/../g).map(x => parseInt(x, 16)));
+    const js = FRE.world.readDyo(bytes).placements.map(p => ({ at: p.at, key: p.key, x: p.x, y: p.y, z: p.z, angle: p.angle, model: p.model }));
+    eq(JSON.stringify(js), JSON.stringify(c.records), `a CTRL record of version 0x${c.version.toString(16)} before an NPC: same offset and values as the Python copy`);
+  }
 
   // the op itself: one spot moves, the model can go on all spots, nothing else changes
   const pb = npcOf('MaFl_Postbox'), spots = E.placementsOf(w, pb);

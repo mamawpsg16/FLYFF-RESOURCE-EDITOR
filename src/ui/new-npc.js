@@ -17,7 +17,47 @@
     const madrigal = ws.area ? ws.area.madrigal : 'WdMadrigal';
     return { key: '', name: '', model: 'MI_MAFL_JURIA', image: null, structure: null, newTag: null, region: `${madrigal}|Flaris`,
       map: ws.mapFiles.has(madrigal) ? madrigal : [...ws.mapFiles.keys()][0],
-      x: null, y: null, z: null, angle: 0, menus: ['MMI_TRADE'], tabs: [blankTab(0)] };
+      x: null, y: null, z: null, angle: 0, menus: ['MMI_TRADE'], tabs: [blankTab(0)],
+      // + Menu's Exchange / Rules text, filled in this form and created with the NPC (one undo step).
+      // The fields are kept while a card is off, like the shop tabs.
+      add: { exchange: false, rules: false }, exchange: null, board: null };
+  }
+  // the form with the new menus' names in its AddMenu list (they are #defined by the steps before the NPC's)
+  function withNewMenus(form, names) { return Object.assign({}, form, { menus: [...form.menus, ...names] }); }
+  const exSpecOf = (form, f = form) => FRE.ui.menuForm.menusSpec(f.exchange, { key: form.key, newNpc: true });
+  // The new menus' checks + plans for the preview: { diags, names, ex: { spec, plan }, board: { name, plan } }
+  function menusOf(ws, form) {
+    const out = { diags: [], names: [], ex: null, board: null };
+    const add = form.add || {};
+    const exOn = add.exchange && form.exchange, rulesOn = add.rules && form.board;
+    const diag = (code, severity, message) => out.diags.push({ code, severity, field: 'menus', message, key: `${code}|menus`, module: 'npc' });
+    if (exOn) {
+      const spec = exSpecOf(form);
+      spec.extraIds = rulesOn ? 1 : 0;
+      out.diags.push(...FRE.validateNewMenus(ws, spec));
+      out.ex = { spec };
+      out.names.push(...spec.menus.map(m => m.name));
+    }
+    if (rulesOn) {
+      const p = FRE.ui.menuChooser.boardProblem(ws, form.board, out.ex ? out.ex.spec.menus.length : 0);
+      if (p) diag('NN_RULES', 'BLOCK', p);
+      else diag('NN_RULES_PATCH', 'WARN', FRE.ui.menuChooser.PATCH_NOTE);
+      const name = FRE.menuNameFromLabel(ws, form.board.label, out.names);
+      out.board = { name };
+      if (name) out.names.push(name);
+    }
+    if (out.diags.some(d => d.severity === 'BLOCK')) return out;
+    try {
+      let off = { ids: 0, tids: 0, texts: 0 };
+      if (out.ex) {
+        out.ex.plan = FRE.menuOps.newMenusPlan(ws, out.ex.spec);
+        const r = out.ex.spec.results.add ? out.ex.spec.results.add.length : 0;
+        off = { ids: out.ex.plan.ids.length, tids: r, texts: out.ex.plan.texts.length };
+      }
+      if (out.board) out.board.plan = FRE.menuOps.newMenusPlan(ws, { npcKey: form.key, newNpc: true, kind: 'board', offset: off,
+        menus: [{ name: out.board.name, label: form.board.label, sets: [] }] });
+    } catch (e) { diag('NN_RULES', 'BLOCK', e.message); }
+    return out;
   }
 
   const provenModels = ws => FRE.ui.npcPlace.provenModels(ws);
@@ -37,7 +77,7 @@
   }
 
   // ---------------------------------------------------------------- item picker (bulk)
-  // opts: { ws, title, have: Set of item ids already there, room: how many more fit (or Infinity), onAdd(infos) }
+  // opts: { ws, title, have: Set of item ids already there, room: how many more fit (or Infinity), roomNote, addLabel(n), onAdd(infos) }
   function itemPicker(opts) {
     const ws = opts.ws;
     if (!ws._pickItems) ws._pickItems = [...ws.items.items.values()].map(it => ws.itemInfo(it)).sort((a, b) => a.name.localeCompare(b.name));
@@ -75,8 +115,8 @@
     function status() {
       const n = st.picked.size;
       const fit = Math.min(n, opts.room);
-      count.textContent = `${n} selected · ${opts.room === Infinity ? '' : `room for ${opts.room} more in this tab (100 max)`}`;
-      addBtn.textContent = n > fit ? `Add the first ${fit} (tab full after that)` : `Add ${n} item${n === 1 ? '' : 's'}`;
+      count.textContent = `${n} selected · ${opts.room === Infinity ? '' : `room for ${opts.room} more ${opts.roomNote || 'in this tab (100 max)'}`}`;
+      addBtn.textContent = opts.addLabel ? opts.addLabel(fit) : n > fit ? `Add the first ${fit} (tab full after that)` : `Add ${n} item${n === 1 ? '' : 's'}`;
       addBtn.disabled = !fit;
     }
     const body = h('div.ip',
@@ -111,6 +151,7 @@
     const place = { modelView: 'used', cache: {} };   // model list view ('used' / 'unused' / 'all') + lists read once (ui/npc-place.js)
     let where = null;
     let touched = false;             // the checks show once the user has typed something
+    let showOther = false;           // the "Other game window…" list (Bank, Deposit…), closed by default
     let menuView = 'top';            // 'top': ticked + the 16 most used; 'used': every menu a visible NPC uses; 'all': also unused ones
     const images = [];
     for (const n of ws.chars.npcs) for (const r of n.statements) if (r.cmd === 'SetImage' && r.args.image && r.args.image.stringKey)
@@ -125,6 +166,7 @@
     const body = h('div.newnpc');
     const problems = h('div.nn-problems'), preview = h('div.nn-preview');
     let createBtn = null;
+    let exSec = null, boardSec = null;     // the inline Exchange / Rules text sections (when their card is on)
 
     const num = v => (v === '' || v === null || v === undefined ? null : Number(v));
     const input = (field, attrs = {}) => h('input', Object.assign({ value: form[field] === null || form[field] === undefined ? '' : form[field],
@@ -181,9 +223,32 @@
       where = FRE.ui.npcPlace.whereFields(ctx, form, { cache: place.cache, rerender: () => { touched = true; render(); }, changed: () => { touched = true; refresh(); } });
       where.rows.forEach(r => body.appendChild(r));
 
-      // --- menus
+      // --- menus: the same three kinds as + Menu (the user, 2026-10-07: "just show that 3"); others behind a link
       body.appendChild(h('h3', 'Right-click menus'));
-      const every = menuList(ws, menuView === 'all').filter(m => menuView !== 'top' || !NOT_FOR_NPCS.includes(m.define));
+      const C = FRE.ui.menuChooser, after = form.add || (form.add = { exchange: false, rules: false });
+      const hasShop = form.menus.includes('MMI_TRADE');
+      const exOk = !!FRE.ui.menuForm && ws.isEditable('exchange_script.txt');
+      body.appendChild(h('div.menu-cards.nn-cards',
+        C.card('Shop', C.TEXT.shop, true, '', () => {
+          form.menus = hasShop ? form.menus.filter(x => x !== 'MMI_TRADE') : [...form.menus, 'MMI_TRADE'];
+          if (!hasShop && !form.tabs.length) form.tabs = [blankTab(0)];
+          touched = true; render();
+        }, hasShop),
+        C.card('Exchange', C.TEXT.exchange, exOk, 'Exchange_Script.txt cannot be written here.', () => {
+          after.exchange = !after.exchange; touched = true;
+          if (after.exchange && !form.exchange) form.exchange = FRE.ui.menuForm.blankMenus();
+          render(); }, after.exchange),
+        C.card('Rules text', C.TEXT.rules, ctx.hasClient, 'Needs the Client folder (the text file goes in Client/Client).', () => {
+          after.rules = !after.rules; touched = true;
+          if (after.rules && !form.board) form.board = { label: '', text: '' };
+          render(); }, after.rules)));
+      const parked = hasShop ? 0 : form.tabs.reduce((a, t) => a + t.items.length, 0);
+      if (parked) body.appendChild(h('p.small.warn', `Shop is off: the ${parked} item${parked === 1 ? '' : 's'} in its tabs won't be added. Turn Shop on again to keep them.`));
+      const otherTicked = form.menus.filter(x => x !== 'MMI_TRADE');
+      body.appendChild(h('button.small.linkish', { on: { click: () => { showOther = !showOther; render(); } } },
+        `${showOther ? '▾' : '▸'} Other game window…${otherTicked.length ? ` (${otherTicked.length} ticked)` : ''}`));
+      if (showOther) {
+      const every = menuList(ws, menuView === 'all').filter(m => m.define !== 'MMI_TRADE' && (menuView !== 'top' || (!NOT_FOR_NPCS.includes(m.define) && m.define !== 'MMI_DIALOG')));
       const list = menuView === 'top' ? every.filter((m, i) => i < 16 || form.menus.includes(m.define)) : every;
       body.appendChild(h('div.nn-menus', list.map(m => h('label.nn-menu', { title: `${m.label}\n${m.define} = ${m.id}; used by ${m.count} NPC(s) players see` },
         h('input', { type: 'checkbox', checked: form.menus.includes(m.define), on: { change: e => {
@@ -193,6 +258,7 @@
         } } }), h('span.nn-menu-text', m.label), m.count ? null : h('span.tag.warn', 'unused')))));
       body.appendChild(h('div.nn-row', ['top', 'used', 'all'].map(v => h('label.nn-radio', h('input', { type: 'radio', name: 'nn-menuview', checked: menuView === v,
         on: { change: () => { menuView = v; render(); } } }), v === 'top' ? 'most used' : v === 'used' ? `every menu an NPC uses (${menuList(ws, false).length})` : 'also menus no NPC uses (untested)'))));
+      }
 
       // --- shop
       if (form.menus.includes('MMI_TRADE')) {
@@ -223,6 +289,18 @@
         const free = [0, 1, 2, 3].find(s => !form.tabs.some(t => t.slot === s));
         if (free !== undefined) body.appendChild(h('button.small', { on: { click: () => { form.tabs.push(blankTab(free)); render(); } } }, `+ Tab ${free + 1}`));
       }
+      // --- exchange / rules text: filled here, created with the NPC
+      if (after.exchange && form.exchange) {
+        body.appendChild(h('h3', 'Exchange'));
+        body.appendChild(h('p.muted.small', 'Right-click menus that open the exchange window, like Collins. One card per row of the window.'));
+        exSec = FRE.ui.menuForm.menusSection(ctx, form.exchange, () => { touched = true; refresh(); });
+        body.appendChild(exSec.el);
+      } else exSec = null;
+      if (after.rules && form.board) {
+        body.appendChild(h('h3', 'Rules text'));
+        boardSec = FRE.ui.menuChooser.boardSection(form.board, () => { touched = true; refresh(); });
+        body.appendChild(boardSec.el);
+      } else boardSec = null;
       body.append(...FRE.ui.formFooter({ checks: problems, action: 'Create', preview }));
       refresh();
     }
@@ -235,7 +313,12 @@
 
     function refresh() {
       if (where) where.refreshWhere();
-      const diags = FRE.validateNewNpc(ws, form);
+      const menus = menusOf(ws, form);
+      const diags = [...FRE.validateNewNpc(ws, form), ...menus.diags];
+      if (boardSec) {
+        const b = menus.board && menus.board.plan;
+        boardSec.nameLine.textContent = b ? `Saved as ${menus.board.name}, menu ${b.ids[0]}; text file Client/Client/${FRE.menuOps.boardFileName(b.ids[0])}` : '';
+      }
       problems.textContent = '';
       const blocks = diags.filter(d => d.severity === 'BLOCK');
       if (!touched) problems.appendChild(h('p.muted', 'Fill in the fields above; the checks show here as you type.'));
@@ -246,7 +329,7 @@
       preview.textContent = '';
       if (blocked) { preview.appendChild(h('p.muted', 'Fix the ⛔ problems to see the exact text.')); return; }
       try {
-        const plan = FRE.npcOps.newNpcPlan(ws, form);
+        const plan = FRE.npcOps.newNpcPlan(ws, withNewMenus(form, menus.names));
         const dv = new DataView(plan.record.buffer);
         if (plan.tag) {
           preview.appendChild(h('div.muted.small', `New tag [${plan.tag.text}] = row ${plan.tag.id} (Server + Client): defineNeuz.h, etc.inc, etc.txt.txt get one line each:`));
@@ -259,6 +342,19 @@
         preview.appendChild(h('div.muted.small', `World/${form.map}/${plan.dyo.name} (Server + Client): 200 bytes inserted at offset ${plan.insertAt}, before the end marker:`));
         preview.appendChild(h('pre.nn-pre', `x ${dv.getFloat32(20, true)} (= ${form.x} / 4), y ${dv.getFloat32(24, true)}, z ${dv.getFloat32(28, true)} (= ${form.z} / 4), angle ${dv.getFloat32(4, true)}, model ${dv.getUint32(48, true)}, key ${form.key}\n` +
           Array.from(plan.record, b => b.toString(16).padStart(2, '0')).join(' ').replace(/((?:\S+ ){16})/g, '$1\n')));
+        if (menus.ex) {
+          preview.appendChild(h('h4', `Exchange (${menus.ex.spec.menus.map(m => m.label).join(', ')})`));
+          FRE.ui.menuForm.menusPreview(ws, menus.ex.spec, menus.ex.plan, form.name || form.key, preview);
+        }
+        if (menus.board) {
+          const b = menus.board.plan;
+          preview.appendChild(h('h4', `Rules text (${form.board.label})`));
+          const show = (t, x) => { preview.appendChild(h('div.muted.small', t)); preview.appendChild(h('pre.nn-pre', x.replace(/\r/g, '').replace(/\n$/, ''))); };
+          show(`defineNeuz.h (menu id ${b.ids[0]}):`, b.lines.defineNeuz);
+          show('defineText.h (label = TID 7000 + id):', b.lines.defineText);
+          show('textClient.txt.txt (+ one textClient.inc block):', b.lines.textTxt);
+          show(`Client/Client/${FRE.menuOps.boardFileName(b.ids[0])} (new file, client only):`, FRE.menuOps.boardText(form.board.text));
+        }
       } catch (e) { preview.appendChild(h('p.bad', e.message)); }
     }
 
@@ -274,16 +370,30 @@
 
   function create(ctx) {
     const ws = ctx.ws;
-    if (FRE.validateNewNpc(ws, form).some(d => d.severity === 'BLOCK')) return false;
-    const key = form.key;
-    const tagMade = form.newTag !== null && form.newTag !== undefined;
-    ctx.editGroup(() => FRE.npcOps.newNpcPlan(ws, form).parts, `new NPC ${key}`, [`npc|character.inc|${key}`]);
+    const menus = menusOf(ws, form);
+    if ([...FRE.validateNewNpc(ws, form), ...menus.diags].some(d => d.severity === 'BLOCK')) return false;
+    const key = form.key, f = form;
+    const tagMade = f.newTag !== null && f.newTag !== undefined;
+    // one undo step, planned one after another: the exchange menus, the rules menu, then the NPC with every AddMenu
+    const exNames = menus.ex ? menus.ex.spec.menus.map(m => m.name) : [];
+    let boardName = null;
+    const steps = [];
+    if (menus.ex) steps.push(() => FRE.menuOps.newMenusPlan(ws, menus.ex.spec).parts);
+    if (menus.board) steps.push(() => {
+      boardName = FRE.menuNameFromLabel(ws, f.board.label);
+      return FRE.menuOps.boardPlan(ws, { npcKey: key, newNpc: true, name: boardName, label: f.board.label, text: f.board.text }).parts;
+    });
+    steps.push(() => FRE.npcOps.newNpcPlan(ws, withNewMenus(f, [...exNames, ...(boardName ? [boardName] : [])])).parts);
+    const what = [menus.ex ? 'exchange' : null, menus.board ? 'rules text' : null].filter(Boolean);
+    if (!ctx.editSteps(steps, `new NPC ${key}${what.length ? ' with ' + what.join(' and ') : ''}`, [`npc|character.inc|${key}`])) return false;
     const npc = ws.chars.byKey.get(key.toLowerCase());
     if (!npc) return false;
     FRE.ui.newNpc.created.add(key.toLowerCase());
     select(ctx, npc[npc.length - 1]);
     form = null;
-    toast(`${key} created (not saved yet). Save writes character.inc, character.txt.txt${tagMade ? ', defineNeuz.h, etc.inc, etc.txt.txt' : ''} and the map file, Server and Client.`, 'ok');
+    const files = ['character.inc', 'character.txt.txt', ...(tagMade ? ['defineNeuz.h', 'etc.inc', 'etc.txt.txt'] : []),
+      ...(what.length ? ['defineNeuz.h', 'defineText.h', 'textClient.inc', 'textClient.txt.txt'] : []), ...(menus.ex ? ['Exchange_Script.txt'] : [])];
+    toast(`${key} created (not saved yet). Save writes ${[...new Set(files)].join(', ')}${menus.board ? ', the rules text file (Client/Client)' : ''} and the map file, Server and Client. One Undo removes it all.`, 'ok');
     return true;
   }
 

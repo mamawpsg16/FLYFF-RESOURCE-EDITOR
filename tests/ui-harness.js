@@ -362,6 +362,19 @@
       ok(/New tag \[Dungeon Pieces\] = row 18/.test(pv) && /#define SRT_DUNGEON_PIECES\s+18/.test(pv) && /IDS_ETC_INC_000046\tDungeon Pieces/.test(pv) && /m_nStructure= SRT_DUNGEON_PIECES;/.test(pv),
         'preview: defineNeuz.h, etc.inc, etc.txt.txt lines and m_nStructure');
       ok(/minimap icon/.test(form.querySelector('.nn-problems').textContent) && !document.getElementById('nn-create').disabled, 'NN_TAG_ICON note; Create allowed');
+      // menus: the three kinds of + Menu as cards; Dialog and the long list are behind "Other game window…"
+      const cards = () => [...form.querySelectorAll('.nn-cards .menu-card')];
+      ok(cards().map(c => c.querySelector('b').textContent.replace('✓ ', '')).join('|') === 'Shop|Exchange|Rules text' && cards()[0].classList.contains('on'),
+        'right-click menus: Shop / Exchange / Rules text cards, Shop on');
+      ok(!form.querySelector('.nn-menus') && /Other game window…/.test(form.textContent), 'the long menu list is closed (Other game window…)');
+      click(cards()[1]);
+      ok(cards()[1].classList.contains('on') && !/After Create/.test(form.textContent) && form.querySelector('.mf-section .mf-card') && form.querySelector('input.mf-label'),
+        'Exchange on: its form shows right here (label, name, exchange cards), nothing opens after Create');
+      click(cards()[1]);
+      ok(!cards()[1].classList.contains('on'), 'Exchange off again');
+      click(btnByText(form, 'Other game window…'));
+      ok(form.querySelector('.nn-menus') && ![...form.querySelectorAll('.nn-menu-text')].some(t => /^(Dialog|Trade)$/.test(t.textContent)), 'Other game window…: the list, without Trade and Dialog');
+      click(btnByText(form, 'Other game window…'));
       if (STOP === 'newnpcform') return;
       click(document.getElementById('nn-create'));
       await waitFor(() => !document.querySelector('.newnpc'), 'form closed');
@@ -417,36 +430,60 @@
       inp(nm, 'MMI_TEST_UI');
       ok(box.querySelectorAll('.nn-req.req').length >= 6 && /= required/.test(box.textContent) && /must be fixed before Create/.test(box.textContent),
         'menu form: red * on required fields, the * note and the Checks legend (the standard form footer)');
+      // one card per exchange (like Collins): a card needs its costs and its reward; a menu needs a card
+      ok(box.querySelectorAll('.mf-card').length === 1 && /Still needs a cost and a reward/.test(box.querySelector('.mf-card').textContent) && box.querySelector('#mf-create').disabled,
+        'a new menu starts with one empty exchange card: "still needs a cost and a reward", Create greyed');
+      const card = k => box.querySelectorAll('.mf-card')[k];
+      const pickItems = async (btn, defs) => {
+        click(btn);
+        await waitFor(() => document.querySelector('.ip'), 'item picker');
+        const ip = document.querySelector('.ip');
+        for (const q of defs) {
+          const qi = ip.querySelector('input[type=search]'); qi.value = q; qi.dispatchEvent(new Event('input'));
+          const cb = [...ip.querySelectorAll('.ip-row')].find(r => r.querySelector('.def').textContent === q).querySelector('input'); cb.checked = true; cb.dispatchEvent(new Event('change'));
+        }
+        click([...ip.closest('.modal').querySelectorAll('footer button')].find(b => /^(Add|Make) /.test(b.textContent)));
+        await waitFor(() => !document.querySelector('.ip'), 'picker closed');
+      };
+      card(0).querySelector('.mf-ing .combo').pick('II_SYS_SYS_SCR_SCRAPTOPAZ'); await tick();
+      await pickItems(btnByText(card(0), '+ Reward'), ['II_SYS_SYS_SCR_BLESSEDNESS']);
+      ok(!box.querySelector('#mf-create').disabled && /You get .*×1\s+←\s+Topaz Piece ×1/.test(card(0).querySelector('.mf-card-gets').textContent), 'card 1: Topaz → one reward; Create allowed');
       const pv = box.querySelector('.nn-preview').textContent;
       ok(/#define MMI_TEST_UI\s+282/.test(pv) && /TID_MMI_TEST_UI\s+7282/.test(pv) && /Test Weapons/.test(pv) && /AddMenu\( MMI_TEST_UI \);/.test(pv),
         'menu dialog preview: MMI_TEST_UI 282, label TID 7282, AddMenu on Peach');
-      ok(/no exchange yet/.test(box.querySelector('.nn-problems').textContent) && !box.querySelector('#mf-create').disabled, 'an empty menu only warns; Create allowed');
-      // an ingredient and two rewards, then Random: 50/50, and 70% on one moves the other to 30%
-      box.querySelector('.mf-ing .combo').pick('II_SYS_SYS_SCR_SCRAPTOPAZ'); await tick();
-      for (const q of ['II_SYS_SYS_SCR_BLESSEDNESS', 'II_SYS_SYS_SCR_AMPESS']) {
-        click(btnByText(box, '+ Rewards'));
-        await waitFor(() => document.querySelector('.ip'), 'reward picker');
-        const ip = document.querySelector('.ip');
-        const qi = ip.querySelector('input[type=search]'); qi.value = q; qi.dispatchEvent(new Event('input'));
-        const row = [...ip.querySelectorAll('.ip-row')].find(r => r.querySelector('.def').textContent === q);
-        const cb = row.querySelector('input'); cb.checked = true; cb.dispatchEvent(new Event('change'));
-        click(btnByText(ip.closest('.modal'), 'Add 1 item'));
-        await waitFor(() => !document.querySelector('.ip'), 'picker closed');
-      }
-      ok(box.querySelectorAll('.mf-rewards tr').length === 3 && /2 exchanges in the window/.test(box.textContent), 'two rewards in a readable table; Player picks = 2 exchanges');
-      const rnd = [...box.querySelectorAll('.mf-mode input')][1]; rnd.checked = true; rnd.dispatchEvent(new Event('change'));
-      const pcts = () => [...box.querySelectorAll('.mf-rewards input.pct-input')].map(x => x.value);
-      ok(String(pcts()) === '50,50' && /1 exchange in the window/.test(box.textContent), 'Random: one exchange, 50% / 50%');
-      const p0 = box.querySelector('.mf-rewards input.pct-input'); p0.value = '70'; p0.dispatchEvent(new Event('change'));
+      // a second reward on the same card: random, 50/50, then 70% moves the other to 30%
+      await pickItems(btnByText(card(0), '+ Reward (random)'), ['II_SYS_SYS_SCR_AMPESS']);
+      const pcts = () => [...card(0).querySelectorAll('.mf-rewards input.pct-input')].map(x => x.value);
+      ok(String(pcts()) === '50,50' && /one of/.test(card(0).querySelector('.mf-card-gets').textContent), 'two rewards on one card: random, 50% / 50%');
+      const p0 = card(0).querySelector('.mf-rewards input.pct-input'); p0.value = '70'; p0.dispatchEvent(new Event('change'));
       ok(String(pcts()) === '70,30' && /II_SYS_SYS_SCR_BLESSEDNESS\t1\t700000/.test(box.querySelector('.nn-preview').textContent)
         && /II_SYS_SYS_SCR_AMPESS\t1\t300000/.test(box.querySelector('.nn-preview').textContent), '70% on one reward moves the other to 30% (700000 / 300000 in the file)');
+      // + Exchange: a second card with the costs of the first, then its own cost and reward (different ingredients per reward)
+      ok(!btnByText(box, '+ Several rewards…') && btnByText(card(0), 'Same costs, other rewards…'), 'no "+ Several rewards…"; each card has "Same costs, other rewards…"');
+      click(btnByText(box, '+ Exchange'));
+      ok(box.querySelectorAll('.mf-card').length === 2 && card(1).querySelector('.mf-ing .combo input').value === '' && /Still needs a cost and a reward/.test(card(1).textContent),
+        '+ Exchange: card 2 is empty (nothing copied)');
+      ok(/"Test Weapons", exchange 2, has no cost/.test(box.querySelector('.nn-problems').textContent), 'checks name the menu by its label, not an internal name');
+      card(1).querySelector('.mf-ing .combo').pick('II_SYS_SYS_SCR_SCRAPMOONSTONE'); await tick();
+      click(btnByText(card(1), '+ Ingredient'));
+      card(1).querySelectorAll('.mf-ing .combo')[1].pick('II_SYS_SYS_SCR_SCRAPTOPAZ'); await tick();
+      await pickItems(btnByText(card(1), '+ Reward'), ['II_SYS_SYS_SCR_PIEPROT']);
+      const pvx = box.querySelector('.nn-preview').textContent;
+      ok(/Exchange 2: .*←\s*Moonstone Piece ×1 \+ Topaz Piece ×1/.test(pvx) && /Exchange 1: one of/.test(pvx), 'preview: exchange 2 has its own two ingredients');
+      // "Same costs, other rewards…" on card 2: each ticked item = its own card with card 2's costs, right after it
+      await pickItems(btnByText(card(1), 'Same costs, other rewards…'), ['II_SYS_SYS_SCR_SMELPROT', 'II_SYS_SYS_SCR_SMELPROT3']);
+      const costsOf = k => [...card(k).querySelectorAll('.mf-ing .combo input')].map(x => x.value).join('+');
+      ok(box.querySelectorAll('.mf-card').length === 4 && costsOf(2) === costsOf(1) && costsOf(3) === costsOf(1) && /Moonstone/.test(costsOf(2))
+        && /SMELPROT/.test(card(2).textContent) && /SMELPROT3/.test(card(3).textContent), 'same costs, 2 other rewards: cards 3 and 4 cost what card 2 costs, one reward each');
+      click(card(3).querySelector('.mf-card-tools .danger')); click(card(2).querySelector('.mf-card-tools .danger'));
+      if (STOP === 'mfcards') { $('toasts').textContent = ''; return; }
       click(box.querySelector('#mf-create'));
       await waitFor(() => !document.querySelector('.modal .mf-recipe'), 'menu dialog closed');
       ok(S.ws.dirtyFiles().length === 6 && S.ws.files.get('exchange_script.txt').dirty && S.ws.files.get('definetext.h').dirty, '6 files changed (incl. Exchange_Script.txt, defineText.h)');
-      ok(/Test Weapons ⇄ 1 exchange/.test($('editor').textContent), 'menu chip: in-game label and 1 exchange');
+      ok(/Test Weapons ⇄ 2 exchanges/.test($('editor').textContent), 'menu chip: in-game label and 2 exchanges');
       // the exchange tab in NPC Shops: the Exchanges cards, before saving
       click([...$('editor').querySelectorAll('.tabs button')].find(b => b.textContent.includes('⇄ Test Weapons')));
-      ok($('editor').querySelectorAll('.ex-card').length === 1 && /You get/.test($('editor').textContent), 'NPC Shops: the menu\'s tab shows its exchange card (before saving)');
+      ok($('editor').querySelectorAll('.ex-card').length === 2 && /You get/.test($('editor').textContent), 'NPC Shops: the menu\'s tab shows its 2 exchange cards (before saving)');
       // typing a percent updates by itself after a short pause, and the cursor stays in the box
       const tp = $('editor').querySelector('.ex-card input.pct-input');
       tp.focus(); tp.value = '25'; tp.dispatchEvent(new Event('input'));
@@ -706,6 +743,61 @@
       ok(spots1.length === 11 && spots1[0].model !== spots0[0].model && S.ws.movers.movers.get(spots1[0].model).name === 'Julia' && spots1.every(p => p.model === spots1[0].model) && spots1.every((p, i) => p.x === spots0[i].x && p.angle === spots0[i].angle), 'all 11 Postboxes now use Julia\'s body, nothing else moved');
       click($('btn-undo'));
       ok(FRE.npcEditOps.placementsOf(S.ws, pb).every((p, i) => p.model === spots0[i].model) && S.ws.dirtyFiles().length === 0, 'one Undo restores all 11');
+      // + NPC with Shop + Exchange + Rules text: filled in the one form, ONE Create, ONE undo step
+      click(btnByText(document.querySelector('#list-action') || document, '+ NPC'));
+      await waitFor(() => document.querySelector('.newnpc'), '+ NPC form (menus inline)');
+      const nf = () => document.querySelector('.newnpc');
+      const typ = (sel, v) => { const el = nf().querySelector(sel); el.value = v; el.dispatchEvent(new Event('input')); };
+      click(btnByText(nf().closest('.modal').querySelector('footer'), 'Reset form'));
+      typ('input[placeholder="MaFl_Lumi"]', 'MaFl_Swapper'); typ('input[placeholder="Lumi"]', 'Swapper');
+      typ('input[placeholder="x"]', '6990'); typ('input[placeholder="y (height)"]', '100'); typ('input[placeholder="z"]', '3290');
+      const ncards = () => [...document.querySelectorAll('.newnpc .nn-cards .menu-card')];
+      typ('input[placeholder="Tab title, e.g. Scrolls"]', 'Goods');
+      const pick1 = async (btn, def) => {
+        click(btn);
+        await waitFor(() => document.querySelector('.ip'), 'item picker');
+        const ip = document.querySelector('.ip');
+        const qi = ip.querySelector('input[type=search]'); qi.value = def; qi.dispatchEvent(new Event('input'));
+        const cb = [...ip.querySelectorAll('.ip-row')].find(r => r.querySelector('.def').textContent === def).querySelector('input'); cb.checked = true; cb.dispatchEvent(new Event('change'));
+        click([...ip.closest('.modal').querySelectorAll('footer button')].find(b => /^Add /.test(b.textContent)));
+        await waitFor(() => !document.querySelector('.ip'), 'picker closed');
+      };
+      await pick1(btnByText(nf(), '+ Add items'), 'II_SYS_SYS_SCR_BLESSEDNESS');
+      // Shop off with items in its tabs: a warning (they are kept), not a block
+      click(ncards()[0]);
+      const probs = () => nf().querySelector('.nn-problems').textContent;
+      ok(/Shop is off: the 1 item in its tabs won't be added/.test(nf().textContent) && /WARN/.test(probs()) && !/tick Trade/.test(probs()) && !document.getElementById('nn-create').disabled,
+        'Shop off with an item: a warning that it won\'t be added, Create still allowed');
+      click(ncards()[0]);
+      ok(/1 \/ 100/.test(nf().textContent), 'Shop on again: the item is still there');
+      // Exchange: the card's cost and reward right in this form
+      click(ncards()[1]);
+      typ('input.mf-label', 'Swapper Swaps');
+      ok(document.getElementById('nn-create').disabled && /NM_RECIPE|no ingredient|no reward|has no exchange/.test(probs()), 'an empty exchange card blocks Create');
+      nf().querySelector('.mf-card .mf-ing .combo').pick('II_SYS_SYS_SCR_SCRAPTOPAZ'); await tick();
+      await pick1(btnByText(nf().querySelector('.mf-card'), '+ Reward'), 'II_SYS_SYS_SCR_AWAKE');
+      // Rules text: name + text right in this form
+      click(ncards()[2]);
+      ok(nf().querySelector('textarea.board-text'), 'Rules text on: its fields show right here');
+      typ('input[placeholder="e.g. Guild Siege Rules"]', 'Swapper Rules');
+      const ta = nf().querySelector('textarea.board-text'); ta.value = 'Be nice'; ta.dispatchEvent(new Event('input'));
+      const pvw = nf().querySelector('.nn-preview').textContent;
+      const [fa, fb] = FRE.menuOps.freeMenuIds(S.ws);
+      ok(!document.getElementById('nn-create').disabled && /AddMenu\( MMI_TRADE \);\s*AddMenu\( MMI_SWAPPER_SWAPS \);\s*AddMenu\( MMI_SWAPPER_RULES \);/.test(pvw)
+        && new RegExp(`#define MMI_SWAPPER_SWAPS\\s+${fa}`).test(pvw) && new RegExp(`#define MMI_SWAPPER_RULES\\s+${fb}`).test(pvw) && new RegExp(`NpcBoard_${fb}\\.inc \\(new file`).test(pvw)
+        && new RegExp(`Saved as MMI_SWAPPER_RULES, menu ${fb}`).test(nf().textContent),
+        `preview: the NPC block lists Trade + both new menus; exchange menu ${fa}, rules menu ${fb} and its file`);
+      if (STOP === 'nnmenus') { $('toasts').textContent = ''; const sc = nf().closest('.modal').querySelector('.modal-body') || nf().parentElement; const h3 = [...nf().querySelectorAll('h3')].find(x => x.textContent === 'Rules text'); if (h3) h3.scrollIntoView(); return; }
+      const steps0 = S.ws.history.length;
+      click(document.getElementById('nn-create'));
+      await waitFor(() => !document.querySelector('.newnpc'), 'form closed (menus inline)');
+      const sw = S.ws.chars.byKey.get('mafl_swapper');
+      const labels = sw ? FRE.newNpcSim.rightClick(S.ws, sw.slice(-1)[0].menus).map(m => m.label) : [];
+      ok(['Swapper Swaps', 'Swapper Rules'].every(l => labels.includes(l)) && S.ws.history.length === steps0 + 1 && !lastModalAny(),
+        `one Create: the NPC with its exchange and rules menus (${labels.join(', ')}), one undo step, no second window`);
+      ok(/Exchange_Script\.txt/.test($('toasts').textContent) && /One Undo removes it all/.test($('toasts').textContent), 'the note lists the files and says one Undo removes it all');
+      click($('btn-undo'));
+      ok(!S.ws.chars.byKey.has('mafl_swapper') && !S.ws.defines.defines.has('MMI_SWAPPER_SWAPS') && S.ws.dirtyFiles().length === 0, 'one Undo removes the NPC and both menus');
       if (STOP === 'npcmove') { openNpc('MaFl_Peach'); $('toasts').textContent = ''; click($('editor').querySelector('.place-edit')); return; }
     }
 

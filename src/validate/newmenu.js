@@ -16,7 +16,8 @@
   // Why a new menu name cannot be used, or null. others: names of the other new menus in the same form.
   function menuNameProblem(ws, name, others = []) {
     const D = ws.defines.defines;
-    if (!NAME.test(name || '')) return `Menu name "${name}" must be MMI_ followed by capital letters, digits or _ (40 at most).`;
+    if (!name) return 'The menu name is empty: type a label (the name fills itself).';
+    if (!NAME.test(name)) return `Menu name "${name}" must be MMI_ followed by capital letters, digits or _ (40 at most).`;
     if (D.has(name) || D.has('TID_' + name) || others.includes(name)) return `${name} (or TID_${name}) already exists: choose another name.`;
     return null;
   }
@@ -36,16 +37,18 @@
     const out = [];
     const add = (code, severity, field, message) => out.push({ code, severity, field, message, key: `${code}|${field}`, module: 'npc' });
     const D = ws.defines.defines;
+    const itemName = d => { if (d === 'PENYA') return 'Penya'; const id = D.get(d), it = id === undefined ? null : ws.itemById(id); return it && it.name ? it.name : d; };
     const missing = FRE.menuOps.FILES.filter(n => !ws.files.get(n) || !ws.isEditable(n));
     if (missing.length) add('NM_FILES', 'BLOCK', 'menus', `A new menu writes ${missing.join(', ')}, which this task cannot change (not found or read-only).`);
     const list = ws.chars && ws.chars.byKey.get(String(spec.npcKey || '').toLowerCase());
     const npc = list && list[list.length - 1];
-    if (!npc) add('NM_NPC', 'BLOCK', 'npc', `There is no NPC ${spec.npcKey}.`);
+    if (spec.newNpc) { /* the NPC is created in the same step (+ NPC) */ }
+    else if (!npc) add('NM_NPC', 'BLOCK', 'npc', `There is no NPC ${spec.npcKey}.`);
     else if (npc.file.toLowerCase() !== 'character.inc') add('NM_NPC', 'BLOCK', 'npc', `${npc.key} is in ${npc.file}; only NPCs in character.inc can get a new menu here.`);
     const menus = spec.menus || [];
     if (!menus.length) add('NM_NONE', 'BLOCK', 'menus', 'No menu to add.');
     const free = FRE.menuOps.freeMenuIds(ws);
-    if (free.length < menus.length) add('NM_ID_FULL', 'BLOCK', 'menus', `Only ${free.length} free menu ids are left under MAX_MOVER_MENU (350, compiled); ${menus.length} are needed.`);
+    if (free.length < menus.length + (spec.extraIds || 0)) add('NM_ID_FULL', 'BLOCK', 'menus', `Only ${free.length} free menu ids are left under MAX_MOVER_MENU (350, compiled); ${menus.length + (spec.extraIds || 0)} are needed.`);
     const seen = new Set();
     menus.forEach((m, i) => {
       const f = `menu ${i + 1}`;
@@ -53,21 +56,29 @@
       if (np) add('NM_NAME', 'BLOCK', f, np);
       seen.add(m.name);
       const tp = textProblem(m.label);
-      if (tp) add('NM_TEXT', 'BLOCK', f, `Label of ${m.name} ${tp}.`);
+      if (tp) add('NM_TEXT', 'BLOCK', f, `The label of exchange menu ${i + 1} ${tp}.`);
+      const who = m.label && m.label.trim() ? `"${m.label.trim()}"` : `Exchange menu ${i + 1}`;
       const sets = m.sets || [];
-      if (!sets.length) add('NM_EMPTY', 'WARN', f, `${m.name} has no exchange yet: its window opens empty.`);
+      if (!sets.length) add('NM_EMPTY', 'BLOCK', f, `${m.label || m.name} has no exchange: add one (its costs and its reward).`);
       if (sets.length > 30) add('NM_SET_CAP', 'BLOCK', f, `${m.name} has ${sets.length} exchanges; the server keeps only the first 30.`);
       sets.forEach((s, k) => {
         const g = `${f} exchange ${k + 1}`;
-        if (!(s.cond || []).length) add('NM_RECIPE', 'BLOCK', g, `${m.name} exchange ${k + 1} has no ingredient: the reward would be free.`);
-        if (!(s.pay || []).length) add('NM_RECIPE', 'BLOCK', g, `${m.name} exchange ${k + 1} has no reward: an empty PAY crashes the server and the client.`);
+        if (!(s.cond || []).length) add('NM_RECIPE', 'BLOCK', g, `${who}, exchange ${k + 1}, has no cost (ingredient): the reward would be free.`);
+        // CheckCondition (Exchange.cpp:279) checks each cost line against the player's WHOLE count, then RemoveItemA
+        // finds nothing left for the second line: Sheep ×1 + Sheep ×1 passes with 1 sheep and takes only 1
+        const twice = (s.cond || []).map(c => c[0]).filter((d, j, a) => d && a.indexOf(d) !== j);
+        for (const d of new Set(twice)) {
+          const total = (s.cond || []).filter(c => c[0] === d).reduce((a, c) => a + (Number(c[1]) || 0), 0);
+          add('NM_COND_TWICE', 'BLOCK', g, `${who}, exchange ${k + 1}: ${itemName(d)} is listed twice in the costs. The game checks each line alone, so players would pay less. Put ×${total} on one line.`);
+        }
+        if (!(s.pay || []).length) add('NM_RECIPE', 'BLOCK', g, `${who}, exchange ${k + 1}, has no reward: an empty PAY crashes the server and the client.`);
         for (const [d, n] of s.cond || []) {
           if (d !== 'PENYA' && !D.has(d)) add('NM_ITEM', 'BLOCK', g, `Ingredient ${d} is not defined: the server reads it as -1 and nobody can trade.`);
           if (!(Number.isInteger(n) && n >= 1)) add('NM_QTY', 'BLOCK', g, `Ingredient ${d}: quantity ${n} must be a whole number, 1 or more.`);
         }
         const payNum = s.payNum === undefined ? 1 : s.payNum;
         if ((s.pay || []).length && !(Number.isInteger(payNum) && payNum >= 1 && payNum <= s.pay.length))
-          add('NM_PAYNUM', 'BLOCK', g, `${m.name} exchange ${k + 1} gives ${payNum} of ${s.pay.length} rewards: it must give 1 to ${s.pay.length}.`);
+          add('NM_PAYNUM', 'BLOCK', g, `${who}, exchange ${k + 1}, gives ${payNum} of ${s.pay.length} rewards: it must give 1 to ${s.pay.length}.`);
         let total = 0;
         for (const [d, n, p] of s.pay || []) {
           const id = D.get(d);
@@ -75,7 +86,7 @@
           if (!(Number.isInteger(n) && n >= 1)) add('NM_QTY', 'BLOCK', g, `Reward ${d}: quantity ${n} must be a whole number, 1 or more.`);
           total += p;
         }
-        if ((s.pay || []).length && total !== 1000000) add('NM_CHANCE', 'WARN', g, `${m.name} exchange ${k + 1}: the chances add up to ${total.toLocaleString('en-US')}, not 1,000,000 (the server cuts or tops up the last line).`);
+        if ((s.pay || []).length && total !== 1000000) add('NM_CHANCE', 'WARN', g, `${who}, exchange ${k + 1}: the chances add up to ${total.toLocaleString('en-US')}, not 1,000,000 (the server cuts or tops up the last line).`);
       });
     });
     const r = spec.results || {};

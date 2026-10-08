@@ -75,6 +75,30 @@
         done(label, said);
       } catch (e) { toast(e.message, 'bad'); } finally { renderAll(false); }
     },
+    // Several steps, each planned on the files as the step before left them, as ONE undo step:
+    // makers = [() => [{ file, splices }], ...]. A failing step undoes the ones before it.
+    editSteps(makers, label, keys = []) {
+      const said = FRE.dom.toasts();
+      let done_ = 0;
+      try {
+        for (const make of makers) {
+          const n = S.ws.history.length;
+          S.ws.applyGroup(make(), label);
+          if (S.ws.history.length > n) done_++;
+        }
+        if (done_ > 1) S.ws.foldLast(done_, label);
+        const last = S.ws.history[S.ws.history.length - 1];
+        tagLast(keys, label);
+        if (last) last.at = Date.now();
+        done(label, said);
+        return true;
+      } catch (e) {
+        while (done_-- > 0) S.ws.undo();
+        S.ws.redoStack = [];
+        toast(e.message, 'bad');
+        return false;
+      } finally { renderAll(false); }
+    },
   };
 
   // ------------------------------------------------------------------ folder + task

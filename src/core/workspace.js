@@ -344,6 +344,23 @@
       return true;
     }
 
+    // Fold the last n steps into ONE undo step (a new NPC + its new menus, each planned after the one before).
+    // Each file keeps only its oldest snapshot of those steps, so Undo goes back to before all of them.
+    foldLast(n, label) {
+      const h = this.history;
+      if (n < 2 || h.length < n || this.redoStack.length) return false;
+      const steps = h.splice(h.length - n, n);
+      const names = [...new Set(steps.flat())];
+      for (const name of names) {
+        const u = this.files.get(name)._undo;
+        const k = steps.filter(s => s.includes(name)).length;
+        u.splice(u.length - k + 1, k - 1);
+        if (label) u[u.length - 1].label = label;
+      }
+      h.push(names);
+      return true;
+    }
+
     undo() {
       const names = this.history.pop(); if (!names) return null;
       let label = null;

@@ -2125,7 +2125,7 @@ def nn_struct_cases(A):
 
 NN_BLOCKING = {'NN_KEY', 'NN_KEY_DUP', 'NN_KEY_NAME', 'NN_TEXT', 'NN_IDS_TAKEN', 'NN_MENU', 'NN_MODEL', 'NN_MODEL_FILES', 'NN_STRUCTURE',
                'NN_TAG_FILES', 'NN_TAG_FULL', 'NN_TAG_CHARS', 'NN_TAG_LONG', 'NN_TAG_DUP',
-               'NN_SHOP_NO_TRADE', 'NN_SHOP_EMPTY', 'NN_TAB', 'NN_RULE', 'NN_ITEM', 'NN_PRICE', 'NN_PRICE_CONFLICT', 'NN_MAP', 'NN_POS'}
+               'NN_SHOP_EMPTY', 'NN_TAB', 'NN_RULE', 'NN_ITEM', 'NN_PRICE', 'NN_PRICE_CONFLICT', 'NN_MAP', 'NN_POS'}
 
 
 # ---------------------------------------------------------------------------------------------- newmenu
@@ -2211,6 +2211,10 @@ def nm_check(A, spec):
             g = f'{f} exchange {k + 1}'
             if not st.get('cond'): add('NM_RECIPE', g)
             if not st.get('pay'): add('NM_RECIPE', g)
+            # CheckCondition (Exchange.cpp:279) checks each line against the player's whole count, and RemoveItemA
+            # then finds nothing for the second line: an item listed twice costs only the larger line
+            names = [d for d, _ in st.get('cond') or []]
+            if len(set(names)) != len(names): add('NM_COND_TWICE', g)
             for d, n in st.get('cond') or []:
                 if d != 'PENYA' and d not in D: add('NM_ITEM', g)
                 if not (isinstance(n, int) and n >= 1): add('NM_QTY', g)
@@ -2357,6 +2361,7 @@ def nm_specs(A):
     S = [('jeff', jeff, True, {}),
          ('one menu, existing texts', one(), True, {}),
          ('penya ingredient', one(menus=menu(sets=[rec(cond=[['PENYA', 1000], ['II_SYS_SYS_SCR_SCRAPTOPAZ', 1]])])), True, {}),
+         ('same cost twice', one(menus=menu(sets=[rec(cond=[['II_SYS_SYS_SCR_SCRAPTOPAZ', 1], ['II_SYS_SYS_SCR_SCRAPTOPAZ', 1]])])), False, {}),
          ('two rewards by chance', one(menus=menu(sets=[rec(pay=[['II_SYS_SYS_SCR_HOLY', 1, 400000], ['II_SYS_SYS_SCR_AMPESS', 1, 600000]])])), True, {}),
          ('random 50/50', one(menus=menu(sets=[dict(rec(pay=[['II_SYS_SYS_SCR_HOLY', 1, 500000], ['II_SYS_SYS_SCR_AMPESS', 2, 500000]]), payNum=1)])), True, {}),
          ('random gives 2 of 3', one(menus=menu(sets=[dict(rec(pay=[['II_SYS_SYS_SCR_HOLY', 1, 333334], ['II_SYS_SYS_SCR_AMPESS', 1, 333333], ['II_SYS_SYS_SCR_BLESSEDNESS', 1, 333333]]), payNum=2)])), True, {}),
@@ -2373,7 +2378,12 @@ def nm_specs(A):
          ('label korean', one(menus=menu(label='무기')), False, {}),
          ('label 255', one(menus=menu(label='L' * 255)), False, {}),
          ('label 256', one(menus=menu(label='L' * 256)), False, {}),
-         ('no exchange', one(menus=menu(sets=[])), True, {}),
+         ('no exchange (blocked since 2026-10-07: a menu needs an exchange)', one(menus=menu(sets=[])), False, {}),
+         ('Collins-like: own costs per exchange', one(menus=menu(sets=[rec(cond=[['II_SYS_SYS_SCR_SCRAPTOPAZ', 5]], pay=[['II_SYS_SYS_SCR_HOLY', 5, 1000000]]),
+                                                                    rec(cond=[['II_SYS_SYS_SCR_SCRAPMOONSTONE', 3], ['PENYA', 1000]], pay=[['II_SYS_SYS_SCR_AMPESS', 1, 1000000]]),
+                                                                    dict(rec(cond=[['II_SYS_SYS_SCR_SCRAPMOONSTONE', 1], ['II_SYS_SYS_SCR_SCRAPTOPAZ', 1]],
+                                                                             pay=[['II_SYS_SYS_SCR_HOLY', 1, 700000], ['II_SYS_SYS_SCR_BLESSEDNESS', 1, 300000]]), payNum=1)])), True, {}),
+         ('two menus, different costs', one(menus=menu() + menu(name='MMI_TEST_TWO', label='Two', sets=[rec(cond=[['II_SYS_SYS_SCR_SCRAPMOONSTONE', 2]], pay=[['II_SYS_SYS_SCR_AMPESS', 1, 1000000]])])), True, {}),
          ('30 exchanges', one(menus=menu(sets=[rec()] * 30)), True, {}),
          ('npc with several menus (Peach)', one(npcKey='MaFl_Peach'), True, {}),
          ('31 exchanges', one(menus=menu(sets=[rec()] * 31)), False, {}),
@@ -2392,7 +2402,7 @@ def nm_specs(A):
     return [dict(name=n, spec=copy.deepcopy(sp), game=g, defs=d) for n, sp, g, d in S]
 
 
-NM_BLOCKING = {'NM_FILES', 'NM_NPC', 'NM_NONE', 'NM_ID_FULL', 'NM_NAME', 'NM_TEXT', 'NM_SET_CAP', 'NM_RECIPE', 'NM_ITEM', 'NM_QTY', 'NM_RESULT', 'NM_PAYNUM'}
+NM_BLOCKING = {'NM_EMPTY', 'NM_FILES', 'NM_NPC', 'NM_NONE', 'NM_ID_FULL', 'NM_NAME', 'NM_TEXT', 'NM_SET_CAP', 'NM_RECIPE', 'NM_ITEM', 'NM_QTY', 'NM_RESULT', 'NM_PAYNUM', 'NM_COND_TWICE'}
 
 
 def nm_run(root):
@@ -3232,7 +3242,22 @@ def nv_run(root):
                 changed[mm] = dict(sha=hashlib.sha1(bytes(b)).hexdigest(), size=len(b), bytes=sum(1 for i in range(len(a)) if a[i] != b[i]))
         back = [dict(map=mm, n=nn, **nv_read(files[mm], at)) for mm, nn, at in nv_spots([(x, bytes(files[x])) for x in order], c['key'])]
         out.append(dict(case=c, changed=changed, back=back))
-    return dict(cases=out, records=len(every))
+    # small built files: an OT_CTRL record of each CCommonCtrl::Read version (CommonCtrl.cpp:84) ahead of an NPC
+    # record, so the record offsets after it come from the CTRL size of that version
+    small = []
+    for v in (0x80000000, 0x90000000, 7):
+        size = CTRL_ELEM if v == 0x80000000 else (88 + CTRL_ELEM - 152 if v == 0x90000000 else CTRL_ELEM - 40)
+        ctrl = struct.pack('<I', OT_CTRL) + bytes(60) + struct.pack('<I', v) + bytes(size)
+        mover = bytearray(200)
+        struct.pack_into('<I', mover, 0, OT_MOVER)
+        struct.pack_into('<f', mover, NV_ANGLE, 45.0)
+        struct.pack_into('<3f', mover, NV_POS, 100.25, 50.5, 200.75)
+        struct.pack_into('<I', mover, NV_INDEX, 231)
+        mover[NV_KEY:NV_KEY + 10] = b'MaFl_Small'
+        data = ctrl + bytes(mover) + struct.pack('<I', 0xFFFFFFFF)
+        recs = [dict(at=at, key=k, **nv_read(data, at)) for at, k in nv_records(data)]
+        small.append(dict(version=v, hex=data.hex(), records=recs))
+    return dict(cases=out, records=len(every), small=small)
 
 
 
