@@ -10,6 +10,8 @@
 //   The game (Neuz): the same loads once at startup, before the login screen (Neuz.cpp:1589 BeginLoadThread ->
 //     LoadPreFiles :1593, OpenProject :1573). A loose file in Client/ wins over data.res (file.cpp:273
 //     CResFile::Open, b7645c52). Never reads .dyo (WorldFile.cpp:269-382 is #ifdef __WORLDSERVER).
+//   propMoverEx.inc (Monster Drops): the game reads it at startup but the drop lines are kept only #ifdef __WORLDSERVER
+//     (Project.cpp:3196 / 3218 / 3234), and it has no loose Client copy: a drop change needs only the server restart.
 //   Client/Client/DonationShopTree.inc: each time the Donation Shop window opens (WndDonationShop.cpp:346; 409 with donation-tree.diff).
 //   Client/Client/NpcBoard_<id>.inc: on every click of the menu, once docs/patches/npc-board.diff is built.
 // Stop Server.bat closes Neuz and every server; Start Server.bat starts them and then the game
@@ -34,6 +36,8 @@
     'exchange_script.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:979 -> Exchange.cpp:34 Load_Script' },
     'donationshop.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:932 -> ProjectCmn.cpp:1845 LoadDonationShop' },
     'battlepass.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:907 -> ProjectCmn.cpp:1682 LoadBattlePass' },
+    // the game parses propMoverEx.inc too, but keeps no drop lines: DropItem / DropKind / DropGold are added #ifdef __WORLDSERVER
+    'propmoverex.inc': { server: STARTUP, client: null, cite: 'Project.cpp:828 LoadPropMoverEx (drops #ifdef __WORLDSERVER :3196)' },
     'client/donationshoptree.inc': { server: null, client: WINDOW, cite: 'WndDonationShop.cpp:346 (409 with donation-tree.diff) LoadTreeScript' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };

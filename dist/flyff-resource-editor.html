@@ -378,6 +378,12 @@ button.linkish { background: none; border: none; color: var(--accent); padding: 
 .mf-card-tools { display: inline-flex; gap: 4px; }
 .mf-ing .combo { flex: 1 1 420px; max-width: 560px; }
 .mf-card label input.num-input { width: 70px; min-width: 0; }
+/* Monster Drops (ui/drops.js) */
+table.dr td input.num-input { width: 72px; }
+table.dr td .dr-amt { white-space: nowrap; }
+.dr-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.dr-line input.num-input { width: 110px; }
+
 
 </style>
 </head>
@@ -434,7 +440,7 @@ button.linkish { background: none; border: none; color: var(--accent); padding: 
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "47+", "when": "Thu 8 Oct 2026, 14:23", "rev": "b0e461b", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "48+", "when": "Thu 8 Oct 2026, 15:48", "rev": "7531898", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -1712,7 +1718,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "47+", "when
 // ---- loaders/propmover.js ----
 // propMover.txt loader, ported from CProject::LoadPropMover (_Common/ProjectCmn.cpp:380).
 // Read-only: the editor needs each monster's id, display name, level and rank
-// (Battle Pass monster points are priced by level and rank).
+// (Battle Pass monster points are priced by level and rank), and for Monster Drops dwFlying and dwCorrectionValue.
 // A record is a fixed token stream: id, name, then the fields below in the
 // exact order the C++ reads them (__VER 19). Line breaks don't matter.
 (function (FRE) {
@@ -1737,6 +1743,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "47+", "when
   const SCHEMA = SCHEMA_SRC.trim().split(/\s+/).map(s => { const [name, kind] = s.split(':'); return { name, kind }; });
   const LEVEL = SCHEMA.findIndex(f => f.name === 'dwLevel');
   const CLASS = SCHEMA.findIndex(f => f.name === 'dwClass');
+  const FLYING = SCHEMA.findIndex(f => f.name === 'dwFlying');
+  const CORRECTION = SCHEMA.findIndex(f => f.name === 'dwCorrectionValue');
 
   // dwClass values (defineAttribute.h RANK_*), as BattlePass.inc's row comments name them
   const RANKS = { 1: 'low', 2: 'normal', 3: 'captain', 4: 'boss', 5: 'midboss', 6: 'material', 7: 'super', 8: 'guard', 9: 'citizen' };
@@ -1765,6 +1773,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "47+", "when
         id: id.value, define: id.define || file.text.slice(id.start, id.end),
         name, nameKey: nameTok.stringKey || null,
         level: vals[LEVEL], rankId: vals[CLASS], rank: RANKS[vals[CLASS]] || `rank ${vals[CLASS]}`,
+        flying: vals[FLYING], correction: vals[CORRECTION],   // the kill path: drops into the bag; DropKind's chance % (Mover.cpp:8613 / 8866)
         start: id.start,
       });
     }
@@ -3371,6 +3380,1008 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "47+", "when
   FRE.battlePass = { loadBattlePass, seasonHistory, validateBattlePass, isMonster, seasonEnd, ymd, dayText, whenText, band, BANDS, FILE, MAX_BPOINTS };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/drops.js ----
+// Monster drops: propMoverEx.inc and the read-only files the kill path also uses.
+//   loadDrops      = CProject::LoadPropMoverEx      (_Common/Project.cpp:2978-3255)
+//                    + LoadPropMoverEx_AI / _SCAN / _BATTLE / _MOVE (_Common/ProjectLux.cpp)
+//                    + InterpretRandomItem           (Project.cpp:3606)
+//   loadExcept     = CProject::LoadExcept            (Project.cpp:5059; only "worldDrop = 0" matters here)
+//   loadDropEvent  = CProject::LoadDropEvent         (Project.cpp:4013; runs after LoadPropMoverEx, Project.cpp:828-898)
+//   loadPenyaTable = PenyaTable::LoadFile            (_Common/PenyaTable.cpp:9, __PENYA_LEVEL_TABLE, commits ed940337 / fbf9bc22)
+//   loadDropLuck   = the expDropLuck block of LoadExpTable (Project.cpp:3815)
+//   loadEventRates = Event.lua AddEvent / SetTime / Set*Rate + LuaFunc/EventFunc.lua GetEventState / Get*Rate
+//   kindArrays     = CProject::OnAfterLoadPropItem   (Project.cpp:4983: m_itemKindAry sorted by dwItemRare, m_minMaxIdxAry)
+// DropItem / DropKind / DropGold are added only #ifdef __WORLDSERVER (Project.cpp:3196 / 3218 / 3234):
+// the game client parses the file but keeps no drops. propMoverEx.inc has no loose Client copy.
+(function (FRE) {
+  'use strict';
+  const { Script } = FRE.lexer;
+  const FILE = 'propMoverEx.inc';
+  const MAX_DROPKIND = 80;           // ProjectCmn.h:758 (the file's header comment still says 64)
+  const INT_MAX = 2147483647;
+  const DROP_ONE = 3000000000;       // GetAt: xRandom( 3000000000 ) (Project.cpp:187)
+  const LANG_USA = 1, SUBLANG = 0;   // WorldServer.rc:137-138 IDS_LANG "1", IDS_SUBLANG "0"
+  // Script-made blocks: "// [Name] begin" ... "// [Name] end" (46c26c73, 1d4c2944, bf871bba, 76924904, d27d9a5a)
+  const GEN_SCRIPT = { BossDrop: 'gen_boss_drops.ps1', SetDrop: 'gen_set_drops.ps1', TowerCard: 'gen_tower_cards.ps1',
+    RedChip: 'gen_red_chips.ps1', MoonSun: 'gen_moonsun_drops.ps1' };
+
+  const ieq = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();   // strcmpi
+  const u32 = v => v >>> 0;
+
+  // "// [X] begin" / "// [X] end" lines -> [{ name, start, end }]
+  function genRanges(text) {
+    const out = [], open = new Map();
+    const re = /\/\/[ \t]*\[(\w+)\][ \t]*(begin|end)\b/g;
+    let m;
+    while ((m = re.exec(text))) {
+      if (m[2] === 'begin') open.set(m[1], m.index);
+      else if (open.has(m[1])) { out.push({ name: m[1], start: open.get(m[1]), end: m.index }); open.delete(m[1]); }
+    }
+    return out;
+  }
+
+  // ---- AI {} (ProjectLux.cpp). Returns false where the C++ returns FALSE: the whole file stops loading. ----
+  // tokenType: IDENTIFIER = our 'ident', NUMBER = our 'number' (a #define resolves to NUMBER, CScript::GetToken).
+  function aiBlock(s, fail) {
+    let t = s.getToken();                                     // {
+    if (t.text[0] !== '{') return fail(t, 'AI is not followed by {');
+    for (;;) {
+      t = s.getToken();
+      if (t.type === 'eof') return fail(t, 'the file ends inside AI { }');
+      if (t.text[0] === '}') break;
+      if (t.text[0] !== '#') return fail(t, `AI { } holds "${t.text}" where a #SCAN / #BATTLE / #MOVE section should start`);
+      const sec = t.text;
+      let ok;
+      if (ieq(sec, '#SCAN')) ok = aiScan(s, fail);
+      else if (ieq(sec, '#BATTLE')) ok = aiBattle(s, fail);
+      else if (ieq(sec, '#MOVE')) ok = aiMove(s, fail);
+      else return fail(t, `unknown AI section "${sec}"`);
+      if (!ok) return false;
+    }
+    return true;
+  }
+  function sectionOpen(s, fail, what) {
+    const t = s.getToken();
+    if (t.text[0] !== '{') { fail(t, `${what} is not followed by {`); return false; }
+    return true;
+  }
+  function aiScan(s, fail) {
+    if (!sectionOpen(s, fail, '#SCAN')) return false;
+    let cmd = 0;
+    for (;;) {
+      const t = s.getToken();
+      if (t.type === 'eof') return fail(t, 'the file ends inside #SCAN { }');
+      if (t.text[0] === '}') break;
+      if (t.type !== 'ident') continue;
+      if (cmd === 'scan') {
+        if (['job', 'range', 'quest', 'item', 'chao'].some(w => ieq(t.text, w))) s.getNumber();
+        else return fail(t, `#SCAN: "${t.text}" is not job / range / quest / item / chao`);
+      }
+      if (ieq(t.text, 'scan')) {
+        if (cmd) return fail(t, '#SCAN: scan appears twice');
+        cmd = 'scan';
+      }
+    }
+    return true;
+  }
+  function aiBattle(s, fail) {
+    if (!sectionOpen(s, fail, '#BATTLE')) return false;
+    let cmd = 0, recvMe = 0, recvHow = 100, recvMP = 0, helpUnit = 0, helpMul = 2;
+    for (;;) {
+      const t = s.getToken();
+      if (t.type === 'eof') return fail(t, 'the file ends inside #BATTLE { }');
+      if (t.text[0] === '}') break;
+      const w = t.text;
+      if (t.type === 'ident') {
+        if (ieq(w, 'Attack')) cmd = 'attack';
+        else if (ieq(w, 'cunning')) {
+          if (!cmd) return fail(t, '#BATTLE: cunning before a command');
+          if (cmd === 'attack') {
+            const n = s.getToken();
+            if (!['low', 'Sam', 'Hi'].some(x => ieq(n.text, x))) return fail(n, `#BATTLE: cunning "${n.text}" is not low / sam / hi`);
+          }
+        } else if (ieq(w, 'Recovery')) { cmd = 'recovery'; recvMe = 0; recvHow = 100; recvMP = 0; }
+        else if (ieq(w, 'u') || ieq(w, 'm') || ieq(w, 'a')) { if (!cmd) return fail(t, `#BATTLE: ${w} before a command`); }
+        else if (ieq(w, 'RangeAttack')) cmd = 'range';
+        else if (ieq(w, 'KeepRangeAttack')) cmd = 'keeprange';
+        else if (ieq(w, 'Summon')) cmd = 'summon';
+        else if (ieq(w, 'Evade')) cmd = 'evade';
+        else if (ieq(w, 'Helper')) { cmd = 'helper'; helpUnit = 0; helpMul = 2; }
+        else if (ieq(w, 'all') || ieq(w, 'sam')) { if (!cmd) return fail(t, `#BATTLE: ${w} before a command`); }
+        else if (ieq(w, 'Berserk')) cmd = 'berserk';
+        else if (ieq(w, 'Randomtarget')) { /* nothing */ }
+        else return fail(t, `#BATTLE: unknown command "${w}"`);
+      } else if (t.type === 'number') {
+        if (!cmd) return fail(t, '#BATTLE: a number before any command');
+        const n = FRE.lexer.atoi(w).value;
+        if (cmd === 'recovery') {
+          if (recvMe === 0) recvMe = n; else if (recvHow === 100) recvHow = n; else if (recvMP === 0) recvMP = n;
+        } else if (cmd === 'summon') { s.getNumber(); s.getToken(); }   // count, then the monster id token
+        else if (cmd === 'helper') { if (helpUnit === 0) helpUnit = n; else if (helpMul === 2) helpMul = n; }
+        else if (cmd === 'berserk') s.getFloat();
+      }
+    }
+    return true;
+  }
+  function aiMove(s, fail) {
+    if (!sectionOpen(s, fail, '#MOVE')) return false;
+    let cmd = 0;
+    for (;;) {
+      const t = s.getToken();
+      if (t.type === 'eof') return fail(t, 'the file ends inside #MOVE { }');
+      if (t.text[0] === '}') break;
+      if (t.type === 'ident') {
+        if (ieq(t.text, 'Loot')) cmd = 'loot';
+        else if (ieq(t.text, 'd')) { /* Loot option */ }
+        else return fail(t, `#MOVE: unknown command "${t.text}"`);
+      } else if (t.type === 'number' && !cmd) return fail(t, '#MOVE: a number before any command');
+    }
+    return true;
+  }
+
+  // ---- propMoverEx.inc ----
+  // ctx: { defines, strings, movers (Map id -> mover from propMover.txt) }
+  // Returns { file, monsters: Map(id -> mon), blocks: [block], stopped, diags }
+  //   mon   = { id, define, blocks: [block], list: [entry], kinds: [entry], maxitem: { value, rec } | null }  (list = the C++ m_dropItems, file order)
+  //   entry = { kind: 'item' | 'gold' | 'kind', block, start, end, ... }
+  function loadDrops(file, ctx) {
+    const text = file.text;
+    const s = new Script(text, { file: file.name, defines: ctx.defines, strings: ctx.strings, diags: [] });
+    const movers = ctx.movers || new Map();
+    let size = 0;                                              // m_nMoverPropSize = highest id + 1 (ProjectCmn.cpp:558)
+    for (const id of movers.keys()) if (id + 1 > size) size = id + 1;
+    const gens = genRanges(text);
+    const genAt = pos => { const g = gens.find(r => pos > r.start && pos < r.end); return g ? g.name : null; };
+    const monsters = new Map(), blocks = [], diags = [];
+    let stopped = null;
+    const add = d => diags.push(Object.assign({ file: file.name, module: 'drops' }, d));
+
+    let nVal = s.getNumber();
+    if (s.eof) return { file: file.name, monsters, blocks, stopped, diags: s.diags.concat(diags), size };
+    do {
+      if (nVal.value < 0 || nVal.value >= size) {
+        // GetMoverProp returns NULL; `continue` in a do-while jumps to the condition without reading on: the server loops forever.
+        stopped = { start: nVal.start, end: nVal.end, reason: 'range' };
+        add({ code: 'M_RANGE', severity: 'BLOCK', start: nVal.start, end: nVal.end, key: `M_RANGE|${text.slice(nVal.start, nVal.end)}`,
+          message: `${text.slice(nVal.start, nVal.end)} (id ${nVal.value}) is not a monster id of propMover.txt (0-${size - 1}): the server hangs at startup here` });
+        break;
+      }
+      const define = nVal.define || text.slice(nVal.start, nVal.end);
+      const block = { id: nVal.value, define, start: nVal.start, defEnd: nVal.end, open: null, close: null, entries: [], unresolved: nVal.unresolved };
+      blocks.push(block);
+      let mon = monsters.get(block.id);
+      if (!mon) { mon = { id: block.id, define, blocks: [], list: [], kinds: [], maxitem: null }; monsters.set(block.id, mon); }
+      mon.blocks.push(block);
+      const openTok = s.getToken();                            // {
+      block.open = { start: openTok.start, end: openTok.end, ok: openTok.text === '{' };
+      let t = s.getToken();
+      let hung = false;
+      while (t.text[0] !== '}') {
+        if (t.type === 'eof') { hung = true; break; }          // *token is '\0', never '}': the C++ loops forever
+        if (t.text === ';') { t = s.getToken(); continue; }
+        if (ieq(t.text, 'AI')) {
+          const ok = aiBlock(s, (at, why) => {
+            stopped = { start: at.start, end: at.end, reason: 'ai' };
+            add({ code: 'M_AI', severity: 'BLOCK', start: at.start, end: at.end, key: `M_AI|${define}`,
+              message: `${define}: ${why}. The server stops reading ${FILE} here: this and every later monster lose their drops` });
+            return false;
+          });
+          if (!ok) break;
+          t = s.token;
+        }
+        const w = t.text;
+        if (w === 'm_nAttackFirstRange' || w === 'm_nAttackItemNear' || w === 'm_nAttackItemFar' || w === 'm_nAttackItem1' || w === 'm_nAttackItem2'
+          || w === 'm_nAttackItem3' || w === 'm_nAttackItem4' || w === 'm_nAttackItemSec' || w === 'm_nMagicReflection' || w === 'm_nImmortality'
+          || w === 'm_bBlow' || w === 'm_nChangeTargetRand' || w === 'm_dwAttackMoveDelay' || w === 'm_dwRunawayDelay') {
+          s.getToken(); s.getNumber();
+        } else if (w === 'SetEvasion') {
+          s.getToken(); s.getNumber(); s.getToken(); s.getNumber(); s.getToken();
+        } else if (w === 'SetRunAway') {
+          s.getToken(); s.getNumber();
+          const c = s.getToken();
+          if (c.text === ',') { s.getNumber(); s.getToken(); s.getNumber(); s.getToken(); }
+        } else if (w === 'SetCallHelper') {
+          s.getToken(); s.getNumber(); s.getToken(); s.getNumber(); s.getToken(); s.getNumber(); s.getToken(); s.getNumber(); s.getToken();
+        } else if (w === 'randomItem') {
+          s.getToken(); let r = s.getToken();
+          while (r.text[0] !== '}' && r.type !== 'eof') { if (r.text === ';') { r = s.getToken(); continue; } r = s.getToken(); }
+        } else if (w === 'Maxitem') {
+          const eq = s.getToken();
+          const v = s.getNumber();
+          const rec = { kind: 'maxitem', block, start: t.start, end: v.end, value: v, eq };
+          mon.maxitem = rec;                                     // the last one read wins (m_dwMax =)
+          block.entries.push(rec);
+        } else if (w === 'DropItem') {
+          const toks = [s.getToken()];                           // (
+          const id = s.getNumber();
+          toks.push(s.getToken());                               // ,
+          const prob = s.getNumber();
+          toks.push(s.getToken());                               // ,
+          const level = s.getNumber();
+          toks.push(s.getToken());                               // ,
+          const count = s.getNumber();
+          const close = s.getToken();                            // )
+          toks.push(close);
+          const e = { kind: 'item', block, start: t.start, end: close.end, id, prob, level, count, toks,
+            itemId: u32(id.value), define: id.define || text.slice(id.start, id.end),
+            probability: u32(prob.value), levelValue: u32(level.value), number: u32(count.value),
+            // a 5th value (",") is skipped token by token like any unknown word: the 4 values are right (M_EXTRA_ARGS)
+            shape: toks[0].text === '(' && toks[1].text === ',' && toks[2].text === ',' && toks[3].text === ',' && (close.text === ')' || close.text === ','),
+            gen: genAt(t.start) };
+          block.entries.push(e); mon.list.push(e);
+        } else if (w === 'DropKind') {
+          const open = s.getToken();
+          const ik3 = s.getNumber();
+          s.getToken(); const a = s.getNumber(); s.getToken(); const b = s.getNumber();
+          const close = s.getToken();
+          const e = { kind: 'kind', block, start: t.start, end: close.end, ik3, a, b, ik3Value: u32(ik3.value), define: ik3.define || text.slice(ik3.start, ik3.end),
+            shape: open.text === '(' && close.text === ')', gen: genAt(t.start) };
+          block.entries.push(e); mon.kinds.push(e);
+        } else if (w === 'DropGold') {
+          const open = s.getToken();
+          const min = s.getNumber();
+          const comma = s.getToken();
+          const max = s.getNumber();
+          const close = s.getToken();
+          const e = { kind: 'gold', block, start: t.start, end: close.end, min, max, minValue: u32(min.value), maxValue: u32(max.value),
+            shape: open.text === '(' && comma.text === ',' && close.text === ')', gen: genAt(t.start) };
+          block.entries.push(e); mon.list.push(e);
+        } else if (w === 'Transform') {
+          s.getToken(); s.getFloat(); s.getToken(); s.getNumber(); s.getToken();
+        }
+        t = s.getToken();
+      }
+      if (stopped) break;
+      if (hung) {
+        stopped = { start: block.start, end: text.length, reason: 'braces' };
+        add({ code: 'M_BRACES', severity: 'BLOCK', start: block.start, end: block.defEnd, key: `M_BRACES|${define}`,
+          message: `${define}: its { } block is never closed. The server loops forever at startup` });
+        break;
+      }
+      block.close = { start: t.start, end: t.end };
+      nVal = s.getNumber();
+    } while (!s.eof);
+
+    // monster-level facts the checks and the UI need
+    for (const mon of monsters.values()) mon.maxValue = mon.maxitem ? u32(mon.maxitem.value.value) : 0;
+    return { file: file.name, monsters, blocks, stopped, diags: s.diags.map(d => Object.assign({ module: 'drops' }, d)).concat(diags), size, gens };
+  }
+
+  // ---- except.txt (Project.cpp:5059): ids with "worldDrop = 0" for the server's language are not event drops ----
+  function loadExcept(file, ctx) {
+    const set = new Set();
+    if (!file) return set;
+    const s = new Script(file.text, { file: file.name, defines: ctx.defines, strings: ctx.strings, diags: [] });
+    const lang = ctx.lang != null ? ctx.lang : LANG_USA, sub = ctx.subLang != null ? ctx.subLang : SUBLANG;
+    let t = s.getToken();
+    while (!s.eof) {
+      const nLang = FRE.lexer.atoi(t.text).value;
+      const nSub = s.getNumber().value;
+      s.getToken();
+      t = s.getToken();
+      while (t.text[0] !== '}' && t.type !== 'eof') {
+        if (t.text === 'ItemProp') {
+          s.getToken();
+          t = s.getToken();                                  // dwID
+          while (t.text[0] !== '}' && t.type !== 'eof') {
+            const id = u32(FRE.lexer.atoi(t.text).value);
+            s.getToken();                                     // {
+            t = s.getToken();
+            while (t.text[0] !== '}' && t.type !== 'eof') {
+              if (nLang !== lang || nSub !== sub) { t = s.getToken(); continue; }
+              const w = t.text;
+              if (w === 'fFlightSpeed') { s.getToken(); s.getFloat(); s.getToken(); }
+              else if (w === 'dwShopAble' || w === 'dwCircleTime' || w === 'dwFlag' || w === 'dwLimitLevel1' || w === 'dwSkillReadyType') { s.getToken(); s.getNumber(); s.getToken(); }
+              else if (w === 'worldDrop') { s.getToken(); if (!s.getNumber().value) set.add(id); s.getToken(); }
+              t = s.getToken();
+            }
+            t = s.getToken();
+          }
+        }
+        t = s.getToken();
+      }
+      t = s.getToken();
+    }
+    return set;
+  }
+
+  // ---- propDropEvent.inc (Project.cpp:4013): DropItem( id, prob, level, number, minLv, maxLv ) for every monster in the level range ----
+  // II_GEN_SKILL_BUFFBREAKER: half chance when the language is not Korean (Project.cpp:4044).
+  function loadDropEvent(file, ctx) {
+    const out = [];
+    if (!file) return out;
+    const s = new Script(file.text, { file: file.name, defines: ctx.defines, strings: ctx.strings, diags: [] });
+    const except = ctx.except || new Set();
+    const buff = ctx.defines.get('II_GEN_SKILL_BUFFBREAKER');
+    do {
+      const t = s.getToken();
+      if (t.text !== 'DropItem') continue;
+      s.getToken(); const id = s.getNumber();
+      s.getToken(); const prob = s.getNumber();
+      s.getToken(); const level = s.getNumber();
+      s.getToken(); const num = s.getNumber();
+      s.getToken(); const minLv = s.getNumber();
+      s.getToken(); const maxLv = s.getNumber();
+      s.getToken();
+      const itemId = u32(id.value);
+      if (except.has(itemId)) continue;
+      let p = u32(prob.value);
+      if (buff != null && itemId === u32(buff)) p = u32(Math.trunc(p * 0.5));
+      out.push({ kind: 'item', event: true, start: t.start, end: maxLv.end, itemId, define: id.define || file.text.slice(id.start, id.end),
+        probability: p, levelValue: u32(level.value), number: u32(num.value), minLv: u32(minLv.value), maxLv: u32(maxLv.value) });
+    } while (!s.eof);
+    return out;
+  }
+
+  // The event lines a monster gets: pProp->dwID && minLv <= dwLevel <= maxLv (Project.cpp:4048-4052)
+  const eventLinesFor = (events, mover) => mover && mover.id ? events.filter(e => u32(mover.level) >= e.minLv && u32(mover.level) <= e.maxLv) : [];
+
+  // ---- PenyaTable.txt (PenyaTable.cpp:9): a bare CScanner (no #define lookup) ----
+  function loadPenyaTable(file) {
+    const tbl = { rows: [], rankPct: new Array(16).fill(0), rankAtLeast: new Array(16).fill(false), worlds: [] };
+    if (!file) return tbl;
+    const s = new Script(file.text, { file: file.name, defines: new Map(), diags: [] });
+    let t = s.getToken();
+    while (!s.eof) {
+      if (t.text === 'LEVELS') {
+        s.getToken();
+        let lv = s.getNumber().value;
+        while (s.token.text[0] !== '}' && !s.eof) {
+          const row = { level: lv, min: s.getNumber().value, max: s.getNumber().value };
+          if (row.min >= 0 && row.max >= row.min) {
+            let i = 0;
+            while (i < tbl.rows.length && tbl.rows[i].level < row.level) i++;
+            tbl.rows.splice(i, 0, row);
+          }
+          lv = s.getNumber().value;
+        }
+      } else if (t.text === 'RANKS') {
+        s.getToken();
+        let rank = s.getNumber().value;
+        while (s.token.text[0] !== '}' && !s.eof) {
+          const pct = s.getNumber().value, mode = s.getNumber().value;
+          if (rank > 0 && rank < 16 && pct > 0) { tbl.rankPct[rank] = pct; tbl.rankAtLeast[rank] = mode === 1; }
+          rank = s.getNumber().value;
+        }
+      } else if (t.text === 'WORLDS') {
+        s.getToken();
+        let w = s.getNumber().value;
+        while (s.token.text[0] !== '}' && !s.eof) {
+          const pct = s.getNumber().value;
+          if (w > 0 && pct > 0) tbl.worlds.push([u32(w), pct]);
+          w = s.getNumber().value;
+        }
+      } else break;
+      t = s.getToken();
+    }
+    return tbl;
+  }
+
+  // ---- expTable.inc expDropLuck { 122 x 11 values } (Project.cpp:3815) ----
+  function loadDropLuck(file) {
+    const luck = Array.from({ length: 122 }, () => new Array(11).fill(0));
+    if (!file) return null;
+    const s = new Script(file.text, { file: file.name, defines: new Map(), diags: [] });
+    let t;
+    do { t = s.getToken(); } while (!s.eof && t.text !== 'expDropLuck');
+    if (s.eof) return null;
+    s.getToken();
+    let i = 0, v = s.getNumber();
+    while (s.token.text[0] !== '}' && !s.eof) {
+      if (i < 122 * 11) luck[Math.floor(i / 11)][i % 11] = u32(v.value);
+      i++;
+      v = s.getNumber();
+    }
+    return luck;
+  }
+
+  // ---- Event.lua: the events on now, and their item / piece / gold rates (EventFunc.lua GetEventState, Get*Rate) ----
+  function loadEventRates(file, now) {
+    const res = { events: [], item: 1, piece: 1, gold: 1 };
+    if (!file) return res;
+    let text = file.text.replace(/--\[\[[\s\S]*?\]\]/g, m => m.replace(/[^\n]/g, ' '));
+    text = text.replace(/--[^\n]*/g, '');
+    const stamp = d => Number(`${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`);
+    const nowN = stamp(now || new Date());
+    let ev = null;
+    const re = /\b(AddEvent|SetTime|SetItemDropRate|SetPieceItemDropRate|SetGoldDropFactor)\s*\(([^)]*)\)/g;
+    let m;
+    while ((m = re.exec(text))) {
+      const args = m[2].split(',').map(a => a.trim().replace(/^"|"$/g, ''));
+      if (m[1] === 'AddEvent') { ev = { name: args[0], times: [], item: null, piece: null, gold: null }; res.events.push(ev); continue; }
+      if (!ev) continue;
+      if (m[1] === 'SetTime') ev.times.push(args.map(a => Number(a.replace(/\D/g, ''))));
+      else if (m[1] === 'SetItemDropRate') ev.item = Number(args[0]);
+      else if (m[1] === 'SetPieceItemDropRate') ev.piece = Number(args[0]);
+      else ev.gold = Number(args[0]);
+    }
+    for (const e of res.events) {
+      let on = false;
+      for (const [a, b] of e.times) if (a <= nowN) on = b > nowN;
+      e.on = on;
+      if (!on) continue;
+      if (e.item != null) res.item *= e.item;
+      if (e.piece != null) res.piece *= e.piece;
+      if (e.gold != null) res.gold *= e.gold;
+    }
+    return res;
+  }
+
+  // ---- m_itemKindAry / m_minMaxIdxAry (Project.cpp:4983-5040) ----
+  // Items by id ascending (m_aPropItem is indexed by dwID), per dwItemKind3; then an exchange sort by dwItemRare
+  // (not stable: copied exactly); then the first / last index of each rarity below MAX_UNIQUE_SIZE (400).
+  // Not modelled: __NEW_STACKABLE_AMPS copies of experience scrolls (ProjectCmn.cpp:891) get extra ids.
+  function kindArrays(items) {
+    const get = (it, f) => FRE.specItem.get(it, f);
+    const byIk3 = new Map();
+    const ids = [...items.keys()].sort((a, b) => a - b);
+    for (const id of ids) {
+      const it = items.get(id);
+      const ik3 = u32(get(it, 'dwItemKind3'));
+      if (ik3 === 0xFFFFFFFF) continue;
+      if (!byIk3.has(ik3)) byIk3.set(ik3, []);
+      byIk3.get(ik3).push({ id, rare: u32(get(it, 'dwItemRare')), lv: u32(get(it, 'dwItemLV')), ik1: get(it, 'dwItemKind1'), item: it });
+    }
+    const out = new Map();
+    for (const [ik3, a] of byIk3) {
+      for (let j = 0; j < a.length - 1; j++) for (let k = j + 1; k < a.length; k++) {
+        if (a[k].rare < a[j].rare) { const t = a[j]; a[j] = a[k]; a[k] = t; }
+      }
+      const minMax = new Map();
+      let rare = 0xFFFFFFFF;
+      for (let j = 0; j < a.length; j++) {
+        if (rare !== a[j].rare) {
+          rare = a[j].rare;
+          if (rare !== 0xFFFFFFFF) minMax.set(rare, [j, j]);
+        } else if (rare !== 0xFFFFFFFF) minMax.get(rare)[1] = j;
+      }
+      out.set(ik3, { list: a, minMax });
+    }
+    return out;
+  }
+  const minIdx = (ka, ik3, rare) => { if (rare >= 400) return -1; const k = ka.get(ik3); const v = k && k.minMax.get(rare); return v ? v[0] : -1; };
+  const maxIdx = (ka, ik3, rare) => { if (rare >= 400) return -1; const k = ka.get(ik3); const v = k && k.minMax.get(rare); return v ? v[1] : -1; };
+  // DropKind's rarity window: monster level -5 .. -2, at least 1 (Project.cpp:3211-3216)
+  function kindWindow(level) {
+    const s16 = v => ((v & 0xffff) << 16) >> 16;
+    let lo = s16(u32(level) - 5), hi = s16(u32(level) - 2);
+    if (lo < 1) lo = 1;
+    if (hi < 1) hi = 1;
+    return [lo, hi];
+  }
+
+  // ---- checks ----
+  // ctx: { items (Map id -> item), movers (Map id -> mover) }
+  function validateDrops(model, ctx) {
+    const out = [];
+    const text = ctx.text || '';
+    const add = d => out.push(Object.assign({ file: model.file, module: 'drops' }, d));
+    for (const d of model.diags) {
+      if (d.code === 'E_UNDEF') continue;               // reported below per entry, in plain words
+      add(Object.assign({}, d, { key: d.key || `${d.code}|${d.name || d.message}` }));
+    }
+    const items = ctx.items || new Map(), movers = ctx.movers || new Map();
+    const nameOf = mon => { const mv = movers.get(mon.id); return mv && mv.name ? `${mv.name} (${mon.define})` : mon.define; };
+    const itemName = e => { const it = items.get(e.itemId); return it && it.name ? it.name : e.define; };
+    const seen = new Map();
+    for (const b of model.blocks) {
+      const mon = model.monsters.get(b.id);
+      const who = nameOf(mon);
+      if (b.unresolved || b.id === 0) add({ code: 'M_UNDEF', severity: 'BLOCK', start: b.start, end: b.defEnd, key: `M_UNDEF|${b.define}`,
+        message: `${b.define} is not defined: the server reads it as 0, so these drops belong to no monster` });
+      else if (!movers.has(b.id)) add({ code: 'M_NO_MOVER', severity: 'WARN', start: b.start, end: b.defEnd, key: `M_NO_MOVER|${b.define}`,
+        message: `${b.define} (id ${b.id}) has no row in propMover.txt: no such monster exists, so nothing drops these items` });
+      if (seen.has(b.id)) add({ code: 'M_DUP', severity: 'WARN', start: b.start, end: b.defEnd, key: `M_DUP|${b.define}`,
+        message: `${who} has two blocks: the server adds the drops of both (and the second "Maxitem" wins)` });
+      seen.set(b.id, b);
+      if (!b.open.ok) add({ code: 'M_BRACES', severity: 'BLOCK', start: b.start, end: b.defEnd, key: `M_BRACES|${b.define}|open`,
+        message: `${who}: "${text.slice(b.open.start, b.open.end)}" stands where { should be. The server skips it and reads on` });
+      for (const e of b.entries) {
+        const at = { start: e.start, end: e.end };
+        if (e.kind === 'item') {
+          const key = `${b.define}|${e.define}|${e.probability}|${e.number}`;
+          if (!e.shape) add(Object.assign(at, { code: 'M_COMMA', severity: 'BLOCK', key: `M_COMMA|${key}`,
+            message: `${who}: this DropItem line is not "DropItem(item, chance, upgrade, amount);". The server reads its values shifted by one: chance ${pct(effChance(e.probability))}` }));
+          if (e.itemId === 0) add(Object.assign(at, { code: 'M_DROP_UNDEF', severity: 'BLOCK', key: `M_DROP_UNDEF|${key}`,
+            message: `${who}: "${e.define}" is not an item (it reads as 0). The server logs an error at startup and crashes when it drops` }));
+          else if (!items.has(e.itemId)) add(Object.assign(at, { code: 'M_DROP_UNDEF', severity: 'BLOCK', key: `M_DROP_UNDEF|${key}|spec`,
+            message: `${who}: ${e.define} (id ${e.itemId}) is not in Spec_Item.txt. The server crashes when it drops on the ground` }));
+          if (e.number === 0) add(Object.assign(at, { code: 'M_COUNT_ZERO', severity: 'BLOCK', key: `M_COUNT_ZERO|${key}`,
+            message: `${who}: ${itemName(e)} has amount 0. When it drops the server divides by zero (xRandom(0)) and crashes` }));
+          if (e.prob.overflow) add(Object.assign(at, { code: 'M_PROB_OVERFLOW', severity: 'WARN', key: `M_PROB_OVERFLOW|${key}`,
+            message: `${who}: ${itemName(e)}'s chance ${text.slice(e.prob.start, e.prob.end)} is above 2,147,483,647. atoi stops there, so it drops ${pct(effChance(e.probability))} of the time, not ${pct(Number(text.slice(e.prob.start, e.prob.end)) / DROP_ONE)}` }));
+          else if (e.probability === 0 && e.shape) add(Object.assign(at, { code: 'M_PROB_ZERO', severity: 'WARN', key: `M_PROB_ZERO|${key}`,
+            message: `${who}: ${itemName(e)} has chance 0: it never drops` }));
+          if (e.toks[4] && e.toks[4].text === ',') add(Object.assign(at, { code: 'M_EXTRA_ARGS', severity: 'INFO', key: `M_EXTRA_ARGS|${key}`,
+            message: `${who}: this DropItem line has more than 4 values. The server reads the first 4 and skips the rest` }));
+        } else if (e.kind === 'gold') {
+          const key = `${b.define}|gold`;
+          if (!e.shape) add(Object.assign(at, { code: 'M_COMMA', severity: 'BLOCK', key: `M_COMMA|${key}`, message: `${who}: this DropGold line is not "DropGold(min, max);"` }));
+          if (e.maxValue <= e.minValue) add(Object.assign(at, { code: 'M_GOLD_RANGE', severity: 'BLOCK', key: `M_GOLD_RANGE|${key}`,
+            message: e.maxValue === e.minValue
+              ? `${who}: DropGold(${e.minValue}, ${e.maxValue}): min and max are equal. The server rolls xRandom(max - min) = xRandom(0), divides by zero and crashes at the first kill`
+              : `${who}: DropGold(${e.minValue}, ${e.maxValue}): min is above max. The server's roll wraps around and pays a random, wrong amount` }));
+        }
+      }
+    }
+    if (ctx.original != null && ctx.original !== text) {
+      for (const g of genEdits(ctx.original, text)) {
+        const [define, name] = g.key.split('|');
+        const mon = [...model.monsters.values()].find(x => x.define === define);
+        const b = mon ? mon.blocks[mon.blocks.length - 1] : null;
+        const what = [g.changed && `${g.changed} line${g.changed > 1 ? 's' : ''} changed`, g.removed && `${g.removed} removed`].filter(Boolean).join(', ');
+        add({ code: 'M_GEN_EDITED', severity: 'WARN', start: b ? b.start : 0, end: b ? b.defEnd : 0, key: `M_GEN_EDITED|${g.key}`,
+          message: `${mon ? nameOf(mon) : define}: ${what} in the [${name}] block. ${GEN_SCRIPT[name] || 'Its gen_*.ps1 script'} rewrites that block when it runs again, which undoes this edit` });
+      }
+    }
+    for (const mon of model.monsters.values()) {
+      const who = nameOf(mon);
+      if (mon.kinds.length > MAX_DROPKIND) add({ code: 'M_KIND_MAX', severity: 'BLOCK', start: mon.kinds[MAX_DROPKIND].start, end: mon.kinds[MAX_DROPKIND].end, key: `M_KIND_MAX|${mon.define}`,
+        message: `${who} has ${mon.kinds.length} DropKind lines; the server has room for ${MAX_DROPKIND}. Line ${MAX_DROPKIND + 1} onward overwrites server memory` });
+      const golds = mon.list.filter(e => e.kind === 'gold');
+      if (!golds.length && movers.has(mon.id) && FRE.battlePass.isMonster(movers.get(mon.id))) add({ code: 'M_NO_GOLD', severity: 'INFO', start: mon.blocks[0].start, end: mon.blocks[0].defEnd,
+        key: `M_NO_GOLD|${mon.define}`, message: `${who} has no DropGold line: it gives no Penya (PenyaTable.txt only changes a DropGold roll)` });
+      // DropGold below lines that count toward Maxitem: the stop can skip the Penya (Mover.cpp:8714)
+      if (mon.maxValue > 0) for (const g of golds) {
+        const before = mon.list.slice(0, mon.list.indexOf(g)).filter(e => e.kind === 'item' && e.number !== 0xFFFFFFFF).length;
+        if (before >= mon.maxValue) add({ code: 'M_GOLD_LATE', severity: 'WARN', start: g.start, end: g.end, key: `M_GOLD_LATE|${mon.define}`,
+          message: `${who}: DropGold comes after ${before} drop lines that count toward its ${mon.maxValue}-item limit. When ${mon.maxValue} of them drop, the server stops and pays no Penya` });
+      }
+    }
+    return out;
+  }
+
+  // Script-made lines per monster: Map("MI_X|Name" -> [trimmed lines]) for a text (genRanges + the MI_ line above each range)
+  function genLines(text) {
+    const out = new Map();
+    const heads = [];
+    const re = /^(MI_\w+)[ \t]*\r?$/gm;
+    let h;
+    while ((h = re.exec(text))) heads.push([h.index, h[1]]);
+    let k = 0;
+    for (const g of genRanges(text).sort((x, y) => x.start - y.start)) {
+      while (k + 1 < heads.length && heads[k + 1][0] < g.start) k++;
+      const key = `${heads.length && heads[k][0] < g.start ? heads[k][1] : '?'}|${g.name}`;
+      const body = text.slice(text.indexOf('\n', g.start) + 1, g.end).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      out.set(key, (out.get(key) || []).concat(body));
+    }
+    return out;
+  }
+  // M_GEN_EDITED: script-made lines changed or removed since the file was loaded
+  function genEdits(original, current) {
+    const a = genLines(original), b = genLines(current), out = [];
+    for (const key of new Set([...a.keys(), ...b.keys()])) {
+      const left = (a.get(key) || []).slice();
+      let changed = 0;
+      for (const l of b.get(key) || []) { const i = left.indexOf(l); if (i >= 0) left.splice(i, 1); else changed++; }
+      if (changed || left.length) out.push({ key, changed, removed: Math.max(0, left.length - changed) });
+    }
+    return out;
+  }
+
+  // ---- chances ----
+  // xRand() is a full-period 32-bit LCG (core/xrandom.js), so over its cycle every value 0 .. 2^32-1 comes once.
+  // xRandom(n) = xRand() % n: when 2^32 is not a multiple of n the low values come once more.
+  // For n = 3e9 the values 0 .. 1,294,967,295 come twice: a 10% line drops 13.97% of the time.
+  const TWO32 = 4294967296;
+  // P( xRandom(n) < t ) for a whole t (0..n)
+  function belowP(n, t) {
+    t = Math.max(0, Math.min(t, n));
+    return (Math.floor(TWO32 / n) * t + Math.min(t, TWO32 % n)) / TWO32;
+  }
+  // The first roll GetAt refuses (Project.cpp:184-208): dwRand = xRandom(3e9); dwRand = (DWORD)(dwRand / f), float32; pass while dwRand < prob.
+  function getAtLimit(prob, factor) {
+    const f = Math.fround(factor == null ? 1 : factor);
+    const pass = x => Math.trunc(Math.fround(Math.fround(x) / f)) < prob;
+    if (!pass(0)) return 0;
+    if (pass(DROP_ONE - 1)) return DROP_ONE;
+    let lo = 0, hi = DROP_ONE - 1;                // pass(lo), !pass(hi); pass is monotone in x
+    while (hi - lo > 1) { const mid = Math.floor((lo + hi) / 2); if (pass(mid)) lo = mid; else hi = mid; }
+    return hi;
+  }
+  // The real chance one DropItem line passes (what players get per roll that reaches it)
+  const effChance = (prob, factor) => belowP(DROP_ONE, getAtLimit(prob >>> 0, factor));
+  // The file value that gives (at least) a real chance p, piece factor 1: the inverse of effChance, at most INT_MAX
+  function probForChance(p) {
+    if (!(p > 0)) return 0;
+    let lo = 0, hi = INT_MAX;                     // smallest prob with effChance(prob) >= p
+    if (effChance(hi) < p) return hi;
+    while (hi - lo > 1) { const mid = Math.floor((lo + hi) / 2); if (effChance(mid) >= p) hi = mid; else lo = mid; }
+    return hi;
+  }
+  const MAX_CHANCE = () => effChance(INT_MAX);
+  const pct = p => {
+    const v = p * 100;
+    if (v === 0) return '0%';
+    if (v >= 1) return `${+v.toFixed(2)}%`;
+    if (v >= 0.01) return `${+v.toFixed(3)}%`;
+    return `${+v.toPrecision(2)}%`;
+  };
+
+  // ---- propItemEtc.inc RandomOptItem (LoadPiercingAvail, Project.cpp:4542-4637) + CRandomOptItemGen::Arrange (Project.cpp:4864) ----
+  // The file is UTF-16LE. Piercing / SetItem blocks are walked token by token the way the C++ reads them.
+  // Not modelled: AddPiercingAvail failing (it would return FALSE before Arrange); the server starts, so it doesn't.
+  const MAX_RANDOMOPTITEM = 256, MAX_MONSTER_LEVEL = 160;   // Project.h:905 (__VER >= 11), defineJob.h:39
+  function loadRandomOpt(file, ctx) {
+    const list = [];
+    if (file) {
+      const s = new Script(file.text, { file: file.name, defines: ctx.defines, strings: ctx.strings, diags: [] });
+      s.getToken();
+      while (!s.eof) {
+        const w = s.token.text;
+        if (w === 'Piercing') {
+          s.getNumber(); s.getToken(); s.getNumber();
+          while (s.token.text[0] !== '}' && !s.eof) { s.getNumber(); s.getNumber(); }
+        } else if (w === 'SetItem') {
+          s.getNumber(); s.getToken(); s.getToken(); s.getToken();
+          while (s.token.text[0] !== '}' && !s.eof) {
+            if (s.token.text === 'Elem') {
+              s.getToken(); s.getNumber();
+              while (s.token.text[0] !== '}' && !s.eof) { s.getNumber(); s.getNumber(); }
+              s.getToken();
+            } else if (s.token.text === 'Avail') {
+              s.getToken(); s.getNumber();
+              while (s.token.text[0] !== '}' && !s.eof) { s.getNumber(); s.getNumber(); s.getNumber(); }
+              s.getToken();
+            } else break;      // the C++ loops forever here; never in this data
+          }
+        } else if (w === 'RandomOptItem') {
+          const id = s.getNumber().value;
+          s.getToken();
+          const level = s.getNumber().value, prob = u32(s.getNumber().value);
+          s.getToken();
+          s.getNumber();
+          while (s.token.text[0] !== '}' && !s.eof) { s.getNumber(); s.getNumber(); }
+          if (list.length < MAX_RANDOMOPTITEM) list.push({ id, level, prob });
+        }
+        s.getToken();
+      }
+    }
+    // Arrange: exchange sort by nLevel (not stable), then m_anIndex[level-1] = the last entry below that level
+    const a = list.slice();
+    for (let i = 0; i < a.length - 1; i++) for (let j = i + 1; j < a.length; j++) if (a[i].level > a[j].level) { const x = a[i]; a[i] = a[j]; a[j] = x; }
+    const anIndex = new Array(MAX_MONSTER_LEVEL).fill(0);
+    let lv = 1, prev = -1;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i].level > lv) { for (let j = lv; j < a[i].level; j++) anIndex[j - 1] = prev; lv = a[i].level; }
+      prev = i;
+    }
+    for (let i = lv; i <= MAX_MONSTER_LEVEL; i++) anIndex[i - 1] = prev;
+    return { list: a, anIndex };
+  }
+
+  // Everything the kill path reads besides propMoverEx.inc, from a Workspace (or any { files, defines, strings, items }).
+  function contextFromFiles(ws, now) {
+    const f = n => ws.files.get(n);
+    const defines = ws.defines.defines, strings = ws.strings ? ws.strings.map : null;
+    const except = loadExcept(f('except.txt'), { defines, strings });
+    const etc = f('propitemetc.inc');
+    return {
+      randomOpt: loadRandomOpt(etc, { defines, strings }),
+      except, events: loadDropEvent(f('propdropevent.inc'), { defines, strings, except }),
+      penya: loadPenyaTable(f('penyatable.txt')), luck: loadDropLuck(f('exptable.inc')),
+      rates: loadEventRates(f('event.lua'), now || (ws.now ? ws.now() : new Date())),
+      kinds: kindArrays(ws.items.items),
+      has: { events: !!f('propdropevent.inc'), penya: !!f('penyatable.txt'), luck: !!f('exptable.inc'), rates: !!f('event.lua'), etc: !!etc },
+    };
+  }
+
+  FRE.drops = { FILE, contextFromFiles, loadRandomOpt, MAX_MONSTER_LEVEL, MAX_DROPKIND, INT_MAX, DROP_ONE, GEN_SCRIPT, LANG_USA, loadDrops, loadExcept, loadDropEvent, eventLinesFor, loadPenyaTable, loadDropLuck,
+    loadEventRates, genLines, genEdits, kindArrays, minIdx, maxIdx, kindWindow, validateDrops, effChance, belowP, getAtLimit, probForChance, MAX_CHANCE, pct, genRanges };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/drops-sim.js ----
+// Killing a monster: what it drops. A port of the WorldServer's kill path.
+//   kill            = CMover::DropItem               (_Common/Mover.cpp:8124-8961), after DropItemByDied (Mover.cpp:8102:
+//                     the top damage dealer gets the drops), from AttackArbiter.cpp:1054
+//   rolls / gate    = Mover.cpp:8483-8600: nloop (Gift Box party mode, GET01 +1, GET02 +2, DST_GIFTBOX), bUnique (Fortune Circle),
+//                     the level-gap table and xRandom( 100 ) < nProbability * GetItemDropRateFactor (MoverParam.cpp:4423)
+//   getAt           = CDropItemGenerator::GetAt     (_Common/Project.cpp:184-208): dwRand = xRandom( 3000000000 ) / GetPieceItemDropRateFactor
+//                     (MoverParam.cpp:4440), float32, then dwRand < dwProbability. The x10 item rate only feeds the gate.
+//   item lines      = Mover.cpp:8604-8716 (bag for flying monsters, ground otherwise; Maxitem stops: >= in the bag, == on the ground)
+//   Penya           = Mover.cpp:8717-8746 (roll 0 only) + PenyaTable::Roll (_Common/PenyaTable.cpp:84-136) + CanAdd (DPSrvr.cpp:116);
+//                     __PENYA_TO_INVENTORY: straight to the bag
+//   genRandomOpt    = CRandomOptItemGen::GenRandomOptItem (Project.cpp:4918): weapons / armor dropped on the ground
+//   DropKind        = Mover.cpp:8823-8956 (rarity window, m_itemKindAry pick, xRandom( 11 ) start upgrade, expDropLuck × dwCorrectionValue)
+// Floats are float32 (Math.fround), (int)( float ) is a truncation (cvttss2si: out of range -> INT_MIN), ints wrap at 32 bits.
+//
+// Not modelled (they happen before or beside the drops and don't use xRandom on the lines below, unless noted):
+//   - event items (CEventGeneric::GetItem calls xRandom when an event item times out; EventLua items use Lua math.random) and quest items
+//     (QuestItem lines roll xRandom( 3e9 ) for players on the quest): the simulator assumes none are pending;
+//   - event monsters / EventLua spawns (no level-gap table, own drop range), guild / party quest monsters, m_nLoot == 2 inventories;
+//   - Anarchy, Lord event, PC-bang factors: set them through the options (anarchyGold, pieceRate, cheering, voteThanks);
+//   - CreateItem in detail: `bagFull` makes every bag drop fail (flying monsters), otherwise it always succeeds;
+//   - xRandomF (item positions) uses the C runtime's rand(), a different generator: it doesn't move xRand.
+(function (FRE) {
+  'use strict';
+  const D = () => FRE.drops;
+  const f32 = Math.fround;
+  const u32 = v => v >>> 0;
+  const INT_MIN = -2147483648;
+  const toInt = v => (Number.isNaN(v) || v >= 2147483648 || v < -2147483648) ? INT_MIN : Math.trunc(v);
+  const NONE = 0xFFFFFFFF;
+
+  // The level-gap table (Mover.cpp:8586-8594): [items %, Penya %]
+  function levelGap(playerLevel, monsterLevel) {
+    const d = playerLevel - monsterLevel;
+    if (d <= 1) return [100, 100];
+    if (d <= 2) return [80, 100];
+    if (d <= 4) return [60, 80];
+    if (d <= 7) return [30, 65];
+    return [10, 50];
+  }
+
+  // env: { mover, list (DropItem / DropGold entries + the event lines, in the server's order), kinds (DropKind entries),
+  //        maxItems, ctx (FRE.drops.contextFromFiles), items (Spec_Item Map), defines (Map) }
+  function envFor(ws, monsterId, model) {
+    model = model || ws.models.drops;
+    const mon = model.monsters.get(monsterId) || { id: monsterId, define: String(monsterId), list: [], kinds: [], maxValue: 0, blocks: [] };
+    const mover = ws.movers.movers.get(monsterId) || null;
+    const ctx = ws.dropContext;
+    const events = D().eventLinesFor(ctx.events, mover);
+    return { mon, mover, list: mon.list.concat(events), kinds: mon.kinds.slice(0, D().MAX_DROPKIND), maxItems: mon.maxValue,
+      ctx, items: ws.items.items, defines: ws.defines.defines };
+  }
+
+  // The factors (MoverParam.cpp:4423-4463, all float32)
+  function factors(o) {
+    let item = f32(1);
+    item = f32(item * f32(o.gmItemRate));        // prj.m_fItemDropRate (1.0 until a GM changes it, CProject::SetGlobal)
+    item = f32(item * f32(1));                   // pProp->m_fItemDrop_Rate (always 1.0, ProjectCmn.cpp:551)
+    item = f32(item * f32(1));                   // CEventGeneric factor (no propEvent rates here)
+    item = f32(item * f32(o.itemRate));          // EventLua GetItemDropRate (Event.lua "Server Rates" x10)
+    let piece = f32(1);
+    piece = f32(piece * f32(o.pieceRate));       // EventLua GetPieceItemDropRate
+    piece = f32(piece * f32(1));                 // Lord event GetIFactor
+    if (o.cheering) piece = f32(piece * f32(1.1));
+    if (o.voteThanks) piece = f32(piece * f32(1.05));
+    piece = f32(piece * f32(1));                 // PC-bang
+    piece = f32(piece + f32(f32(o.anarchyPiece) / f32(100)));
+    return { item, piece };
+  }
+
+  const DEFAULTS = { playerLevel: null, loops: 1, fortune: false, gmItemRate: 1, gmGoldRate: 1, itemRate: null, pieceRate: null, goldRate: null,
+    cheering: false, voteThanks: false, anarchyPiece: 0, anarchyGold: 0, penyaRate: 0, worldId: 1, bagFull: false, gold: 0 };
+  function options(env, o) {
+    const r = Object.assign({}, DEFAULTS, o || {});
+    const rates = env.ctx.rates;
+    if (r.itemRate == null) r.itemRate = rates.item;
+    if (r.pieceRate == null) r.pieceRate = rates.piece;
+    if (r.goldRate == null) r.goldRate = rates.gold;
+    if (r.playerLevel == null) r.playerLevel = env.mover ? env.mover.level : 1;
+    return r;
+  }
+
+  // PenyaTable::Roll (PenyaTable.cpp:84-136). Returns the new gold (or the old one when the rank has no row)
+  function penyaRoll(tbl, rnd, level, rank, world, gold) {
+    if (!tbl.rows.length || u32(rank) >= 16 || tbl.rankPct[rank] <= 0) return gold;
+    const rows = tbl.rows;
+    let min, max;
+    if (level <= rows[0].level) { min = rows[0].min; max = rows[0].max; }
+    else if (level >= rows[rows.length - 1].level) { min = rows[rows.length - 1].min; max = rows[rows.length - 1].max; }
+    else {
+      let i = 1;
+      while (rows[i].level < level) i++;
+      const lo = rows[i - 1], hi = rows[i];
+      const span = hi.level - lo.level, step = level - lo.level;
+      min = lo.min + Math.trunc((hi.min - lo.min) * step / span) | 0;
+      max = lo.max + Math.trunc((hi.max - lo.max) * step / span) | 0;
+    }
+    let wp = 100;
+    for (const [w, p] of tbl.worlds) if (w === u32(world)) { wp = p; break; }
+    min = Math.trunc(Math.trunc(min * tbl.rankPct[rank] / 100) * wp / 100) | 0;
+    max = Math.trunc(Math.trunc(max * tbl.rankPct[rank] / 100) * wp / 100) | 0;
+    if (max < min) max = min;
+    const g = (min + (rnd.random(u32(max - min + 1)) | 0)) | 0;
+    if (tbl.rankAtLeast[rank] && gold > g) return gold;
+    return g;
+  }
+
+  // GenRandomOptItem (Project.cpp:4918-4937)
+  function genRandomOpt(env, rnd, level, penalty, item, rank) {
+    if (!item) return 0;
+    const ik1 = FRE.specItem.get(item, 'dwItemKind1');
+    const W = env.defines.get('IK1_WEAPON'), A = env.defines.get('IK1_ARMOR');
+    if (ik1 !== W && ik1 !== A) return 0;
+    if (level >= D().MAX_MONSTER_LEVEL) level = D().MAX_MONSTER_LEVEL - 1;
+    const ro = env.ctx.randomOpt;
+    const i = ro.anIndex[level];
+    if (i === undefined || i === -1) return 0;
+    const idx = rnd.random(i + 1);
+    let r = rnd.random(3000000000);
+    if (rank === env.defines.get('RANK_MIDBOSS')) r = Math.floor(r / 5);
+    const p = u32(toInt(f32(f32(ro.list[idx].prob) * penalty)) >>> 0);
+    return r < p ? ro.list[idx].id : 0;
+  }
+
+  // One kill. rnd: FRE.xRandom.rng(seed). Returns { rolls: [{ gate, stop }], drops: [{ id, n, plus, opt, where, from }], gold, crash }
+  function kill(env, rnd, opts) {
+    const o = options(env, opts);
+    const mv = env.mover || { level: 1, rankId: 1, flying: 0, correction: 100, id: 0, define: '' };
+    const level = mv.level | 0, rank = mv.rankId, flying = !!mv.flying;
+    const fac = factors(o);
+    const res = { rolls: [], drops: [], gold: 0, crash: null };
+    const noAdj = ['MI_CLOCKWORK1', 'MI_DEMIAN5', 'MI_KEAKOON5', 'MI_MUFFRIN5'].some(n => env.defines.get(n) === mv.id);
+    const maxItems = u32(env.maxItems);
+    const SUPER = env.defines.get('RANK_SUPER');
+    for (let k = 0; k < o.loops; k++) {
+      const [nProb, nPenya] = noAdj ? [100, 100] : levelGap(o.playerLevel, level);
+      const roll = { gate: false, stop: null };
+      res.rolls.push(roll);
+      const rate = f32(f32(nProb) * fac.item);
+      if (!(f32(rnd.random(100)) < rate)) continue;
+      roll.gate = true;
+      let nNumber = 0;
+      for (let i = 0; i < env.list.length; i++) {
+        const e = env.list[i];
+        // GetAt
+        let pass;
+        if (fac.piece > 0) {
+          const r = rnd.random(3000000000);
+          const dw = u32(toInt(f32(f32(r) / fac.piece)));
+          pass = dw < (e.kind === 'gold' ? NONE : e.probability);
+        } else pass = true;
+        if (!pass) continue;
+        if (e.kind === 'item') {
+          const num = e.number === NONE ? 1 : e.number;
+          if (num === 0) { res.crash = { at: i, why: 'xRandom(0): amount 0' }; return res; }
+          const n = ((rnd.random(num) + 1) << 16) >> 16;          // (short)
+          if (flying) {
+            if (o.bagFull) continue;                              // CreateItem failed: no count, no stop check
+            res.drops.push({ id: e.itemId, n, plus: e.levelValue, opt: 0, where: 'bag', from: i });
+            if (e.number !== NONE) nNumber++;
+            if (u32(nNumber) >= maxItems) { roll.stop = i; break; }
+            continue;
+          }
+          const item = env.items.get(e.itemId) || null;
+          let opt = 0;
+          if (item) opt = genRandomOpt(env, rnd, level, f32(f32(nProb) / f32(100)), item, rank);
+          if (!item) { res.crash = { at: i, why: `item ${e.itemId} has no Spec_Item row (Mover.cpp:8701)` }; return res; }
+          res.drops.push({ id: e.itemId, n, plus: e.levelValue, opt, where: 'ground', from: i });
+          if (e.number !== NONE) nNumber++;
+          if (u32(nNumber) === maxItems) { roll.stop = i; break; }
+        } else if (e.kind === 'gold' && k === 0) {
+          const span = u32(e.maxValue - e.minValue);
+          if (span === 0) { res.crash = { at: i, why: 'xRandom(0): DropGold min = max' }; return res; }
+          let g = u32(e.minValue + rnd.random(span)) | 0;
+          g = penyaRoll(env.ctx.penya, rnd, level, rank, o.worldId, g);
+          g = Math.trunc(Math.imul(g, nPenya) / 100) | 0;
+          g = toInt(f32(f32(f32(g) * f32(o.gmGoldRate)) * f32(1)));
+          if (g === 0) continue;
+          g = toInt(f32(f32(g) * f32(o.goldRate)));
+          g = toInt(f32(f32(g) * f32(f32(1) + f32(f32(o.anarchyGold) / f32(100)))));
+          g = toInt(f32(f32(g) * f32(f32(1) + f32(f32(o.penyaRate | 0) / f32(100)))));
+          const have = u32(o.gold) | 0;
+          if (g > 0 && ((have + g) | 0) > have) res.gold += g;
+        }
+      }
+      // DropKind
+      const [lo, hi] = D().kindWindow(level);
+      for (let i = 0; i < env.kinds.length; i++) {
+        const kd = env.kinds[i];
+        let bDrop = false;
+        let mn = -1, mx = -1;
+        for (let j = lo; j <= hi; j++) { mn = D().minIdx(env.ctx.kinds, kd.ik3Value, j); if (mn !== -1) break; }
+        for (let j = hi; j >= lo; j--) { mx = D().maxIdx(env.ctx.kinds, kd.ik3Value, j); if (mx !== -1) break; }
+        if (mn < 0 || mx < 0) continue;
+        const ary = env.ctx.kinds.get(kd.ik3Value).list;
+        const pick = ary[mn + rnd.random(mx - mn + 1)];
+        if (!pick) continue;
+        const start = rnd.random(11);
+        const lvIdx = pick.lv > 120 ? 119 : pick.lv - 1;
+        if (lvIdx < 0) { res.crash = { at: `kind ${i}`, why: `item ${pick.id} has dwItemLV 0: expDropLuck[-1] is read out of bounds` }; return res; }
+        const corr = f32(f32(u32(mv.correction)) / f32(100));
+        for (let kk = start; kk >= 0; kk--) {
+          const p = u32(toInt(f32(f32(env.ctx.luck[lvIdx][kk]) * corr)));
+          let r = rnd.random(3000000000);
+          if (o.fortune && p <= 10000000) r = Math.floor(r / 2);
+          if (r < p) {
+            if (flying) {
+              const opt = genRandomOpt(env, rnd, level, f32(f32(nProb) / f32(100)), pick.item, rank);
+              if (!o.bagFull) { res.drops.push({ id: pick.id, n: 1, plus: kk, opt, where: 'bag', from: `kind ${i}` }); break; }
+            }
+            const opt = genRandomOpt(env, rnd, level, f32(f32(nProb) / f32(100)), pick.item, rank);
+            res.drops.push({ id: pick.id, n: 1, plus: kk, opt, where: 'ground', from: `kind ${i}` });
+            bDrop = true;
+            break;
+          }
+        }
+        if (rank === SUPER && bDrop) break;
+      }
+    }
+    return res;
+  }
+
+  // Kill it N times: how often each line drops, the Penya, how often Maxitem stopped the list.
+  function run(env, opts) {
+    const o = Object.assign({ kills: 1000, seed: 1 }, opts || {});
+    const rnd = FRE.xRandom.rng(o.seed);
+    const out = { kills: o.kills, lines: new Map(), kinds: new Map(), gold: { total: 0, min: Infinity, max: 0, kills: 0 }, stops: 0, gates: 0, crash: null };
+    for (let n = 0; n < o.kills; n++) {
+      const r = kill(env, rnd, o);
+      if (r.crash) { out.crash = Object.assign({ kill: n + 1 }, r.crash); break; }
+      for (const g of r.rolls) { if (g.gate) out.gates++; if (g.stop != null) out.stops++; }
+      for (const d of r.drops) {
+        const map = typeof d.from === 'number' ? out.lines : out.kinds;
+        const key = typeof d.from === 'number' ? d.from : d.id;
+        const s = map.get(key) || { times: 0, count: 0, id: d.id };
+        s.times++; s.count += d.n;
+        map.set(key, s);
+      }
+      out.gold.total += r.gold;
+      if (r.gold) out.gold.kills++;
+      out.gold.min = Math.min(out.gold.min, r.gold); out.gold.max = Math.max(out.gold.max, r.gold);
+    }
+    if (out.gold.min === Infinity) out.gold.min = 0;
+    return out;
+  }
+
+  // The exact chance per line (no simulation): the gate × the line's own chance × P(the Maxitem stop has not come yet).
+  // Uses the modulo-biased roll odds (FRE.drops.belowP). Only roll 0 pays Penya; every roll repeats the item lines.
+  // Returns { gate, lines: [{ entry, chance (per roll), perKill (expected drops per kill), reach }], avgGold: null (see run) }
+  function exactChances(env, opts) {
+    const o = options(env, opts);
+    const mv = env.mover || { level: 1, rankId: 1, flying: 0, id: 0 };
+    const noAdj = ['MI_CLOCKWORK1', 'MI_DEMIAN5', 'MI_KEAKOON5', 'MI_MUFFRIN5'].some(n => env.defines.get(n) === mv.id);
+    const [nProb] = noAdj ? [100] : levelGap(o.playerLevel, mv.level | 0);
+    const fac = factors(o);
+    const rate = f32(f32(nProb) * fac.item);
+    const gate = D().belowP(100, Math.min(100, Math.ceil(rate)));
+    const max = u32(env.maxItems);
+    // dist[c] = P(c counted drops so far and the list not stopped)
+    let dist = [1];
+    const lines = [];
+    for (const e of env.list) {
+      const reach = dist.reduce((a, b) => a + b, 0);
+      const p = e.kind === 'gold' ? 1 : D().belowP(3000000000, D().getAtLimit(e.probability, fac.piece));
+      lines.push({ entry: e, chance: p, reach, perRoll: gate * reach * p });
+      if (e.kind !== 'item') continue;
+      const counts = e.number !== NONE && !(mv.flying && o.bagFull);
+      const next = new Array(dist.length + 1).fill(0);
+      for (let c = 0; c < dist.length; c++) {
+        if (!dist[c]) continue;
+        next[c] += dist[c] * (1 - p);
+        const nc = counts ? c + 1 : c;
+        const stop = mv.flying ? u32(nc) >= max && !o.bagFull : (counts && u32(nc) === max);
+        if (!stop) next[nc] += dist[c] * p;
+      }
+      while (next.length > 1 && !next[next.length - 1]) next.pop();
+      dist = next;
+    }
+    for (const l of lines) l.perKill = l.entry.kind === 'gold' ? l.perRoll : l.perRoll * o.loops;
+    return { gate, rate, lines, loops: o.loops };
+  }
+
+  // The Penya one kill pays (roll 0, no Maxitem stop): [lowest, highest] after PenyaTable and the rates, and where it comes from.
+  // DropGold rolls min .. max-1; PenyaTable (when the rank has a row) rolls its own range (mode 0 replaces, mode 1 keeps the higher).
+  function penyaRange(env, opts) {
+    const o = options(env, opts);
+    const g = env.list.find(e => e.kind === 'gold');
+    if (!g) return null;
+    const mv = env.mover || { level: 1, rankId: 1 };
+    const tbl = env.ctx.penya, rank = mv.rankId;
+    let lo = g.minValue | 0, hi = (u32(g.maxValue - g.minValue) ? u32(g.minValue + u32(g.maxValue - g.minValue) - 1) : g.minValue) | 0, from = 'DropGold';
+    if (tbl.rows.length && u32(rank) < 16 && tbl.rankPct[rank] > 0) {
+      const fixed = n => ({ random: () => n });
+      const tlo = penyaRoll(Object.assign({}, tbl, { rankAtLeast: [] }), fixed(0), mv.level | 0, rank, o.worldId, 0);
+      const span = penyaRoll(Object.assign({}, tbl, { rankAtLeast: [] }), { random: m => m - 1 }, mv.level | 0, rank, o.worldId, 0);
+      if (tbl.rankAtLeast[rank]) { lo = Math.max(lo, tlo); hi = Math.max(hi, span); from = 'PenyaTable.txt (or DropGold if higher)'; }
+      else { lo = tlo; hi = span; from = 'PenyaTable.txt'; }
+    }
+    const [, nPenya] = levelGap(o.playerLevel, mv.level | 0);
+    const pay = v => {
+      v = Math.trunc(Math.imul(v, nPenya) / 100) | 0;
+      v = toInt(f32(f32(f32(v) * f32(o.gmGoldRate)) * f32(1)));
+      v = toInt(f32(f32(v) * f32(o.goldRate)));
+      v = toInt(f32(f32(v) * f32(f32(1) + f32(f32(o.anarchyGold) / f32(100)))));
+      return toInt(f32(f32(v) * f32(f32(1) + f32(f32(o.penyaRate | 0) / f32(100)))));
+    };
+    return { min: pay(lo), max: pay(hi), from, dropGold: [g.minValue, g.maxValue], rates: o.goldRate };
+  }
+
+  FRE.dropsSim = { penyaRange, kill, run, envFor, exactChances, levelGap, factors, penyaRoll, genRandomOpt, DEFAULTS };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- loaders/exchange.js ----
 // Exchange_Script.txt loader, ported from CExchange::Load_Script (_Common/Exchange.cpp:32).
 //   MMI_x { DESCRIPTION { TID.. }  SET TID { RESULTMSG { TID.. } CONDITION { II_x n .. }
@@ -4429,6 +5440,24 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "47+", "when
     NN_POS: ['x, y, z and the angle must be numbers, and the angle 0 or more and under 360.', 'In game, stand on the spot and type /position, then copy the three numbers.'],
     NN_OVERLAP: ['Another NPC stands less than 4 units away (1 unit in the map file). The two would overlap.', 'Move a few steps away and take /position again.'],
     NN_HEIGHT: ['The height (y) is more than 30 away from the nearest NPC on the map. The NPC may float or be inside the ground.', 'Check y with /position on the exact spot.'],
+    // Monster Drops (loaders/drops.js, propMoverEx.inc)
+    M_RANGE: ['The block starts with a monster id above the highest id in propMover.txt. The server\'s loader then loops forever (a `continue` inside a do-while), so the WorldServer never finishes starting.', 'Use the MI_ name of a monster that exists in propMover.txt.'],
+    M_UNDEF: ['The MI_ name is not defined in any header, so the server reads it as 0 and gives these drops to no real monster.', 'Fix the spelling of the MI_ name.'],
+    M_NO_MOVER: ['The id is defined but has no row in propMover.txt, so no such monster ever spawns.', 'Add the drops to a monster that exists.'],
+    M_BRACES: ['The monster\'s { } block is broken. Without its closing }, the server reads until the end of the file and loops forever at startup.', 'Close the block with } on its own line.'],
+    M_AI: ['The AI { } part of this monster has a word the server does not know. The server stops reading propMoverEx.inc there: this monster and every monster after it lose their drops.', 'Fix the AI line (compare with another monster\'s AI block).'],
+    M_DUP: ['The same monster has two blocks. The server adds the drops of both blocks, and the Maxitem of the second one wins.', 'Move the drops into one block.'],
+    M_COMMA: ['The line is not written as DropItem(item, chance, upgrade, amount); The server does not check the commas: it reads the values shifted by one, so the chance usually becomes 0 (this is how Sacred Bead of Bubble never dropped, 600269aa).', 'Write the line with three commas.'],
+    M_DROP_UNDEF: ['The item name is not defined (it reads as 0) or has no Spec_Item.txt row. The server logs an error at startup and crashes when the item drops.', 'Pick an item that exists.'],
+    M_COUNT_ZERO: ['The amount is 0. When the line drops, the server picks a random amount with xRandom(0), which divides by zero and crashes.', 'Use an amount of 1 or more (or -1 for exactly one).'],
+    M_GOLD_RANGE: ['DropGold(min, max): the server rolls min + xRandom(max - min). With min = max that is xRandom(0) (a crash); with min above max the number wraps around.', 'Make max bigger than min.'],
+    M_KIND_MAX: ['A monster has room for 80 random-gear lines (MAX_DROPKIND). The server does not check: line 81 onward writes past the end of the list in memory.', 'Remove random-gear lines.'],
+    M_PROB_OVERFLOW: ['The chance is above 2,147,483,647. The server reads it with atoi, which stops there, so the line drops about 80% of the time instead of always.', 'Nothing to do if 80% is fine. For "always", the server cannot do it in one line: repeat the line (c6b006fe did).'],
+    M_PROB_ZERO: ['The chance is 0: the item never drops.', 'Type a chance, or remove the drop.'],
+    M_EXTRA_ARGS: ['The DropItem line has more than 4 values (like the event-drop lines of propDropEvent.inc). The server reads the first 4 and skips the rest.', 'Nothing to do; the extra values do nothing.'],
+    M_NO_GOLD: ['The monster has no DropGold line, so it gives no Penya. PenyaTable.txt only changes a DropGold roll; it never adds one.', 'Add Penya if players should get some.'],
+    M_GOLD_LATE: ['DropGold comes after drop lines that count toward the monster\'s max items per kill. When that many items drop first, the server stops reading the list and the Penya is skipped.', 'Move DropGold up, right after Maxitem.'],
+    M_GEN_EDITED: ['This drop was written by one of the gen_*.ps1 scripts. Running that script again rewrites its block and undoes this edit.', 'Change the script too, or don\'t run it again.'],
   };
 })(globalThis.FRE = globalThis.FRE || {});
 
@@ -5742,6 +6771,101 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "47+", "when
     setIngredientQty, setIngredientItem, setRewardQty, setRewardChance, setRewardItem, setRewardFlag, setPayNum,
     addIngredient, removeIngredient, addReward, removeReward, evenChances, rebalance, setChanceKeepTotal, addRewardKeepTotal, removeRewardKeepTotal, copySet, removeSet, moveSet, buildSet, setBlock,
   };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- edit/drops-ops.js ----
+// propMoverEx.inc edits as minimal splices (ASCII only; the file is UTF-8 with U+FFFD in old comments, CRLF).
+// New lines copy the indent and line ending of the line they follow; files get plain digits.
+// Where a new line goes (the way the drop commits did it):
+//   DropItem  after the monster's last hand-written DropItem (outside the gen_*.ps1 blocks), else after its
+//             DropGold / Maxitem, else on the line below {. Script-made blocks sit right after DropGold
+//             (46c26c73, 1d4c2944, bf871bba, 76924904, d27d9a5a), so hand-written lines come after them.
+//   DropKind  after the last DropKind, else after the last DropItem / DropGold / Maxitem, else below {.
+//   DropGold  after Maxitem (MI_AIBATT1's order), else below {.     Maxitem  below {.
+// A monster with two blocks (M_DUP) is edited in its last block.
+(function (FRE) {
+  'use strict';
+  const T = FRE.textOps;
+  const D = () => FRE.drops;
+  const MAX_COUNT = 32767;          // (short)( xRandom( dwNum ) + 1 ) (Mover.cpp:8618): above this the amount turns negative
+  const MAX_UPGRADE = 20;
+  const MAX_MAXITEM = 1000;
+
+  function lastBlock(model, monId) {
+    const mon = model.monsters.get(monId);
+    if (!mon) throw new Error('This monster has no block in propMoverEx.inc yet');
+    const b = mon.blocks[mon.blocks.length - 1];
+    if (!b.close) throw new Error(`${mon.define}'s block is not closed: fix the file first`);
+    return { mon, b };
+  }
+  const last = (arr, f) => { for (let i = arr.length - 1; i >= 0; i--) if (f(arr[i])) return arr[i]; return null; };
+
+  function checkItem(define, defines) {
+    T.checkDefine(define);
+    if (!defines.has(define)) throw new Error(`${define} is not defined`);
+  }
+  function checkChance(prob) { T.checkAmount(prob, 1, D().INT_MAX, 'The chance (file value)'); }
+  function checkCount(count) {
+    if (count !== -1) T.checkAmount(count, 1, MAX_COUNT, 'The amount');
+  }
+  function checkUpgrade(level) { T.checkAmount(level, 0, MAX_UPGRADE, 'The upgrade (+N)'); }
+
+  const dropLine = (define, prob, level, count) => `DropItem(${define}, ${prob}, ${level}, ${count});`;
+
+  // { define, prob, level, count } -> splices
+  function addDrop(text, model, monId, d, defines) {
+    checkItem(d.define, defines); checkChance(d.prob); checkCount(d.count); checkUpgrade(d.level);
+    const { b } = lastBlock(model, monId);
+    const row = dropLine(d.define, d.prob, d.level, d.count);
+    const anchor = last(b.entries, e => e.kind === 'item' && !e.gen)
+      || last(b.entries, e => (e.kind === 'gold' || e.kind === 'maxitem') && !e.gen);
+    if (anchor) return T.insertRowAfter(text, anchor, row);
+    return T.insertRowBelowLine(text, b.open.start, row);
+  }
+
+  // change some of { prob, level, count, define } of one DropItem line
+  function setDrop(text, e, d, defines) {
+    const out = [];
+    if (d.define != null && d.define !== e.define) { checkItem(d.define, defines); out.push(...T.replaceSpan(e.id, d.define)); }
+    if (d.prob != null && d.prob !== e.probability) { checkChance(d.prob); out.push(...T.replaceSpan(e.prob, d.prob)); }
+    if (d.level != null && d.level !== e.levelValue) { checkUpgrade(d.level); out.push(...T.replaceSpan(e.level, d.level)); }
+    if (d.count != null && (d.count === -1 ? 0xFFFFFFFF : d.count) !== e.number) { checkCount(d.count); out.push(...T.replaceSpan(e.count, d.count)); }
+    return out;
+  }
+
+  const removeEntry = (text, e) => T.removeRow(text, e);
+
+  function setGold(text, model, monId, min, max) {
+    T.checkAmount(min, 0, D().INT_MAX - 1, 'The lowest Penya');
+    T.checkAmount(max, 1, D().INT_MAX, 'The highest Penya');
+    if (max <= min) throw new Error('The highest Penya must be more than the lowest (the server crashes when they are equal)');
+    const { mon, b } = lastBlock(model, monId);
+    const g = last(mon.list, e => e.kind === 'gold');
+    if (g) return [...T.replaceSpan(g.min, min), ...T.replaceSpan(g.max, max)];
+    const row = `DropGold(${min}, ${max});`;
+    const mi = last(b.entries, e => e.kind === 'maxitem');
+    return mi ? T.insertRowAfter(text, mi, row) : T.insertRowBelowLine(text, b.open.start, row);
+  }
+
+  function setMaxitem(text, model, monId, n) {
+    T.checkAmount(n, 0, MAX_MAXITEM, 'Max items per kill');
+    const { mon, b } = lastBlock(model, monId);
+    if (mon.maxitem) return T.replaceSpan(mon.maxitem.value, n);
+    return T.insertRowBelowLine(text, b.open.start, `Maxitem = ${n};`);
+  }
+
+  function addKind(text, model, monId, ik3Define, defines, level) {
+    T.checkDefine(ik3Define);
+    if (!defines.has(ik3Define)) throw new Error(`${ik3Define} is not defined`);
+    const { mon, b } = lastBlock(model, monId);
+    if (mon.kinds.length >= D().MAX_DROPKIND) throw new Error(`A monster has room for ${D().MAX_DROPKIND} random-gear lines`);
+    const [lo, hi] = D().kindWindow(level);
+    const row = `DropKind(${ik3Define}, ${lo}, ${hi});`;
+    const anchor = last(b.entries, e => e.kind === 'kind' && !e.gen) || last(b.entries, e => e.kind !== 'kind' && !e.gen);
+    return anchor ? T.insertRowAfter(text, anchor, row) : T.insertRowBelowLine(text, b.open.start, row);
+  }
+
+  FRE.dropsOps = { addDrop, setDrop, removeEntry, setGold, setMaxitem, addKind, dropLine, MAX_COUNT, MAX_UPGRADE, MAX_MAXITEM };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- edit/npc-ops.js ----
@@ -7066,8 +8190,25 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "47+", "when
           live: ws.placed ? m => ws.isLiveMenu(m) : null });
       },
     },
+    {
+      // propMoverEx.inc (CProject::LoadPropMoverEx, Project.cpp:2978): each monster's drops, Penya and max items per kill.
+      // Server only: the drop lines are kept #ifdef __WORLDSERVER and there is no loose Client copy.
+      // optional: what the kill path also reads (loaders/drops.js), read-only here.
+      id: 'drops', label: 'Monster Drops',
+      required: ['propMoverEx.inc', 'propMover.txt', 'propMover.txt.txt'], editable: ['propMoverEx.inc'], client: [],
+      optional: ['propDropEvent.inc', 'except.txt', 'PenyaTable.txt', 'expTable.inc', 'Event.lua', 'propItemEtc.inc'],
+      parse(ws) {
+        if (!ws.movers) ws.movers = FRE.propMover.loadPropMover(ws.files.get('propmover.txt'), { defines: ws.defines.defines, strings: ws.strings.map });
+        if (!ws.dropContext) ws.dropContext = FRE.drops.contextFromFiles(ws);
+        return FRE.drops.loadDrops(ws.files.get('propmoverex.inc'), { defines: ws.defines.defines, strings: ws.strings.map, movers: ws.movers.movers });
+      },
+      validate(ws, model) {
+        const f = ws.files.get('propmoverex.inc');
+        return FRE.drops.validateDrops(model, { items: ws.items.items, movers: ws.movers.movers, text: f.text, original: f.originalText });
+      },
+    },
   ];
-  const ALL_FILES = [...new Set([...CORE, ...MODULES.flatMap(m => m.required), ...OPTIONAL])];
+  const ALL_FILES = [...new Set([...CORE, ...MODULES.flatMap(m => [...m.required, ...(m.optional || [])]), ...OPTIONAL])];
 
   class Workspace {
     // files: Map lowercase name -> SourceFile
@@ -7516,6 +8657,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "47+", "when
 //   The game (Neuz): the same loads once at startup, before the login screen (Neuz.cpp:1589 BeginLoadThread ->
 //     LoadPreFiles :1593, OpenProject :1573). A loose file in Client/ wins over data.res (file.cpp:273
 //     CResFile::Open, b7645c52). Never reads .dyo (WorldFile.cpp:269-382 is #ifdef __WORLDSERVER).
+//   propMoverEx.inc (Monster Drops): the game reads it at startup but the drop lines are kept only #ifdef __WORLDSERVER
+//     (Project.cpp:3196 / 3218 / 3234), and it has no loose Client copy: a drop change needs only the server restart.
 //   Client/Client/DonationShopTree.inc: each time the Donation Shop window opens (WndDonationShop.cpp:346; 409 with donation-tree.diff).
 //   Client/Client/NpcBoard_<id>.inc: on every click of the menu, once docs/patches/npc-board.diff is built.
 // Stop Server.bat closes Neuz and every server; Start Server.bat starts them and then the game
@@ -7540,6 +8683,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "47+", "when
     'exchange_script.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:979 -> Exchange.cpp:34 Load_Script' },
     'donationshop.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:932 -> ProjectCmn.cpp:1845 LoadDonationShop' },
     'battlepass.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:907 -> ProjectCmn.cpp:1682 LoadBattlePass' },
+    // the game parses propMoverEx.inc too, but keeps no drop lines: DropItem / DropKind / DropGold are added #ifdef __WORLDSERVER
+    'propmoverex.inc': { server: STARTUP, client: null, cite: 'Project.cpp:828 LoadPropMoverEx (drops #ifdef __WORLDSERVER :3196)' },
     'client/donationshoptree.inc': { server: null, client: WINDOW, cite: 'WndDonationShop.cpp:346 (409 with donation-tree.diff) LoadTreeScript' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };
@@ -8159,8 +9304,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "47+", "when
   // so 1% = 10,000 and 0.0001% = 1 (the smallest step the file can hold). value / onCommit are in units.
   const PCT_UNIT = 10000;
   const pctText = u => (u === null || u === undefined ? '' : (u / PCT_UNIT).toLocaleString('en-US', { maximumFractionDigits: 4, useGrouping: false }));
-  function pctInput({ value = null, disabled = false, title = '', onCommit, key = null, live = !!key }) {
-    const tip = u => `${title ? title + '\n' : ''}${u === null ? '' : `= ${fmt(u)} of 1,000,000 in the file`}`;
+  // conv (another scale, e.g. drop chances out of 3,000,000,000): { toPct(u) -> percent, fromPct(p) -> u, maxPct, tip(u) -> text }
+  function pctInput({ value = null, disabled = false, title = '', onCommit, key = null, live = !!key, conv = null }) {
+    const pctText = u => (u === null || u === undefined ? '' : conv
+      ? Number(conv.toPct(Number(u)).toFixed(4)).toLocaleString('en-US', { maximumFractionDigits: 4, useGrouping: false }) : FRE.dom.pctText(u));
+    const tip = u => `${title ? title + '\n' : ''}${u === null ? '' : conv ? conv.tip(Number(u)) : `= ${fmt(u)} of 1,000,000 in the file`}`;
     const el = h('input.num-input.pct-input', { type: 'text', inputMode: 'decimal', disabled, title: tip(value), value: pctText(value), placeholder: '%' });
     el.dataset.value = value === null ? '' : String(value);
     if (key) el.dataset.key = key;
@@ -8172,9 +9320,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "47+", "when
       const t = el.value.trim().replace(/%$/, '').trim().replace(',', '.');
       const back = () => { el.value = pctText(el.dataset.value === '' ? null : Number(el.dataset.value)); };
       if (!/^\d+(\.\d*)?$|^\.\d+$/.test(t)) { if (!quiet) { toast('Type a percent between 0 and 100, e.g. 50 or 12.5.', 'bad'); back(); } return; }
-      const u = Math.round(Number(t) * PCT_UNIT);
-      if (u > 100 * PCT_UNIT) { if (!quiet) { toast('A chance is at most 100%.', 'bad'); back(); } return; }
-      if (!quiet && Math.abs(u - Number(t) * PCT_UNIT) > 1e-6) toast(`Rounded to ${pctText(u)}% (the file keeps 4 decimals).`);
+      if (conv && Number(t) > conv.maxPct) { if (!quiet) { toast(`A chance is at most ${conv.maxPct}% here.`, 'bad'); back(); } return; }
+      const u = conv ? conv.fromPct(Number(t)) : Math.round(Number(t) * PCT_UNIT);
+      if (!conv && u > 100 * PCT_UNIT) { if (!quiet) { toast('A chance is at most 100%.', 'bad'); back(); } return; }
+      if (!conv && !quiet && Math.abs(u - Number(t) * PCT_UNIT) > 1e-6) toast(`Rounded to ${pctText(u)}% (the file keeps 4 decimals).`);
       if (!quiet) el.value = pctText(u);
       el.title = tip(u);
       if (String(u) === el.dataset.value) return;
@@ -11467,6 +12616,323 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "47+", "when
   }
 
   FRE.ui.modules.push(mod);
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- ui/drops.js ----
+// Monster Drops (propMoverEx.inc): pick a monster, see what it drops with the chance players really get,
+// add / change / remove drops, its Penya and its max items per kill. "🎲 Kill it" replays kills through
+// loaders/drops-sim.js (CMover::DropItem). Edits: edit/drops-ops.js. Plain words (the user, 2026-10-07).
+(function (FRE) {
+  'use strict';
+  const { h, fmt, modal, numInput, pctInput, toast, keepFocus } = FRE.dom;
+  const { diagTags, itemCell, fieldLabel, formFooter, diagRow, pretty } = FRE.ui;
+  const FILE = 'propmoverex.inc';
+  const st = { sel: null, show: 'all', killOpts: null };
+
+  const Dr = () => FRE.drops, Sim = () => FRE.dropsSim, O = () => FRE.dropsOps;
+  const model = ctx => ctx.ws.models.drops;
+  const movers = ctx => ctx.ws.movers.movers;
+  const canEdit = ctx => ctx.ws.isEditable(FILE);
+  const keyOf = id => 'drops|' + id;
+  const pctOf = p => Dr().pct(p);
+  const RANK_WORD = { 1: 'small', 2: 'normal', 3: 'captain', 4: 'giant', 5: 'boss', 6: 'material', 7: 'world boss', 8: 'guard', 9: 'citizen' };
+  const rankWord = mv => RANK_WORD[mv.rankId] || mv.rank;
+  const nameOf = (ctx, id) => { const mv = movers(ctx).get(id); return mv && mv.name ? mv.name : (model(ctx).monsters.get(id) || {}).define || String(id); };
+  const itemNameOf = (ctx, e) => { const it = ctx.ws.itemById(e.itemId); return it && it.name ? it.name : e.define; };
+  const genNote = e => e.gen ? ` (made by ${Dr().GEN_SCRIPT[e.gen] || 'a gen script'})` : '';
+  const dropDiags = ctx => ctx.ws.diags.filter(d => d.module === 'drops');
+  const rowDiags = (ctx, e) => dropDiags(ctx).filter(d => d.start !== undefined && d.start >= e.start && d.start < Math.max(e.end, e.start + 1));
+  const monDiags = (ctx, mon) => dropDiags(ctx).filter(d => mon.blocks.some(b => d.start >= b.start && d.start <= (b.close ? b.close.end : b.start + 1)));
+  // the chance box: players' real chance in %, written as the file value that gives it (FRE.drops.probForChance)
+  const CONV = {
+    toPct: u => Dr().effChance(u) * 100, fromPct: p => Dr().probForChance(p / 100),
+    get maxPct() { return Number((Dr().MAX_CHANCE() * 100).toFixed(4)); },
+    tip: u => `= ${fmt(u)} in the file (out of 3,000,000,000; on paper ${pctOf(u / Dr().DROP_ONE)})`,
+  };
+
+  function monsterList(ctx) {
+    const m = model(ctx), mv = movers(ctx);
+    return [...m.monsters.values()].map(mon => ({ mon, mover: mv.get(mon.id) || null }))
+      .sort((a, b) => ((a.mover ? a.mover.level : 0) - (b.mover ? b.mover.level : 0)) || a.mon.define.localeCompare(b.mon.define));
+  }
+  const SHOW = [
+    { v: 'all', label: 'All monsters', test: () => true },
+    { v: 'boss', label: 'Giants and bosses', test: x => x.mover && [4, 5, 7].includes(x.mover.rankId) },
+    { v: 'problems', label: 'With problems', test: (x, ctx) => monDiags(ctx, x.mon).some(d => d.severity !== 'INFO') },
+    { v: 'edited', label: 'Edited', test: (x, ctx) => ctx.edited.has(keyOf(x.mon.id)) },
+    { v: 'gen', label: 'With script-made drops', test: x => x.mon.list.some(e => e.gen) || x.mon.kinds.some(e => e.gen) },
+  ];
+  function edit(ctx, id, make, label) { ctx.edit(FILE, make, label, keyOf(id)); }
+  // a typed field: the pauses while typing one value fold into one undo step (keeps the first label: "was <the value before>")
+  function typed(ctx, id, field, make, label) {
+    ctx.editGroup(() => [{ file: FILE, splices: make(ctx.ws.files.get(FILE).text) }], label, [keyOf(id)], `dr|${id}|${field}`);
+  }
+
+  const mod = {
+    id: 'drops', label: 'Monster Drops', searchPlaceholder: 'Search monsters',
+    help: 'Monster Drops: what each monster drops, its Penya and how many items per kill (propMoverEx.inc)',
+    st,
+    onLoad() { st.sel = null; st.show = 'all'; st.killOpts = null; },
+
+    listExtra(ctx) {
+      const all = monsterList(ctx);
+      return h('select.npc-filter', { title: 'Which monsters to list', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
+        SHOW.map(o => h('option', { value: o.v, selected: o.v === st.show }, `${o.label} (${all.filter(x => o.test(x, ctx)).length})`)));
+    },
+
+    renderList(el, ctx) {
+      const q = ctx.query.toLowerCase(), test = SHOW.find(o => o.v === st.show).test;
+      let shown = 0;
+      for (const x of monsterList(ctx)) {
+        if (!test(x, ctx)) continue;
+        const name = x.mover && x.mover.name ? x.mover.name : x.mon.define;
+        if (q && !name.toLowerCase().includes(q) && !x.mon.define.toLowerCase().includes(q)) continue;
+        if (++shown > 600) continue;
+        const ds = monDiags(ctx, x.mon), b = ds.filter(d => d.severity === 'BLOCK').length, w = ds.filter(d => d.severity === 'WARN').length;
+        el.appendChild(h('div.npc' + (st.sel === x.mon.id ? '.sel' : ''), { on: { click: () => { st.sel = x.mon.id; ctx.renderAll(false); } } },
+          h('div.n', h('span', name), h('span', ctx.edited.has(keyOf(x.mon.id)) ? h('span.tag.edit', 'edited') : null,
+            b ? h('span.tag.bad', '⛔' + b) : w ? h('span.tag.warn', '⚠' + w) : null)),
+          h('div.k', `${x.mover ? `lv ${x.mover.level} · ${rankWord(x.mover)} · ` : ''}${x.mon.define}`)));
+      }
+      if (shown > 600) el.appendChild(h('div.pad.muted', `${shown - 600} more: search to narrow the list.`));
+      if (!shown) el.appendChild(h('div.pad.muted', 'No monsters match.'));
+    },
+
+    renderEditor(el, ctx) {
+      const m = model(ctx);
+      if (m.stopped) el.appendChild(h('div.banner.bad', m.stopped.reason === 'ai'
+        ? 'The server stops reading propMoverEx.inc at a broken AI { } block: every monster after it loses its drops. See the problems list.'
+        : 'The server never finishes loading propMoverEx.inc (it loops forever at startup). See the problems list.'));
+      const mon = st.sel !== null ? m.monsters.get(st.sel) : null;
+      if (!mon) { el.appendChild(h('p.empty-state', 'Select a monster on the left.')); return; }
+      keepFocus(el, () => monsterView(el, ctx, mon));
+    },
+
+    addTarget(ctx) {
+      if (!canEdit(ctx)) return { ok: false, title: 'propMoverEx.inc is read-only' };
+      const mon = st.sel !== null ? model(ctx).monsters.get(st.sel) : null;
+      if (!mon) return { ok: false, title: 'Select a monster on the left first' };
+      return { ok: true, usesPrice: false, title: `Add as a drop of ${nameOf(ctx, mon.id)} (opens the form)`, add(info) { addForm(ctx, mon, info.define); } };
+    },
+
+    locate(d, ctx) {
+      if (d.module !== 'drops') return false;
+      const b = model(ctx).blocks.find(x => d.start >= x.start && d.start <= (x.close ? x.close.end : Infinity));
+      if (b) st.sel = b.id;
+      return true;
+    },
+  };
+
+  // ------------------------------------------------------------- one monster
+  function monsterView(el, ctx, mon) {
+    const ws = ctx.ws, edit_ = canEdit(ctx), mv = movers(ctx).get(mon.id) || null, f = ws.files.get(FILE);
+    const env = Sim().envFor(ws, mon.id), ex = Sim().exactChances(env, {});
+    const name = nameOf(ctx, mon.id);
+    el.appendChild(h('div.npc-title', h('h2', name), h('span.def', mon.define),
+      mv ? h('span.muted', ` lv ${mv.level} · ${rankWord(mv)}${mv.flying ? ' · flies (drops go straight into the bag)' : ''}`) : h('span.tag.bad', 'not in propMover.txt'),
+      h('span.line', `${f.name} L${f.lineOf(mon.blocks[0].start) + 1}`), edit_ ? null : h('span.tag.bad', 'read-only')));
+    const rates = ws.dropContext.rates;
+    el.appendChild(h('p.muted.small', `Chances below are what players get: a player at the monster's level, the server rates on now (${rates.events.filter(e => e.on).map(e => e.name).join(', ') || 'none'}: item rate ×${rates.item}, Penya ×${rates.gold}). `,
+      'The item rate only decides whether a kill drops anything at all; each line then rolls its own chance (the server picks the roll with xRand() % 3,000,000,000, so low chances come out about 1.4 times what the file says).'));
+
+    // max items per kill
+    const maxRow = h('div.dr-line',
+      h('b', 'Max items per kill'),
+      numInput({ value: mon.maxValue, min: 0, max: O().MAX_MAXITEM, disabled: !edit_, key: `dr|${mon.id}|max`,
+        title: '0 = no limit. Lines marked "not counted" never use it up.',
+        onCommit: v => { if (v === null) return; typed(ctx, mon.id, 'max', t => O().setMaxitem(t, model(ctx), mon.id, v), `${name}: changed max items per kill (was ${mon.maxValue})`); } }),
+      h('span.muted.small', mon.maxValue ? `The server reads the list top to bottom and stops after ${mon.maxValue} counted item${mon.maxValue > 1 ? 's' : ''}.` : 'No limit.'));
+    el.appendChild(maxRow);
+
+    // Penya
+    const gold = mon.list.find(e => e.kind === 'gold');
+    const pr = Sim().penyaRange(env, {});
+    el.appendChild(h('h3', 'Penya'));
+    const setGold = (min, max) => typed(ctx, mon.id, 'gold', t => O().setGold(t, model(ctx), mon.id, min, max), `${name}: changed Penya (was ${gold ? `${gold.minValue}-${gold.maxValue}` : 'none'})`);
+    el.appendChild(h('div.dr-line',
+      h('span', 'DropGold'), numInput({ value: gold ? gold.minValue : null, min: 0, max: Dr().INT_MAX - 1, disabled: !edit_, key: `dr|${mon.id}|gmin`,
+        onCommit: v => { if (v !== null) setGold(v, gold ? Math.max(gold.maxValue, v + 1) : v + 1); } }),
+      h('span', 'to'), numInput({ value: gold ? gold.maxValue : null, min: 1, max: Dr().INT_MAX, disabled: !edit_, key: `dr|${mon.id}|gmax`,
+        onCommit: v => { if (v !== null) setGold(gold ? Math.min(gold.minValue, v - 1) : 0, v); } }),
+      gold && gold.gen ? h('span.tag.info', `made by ${Dr().GEN_SCRIPT[gold.gen]}`) : null,
+      gold ? h('button.icon.danger', { disabled: !edit_, title: 'Remove: this monster gives no Penya',
+        on: { click: () => edit(ctx, mon.id, t => O().removeEntry(t, gold), `${name}: removed its Penya`) } }, '✕') : null,
+      gold ? diagTags(rowDiags(ctx, gold)) : null));
+    el.appendChild(h('p.small', pr ? [`Players get ${fmt(pr.min)} - ${fmt(pr.max)} Penya per kill, straight into the bag `,
+      h('span.muted', `(from ${pr.from}${pr.from === 'DropGold' ? '' : ': this monster\'s DropGold numbers only matter as noted'}, × ${pr.rates} server rate)`)]
+      : h('span.muted', 'No DropGold line: this monster gives no Penya.')));
+
+    // the drop lines
+    el.appendChild(h('div.dr-line', { style: 'margin-top:14px' }, h('h3', { style: 'margin:0' }, `Drops (${mon.list.filter(e => e.kind === 'item').length})`),
+      h('button.primary', { disabled: !edit_, on: { click: () => addForm(ctx, mon) } }, '+ Add a drop'),
+      h('button', { on: { click: () => killWindow(ctx, mon) } }, '🎲 Kill it N times…')));
+    const tb = h('table.items.dr', h('tr', h('th', 'Item'), h('th', { title: 'Typed in percent: what players get when the list reaches this line' }, 'Chance'),
+      h('th', { title: 'Per kill, with the item rate and the max items per kill' }, 'Per kill'), h('th', 'Amount'), h('th', 'Upgrade'), h('th', ''), h('th', 'Line')));
+    ex.lines.forEach((l, i) => {
+      const e = l.entry;
+      if (e.kind !== 'item' || e.event) return;
+      const info = ws.itemById(e.itemId) ? ws.itemInfo(ws.itemById(e.itemId)) : null;
+      const iname = itemNameOf(ctx, e);
+      const set = (what, d, was) => typed(ctx, mon.id, `${e.start}|${what}`, () => O().setDrop(null, e, d, ws.defines.defines), `${name}: changed the ${what} of ${iname} (was ${was})${genNote(e)}`);
+      const free = e.number === 0xFFFFFFFF;
+      const amount = h('td.dr-amt', h('label.small', { title: 'Not counted: always exactly 1, and it never uses up the max items per kill' },
+        h('input', { type: 'checkbox', checked: free, disabled: !edit_, on: { change: ev => set('amount', { count: ev.target.checked ? -1 : 1 }, free ? '1, not counted' : `1 to ${e.number}`) } }), ' not counted'),
+        free ? null : h('span', ' 1 to ', numInput({ value: e.number, min: 1, max: O().MAX_COUNT, disabled: !edit_, key: `dr|${mon.id}|${e.start}|n`,
+          onCommit: v => { if (v) set('amount', { count: v }, `1 to ${e.number}`); } })));
+      const reach = l.reach < 0.9995 ? h('div.muted.small', `reached in ${pctOf(l.reach)} of kills (the max stops the list before it)`) : null;
+      tb.appendChild(h('tr', itemCell(info, e.define),
+        h('td', pctInput({ value: e.probability, disabled: !edit_, key: `dr|${mon.id}|${e.start}|p`, conv: CONV,
+          onCommit: u => set('chance', { prob: u }, pctOf(Dr().effChance(e.probability)))})),
+        h('td', pctOf(l.perKill), reach),
+        amount,
+        h('td.dr-amt', h('span', '+', numInput({ value: e.levelValue, min: 0, max: O().MAX_UPGRADE, disabled: !edit_, key: `dr|${mon.id}|${e.start}|lv`,
+          onCommit: v => { if (v !== null) set('upgrade', { level: v }, `+${e.levelValue}`); } }))),
+        h('td', h('button.icon.danger', { disabled: !edit_, title: 'Remove this drop',
+          on: { click: () => edit(ctx, mon.id, t => O().removeEntry(t, e), `${name}: removed ${iname} from its drops${genNote(e)}`) } }, '✕'), ' ',
+          e.gen ? h('span.tag.info', { title: `Running ${Dr().GEN_SCRIPT[e.gen]} again rewrites this block` }, `script: ${e.gen}`) : null, diagTags(rowDiags(ctx, e))),
+        h('td', h('span.line', { title: f.text.slice(e.start, e.end) }, 'L' + (f.lineOf(e.start) + 1)))));
+    });
+    el.appendChild(tb);
+
+    // random gear (DropKind)
+    const [lo, hi] = Dr().kindWindow(mv ? mv.level : 1);
+    el.appendChild(h('h3', `Random gear (${mon.kinds.length})`));
+    el.appendChild(h('p.muted.small', `Each line can drop one random item of that kind whose rarity is ${lo} - ${hi} (the monster's level −5 to −2), at a random +0 - +10, rolled from expTable.inc's drop luck × this monster's ${mv ? mv.correction : 100}%.`));
+    const kt = h('table.items', h('tr', h('th', 'Kind'), h('th', 'Items it can pick'), h('th', '')));
+    for (const k of mon.kinds) {
+      const ka = ws.dropContext.kinds.get(k.ik3Value);
+      let n = 0;
+      if (ka) for (const it of ka.list) if (it.rare >= lo && it.rare <= hi) n++;
+      kt.appendChild(h('tr', h('td', pretty(k.define)), h('td', n ? `${n} item${n > 1 ? 's' : ''}` : h('span.muted', 'none: this line never drops anything')),
+        h('td', h('button.icon.danger', { disabled: !edit_, on: { click: () => edit(ctx, mon.id, t => O().removeEntry(t, k), `${name}: removed random ${pretty(k.define)}${genNote(k)}`) } }, '✕'), ' ', diagTags(rowDiags(ctx, k)))));
+    }
+    if (mon.kinds.length) el.appendChild(kt);
+    const ik3 = [...ws.dropContext.kinds.keys()].map(v => ws.defines.byValue('IK3_', v)).filter(Boolean).sort();
+    el.appendChild(h('div.dr-line', h('span', '+ Random gear:'),
+      edit_ ? FRE.ui.combo({ options: ik3.map(d => ({ v: d, label: pretty(d), find: d })), placeholder: 'Pick a kind (Sword, Axe…)', wordStart: true,
+        onPick: d => edit(ctx, mon.id, t => O().addKind(t, model(ctx), mon.id, d, ws.defines.defines, mv ? mv.level : 1), `${name}: added random ${pretty(d)}`) }) : null));
+
+    // event drops (read-only)
+    const evs = env.list.filter(e => e.event);
+    if (evs.length) {
+      const det = h('details', h('summary', `Event drops every monster of this level has (propDropEvent.inc): ${evs.length} item${evs.length > 1 ? 's' : ''}, after its own lines`));
+      const et = h('table.items', h('tr', h('th', 'Item'), h('th', 'Chance'), h('th', 'Per kill')));
+      ex.lines.forEach(l => { if (!l.entry.event) return; const e = l.entry, it = ws.itemById(e.itemId);
+        et.appendChild(h('tr', itemCell(it ? ws.itemInfo(it) : null, e.define), h('td', pctOf(l.chance)), h('td', pctOf(l.perKill)))); });
+      det.appendChild(h('p.muted.small', 'Edited in propDropEvent.inc (not in this task). They come after the monster\'s own lines, so the max items per kill can stop them too.'));
+      det.appendChild(et);
+      el.appendChild(det);
+    }
+    const ds = monDiags(ctx, mon);
+    if (ds.length) { el.appendChild(h('h3', 'Problems')); for (const d of ds) el.appendChild(diagRow(d)); }
+  }
+
+  // ------------------------------------------------------------- + Add a drop
+  function addForm(ctx, mon, define) {
+    const ws = ctx.ws, name = nameOf(ctx, mon.id);
+    const s = { define: define || null, prob: null, count: 1, free: true, level: 0 };
+    const body = h('div.nn-form');
+    const checks = h('div'), preview = h('div');
+    let createBtn = null;
+    const itemOpts = ws._itemOpts || [...ws.items.items.values()].map(it => ws.itemInfo(it)).sort((a, b) => a.name.localeCompare(b.name)).map(i => ({ v: i.define, label: `${i.name} (${i.define})`, find: i.define }));
+    ws._itemOpts = itemOpts;
+    const plan = () => {
+      const f = ws.files.get(FILE);
+      return O().addDrop(f.text, model(ctx), mon.id, { define: s.define, prob: s.prob, level: s.level, count: s.free ? -1 : s.count }, ws.defines.defines);
+    };
+    function refresh() {
+      checks.textContent = ''; preview.textContent = '';
+      const probs = [];
+      if (!s.define) probs.push(['BLOCK', 'Still needs: the item']);
+      if (!s.prob) probs.push(['BLOCK', 'Still needs: the chance']);
+      if (s.define && mon.list.some(e => e.kind === 'item' && e.define === s.define)) probs.push(['WARN', `${name} already drops this item: both lines roll, one after the other`]);
+      if (s.define) { const id = ws.defines.defines.get(s.define), it = id === undefined ? null : ws.itemById(id);
+        if (it && s.level && ![ws.defines.defines.get('IK1_WEAPON'), ws.defines.defines.get('IK1_ARMOR')].includes(FRE.specItem.get(it, 'dwItemKind1'))) probs.push(['WARN', `+${s.level} on an item that is not a weapon or armor`]); }
+      for (const [sev, msg] of probs) checks.appendChild(diagRow({ severity: sev, code: '', message: msg }));
+      if (!probs.length) checks.appendChild(h('p.muted.small', 'No problems.'));
+      const ok = !probs.some(p => p[0] === 'BLOCK');
+      if (createBtn) createBtn.disabled = !ok;
+      if (!ok) { preview.appendChild(h('p.muted', 'Fill in the item and the chance.')); return; }
+      try {
+        const sp = plan(), f = ws.files.get(FILE);
+        const scratch = sp.reduce((t, x) => t.slice(0, x.start) + x.insert + t.slice(x.end), f.text);
+        const line = sp[0].insert.replace(/\r?\n$/, '');
+        preview.appendChild(h('pre.preview', `${FRE.drops.FILE}, ${name}'s block, line ${f.lineOf(sp[0].start) + 1}:\n+${line}`));
+        const sm = Dr().loadDrops({ name: FILE, text: scratch }, { defines: ws.defines.defines, strings: ws.strings.map, movers: movers(ctx) });
+        const ex2 = Sim().exactChances(Sim().envFor(ws, mon.id, sm), {});
+        const mine = ex2.lines.find(l => l.entry.kind === 'item' && !l.entry.event && l.entry.start === sp[0].start + sp[0].insert.indexOf('DropItem'));
+        if (mine) preview.appendChild(h('p', `Players get it in ${pctOf(mine.perKill)} of kills (about ${fmt(Math.round(mine.perKill * 1000) / 10)} per 100 kills)`,
+          mine.reach < 0.9995 ? ` — the list reaches it in ${pctOf(mine.reach)} of kills because of the max items per kill.` : '.'));
+      } catch (e) { preview.appendChild(h('p.bad', e.message)); if (createBtn) createBtn.disabled = true; }
+    }
+    const debounce = refresh;          // the inputs already wait for a pause in typing (FRE.dom live inputs)
+    const cnt = numInput({ value: 1, min: 1, max: O().MAX_COUNT, key: 'dr|add|n', disabled: s.free, onCommit: v => { s.count = v || 1; debounce(); } });
+    const row = (label, req, ...el) => h('div.nn-row', fieldLabel(label, req), ...el);
+    body.appendChild(h('div',
+      row('Item', true, h('div', { style: 'flex:1' }, FRE.ui.combo({ options: itemOpts, value: s.define, placeholder: 'Type an item name…', onPick: v => { s.define = v; refresh(); } }))),
+      row('Chance (what players get, per roll)', true, pctInput({ value: null, conv: CONV, key: 'dr|add|p', live: true, onCommit: u => { s.prob = u; debounce(); } })),
+      row('Amount', false,
+        h('label', h('input', { type: 'checkbox', checked: s.free, on: { change: ev => { s.free = ev.target.checked; cnt.disabled = s.free; refresh(); } } }),
+          ' exactly 1, not counted toward the max items per kill'),
+        h('span.muted', '— or untick it for a random amount from 1 to'), cnt),
+      row('Upgrade (+N)', false, numInput({ value: 0, min: 0, max: O().MAX_UPGRADE, key: 'dr|add|lv', onCommit: v => { s.level = v || 0; debounce(); } }))));
+    body.appendChild(h('p.muted.small', `The chance can be at most ${CONV.maxPct}%: the server reads the number with atoi, which stops at 2,147,483,647. For "every kill", add the same line twice.`));
+    formFooter({ checks, action: 'Add', previewTitle: 'What will be written / what players get', preview }).forEach(x => body.appendChild(x));
+    const m = modal({ title: `Add a drop: ${name}`, body, wide: true, buttons: [
+      { label: 'Cancel' },
+      { label: 'Add', cls: 'primary', id: 'dr-add-btn', onClick: () => {
+        const iname = (() => { const id = ws.defines.defines.get(s.define), it = id === undefined ? null : ws.itemById(id); return it && it.name ? it.name : s.define; })();
+        edit(ctx, mon.id, () => plan(), `${name}: added ${iname} as a drop (${pctOf(Dr().effChance(s.prob))})`);
+      } },
+    ] });
+    createBtn = m.el.querySelector('#dr-add-btn');
+    refresh();
+  }
+
+  // ------------------------------------------------------------- 🎲 Kill it N times
+  function killWindow(ctx, mon) {
+    const ws = ctx.ws, mv = movers(ctx).get(mon.id), name = nameOf(ctx, mon.id);
+    const o = st.killOpts && st.killOpts.id === mon.id ? st.killOpts : { id: mon.id, kills: 1000, playerLevel: mv ? mv.level : 1, loops: 1, seed: 1, fortune: false, worldId: 1 };
+    st.killOpts = o;
+    const out = h('div');
+    const run = () => {
+      out.textContent = '';
+      const env = Sim().envFor(ws, mon.id);
+      const t0 = Date.now();
+      const r = Sim().run(env, { kills: o.kills, seed: o.seed, playerLevel: o.playerLevel, loops: o.loops, fortune: o.fortune, worldId: o.worldId });
+      if (r.crash) out.appendChild(h('div.banner.bad', `The server would crash at kill ${r.crash.kill}: ${r.crash.why}.`));
+      out.appendChild(h('p', `${fmt(r.kills)} kills in ${Date.now() - t0} ms. A drop roll happened ${fmt(r.gates)} times; the max items per kill stopped the list ${fmt(r.stops)} times. `,
+        `Penya: ${fmt(Math.round(r.gold.total / Math.max(1, r.kills)))} per kill on average (${fmt(r.gold.min)} - ${fmt(r.gold.max)}).`));
+      const tb = h('table.items.dr', h('tr', h('th', 'Item'), h('th.num', 'Kills it dropped'), h('th.num', '% of kills'), h('th.num', 'Items in all')));
+      const rows = [...r.lines.entries()].map(([i, s]) => ({ e: env.list[i], s })).concat([...r.kinds.values()].map(s => ({ e: null, s })))
+        .sort((a, b) => b.s.times - a.s.times);
+      for (const x of rows) {
+        const it = ws.itemById(x.s.id);
+        tb.appendChild(h('tr', itemCell(it ? ws.itemInfo(it) : null, x.e ? x.e.define : String(x.s.id)),
+          h('td.num', fmt(x.s.times)), h('td.num', pctOf(x.s.times / r.kills)), h('td.num', fmt(x.s.count)),
+          x.e && x.e.event ? h('td.muted.small', 'event drop') : !x.e ? h('td.muted.small', 'random gear') : null));
+      }
+      out.appendChild(rows.length ? tb : h('p.muted', 'Nothing dropped.'));
+    };
+    const worlds = [[1, 'Madrigal (1)']].concat(ws.dropContext.penya.worlds.map(([w, p]) => [w, `world ${w} (Penya ${p}%)`]));
+    const body = h('div',
+      h('p.muted.small', 'Replays the server\'s kill code with its random generator: the same seed gives the same kills. Not modelled: event / quest items, Anarchy, the Lord event, PC-bang.'),
+      h('div.nn-row',
+        fieldLabel('Kills', true), numInput({ value: o.kills, min: 1, max: 200000, onCommit: v => { o.kills = v || 1; } }),
+        fieldLabel('Player level', true), numInput({ value: o.playerLevel, min: 1, max: 200, onCommit: v => { o.playerLevel = v || 1; } }),
+        fieldLabel('Seed', false), numInput({ value: o.seed, min: 0, max: 4294967295, onCommit: v => { o.seed = v || 0; } })),
+      h('div.nn-row',
+        fieldLabel('Rolls per kill', false), h('select', { on: { change: e => { o.loops = Number(e.target.value); } } },
+          [[1, '1 (normal)'], [2, '2 (Gift Box party, or a GET01 scroll)'], [3, '3 (GET02 scroll)'], [4, '4']].map(([v, l]) => h('option', { value: v, selected: o.loops === v }, l))),
+        h('label', h('input', { type: 'checkbox', checked: o.fortune, on: { change: e => { o.fortune = e.target.checked; } } }), ' Fortune Circle party'),
+        fieldLabel('Map', false), h('select', { on: { change: e => { o.worldId = Number(e.target.value); } } }, worlds.map(([v, l]) => h('option', { value: v, selected: o.worldId === v }, l)))),
+      h('button.primary', { on: { click: run } }, 'Run'), out);
+    modal({ title: `Kill ${name} N times`, body, wide: true });
+    run();
+  }
+
+  FRE.ui.modules.push(mod);
+  FRE.ui.drops = { addForm, killWindow };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/exchange.js ----

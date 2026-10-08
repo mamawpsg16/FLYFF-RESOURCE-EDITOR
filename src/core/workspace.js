@@ -92,8 +92,25 @@
           live: ws.placed ? m => ws.isLiveMenu(m) : null });
       },
     },
+    {
+      // propMoverEx.inc (CProject::LoadPropMoverEx, Project.cpp:2978): each monster's drops, Penya and max items per kill.
+      // Server only: the drop lines are kept #ifdef __WORLDSERVER and there is no loose Client copy.
+      // optional: what the kill path also reads (loaders/drops.js), read-only here.
+      id: 'drops', label: 'Monster Drops',
+      required: ['propMoverEx.inc', 'propMover.txt', 'propMover.txt.txt'], editable: ['propMoverEx.inc'], client: [],
+      optional: ['propDropEvent.inc', 'except.txt', 'PenyaTable.txt', 'expTable.inc', 'Event.lua', 'propItemEtc.inc'],
+      parse(ws) {
+        if (!ws.movers) ws.movers = FRE.propMover.loadPropMover(ws.files.get('propmover.txt'), { defines: ws.defines.defines, strings: ws.strings.map });
+        if (!ws.dropContext) ws.dropContext = FRE.drops.contextFromFiles(ws);
+        return FRE.drops.loadDrops(ws.files.get('propmoverex.inc'), { defines: ws.defines.defines, strings: ws.strings.map, movers: ws.movers.movers });
+      },
+      validate(ws, model) {
+        const f = ws.files.get('propmoverex.inc');
+        return FRE.drops.validateDrops(model, { items: ws.items.items, movers: ws.movers.movers, text: f.text, original: f.originalText });
+      },
+    },
   ];
-  const ALL_FILES = [...new Set([...CORE, ...MODULES.flatMap(m => m.required), ...OPTIONAL])];
+  const ALL_FILES = [...new Set([...CORE, ...MODULES.flatMap(m => [...m.required, ...(m.optional || [])]), ...OPTIONAL])];
 
   class Workspace {
     // files: Map lowercase name -> SourceFile

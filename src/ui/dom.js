@@ -74,8 +74,11 @@
   // so 1% = 10,000 and 0.0001% = 1 (the smallest step the file can hold). value / onCommit are in units.
   const PCT_UNIT = 10000;
   const pctText = u => (u === null || u === undefined ? '' : (u / PCT_UNIT).toLocaleString('en-US', { maximumFractionDigits: 4, useGrouping: false }));
-  function pctInput({ value = null, disabled = false, title = '', onCommit, key = null, live = !!key }) {
-    const tip = u => `${title ? title + '\n' : ''}${u === null ? '' : `= ${fmt(u)} of 1,000,000 in the file`}`;
+  // conv (another scale, e.g. drop chances out of 3,000,000,000): { toPct(u) -> percent, fromPct(p) -> u, maxPct, tip(u) -> text }
+  function pctInput({ value = null, disabled = false, title = '', onCommit, key = null, live = !!key, conv = null }) {
+    const pctText = u => (u === null || u === undefined ? '' : conv
+      ? Number(conv.toPct(Number(u)).toFixed(4)).toLocaleString('en-US', { maximumFractionDigits: 4, useGrouping: false }) : FRE.dom.pctText(u));
+    const tip = u => `${title ? title + '\n' : ''}${u === null ? '' : conv ? conv.tip(Number(u)) : `= ${fmt(u)} of 1,000,000 in the file`}`;
     const el = h('input.num-input.pct-input', { type: 'text', inputMode: 'decimal', disabled, title: tip(value), value: pctText(value), placeholder: '%' });
     el.dataset.value = value === null ? '' : String(value);
     if (key) el.dataset.key = key;
@@ -87,9 +90,10 @@
       const t = el.value.trim().replace(/%$/, '').trim().replace(',', '.');
       const back = () => { el.value = pctText(el.dataset.value === '' ? null : Number(el.dataset.value)); };
       if (!/^\d+(\.\d*)?$|^\.\d+$/.test(t)) { if (!quiet) { toast('Type a percent between 0 and 100, e.g. 50 or 12.5.', 'bad'); back(); } return; }
-      const u = Math.round(Number(t) * PCT_UNIT);
-      if (u > 100 * PCT_UNIT) { if (!quiet) { toast('A chance is at most 100%.', 'bad'); back(); } return; }
-      if (!quiet && Math.abs(u - Number(t) * PCT_UNIT) > 1e-6) toast(`Rounded to ${pctText(u)}% (the file keeps 4 decimals).`);
+      if (conv && Number(t) > conv.maxPct) { if (!quiet) { toast(`A chance is at most ${conv.maxPct}% here.`, 'bad'); back(); } return; }
+      const u = conv ? conv.fromPct(Number(t)) : Math.round(Number(t) * PCT_UNIT);
+      if (!conv && u > 100 * PCT_UNIT) { if (!quiet) { toast('A chance is at most 100%.', 'bad'); back(); } return; }
+      if (!conv && !quiet && Math.abs(u - Number(t) * PCT_UNIT) > 1e-6) toast(`Rounded to ${pctText(u)}% (the file keeps 4 decimals).`);
       if (!quiet) el.value = pctText(u);
       el.title = tip(u);
       if (String(u) === el.dataset.value) return;

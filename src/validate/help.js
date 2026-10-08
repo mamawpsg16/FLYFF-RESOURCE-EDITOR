@@ -186,5 +186,23 @@
     NN_POS: ['x, y, z and the angle must be numbers, and the angle 0 or more and under 360.', 'In game, stand on the spot and type /position, then copy the three numbers.'],
     NN_OVERLAP: ['Another NPC stands less than 4 units away (1 unit in the map file). The two would overlap.', 'Move a few steps away and take /position again.'],
     NN_HEIGHT: ['The height (y) is more than 30 away from the nearest NPC on the map. The NPC may float or be inside the ground.', 'Check y with /position on the exact spot.'],
+    // Monster Drops (loaders/drops.js, propMoverEx.inc)
+    M_RANGE: ['The block starts with a monster id above the highest id in propMover.txt. The server\'s loader then loops forever (a `continue` inside a do-while), so the WorldServer never finishes starting.', 'Use the MI_ name of a monster that exists in propMover.txt.'],
+    M_UNDEF: ['The MI_ name is not defined in any header, so the server reads it as 0 and gives these drops to no real monster.', 'Fix the spelling of the MI_ name.'],
+    M_NO_MOVER: ['The id is defined but has no row in propMover.txt, so no such monster ever spawns.', 'Add the drops to a monster that exists.'],
+    M_BRACES: ['The monster\'s { } block is broken. Without its closing }, the server reads until the end of the file and loops forever at startup.', 'Close the block with } on its own line.'],
+    M_AI: ['The AI { } part of this monster has a word the server does not know. The server stops reading propMoverEx.inc there: this monster and every monster after it lose their drops.', 'Fix the AI line (compare with another monster\'s AI block).'],
+    M_DUP: ['The same monster has two blocks. The server adds the drops of both blocks, and the Maxitem of the second one wins.', 'Move the drops into one block.'],
+    M_COMMA: ['The line is not written as DropItem(item, chance, upgrade, amount); The server does not check the commas: it reads the values shifted by one, so the chance usually becomes 0 (this is how Sacred Bead of Bubble never dropped, 600269aa).', 'Write the line with three commas.'],
+    M_DROP_UNDEF: ['The item name is not defined (it reads as 0) or has no Spec_Item.txt row. The server logs an error at startup and crashes when the item drops.', 'Pick an item that exists.'],
+    M_COUNT_ZERO: ['The amount is 0. When the line drops, the server picks a random amount with xRandom(0), which divides by zero and crashes.', 'Use an amount of 1 or more (or -1 for exactly one).'],
+    M_GOLD_RANGE: ['DropGold(min, max): the server rolls min + xRandom(max - min). With min = max that is xRandom(0) (a crash); with min above max the number wraps around.', 'Make max bigger than min.'],
+    M_KIND_MAX: ['A monster has room for 80 random-gear lines (MAX_DROPKIND). The server does not check: line 81 onward writes past the end of the list in memory.', 'Remove random-gear lines.'],
+    M_PROB_OVERFLOW: ['The chance is above 2,147,483,647. The server reads it with atoi, which stops there, so the line drops about 80% of the time instead of always.', 'Nothing to do if 80% is fine. For "always", the server cannot do it in one line: repeat the line (c6b006fe did).'],
+    M_PROB_ZERO: ['The chance is 0: the item never drops.', 'Type a chance, or remove the drop.'],
+    M_EXTRA_ARGS: ['The DropItem line has more than 4 values (like the event-drop lines of propDropEvent.inc). The server reads the first 4 and skips the rest.', 'Nothing to do; the extra values do nothing.'],
+    M_NO_GOLD: ['The monster has no DropGold line, so it gives no Penya. PenyaTable.txt only changes a DropGold roll; it never adds one.', 'Add Penya if players should get some.'],
+    M_GOLD_LATE: ['DropGold comes after drop lines that count toward the monster\'s max items per kill. When that many items drop first, the server stops reading the list and the Penya is skipped.', 'Move DropGold up, right after Maxitem.'],
+    M_GEN_EDITED: ['This drop was written by one of the gen_*.ps1 scripts. Running that script again rewrites its block and undoes this edit.', 'Change the script too, or don\'t run it again.'],
   };
 })(globalThis.FRE = globalThis.FRE || {});

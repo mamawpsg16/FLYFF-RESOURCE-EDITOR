@@ -370,3 +370,9 @@ button.linkish { background: none; border: none; color: var(--accent); padding: 
 .mf-card-tools { display: inline-flex; gap: 4px; }
 .mf-ing .combo { flex: 1 1 420px; max-width: 560px; }
 .mf-card label input.num-input { width: 70px; min-width: 0; }
+/* Monster Drops (ui/drops.js) */
+table.dr td input.num-input { width: 72px; }
+table.dr td .dr-amt { white-space: nowrap; }
+.dr-line { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.dr-line input.num-input { width: 110px; }
+

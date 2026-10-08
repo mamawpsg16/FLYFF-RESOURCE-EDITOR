@@ -6,7 +6,7 @@ one copy shows up as a disagreement in tests/run-tests.js. It makes its own test
 cases (bags, seeds, small scripts), runs them, and prints both as JSON; the JS
 test runs the same cases through src/loaders/exchange-sim.js and compares.
 
-Usage: python3 tools/oracle_sim.py exchange|battlepass|area|newnpc|newmenu|npcedit <Resource folder>   -> JSON
+Usage: python3 tools/oracle_sim.py exchange|battlepass|area|newnpc|newmenu|npcedit|...|drops <Resource folder>   -> JSON
 
 exchange: CExchange::Load_Script / CheckCondition / GetPayItemList / IsFull /
 ResultExchange (_Common/Exchange.cpp), CMover::GetItemNum / RemoveItemA /
@@ -4015,6 +4015,8 @@ AS_CITES = [
     ('_Common/Project.cpp', 907, 'LoadBattlePass( "BattlePass.inc" )'),
     ('_Common/Project.cpp', 932, 'LoadDonationShop( "DonationShop.inc" )'),
     ('_Common/Project.cpp', 979, 'm_Exchange.Load_Script()'),
+    ('_Common/Project.cpp', 828, 'LoadPropMoverEx( "PropMoverEx.inc" )'),
+    ('_Common/Project.cpp', 3196, '#ifdef __WORLDSERVER'),
     ('_Common/ProjectCmn.cpp', 1256, '"character.txt.txt"'),
     ('_Common/ProjectCmn.cpp', 1259, '"etc.txt.txt"'),
     ('_Common/ProjectCmn.cpp', 1274, '"textClient.txt.txt"'),
@@ -4040,6 +4042,8 @@ def as_who(key):
     if re.fullmatch(r'client/npcboard_\d+\.inc', key):
         return False, 'click'
     if re.fullmatch(r'world/.+\.dyo', key):
+        return True, None
+    if key == 'propmoverex.inc':          # drops are kept only in the WorldServer (Project.cpp:3196)
         return True, None
     return True, 'start'          # unknown file: both, at startup
 
@@ -4086,7 +4090,7 @@ def as_run(root):
     import random
     rnd = random.Random(1019)
     keys = AS_SHARED + [AS_TREE, 'client/npcboard_282.inc', 'client/npcboard_300.inc', 'world/wdmadrigal/wdmadrigal.dyo',
-                        'world/wdvolcane/wdvolcane.dyo', 'propskill.txt']
+                        'world/wdvolcane/wdvolcane.dyo', 'propmoverex.inc', 'propskill.txt']
     states = ['written', 'created', 'datares', 'different', 'none']
     pstates = ['in-source', 'missing', 'unknown', 'built']
     codesets = [[], ['DT_PATCH'], ['DT_ORDER'], ['NN_RULES_PATCH']]
@@ -4128,6 +4132,1092 @@ def as_run(root):
         cites.append({'path': path, 'line': at[0], 'ok': any(n <= len(lines) and text in lines[n - 1] for n in at)})
     return {'cases': cases, 'cites': cites}
 
+# ===================================================================================================
+# drops: monster drops (task F). Straight from the C++:
+#   CProject::LoadPropMoverEx (Project.cpp:2978-3255) + LoadPropMoverEx_AI* (ProjectLux.cpp) + InterpretRandomItem (Project.cpp:3606)
+#   CProject::LoadExcept (Project.cpp:5059), LoadDropEvent (Project.cpp:4013), PenyaTable::LoadFile / Roll (PenyaTable.cpp)
+#   LoadExpTable expDropLuck (Project.cpp:3815), LoadPiercingAvail RandomOptItem (Project.cpp:4542) + CRandomOptItemGen::Arrange (:4864)
+#   OnAfterLoadPropItem m_itemKindAry / m_minMaxIdxAry (Project.cpp:4983-5040), GetMinIdx / GetMaxIdx (:5537)
+#   CMover::DropItem (Mover.cpp:8124-8961), CDropItemGenerator::GetAt (Project.cpp:184), GenRandomOptItem (Project.cpp:4918),
+#   GetItemDropRateFactor / GetPieceItemDropRateFactor (MoverParam.cpp:4423-4463), CanAdd (DPSrvr.cpp:116)
+#   EventFunc.lua GetEventState / GetItemDropRate / GetPieceItemDropRate / GetGoldDropFactor
+# Own readers: propMover.txt and Spec_Item.txt by their header rows' column names (the JS copy walks tokens).
+# Not modelled (same list as the C++ allows to leave out): event / quest items, event monsters, guild / party quest
+# monsters, m_nLoot == 2, Anarchy / Lord / PC-bang beyond the option numbers.
+# ===================================================================================================
+DR_ONE = 3000000000
+DR_NONE = 0xFFFFFFFF
+DR_FIXED_NOW = 202610081200          # the date the cases read Event.lua at (YYYYMMDDHHMM)
+
+
+def dr_atoi(s):
+    """MSVC atoi: digits after optional blanks / sign, saturating at INT_MAX / INT_MIN."""
+    m = re.match(r'[ \t\r\n\f\v]*([+-]?)(\d*)', s)
+    if not m or not m.group(2):
+        return 0
+    v = int(m.group(2)) * (-1 if m.group(1) == '-' else 1)
+    return max(-2147483648, min(2147483647, v))
+
+
+def dr_f32(x):
+    return struct.unpack('<f', struct.pack('<f', x))[0]
+
+
+def dr_int(x):
+    """(int)( float ): truncation; out of range or NaN gives INT_MIN (cvttss2si)"""
+    if x != x or x >= 2147483648.0 or x < -2147483648.0:
+        return -2147483648
+    return int(x)
+
+
+def dr_cdiv(a, b):
+    q = abs(a) // abs(b)
+    return q if (a >= 0) == (b > 0) else -q
+
+
+class DrScript:
+    """CScript on a token list: GetToken resolves #define names to their number (CScript::GetToken), GetNumber = atoi."""
+    def __init__(self, data, D):
+        self.t = [x.decode('latin-1') for x in tokens(data)]
+        self.k = 0
+        self.D = D
+        self.tok = ''
+        self.typ = 'eof'
+        self.eof = False
+
+    def get(self):
+        if self.k >= len(self.t):
+            self.tok, self.typ, self.eof = '', 'eof', True
+            self.k += 1
+            return self.tok
+        x = self.t[self.k]
+        self.k += 1
+        c = x[:1]
+        if x.startswith('"'):
+            self.tok, self.typ = x[1:-1] if x.endswith('"') and len(x) > 1 else x[1:], 'str'
+        elif x[:2].lower() == '0x':
+            self.tok, self.typ = x, 'hex'
+        elif c.isdigit():
+            self.tok, self.typ = x, 'num'
+        elif c.isalpha() or c in '#_@$?' or (c and ord(c) >= 0x80):
+            if x.startswith('#define'):
+                self.tok, self.typ = x, 'kw'
+            elif x in self.D:
+                self.tok, self.typ = str(self.D[x]), 'num'
+            else:
+                self.tok, self.typ = x, 'id'
+        else:
+            self.tok, self.typ = x, 'delim'
+        return self.tok
+
+    def number(self):
+        x = self.get()
+        if self.typ == 'hex':
+            return s32(int(x[2:] or '0', 16))
+        if x == '':
+            return 0
+        if x[0] == '=':
+            return -1
+        if x[0] in '-+':
+            y = self.get()
+            v = dr_atoi(y)
+            return s32(-v) if x[0] == '-' else v
+        return dr_atoi(x)
+
+    def flt(self):
+        x = self.get()
+        if x == '':
+            return 0.0
+        if x[0] == '=':
+            return -1.0
+        m = lambda y: float(re.match(r'\s*([+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?)?', y).group(1) or 0)
+        if x[0] in '-+':
+            y = self.get()
+            return -m(y) if x[0] == '-' else m(y)
+        return m(x)
+
+
+def dr_ai(s):
+    """LoadPropMoverEx_AI: False = the C++ returned FALSE (the file stops loading)."""
+    s.get()
+    if s.tok[:1] != '{':
+        return False
+    while True:
+        s.get()
+        if s.eof:
+            return False
+        if s.tok[:1] == '}':
+            return True
+        if s.tok[:1] != '#':
+            return False
+        sec = s.tok.lower()
+        if sec == '#scan':
+            ok = dr_ai_scan(s)
+        elif sec == '#battle':
+            ok = dr_ai_battle(s)
+        elif sec == '#move':
+            ok = dr_ai_move(s)
+        else:
+            return False
+        if not ok:
+            return False
+
+
+def dr_ai_scan(s):
+    s.get()
+    if s.tok[:1] != '{':
+        return False
+    cmd = None
+    while True:
+        s.get()
+        if s.eof:
+            return False
+        if s.tok[:1] == '}':
+            return True
+        if s.typ == 'id':
+            w = s.tok.lower()
+            if cmd == 'scan':
+                if w in ('job', 'range', 'quest', 'item', 'chao'):
+                    s.number()
+                else:
+                    return False
+            if w == 'scan':
+                if cmd:
+                    return False
+                cmd = 'scan'
+
+
+def dr_ai_battle(s):
+    s.get()
+    if s.tok[:1] != '{':
+        return False
+    cmd = None
+    me, how, mp, unit, mul = 0, 100, 0, 0, 2
+    while True:
+        s.get()
+        if s.eof:
+            return False
+        if s.tok[:1] == '}':
+            return True
+        w = s.tok.lower()
+        if s.typ == 'id':
+            if w == 'attack':
+                cmd = 'attack'
+            elif w == 'cunning':
+                if cmd is None:
+                    return False
+                if cmd == 'attack':
+                    s.get()
+                    if s.tok.lower() not in ('low', 'sam', 'hi'):
+                        return False
+            elif w == 'recovery':
+                cmd, me, how, mp = 'recovery', 0, 100, 0
+            elif w in ('u', 'm', 'a'):
+                if cmd is None:
+                    return False
+            elif w == 'rangeattack':
+                cmd = 'range'
+            elif w == 'keeprangeattack':
+                cmd = 'keeprange'
+            elif w == 'summon':
+                cmd = 'summon'
+            elif w == 'evade':
+                cmd = 'evade'
+            elif w == 'helper':
+                cmd, unit, mul = 'helper', 0, 2
+            elif w in ('all', 'sam'):
+                if cmd is None:
+                    return False
+            elif w == 'berserk':
+                cmd = 'berserk'
+            elif w == 'randomtarget':
+                pass
+            else:
+                return False
+        elif s.typ == 'num':
+            if cmd is None:
+                return False
+            if cmd == 'summon':
+                s.number()
+                s.get()
+            elif cmd == 'berserk':
+                s.flt()
+
+
+def dr_ai_move(s):
+    s.get()
+    if s.tok[:1] != '{':
+        return False
+    cmd = None
+    while True:
+        s.get()
+        if s.eof:
+            return False
+        if s.tok[:1] == '}':
+            return True
+        if s.typ == 'id':
+            w = s.tok.lower()
+            if w == 'loot':
+                cmd = 'loot'
+            elif w == 'd':
+                pass
+            else:
+                return False
+        elif s.typ == 'num' and cmd is None:
+            return False
+
+
+DR_ASSIGN = {'m_nAttackFirstRange', 'm_nAttackItemNear', 'm_nAttackItemFar', 'm_nAttackItem1', 'm_nAttackItem2', 'm_nAttackItem3',
+             'm_nAttackItem4', 'm_nAttackItemSec', 'm_nMagicReflection', 'm_nImmortality', 'm_bBlow', 'm_nChangeTargetRand',
+             'm_dwAttackMoveDelay', 'm_dwRunawayDelay'}
+
+
+def dr_load(data, D, size):
+    """LoadPropMoverEx -> (monsters {id: {'list': [...], 'kinds': [...], 'max': int}}, order [id per block], stop)
+    list entries: ('item', id, prob, level, number) / ('gold', min, max) as DWORDs; kinds: (ik3, minUniq, maxUniq) set later."""
+    s = DrScript(data, D)
+    mons, order, stop = {}, [], None
+    nval = s.number()
+    if s.eof:
+        return mons, order, stop
+    while True:
+        if nval < 0 or nval >= size:
+            stop = 'range'
+            break
+        m = mons.setdefault(nval, {'list': [], 'kinds': [], 'max': 0})
+        order.append(nval)
+        s.get()              # {
+        s.get()
+        failed = False
+        while s.tok[:1] != '}':
+            if s.eof:
+                stop = 'braces'
+                break
+            if s.tok == ';':
+                s.get()
+                continue
+            if s.tok.lower() == 'ai':
+                if not dr_ai(s):
+                    stop, failed = 'ai', True
+                    break
+            w = s.tok
+            if w in DR_ASSIGN:
+                s.get(); s.number()
+            elif w == 'SetEvasion':
+                s.get(); s.number(); s.get(); s.number(); s.get()
+            elif w == 'SetRunAway':
+                s.get(); s.number(); s.get()
+                if s.tok == ',':
+                    s.number(); s.get(); s.number(); s.get()
+            elif w == 'SetCallHelper':
+                s.get(); s.number(); s.get(); s.number(); s.get(); s.number(); s.get(); s.number(); s.get()
+            elif w == 'randomItem':
+                s.get(); s.get()
+                while s.tok[:1] != '}' and not s.eof:
+                    s.get()
+            elif w == 'Maxitem':
+                s.get()
+                m['max'] = s.number() & 0xFFFFFFFF
+            elif w == 'DropItem':
+                s.get()
+                iid = s.number() & 0xFFFFFFFF
+                s.get(); prob = s.number() & 0xFFFFFFFF
+                s.get(); lv = s.number() & 0xFFFFFFFF
+                s.get(); num = s.number() & 0xFFFFFFFF
+                s.get()
+                m['list'].append(('item', iid, prob, lv, num))
+            elif w == 'DropKind':
+                s.get(); ik3 = s.number() & 0xFFFFFFFF
+                s.get(); s.number(); s.get(); s.number(); s.get()
+                m['kinds'].append(ik3)
+            elif w == 'DropGold':
+                s.get(); lo = s.number() & 0xFFFFFFFF
+                s.get(); hi = s.number() & 0xFFFFFFFF
+                s.get()
+                m['list'].append(('gold', lo, hi))
+            elif w == 'Transform':
+                s.get(); s.flt(); s.get(); s.number(); s.get()
+            s.get()
+        if stop:
+            break
+        nval = s.number()
+        if s.eof:
+            break
+    return mons, order, stop
+
+
+def dr_columns(path, need):
+    """rows of a tab file whose 2nd line is '//name<TAB>name...': {name: value text}"""
+    lines = open(path, 'rb').read().decode('latin-1').splitlines()
+    head = None
+    for l in lines[:4]:
+        cells = [c.strip().lstrip('/') for c in l.split('\t')]
+        if all(n in cells for n in need):
+            head = {c: i for i, c in enumerate(cells)}
+            break
+    out = []
+    for l in lines:
+        if not l.strip() or l.lstrip().startswith('//'):
+            continue
+        c = l.split('\t')
+        out.append({n: (c[head[n]].strip() if head[n] < len(c) else '') for n in need})
+    return out
+
+
+def dr_val(x, D):
+    x = x.strip()
+    if x == '=' or x == '':
+        return -1 if x == '=' else 0
+    if x in D:
+        return D[x]
+    if x[:1] == '-':
+        return -dr_atoi(x[1:])
+    return dr_atoi(x)
+
+
+def dr_movers(root, D):
+    rows = dr_columns(os.path.join(root, 'propMover.txt'), ['dwID', 'dwLevel', 'dwClass', 'bFlying', 'dwCorrectionValue'])
+    mv = {}
+    for r in rows:
+        i = dr_val(r['dwID'], D)
+        if i and i not in mv:
+            mv[i] = {'level': dr_val(r['dwLevel'], D), 'rank': dr_val(r['dwClass'], D), 'fly': dr_val(r['bFlying'], D),
+                     'corr': dr_val(r['dwCorrectionValue'], D)}
+    return mv
+
+
+def dr_items(root, D):
+    rows = dr_columns(os.path.join(root, 'Spec_Item.txt'), ['ver6', 'dwID', 'dwItemKind1', 'dwItemKind3', 'dwItemLV', 'dwItemRare'])
+    it = {}
+    for r in rows:
+        if dr_val(r['ver6'], D) > 19:
+            continue
+        i = dr_val(r['dwID'], D) & 0xFFFFFFFF
+        it[i] = {'ik1': dr_val(r['dwItemKind1'], D), 'ik3': dr_val(r['dwItemKind3'], D) & 0xFFFFFFFF,
+                 'lv': dr_val(r['dwItemLV'], D) & 0xFFFFFFFF, 'rare': dr_val(r['dwItemRare'], D) & 0xFFFFFFFF}
+    return it
+
+
+def dr_kinds(items):
+    """m_itemKindAry per IK3 (ids ascending, exchange sort by rarity) and m_minMaxIdxAry"""
+    ary = {}
+    for i in sorted(items):
+        k = items[i]['ik3']
+        if k == DR_NONE:
+            continue
+        ary.setdefault(k, []).append(i)
+    mm = {}
+    for k, a in ary.items():
+        for j in range(len(a) - 1):
+            for q in range(j + 1, len(a)):
+                if items[a[q]]['rare'] < items[a[j]]['rare']:
+                    a[j], a[q] = a[q], a[j]
+        cur = DR_NONE
+        for j, i in enumerate(a):
+            r = items[i]['rare']
+            if r != cur:
+                cur = r
+                if r != DR_NONE:
+                    mm[(k, r)] = [j, j]
+            elif r != DR_NONE:
+                mm[(k, r)][1] = j
+    return ary, mm
+
+
+def dr_penya(data):
+    T = {'rows': [], 'pct': [0] * 16, 'least': [False] * 16, 'worlds': []}
+    if data is None:
+        return T
+    s = DrScript(data, {})
+    s.get()
+    while not s.eof:
+        if s.tok == 'LEVELS':
+            s.get()
+            lv = s.number()
+            while s.tok[:1] != '}' and not s.eof:
+                lo, hi = s.number(), s.number()
+                if lo >= 0 and hi >= lo:
+                    k = 0
+                    while k < len(T['rows']) and T['rows'][k][0] < lv:
+                        k += 1
+                    T['rows'].insert(k, (lv, lo, hi))
+                lv = s.number()
+        elif s.tok == 'RANKS':
+            s.get()
+            r = s.number()
+            while s.tok[:1] != '}' and not s.eof:
+                p, mode = s.number(), s.number()
+                if 0 < r < 16 and p > 0:
+                    T['pct'][r], T['least'][r] = p, mode == 1
+                r = s.number()
+        elif s.tok == 'WORLDS':
+            s.get()
+            w = s.number()
+            while s.tok[:1] != '}' and not s.eof:
+                p = s.number()
+                if w > 0 and p > 0:
+                    T['worlds'].append((w & 0xFFFFFFFF, p))
+                w = s.number()
+        else:
+            break
+        s.get()
+    return T
+
+
+def dr_luck(data):
+    if data is None:
+        return None
+    s = DrScript(data, {})
+    s.get()
+    while not s.eof and s.tok != 'expDropLuck':
+        s.get()
+    if s.eof:
+        return None
+    L = [[0] * 11 for _ in range(122)]
+    s.get()
+    k, v = 0, s.number()
+    while s.tok[:1] != '}' and not s.eof:
+        if k < 122 * 11:
+            L[k // 11][k % 11] = v & 0xFFFFFFFF
+        k += 1
+        v = s.number()
+    return L
+
+
+def dr_randomopt(data, D):
+    lst = []
+    if data is not None:
+        text = nn_text16(data).encode('utf-8', 'replace')
+        s = DrScript(text, D)
+        s.get()
+        while not s.eof:
+            w = s.tok
+            if w == 'Piercing':
+                s.number(); s.get(); s.number()
+                while s.tok[:1] != '}' and not s.eof:
+                    s.number(); s.number()
+            elif w == 'SetItem':
+                s.number(); s.get(); s.get(); s.get()
+                while s.tok[:1] != '}' and not s.eof:
+                    if s.tok == 'Elem':
+                        s.get(); s.number()
+                        while s.tok[:1] != '}' and not s.eof:
+                            s.number(); s.number()
+                        s.get()
+                    elif s.tok == 'Avail':
+                        s.get(); s.number()
+                        while s.tok[:1] != '}' and not s.eof:
+                            s.number(); s.number(); s.number()
+                        s.get()
+                    else:
+                        break
+            elif w == 'RandomOptItem':
+                rid = s.number(); s.get()
+                lv, p = s.number(), s.number() & 0xFFFFFFFF
+                s.get(); s.number()
+                while s.tok[:1] != '}' and not s.eof:
+                    s.number(); s.number()
+                if len(lst) < 256:
+                    lst.append([rid, lv, p])
+            s.get()
+    for i in range(len(lst) - 1):
+        for j in range(i + 1, len(lst)):
+            if lst[i][1] > lst[j][1]:
+                lst[i], lst[j] = lst[j], lst[i]
+    idx = [0] * 160
+    lv, prev = 1, -1
+    for i, r in enumerate(lst):
+        if r[1] > lv:
+            for j in range(lv, r[1]):
+                idx[j - 1] = prev
+            lv = r[1]
+        prev = i
+    for i in range(lv, 161):
+        idx[i - 1] = prev
+    return lst, idx
+
+
+def dr_except(data, D):
+    out = set()
+    if data is None:
+        return out
+    s = DrScript(data, D)
+    s.get()
+    while not s.eof:
+        lang = dr_atoi(s.tok)
+        sub = s.number()
+        s.get()
+        s.get()
+        while s.tok[:1] != '}' and not s.eof:
+            if s.tok == 'ItemProp':
+                s.get(); s.get()
+                while s.tok[:1] != '}' and not s.eof:
+                    iid = dr_atoi(s.tok) & 0xFFFFFFFF
+                    s.get(); s.get()
+                    while s.tok[:1] != '}' and not s.eof:
+                        if lang != 1 or sub != 0:           # WorldServer.rc IDS_LANG "1", IDS_SUBLANG "0"
+                            s.get()
+                            continue
+                        if s.tok == 'fFlightSpeed':
+                            s.get(); s.flt(); s.get()
+                        elif s.tok in ('dwShopAble', 'dwCircleTime', 'dwFlag', 'dwLimitLevel1', 'dwSkillReadyType'):
+                            s.get(); s.number(); s.get()
+                        elif s.tok == 'worldDrop':
+                            s.get()
+                            if not s.number():
+                                out.add(iid)
+                            s.get()
+                        s.get()
+                    s.get()
+            s.get()
+        s.get()
+    return out
+
+
+def dr_events(data, D, exc):
+    ev = []
+    if data is None:
+        return ev
+    s = DrScript(data, D)
+    buff = D.get('II_GEN_SKILL_BUFFBREAKER')
+    while True:
+        s.get()
+        if s.tok == 'DropItem':
+            s.get(); iid = s.number() & 0xFFFFFFFF
+            s.get(); p = s.number() & 0xFFFFFFFF
+            s.get(); lv = s.number() & 0xFFFFFFFF
+            s.get(); n = s.number() & 0xFFFFFFFF
+            s.get(); lo = s.number() & 0xFFFFFFFF
+            s.get(); hi = s.number() & 0xFFFFFFFF
+            s.get()
+            if iid not in exc:
+                if buff is not None and iid == buff & 0xFFFFFFFF:
+                    p = int(p * 0.5) & 0xFFFFFFFF
+                ev.append(('item', iid, p, lv, n, lo, hi))
+        if s.eof:
+            break
+    return ev
+
+
+def dr_rates(data, now):
+    """Event.lua through EventFunc.lua: the product of each rate over the events whose state is on"""
+    out = {'item': 1, 'piece': 1, 'gold': 1, 'on': []}
+    if data is None:
+        return out
+    t = data.decode('latin-1')
+    t = re.sub(r'--\[\[.*?\]\]', '', t, flags=re.S)
+    t = re.sub(r'--[^\n]*', '', t)
+    evs = []
+    for m in re.finditer(r'\b(AddEvent|SetTime|SetItemDropRate|SetPieceItemDropRate|SetGoldDropFactor)\s*\(([^)]*)\)', t):
+        a = [x.strip().strip('"') for x in m.group(2).split(',')]
+        if m.group(1) == 'AddEvent':
+            evs.append({'name': a[0], 'times': [], 'item': None, 'piece': None, 'gold': None})
+        elif evs:
+            e = evs[-1]
+            if m.group(1) == 'SetTime':
+                e['times'].append([int(re.sub(r'\D', '', x)) for x in a])
+            else:
+                e[{'SetItemDropRate': 'item', 'SetPieceItemDropRate': 'piece', 'SetGoldDropFactor': 'gold'}[m.group(1)]] = float(a[0])
+    for e in evs:
+        state = 0
+        for st, en in e['times']:
+            if st <= now:
+                state = 1 if en > now else 0
+        if state:
+            out['on'].append(e['name'])
+            for k in ('item', 'piece', 'gold'):
+                if e[k] is not None:
+                    out[k] *= e[k]
+    return out
+
+
+def dr_defines(root):
+    """CProject::LoadDefines reads each header with CScript, so /* */ and // comments hide a #define
+    (defineObj.h:1852-1921 holds an old, commented-out MI_ list). First definition wins."""
+    names = {n.lower(): n for n in os.listdir(root)}
+    d = {}
+    for f in DEFINE_FILES:
+        real = names.get(f.lower())
+        if not real:
+            continue
+        b = open(os.path.join(root, real), 'rb').read()
+        b = re.sub(rb'/\*.*?\*/', lambda m: b'\n' * m.group(0).count(b'\n'), b, flags=re.S)
+        b = re.sub(rb'//[^\r\n]*', b'', b)
+        for m in re.finditer(rb'^[ \t]*#define[ \t]+(\w+)[ \t]+(0x[0-9a-fA-F]+|\d+)[ \t]*\r?$', b, re.M):
+            k = m.group(1).decode()
+            if k not in d:
+                v = m.group(2).decode()
+                d[k] = int(v, 16) if v.lower().startswith('0x') else int(v)
+    return d
+
+
+class DrWorld:
+    def __init__(self, root):
+        self.D = dr_defines(root)
+        rd = lambda n: open(os.path.join(root, n), 'rb').read() if os.path.exists(os.path.join(root, n)) else None
+        self.mv = dr_movers(root, self.D)
+        self.size = max(self.mv) + 1
+        self.items = dr_items(root, self.D)
+        self.ary, self.mm = dr_kinds(self.items)
+        self.penya = dr_penya(rd('PenyaTable.txt'))
+        self.luck = dr_luck(rd('expTable.inc'))
+        self.ro, self.ro_idx = dr_randomopt(rd('propItemEtc.inc'), self.D)
+        self.exc = dr_except(rd('except.txt'), self.D)
+        self.events = dr_events(rd('propDropEvent.inc'), self.D, self.exc)
+        self.rates = dr_rates(rd('Event.lua'), DR_FIXED_NOW)
+        self.mons, self.order, self.stop = dr_load(rd('propMoverEx.inc'), self.D, self.size)
+
+    def drop_list(self, mid, mons=None):
+        m = (mons or self.mons).get(mid, {'list': [], 'kinds': [], 'max': 0})
+        lv = self.mv.get(mid, {}).get('level', 0)
+        ev = [e[:5] for e in self.events if mid and lo_hi_ok(e, lv)]
+        return m['list'] + ev, m['kinds'][:80], m['max']
+
+
+def lo_hi_ok(e, lv):
+    return e[5] <= (lv & 0xFFFFFFFF) <= e[6]
+
+
+def dr_gen_opt(W, R, level, penalty, iid, rank):
+    it = W.items.get(iid)
+    if it is None:
+        return 0
+    if it['ik1'] != W.D['IK1_WEAPON'] and it['ik1'] != W.D['IK1_ARMOR']:
+        return 0
+    if level >= 160:
+        level = 159
+    i = W.ro_idx[level]
+    if i == -1:
+        return 0
+    k = R(i + 1)
+    r = R(DR_ONE)
+    if rank == W.D['RANK_MIDBOSS']:
+        r //= 5
+    p = dr_int(dr_f32(dr_f32(W.ro[k][2]) * penalty)) & 0xFFFFFFFF
+    return W.ro[k][0] if r < p else 0
+
+
+def dr_penya_roll(T, R, level, rank, world, gold):
+    rank &= 0xFFFFFFFF
+    if not T['rows'] or rank >= 16 or T['pct'][rank] <= 0:
+        return gold
+    rows = T['rows']
+    if level <= rows[0][0]:
+        lo, hi = rows[0][1], rows[0][2]
+    elif level >= rows[-1][0]:
+        lo, hi = rows[-1][1], rows[-1][2]
+    else:
+        i = 1
+        while rows[i][0] < level:
+            i += 1
+        a, b = rows[i - 1], rows[i]
+        span, step = b[0] - a[0], level - a[0]
+        lo = s32(a[1] + dr_cdiv((b[1] - a[1]) * step, span))
+        hi = s32(a[2] + dr_cdiv((b[2] - a[2]) * step, span))
+    wp = 100
+    for w, p in T['worlds']:
+        if w == world & 0xFFFFFFFF:
+            wp = p
+            break
+    lo = s32(dr_cdiv(dr_cdiv(lo * T['pct'][rank], 100) * wp, 100))
+    hi = s32(dr_cdiv(dr_cdiv(hi * T['pct'][rank], 100) * wp, 100))
+    if hi < lo:
+        hi = lo
+    g = s32(lo + R((hi - lo + 1) & 0xFFFFFFFF))
+    if T['least'][rank] and gold > g:
+        return gold
+    return g
+
+
+def dr_kill(W, mid, o, R, mons=None, penya=None):
+    """CMover::DropItem for one kill -> {'g': [gate per roll], 's': [stop line per roll or None], 'd': [[from, id, n, plus, opt, where]], 'p': gold, 'x': crash at}"""
+    lst, kinds, mx = W.drop_list(mid, mons)
+    mv = W.mv.get(mid, {'level': 1, 'rank': 1, 'fly': 0, 'corr': 100})
+    level, rank, fly = mv['level'], mv['rank'], bool(mv['fly'])
+    T = penya or W.penya
+    out = {'g': [], 's': [], 'd': [], 'p': 0, 'x': None}
+    noadj = mid in [W.D.get(n) for n in ('MI_CLOCKWORK1', 'MI_DEMIAN5', 'MI_KEAKOON5', 'MI_MUFFRIN5')]
+    fi = dr_f32(1.0)
+    for v in (o['gmItemRate'], 1.0, 1.0, o['itemRate']):
+        fi = dr_f32(fi * dr_f32(v))
+    fp = dr_f32(dr_f32(1.0) * dr_f32(o['pieceRate']))
+    if o.get('cheering'):
+        fp = dr_f32(fp * dr_f32(1.1))
+    if o.get('voteThanks'):
+        fp = dr_f32(fp * dr_f32(1.05))
+    fp = dr_f32(fp + dr_f32(dr_f32(o.get('anarchyPiece', 0)) / dr_f32(100.0)))
+    lo_u = s16(level - 5); hi_u = s16(level - 2)
+    lo_u, hi_u = max(lo_u, 1), max(hi_u, 1)
+    for k in range(o['loops']):
+        if noadj:
+            npr, npe = 100, 100
+        else:
+            d = o['playerLevel'] - level
+            npr, npe = (100, 100) if d <= 1 else (80, 100) if d <= 2 else (60, 80) if d <= 4 else (30, 65) if d <= 7 else (10, 50)
+        out['g'].append(False)
+        out['s'].append(None)
+        if not (dr_f32(float(R(100))) < dr_f32(npr * fi)):
+            continue
+        out['g'][-1] = True
+        nn = 0
+        for i, e in enumerate(lst):
+            if fp > 0:
+                r = R(DR_ONE)
+                dw = dr_int(dr_f32(dr_f32(float(r)) / fp)) & 0xFFFFFFFF
+                if not dw < (DR_NONE if e[0] == 'gold' else e[2]):
+                    continue
+            if e[0] == 'item':
+                num = 1 if e[4] == DR_NONE else e[4]
+                if num == 0:
+                    out['x'] = i
+                    return out
+                n = s16(R(num) + 1)
+                if fly:
+                    if o.get('bagFull'):
+                        continue
+                    out['d'].append([i, e[1], n, e[3], 0, 'bag'])
+                    if e[4] != DR_NONE:
+                        nn += 1
+                    if (nn & 0xFFFFFFFF) >= mx:
+                        out['s'][-1] = i
+                        break
+                    continue
+                if e[1] not in W.items:
+                    out['x'] = i
+                    return out
+                opt = dr_gen_opt(W, R, level, dr_f32(dr_f32(float(npr)) / dr_f32(100.0)), e[1], rank)
+                out['d'].append([i, e[1], n, e[3], opt, 'ground'])
+                if e[4] != DR_NONE:
+                    nn += 1
+                if (nn & 0xFFFFFFFF) == mx:
+                    out['s'][-1] = i
+                    break
+            elif e[0] == 'gold' and k == 0:
+                span = (e[2] - e[1]) & 0xFFFFFFFF
+                if span == 0:
+                    out['x'] = i
+                    return out
+                g = s32(e[1] + R(span))
+                g = dr_penya_roll(T, R, level, rank, o['worldId'], g)
+                g = dr_cdiv(s32(g * npe), 100)
+                g = dr_int(dr_f32(dr_f32(dr_f32(float(g)) * dr_f32(o['gmGoldRate'])) * dr_f32(1.0)))
+                if g == 0:
+                    continue
+                g = dr_int(dr_f32(dr_f32(float(g)) * dr_f32(o['goldRate'])))
+                g = dr_int(dr_f32(dr_f32(float(g)) * dr_f32(dr_f32(1.0) + dr_f32(dr_f32(o.get('anarchyGold', 0)) / dr_f32(100.0)))))
+                g = dr_int(dr_f32(dr_f32(float(g)) * dr_f32(dr_f32(1.0) + dr_f32(dr_f32(o.get('penyaRate', 0)) / dr_f32(100.0)))))
+                have = s32(o.get('gold', 0))
+                if g > 0 and s32(have + g) > have:
+                    out['p'] += g
+        for i, ik3 in enumerate(kinds):
+            dropped = False
+            a = b = -1
+            for j in range(lo_u, hi_u + 1):
+                a = -1 if j >= 400 else W.mm.get((ik3, j), [-1, -1])[0]
+                if a != -1:
+                    break
+            for j in range(hi_u, lo_u - 1, -1):
+                b = -1 if j >= 400 else W.mm.get((ik3, j), [-1, -1])[1]
+                if b != -1:
+                    break
+            if a < 0 or b < 0:
+                continue
+            pick = W.ary[ik3][a + R(b - a + 1)]
+            start = R(11)
+            plv = W.items[pick]['lv']
+            row = 119 if plv > 120 else plv - 1
+            if row < 0:
+                out['x'] = 'kind %d' % i
+                return out
+            corr = dr_f32(dr_f32(float(mv['corr'] & 0xFFFFFFFF)) / dr_f32(100.0))
+            for kk in range(start, -1, -1):
+                p = dr_int(dr_f32(dr_f32(float(W.luck[row][kk])) * corr)) & 0xFFFFFFFF
+                r = R(DR_ONE)
+                if o.get('fortune') and p <= 10000000:
+                    r //= 2
+                if r < p:
+                    if fly:
+                        opt = dr_gen_opt(W, R, level, dr_f32(dr_f32(float(npr)) / dr_f32(100.0)), pick, rank)
+                        if not o.get('bagFull'):
+                            out['d'].append(['kind %d' % i, pick, 1, kk, opt, 'bag'])
+                            break
+                    opt = dr_gen_opt(W, R, level, dr_f32(dr_f32(float(npr)) / dr_f32(100.0)), pick, rank)
+                    out['d'].append(['kind %d' % i, pick, 1, kk, opt, 'ground'])
+                    dropped = True
+                    break
+            if rank == W.D['RANK_SUPER'] and dropped:
+                break
+    return out
+
+
+DR_OPTS = {'loops': 1, 'fortune': False, 'gmItemRate': 1.0, 'gmGoldRate': 1.0, 'cheering': False, 'voteThanks': False,
+           'anarchyPiece': 0, 'anarchyGold': 0, 'penyaRate': 0, 'worldId': 1, 'bagFull': False, 'gold': 0}
+
+
+# small propMoverEx scripts for the loader's edges (the JS copy loads the same text with the real defines and movers)
+DR_SCRIPTS = [
+    ('plain', 'MI_AIBATT1\r\n{\r\n\tMaxitem = 2;\r\n\tDropGold(6, 9);\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 300000000, 0, 1);\r\n}\r\n'),
+    ('missing comma (600269aa)', 'MI_AIBATT1\r\n{\r\n\tDropItem(II_SYS_VIS_LV3_BUBBLE 21000000, 0, 1);\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 5, 0, 1);\r\n}\r\n'),
+    ('six values', 'MI_AIBATT1\r\n{\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 1500000, 0, -1, 5, 18);\r\n\tMaxitem = 3;\r\n}\r\n'),
+    ('over INT_MAX, hex, =, negative', 'MI_AIBATT1\r\n{\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 3000000000, 0, 1);\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 0x10, 0, 1);\r\n'
+     '\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, =, 0, 1);\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, -5, 0, 2);\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 99999999999999, 0, 1);\r\n}\r\n'),
+    ('two blocks', 'MI_AIBATT1\r\n{\r\n\tMaxitem = 2;\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 1, 0, 1);\r\n}\r\nMI_AIBATT2\r\n{\r\n\tDropGold(1, 2);\r\n}\r\n'
+     'MI_AIBATT1\r\n{\r\n\tMaxitem = 5;\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE_1, 2, 0, 1);\r\n}\r\n'),
+    ('undefined monster', 'MI_NO_SUCH_MONSTER\r\n{\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 1, 0, 1);\r\n}\r\nMI_AIBATT2\r\n{\r\n\tDropGold(1, 2);\r\n}\r\n'),
+    ('undefined item', 'MI_AIBATT1\r\n{\r\n\tDropItem(II_NO_SUCH_ITEM, 100, 0, 1);\r\n}\r\n'),
+    ('out of range id', 'MI_AIBATT1\r\n{\r\n\tDropGold(1, 2);\r\n}\r\n99999\r\n{\r\n}\r\nMI_AIBATT2\r\n{\r\n\tDropGold(1, 2);\r\n}\r\n'),
+    ('never closed', 'MI_AIBATT1\r\n{\r\n\tDropGold(1, 2);\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 1, 0, 1);\r\n'),
+    ('bad AI', 'MI_AIBATT1\r\n{\r\n\tDropGold(1, 2);\r\n\tAI\r\n\t{\r\n\t\t#scan { scan }\r\n\t\t#battle { Attack cunning low Fly }\r\n\t}\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 1, 0, 1);\r\n}\r\n'
+     'MI_AIBATT2\r\n{\r\n\tDropGold(1, 2);\r\n}\r\n'),
+    ('good AI + other statements', 'MI_AIBATT1\r\n{\r\n\tm_nAttackFirstRange = 8;\r\n\tSetEvasion(10, 5);\r\n\tSetRunAway(20, 1, 2);\r\n\tSetRunAway(20);\r\n'
+     '\tSetCallHelper(50, MI_AIBATT2, 3, 1);\r\n\trandomItem { a ; b }\r\n\tTransform(0.5, MI_AIBATT2);\r\n\tAI\r\n\t{\r\n\t\t#Scan { scan range 8 job 2 }\r\n'
+     '\t\t#battle { Attack cunning low Recovery 30 50 10 u Summon 20 2 MI_AIBATT2 Berserk 30 1.5 Helper 5 3 all Rangeattack 4 Keeprangeattack 5 Evade 10 Randomtarget }\r\n'
+     '\t\t#move { Loot d 5 }\r\n\t}\r\n\tDDropGold(1, 2);\r\n\tMaxitem = 1;\r\n\tDropKind(IK3_SWD, 1, 2);\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 1, 0, 1);\r\n}\r\n'),
+    ('flying, no Maxitem', 'MI_MOTHBEE1\r\n{\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 2000000000, 0, 1);\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE_1, 2000000000, 0, -1);\r\n'
+     '\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 2000000000, 0, 3);\r\n\tDropGold(5, 9);\r\n}\r\n'),
+    ('SetRunAway eats tokens', 'MI_AIBATT1\r\n{\r\n\tSetRunAway(20, 1, Maxitem = 5);\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 1, 0, 1);\r\n}\r\n'),
+    ('bad cunning word', 'MI_AIBATT1\r\n{\r\n\tDropGold(1, 2);\r\n\tAI\r\n\t{\r\n\t\t#battle { Attack cunning fly }\r\n\t}\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 1, 0, 1);\r\n}\r\n'),
+    ('stray token between blocks', 'MI_AIBATT1\r\n{\r\n\tDropGold(1, 2);\r\n}\r\nII_SYS_SYS_SCR_BXSUHO01\r\nMI_AIBATT2\r\n{\r\n\tDropGold(3, 4);\r\n}\r\n'),
+]
+
+
+# ---- drops edit scripts: the same edits written independently (line rules from the drop commits), files compared by sha256 ----
+def dre_block(text, define):
+    """the monster's last block: (start of the {-line, end of the }-line, lines [(start, end-with-eol, content)])"""
+    heads = [m for m in re.finditer(r'^' + re.escape(define) + r'[ \t]*\r?\n', text, re.M)]
+    if not heads:
+        raise ValueError('no block ' + define)
+    i = heads[-1].end()
+    lines = []
+    while i < len(text):
+        j = text.find('\n', i)
+        j = len(text) if j < 0 else j + 1
+        lines.append((i, j, text[i:j].rstrip('\r\n')))
+        if text[i:j].strip() == '}' and len(lines) > 1:
+            break
+        i = j
+    return lines
+
+
+def dre_gen_spans(text):
+    out, opened = [], {}
+    for m in re.finditer(r'//[ \t]*\[(\w+)\][ \t]*(begin|end)\b', text):
+        if m.group(2) == 'begin':
+            opened[m.group(1)] = m.start()
+        elif m.group(1) in opened:
+            out.append((opened.pop(m.group(1)), m.start()))
+    return out
+
+
+def dre_kind_of(content):
+    m = re.match(r'[ \t]*(DropItem|DropGold|Maxitem|DropKind)\b', content)
+    return m.group(1) if m else None
+
+
+def dre_insert_after(text, line, row):
+    s, e, c = line
+    indent = re.match(r'[ \t]*', c).group(0)
+    eol = text[s:e][len(c):] or '\r\n'
+    return text[:e] + indent + row + eol + text[e:]
+
+
+def dre_below_open(text, lines, row):
+    s, e, c = lines[0]             # the { line
+    indent = re.match(r'[ \t]*', c).group(0)
+    eol = text[s:e][len(c):]
+    return text[:e] + indent + '\t' + row + eol + text[e:]
+
+
+def dre_apply(text, op):
+    lines = dre_block(text, op['mon'])
+    gens = dre_gen_spans(text)
+    ingen = lambda l: any(a < l[0] < b for a, b in gens)
+    stm = [(l, dre_kind_of(l[2])) for l in lines[1:]]
+    stm = [(l, k) for l, k in stm if k]
+    lastof = lambda f: next((l for l, k in reversed(stm) if f(l, k)), None)
+    if op['op'] == 'add':
+        row = 'DropItem(%s, %d, %d, %d);' % (op['define'], op['prob'], op['level'], op['count'])
+        a = lastof(lambda l, k: k == 'DropItem' and not ingen(l)) or lastof(lambda l, k: k in ('DropGold', 'Maxitem') and not ingen(l))
+        return dre_insert_after(text, a, row) if a else dre_below_open(text, lines, row)
+    if op['op'] == 'kind':
+        lo, hi = max(s16(op['level'] - 5), 1), max(s16(op['level'] - 2), 1)
+        row = 'DropKind(%s, %d, %d);' % (op['ik3'], lo, hi)
+        a = lastof(lambda l, k: k == 'DropKind' and not ingen(l)) or lastof(lambda l, k: k != 'DropKind' and not ingen(l))
+        return dre_insert_after(text, a, row) if a else dre_below_open(text, lines, row)
+    if op['op'] in ('set', 'remove'):
+        hits = [l for l, k in stm if k == 'DropItem' and re.match(r'[ \t]*DropItem[ \t]*\([ \t]*' + re.escape(op['item']) + r'[ \t]*,', l[2])]
+        s, e, c = hits[op.get('k', 0)]
+        if op['op'] == 'remove':
+            return text[:s] + text[e:]
+        m = re.match(r'([ \t]*DropItem[ \t]*\([ \t]*)([^,]*?)([ \t]*,[ \t]*)([^,]*?)([ \t]*,[ \t]*)([^,]*?)([ \t]*,[ \t]*)([^)]*?)([ \t]*\).*)$', c)
+        g = list(m.groups())
+        for key, at in (('define', 1), ('prob', 3), ('level', 5), ('count', 7)):
+            if key in op:
+                g[at] = str(op[key])
+        return text[:s] + ''.join(g) + text[s + len(c):]
+    if op['op'] == 'gold':
+        g = lastof(lambda l, k: k == 'DropGold')
+        if g:
+            s, e, c = g
+            nc = re.sub(r'(DropGold[ \t]*\([ \t]*)[^,]*?([ \t]*,[ \t]*)[^)]*?([ \t]*\))', lambda m: m.group(1) + str(op['min']) + m.group(2) + str(op['max']) + m.group(3), c, count=1)
+            return text[:s] + nc + text[s + len(c):]
+        mi = lastof(lambda l, k: k == 'Maxitem')
+        row = 'DropGold(%d, %d);' % (op['min'], op['max'])
+        return dre_insert_after(text, mi, row) if mi else dre_below_open(text, lines, row)
+    if op['op'] == 'max':
+        mi = lastof(lambda l, k: k == 'Maxitem')
+        if mi:
+            s, e, c = mi
+            nc = re.sub(r'(Maxitem[ \t]*=[ \t]*)[^;\s]+', lambda m: m.group(1) + str(op['n']), c, count=1)
+            return text[:s] + nc + text[s + len(c):]
+        return dre_below_open(text, lines, 'Maxitem = %d;' % op['n'])
+    raise ValueError(op['op'])
+
+
+def dre_scripts(W, text):
+    """10 edit scripts on real monsters; the JS copy runs the same ops through FRE.dropsOps"""
+    import hashlib
+    blocks = {}
+    for m in re.finditer(r'^(MI_\w+)[ \t]*\r?$', text, re.M):
+        blocks[m.group(1)] = blocks.get(m.group(1), 0) + 1
+    pick = lambda f: next(d for d in sorted(blocks) if f(d))
+    cache = {}
+
+    def blk(d):
+        if d not in cache:
+            cache[d] = dre_block(text, d)
+        return cache[d]
+    body = lambda d: ''.join(l[2] + '\n' for l in blk(d))
+    plain = 'MI_AIBATT1'
+    gen = pick(lambda d: '[BossDrop] begin' in body(d))
+    spaces = pick(lambda d: re.search(r'^        DropItem', body(d), re.M) is not None)
+    nomax = pick(lambda d: 'Maxitem' not in body(d) and 'DropItem' in body(d))
+    empty = pick(lambda d: 'DropItem' not in body(d) and 'DropGold' not in body(d) and 'Maxitem' not in body(d))
+    first = lambda d: re.search(r'DropItem[ \t]*\([ \t]*(\w+)', body(d)).group(1)
+    genfirst = lambda d: re.search(r'\[BossDrop\] begin[^\n]*\n[ \t]*DropItem[ \t]*\([ \t]*(\w+)', body(d)).group(1)
+    gens = dre_gen_spans(text)
+
+    def stm(d):
+        st = [(l, dre_kind_of(l[2])) for l in blk(d)[1:]]
+        return [x for x in st if x[1]]
+    last_in_gen = pick(lambda d: any(a < [l for l, k in stm(d) if k == 'DropItem'][-1][0] < b for a, b in gens) if any(k == 'DropItem' for l, k in stm(d)) else False)
+    ends_odd = pick(lambda d: stm(d) and not any(k == 'DropKind' for l, k in stm(d)) and stm(d)[-1][1] != 'DropItem')
+    indented = pick(lambda d: blk(d)[0][2] != '{' and blk(d)[0][2].strip() == '{' and not any(k == 'Maxitem' for l, k in stm(d)))
+    scripts = [
+        [{'op': 'add', 'mon': last_in_gen, 'define': 'II_CHP_RED', 'prob': 77, 'level': 0, 'count': 1}],
+        [{'op': 'kind', 'mon': ends_odd, 'ik3': 'IK3_SWD', 'level': 50}],
+        [{'op': 'max', 'mon': indented, 'n': 2}, {'op': 'add', 'mon': indented, 'define': 'II_CHP_RED', 'prob': 77, 'level': 0, 'count': 1}],
+        [{'op': 'add', 'mon': plain, 'define': 'II_SYS_SYS_SCR_AWAKECANCEL', 'prob': 15000000, 'level': 0, 'count': 1}],
+        [{'op': 'set', 'mon': plain, 'item': 'II_GEN_GEM_GEM_TWINKLESTONE', 'prob': 150000000, 'count': -1}],
+        [{'op': 'remove', 'mon': plain, 'item': 'II_GEN_GEM_GEM_TWINKLESTONE_1'}, {'op': 'gold', 'mon': plain, 'min': 10, 'max': 20}, {'op': 'max', 'mon': plain, 'n': 3}],
+        [{'op': 'add', 'mon': gen, 'define': 'II_CHP_RED', 'prob': 30000000, 'level': 0, 'count': -1},
+         {'op': 'set', 'mon': gen, 'item': genfirst(gen), 'prob': 1000, 'level': 3}],
+        [{'op': 'remove', 'mon': gen, 'item': genfirst(gen)}, {'op': 'kind', 'mon': gen, 'ik3': 'IK3_SWD', 'level': 4}],
+        [{'op': 'add', 'mon': spaces, 'define': 'II_GEN_GEM_GEM_TWINKLESTONE', 'prob': 1, 'level': 20, 'count': 32767},
+         {'op': 'set', 'mon': spaces, 'item': first(spaces), 'define': 'II_GEN_GEM_GEM_TWINKLESTONE_1'}],
+        [{'op': 'gold', 'mon': nomax, 'min': 0, 'max': 1}, {'op': 'max', 'mon': nomax, 'n': 0}, {'op': 'add', 'mon': nomax, 'define': 'II_CHP_RED', 'prob': 2147483647, 'level': 0, 'count': 2}],
+        [{'op': 'max', 'mon': empty, 'n': 4}, {'op': 'gold', 'mon': empty, 'min': 5, 'max': 9}, {'op': 'add', 'mon': empty, 'define': 'II_CHP_RED', 'prob': 5, 'level': 1, 'count': 1},
+         {'op': 'kind', 'mon': empty, 'ik3': 'IK3_AXE', 'level': 200}],
+        [{'op': 'kind', 'mon': plain, 'ik3': 'IK3_SWD', 'level': 3}, {'op': 'kind', 'mon': plain, 'ik3': 'IK3_AXE', 'level': 70}, {'op': 'remove', 'mon': plain, 'item': 'II_GEN_GEM_GEM_TWINKLESTONE'}],
+        [{'op': 'set', 'mon': plain, 'item': 'II_GEN_GEM_GEM_TWINKLESTONE', 'k': 0, 'prob': 3, 'level': 0, 'count': 5}, {'op': 'add', 'mon': plain, 'define': 'II_GEN_GEM_GEM_TWINKLESTONE', 'prob': 9, 'level': 0, 'count': 1}],
+    ]
+    out = []
+    for sc in scripts:
+        t = text
+        for op in sc:
+            t = dre_apply(t, op)
+        b = t.encode('latin-1')
+        out.append({'ops': sc, 'sha256': hashlib.sha256(b).hexdigest(), 'size': len(b)})
+    return out
+
+
+def dr_case_out(W, mid, o, seed, kills, mons=None, penya=None):
+    R = Rand(seed)
+    res = [dr_kill(W, mid, o, R, mons, penya) for _ in range(kills)]
+    return {'kills': res, 'next': R.g}
+
+
+def dr_run(root):
+    W = DrWorld(root)
+    out = {'stop': W.stop, 'blocks': len(W.order), 'rates': W.rates, 'events': [list(e[1:]) for e in W.events], 'except': sorted(W.exc),
+           'luck': [sum(r) for r in W.luck] if W.luck else None, 'randomopt': {'list': W.ro, 'index': W.ro_idx},
+           'penya': {'rows': W.penya['rows'], 'pct': W.penya['pct'], 'least': W.penya['least'], 'worlds': W.penya['worlds']},
+           'monsters': {}, 'kills': [], 'scripts': []}
+    for mid, m in W.mons.items():
+        out['monsters'][str(mid)] = {'list': [list(e) for e in m['list']], 'kinds': m['kinds'], 'max': m['max']}
+    base = dict(DR_OPTS, itemRate=W.rates['item'], pieceRate=W.rates['piece'], goldRate=W.rates['gold'])
+    # every monster: 2 seeds x 25 kills, with a different player / party setup per monster
+    for n, mid in enumerate(sorted(W.mons)):
+        if mid not in W.mv:
+            continue
+        lv = W.mv[mid]['level']
+        for s in (n * 7 + 1, n * 7 + 2):
+            o = dict(base, playerLevel=lv + (0, 2, 4, 7, 9, -3)[(n + s) % 6], loops=1 + (n + s) % 3, fortune=(n + s) % 4 == 0,
+                     worldId=(1, 3, 4, 5, 2)[(n + s) % 5], bagFull=(n + s) % 5 == 0 and bool(W.mv[mid]['fly']),
+                     penyaRate=(0, 50)[s % 2], anarchyGold=(0, 0, 25)[n % 3], cheering=n % 7 == 0, gold=(0, 2147483000)[(n + s) % 9 == 0])
+            c = {'monster': mid, 'seed': s, 'opts': o}
+            c.update(dr_case_out(W, mid, o, s, 25))
+            out['kills'].append(c)
+    # rare branches on chosen monsters, many kills
+    pick = lambda f: next((m for m in sorted(W.mons) if m in W.mv and f(m)), None)
+    special = [
+        ('flying, bag full', pick(lambda m: W.mv[m]['fly'] and W.mons[m]['kinds']), {'bagFull': True}),
+        ('flying', pick(lambda m: W.mv[m]['fly'] and W.mons[m]['kinds']), {}),
+        ('super, fortune', pick(lambda m: W.mv[m]['rank'] == W.D['RANK_SUPER'] and W.mons[m]['kinds']), {'fortune': True, 'loops': 2}),
+        ('midboss', pick(lambda m: W.mv[m]['rank'] == W.D['RANK_MIDBOSS'] and W.mons[m]['kinds']), {}),
+        ('piece 0', pick(lambda m: len(W.mons[m]['list']) > 3), {'pieceRate': 0.0}),
+        ('piece 2.5 + vote', pick(lambda m: len(W.mons[m]['list']) > 3), {'pieceRate': 2.5, 'voteThanks': True, 'anarchyPiece': 30}),
+        ('gm rates', pick(lambda m: len(W.mons[m]['list']) > 3), {'gmItemRate': 0.05, 'itemRate': 1.0, 'gmGoldRate': 3.5, 'playerLevel': 200}),
+        ('clockwork', W.D.get('MI_CLOCKWORK1'), {'playerLevel': 200}),
+        ('level 125+, random gear', pick(lambda m: W.mv[m]['level'] >= 125 and W.mons[m]['kinds'] and W.mv[m]['corr'] > 0), {'loops': 3}),
+    ]
+    for label, mid, extra in special:
+        if mid is None:
+            continue
+        o = dict(base, playerLevel=W.mv[mid]['level'])
+        o.update(extra)
+        c = {'monster': mid, 'seed': 99, 'opts': o, 'label': label}
+        c.update(dr_case_out(W, mid, o, 99, 400))
+        out['kills'].append(c)
+    # small scripts: loader edges, then kills on them
+    for label, text in DR_SCRIPTS:
+        mons, order, stop = dr_load(text.encode('latin-1'), W.D, W.size)
+        sc = {'label': label, 'text': text, 'stop': stop, 'order': order,
+              'monsters': {str(k): {'list': [list(e) for e in v['list']], 'kinds': v['kinds'], 'max': v['max']} for k, v in mons.items()}, 'kills': []}
+        for mid in sorted(mons):
+            if mid in W.mv:
+                o = dict(base, playerLevel=W.mv[mid]['level'])
+                c = {'monster': mid, 'seed': 5, 'opts': o}
+                c.update(dr_case_out(W, mid, o, 5, 30, mons))
+                sc['kills'].append(c)
+        out['scripts'].append(sc)
+    out['edits'] = dre_scripts(W, open(os.path.join(root, 'propMoverEx.inc'), 'rb').read().decode('latin-1'))
+    # small propDropEvent.inc files: the Buffbreaker half chance, an except.txt item, bad values
+    out['eventfiles'] = []
+    exc_id = sorted(W.exc)[0] if W.exc else 0
+    for txt in ['DropItem(II_GEN_SKILL_BUFFBREAKER, 30000001, 0, -1, 40, 50);\r\nDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 7, 2, 3, 1, 160);\r\n',
+                'DropItem(%d, 5, 0, -1, 1, 10);\r\nDropItem(II_SYS_SYS_SCR_GET01, -1, 0, =, 0x10, 999999999999);\r\n' % exc_id]:
+        out['eventfiles'].append({'text': txt, 'lines': [list(e[1:]) for e in dr_events(txt.encode('latin-1'), W.D, W.exc)]})
+    # PenyaTable variants: unsorted / repeated levels, a mode-1 rank, worlds, a bad row
+    tables = [
+        'LEVELS\n{\n 10 100 200\n 1 5 9\n 10 300 400\n 150 9000 9900\n 50 -1 7\n}\nRANKS\n{\n 1 100 0\n 2 250 1\n 7 5000 1\n 20 100 0\n}\nWORLDS\n{\n 1 50\n 3 300\n}\n',
+        'RANKS\n{\n 1 100 0\n}\n',
+        'LEVELS\n{\n 1 1 1\n}\nRANKS\n{\n 1 100 0\n 2 100 0\n 3 100 0\n 4 100 0\n 5 100 0\n 7 100 0\n}\nWORLDS\n{\n 1 0\n 2 100\n}\nJUNK\nLEVELS\n{\n 5 5 5\n}\n',
+    ]
+    out['tables'] = []
+    for n, txt in enumerate(tables):
+        T = dr_penya(txt.encode('latin-1'))
+        tc = {'text': txt, 'table': {'rows': T['rows'], 'pct': T['pct'], 'least': T['least'], 'worlds': T['worlds']}, 'kills': []}
+        for mid in [pick(lambda m: any(e[0] == 'gold' for e in W.mons[m]['list']) and W.mv[m]['rank'] == r) for r in (1, 2, 3, 4, 7)]:
+            if mid is None:
+                continue
+            o = dict(base, playerLevel=W.mv[mid]['level'], worldId=(1, 3, 2)[n])
+            c = {'monster': mid, 'seed': 11 + n, 'opts': o}
+            c.update(dr_case_out(W, mid, o, 11 + n, 40, None, T))
+            tc['kills'].append(c)
+        out['tables'].append(tc)
+    return out
+
 
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
@@ -4156,6 +5246,8 @@ if __name__ == '__main__':
         print(json.dumps(db_run(root)))
     elif what == 'aftersave':
         print(json.dumps(as_run(root)))
+    elif what == 'drops':
+        print(json.dumps(dr_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model
         for f in sorted(os.listdir(root)):
             if f.lower().startswith('mvr_') and f.lower().endswith('.o3d'):

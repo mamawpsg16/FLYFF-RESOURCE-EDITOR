@@ -148,7 +148,7 @@
     click($('btn-root'));
     await waitFor(() => S.layout, 'folder detected');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
-    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 3 && !document.querySelector('.task-card[data-task="exchange"]'), 'real-files tag; 3 tasks to pick (exchanges are in NPC Shops)');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 4 && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]'), 'real-files tag; 4 tasks to pick (exchanges are in NPC Shops; Monster Drops)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     await openTask('npc');
@@ -1044,6 +1044,68 @@
       ok(!S.ws.donationTree.find('Masks') && S.ws.models.donation.rows.filter(r => r.category === 'Suits').length === 75, 'Masks gone, Suits now holds 75');
       click($('btn-undo'));
       ok(S.ws.files.get(K).text === tree0 && S.ws.files.get('donationshop.inc').text === ds0 && S.ws.dirtyFiles().length === 0, 'Undo restores both files');
+    }
+
+    // ---- Monster Drops (propMoverEx.inc)
+    await openTask('drops');
+    ok(S.mode === 'drops' && document.querySelectorAll('#list .npc').length > 300, 'Monster Drops: the monster list');
+    {
+      const listSearch = $('list-search');
+      listSearch.value = 'Small Aibatt'; listSearch.dispatchEvent(new Event('input'));
+      click([...document.querySelectorAll('#list .npc')].find(n => /^Small Aibatt/.test(n.textContent)));
+      const ed = () => $('editor');
+      ok(/Max items per kill/.test(ed().textContent) && /Drops \(2\)/.test(ed().textContent), 'Small Aibatt: max items, 2 drops');
+      ok([...ed().querySelectorAll('input.pct-input')].some(i => i.value === '13.9698'), 'a 300,000,000 line shows 13.9698% (what players get)');
+      ok(/Players get \d[\d,]* - [\d,]+ Penya per kill/.test(ed().textContent) && /PenyaTable\.txt/.test(ed().textContent), 'Penya: the range players get, from PenyaTable.txt');
+      const f0 = S.ws.files.get('propmoverex.inc').text;
+      // + Add a drop
+      click(btnByText(ed(), '+ Add a drop'));
+      await waitFor(() => lastModalAny() && /Add a drop/.test(lastModalAny().querySelector('header').textContent), 'add-drop form');
+      const fm = lastModalAny(), addBtn = () => fm.querySelector('#dr-add-btn');
+      ok(addBtn().disabled && /Still needs: the item/.test(fm.textContent), 'Add greyed until item and chance are set');
+      const ci = fm.querySelector('.combo input');
+      ci.dispatchEvent(new Event('focus')); ci.value = 'II_CHP_RED'; ci.dispatchEvent(new Event('input'));
+      const opt = [...fm.querySelectorAll('.combo-opt')].find(o => /II_CHP_RED\)/.test(o.textContent));
+      opt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      const pin = fm.querySelector('input.pct-input');
+      pin.value = '5'; pin.dispatchEvent(new Event('change'));
+      await waitFor(() => !addBtn().disabled && /Players get it in/.test(fm.textContent), 'add form ready');
+      ok(/DropItem\(II_CHP_RED, \d+, 0, -1\);/.test(fm.textContent), 'preview: the line that will be written (amount 1, not counted)');
+      if (STOP === 'drops') { $('toasts').textContent = ''; return; }
+      click(addBtn());
+      ok(/Drops \(3\)/.test(ed().textContent) && /DropItem\(II_CHP_RED, \d+, 0, -1\);\r\n/.test(S.ws.files.get('propmoverex.inc').text), 'drop added: one CRLF line');
+      ok(S.ws.history[S.ws.history.length - 1].label.startsWith('Small Aibatt: added '), 'undo label in plain words');
+      // change a chance (players' %), then remove the line
+      const row = () => [...ed().querySelectorAll('table.items tr')].find(tr => tr.textContent.includes('II_GEN_GEM_GEM_TWINKLESTONE_1'));
+      const p2 = row().querySelector('input.pct-input');
+      p2.value = '20'; p2.dispatchEvent(new Event('change'));
+      ok(/TWINKLESTONE_1, 429496729,|TWINKLESTONE_1, 42949673\d,/.test(S.ws.files.get('propmoverex.inc').text), 'typing 20% writes the file value that gives 20%');
+      {
+        const steps = S.ws.history.length;
+        const p3 = row().querySelector('input.pct-input');
+        p3.value = '25'; p3.dispatchEvent(new Event('change'));
+        ok(S.ws.history.length === steps && /\(was 13\.97%\)/.test(S.ws.history[steps - 1].label), 'typing the same chance again folds into one undo step (label keeps "was 13.97%")');
+      }
+      click(row().querySelector('button.icon.danger'));
+      ok(/Drops \(2\)/.test(ed().textContent) && !/TWINKLESTONE_1,/.test(S.ws.files.get('propmoverex.inc').text.slice(f0.indexOf('MI_AIBATT1'), f0.indexOf('MI_AIBATT2'))), 'drop removed');
+      // kill it
+      click(btnByText(ed(), 'Kill it'));
+      await waitFor(() => lastModalAny() && /kills in \d+ ms/.test(lastModalAny().textContent), 'kill window');
+      ok(/Penya: [\d,]+ per kill/.test(lastModalAny().textContent), 'kill window: Penya per kill');
+      if (STOP === 'dropskill') { $('toasts').textContent = ''; return; }
+      click(btnByText(lastModalAny().querySelector('footer'), 'Close'));
+      // a script-made line: the warning
+      listSearch.value = 'MI_SYLIACA4'; listSearch.dispatchEvent(new Event('input'));
+      click(document.querySelector('#list .npc'));
+      ok(/script: BossDrop/.test(ed().textContent), 'script-made rows are tagged');
+      const gp = [...ed().querySelectorAll('table.items tr')].find(tr => /script: BossDrop/.test(tr.textContent)).querySelector('input.pct-input');
+      gp.value = '1'; gp.dispatchEvent(new Event('change'));
+      ok(S.ws.diags.some(d => d.code === 'M_GEN_EDITED' && /gen_boss_drops\.ps1/.test(d.message)), 'editing a [BossDrop] line warns: the script would undo it');
+      ok(S.ws.newBlocking().length === 0, 'no blocking problems');
+      if (STOP === 'dropsgen') { $('toasts').textContent = ''; return; }
+      while (S.ws.history.length) click($('btn-undo'));
+      ok(S.ws.files.get('propmoverex.inc').text === f0 && !S.ws.dirtyFiles().length, 'every edit undone');
+      listSearch.value = ''; listSearch.dispatchEvent(new Event('input'));
     }
 
     // ---- Battle Pass

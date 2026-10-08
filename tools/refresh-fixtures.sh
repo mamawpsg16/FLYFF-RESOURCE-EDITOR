@@ -16,6 +16,9 @@ cp -p $SRC/Server/Resource/Masquerade.prj $SRC/Server/Resource/character*.inc $S
   $SRC/Server/Resource/World.inc $SRC/Server/Resource/world.txt.txt $SRC/Server/Resource/propMapComboBoxData.inc \
   $SRC/Server/Resource/propMapComboBoxData.txt.txt $SRC/Server/Resource/mdlDyna.inc $SRC/Server/Resource/etc.inc \
   $SRC/Server/Resource/etc.txt.txt "$DST/Resource/"
+# Monster Drops: what the kill path also reads (loaders/drops.js), read-only
+cp -p $SRC/Server/Resource/propDropEvent.inc $SRC/Server/Resource/except.txt $SRC/Server/Resource/PenyaTable.txt \
+  $SRC/Server/Resource/expTable.inc $SRC/Server/Resource/Event.lua $SRC/Server/Resource/propItemEtc.inc "$DST/Resource/"
 for d in $SRC/Server/Resource/World/*/; do
   n=$(basename "$d")
   # NPC placement (.dyo), area names (.rgn + the map's .txt.txt), continents (WdMadrigal.wld.cnt)

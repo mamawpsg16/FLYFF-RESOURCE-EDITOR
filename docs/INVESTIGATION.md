@@ -138,6 +138,7 @@ Startup order (`OpenProject`):
 - Missing `;` after `AddMenu(…)` is common and harmless.
 
 ### 1.7 `propMoverEx.inc`: drops (`CProject::LoadPropMoverEx`, Project.cpp:2978)
+> **Superseded by §1.18 (2026-10-08, task F), read the C++ line by line.** Corrections: a capped "100%" line drops **80.15%**, not 71.6% (`xRand() % 3e9` favours low rolls); a missing `}` at the end of the file is an endless loop; "out of range" means above the highest propMover.txt id.
 - **Block form:** `MI_x { … }`.
 - **Statements:**
   - `Maxitem = n;`
@@ -364,6 +365,31 @@ The game loads at startup before the login screen (`Neuz.cpp:1589 BeginLoadThrea
 **Compiled limits (a rebuild, never a data edit):** `MAX_MOVER_MENU` 350 (`Source/Resource/defineNeuz.h:483`; `Project.h:433 m_abMoverMenu`, `WORLDSERVER/npchecker.h:18`) and `MAX_STRUCTURE` 20 (`defineNeuz.h:93`; `Project.h:1046 m_aStructure`). Neither array is bounds-checked. Raising one means WorldServer (Release) + Neuz (NoGameguard); the DatabaseServer has its own `project.h` and uses neither. New `MMI_` / `TID_MMI_` / `SRT_` names in the Resource copies need no rebuild as long as no C++ code names them.
 
 **Simulator:** `gjs -m tools/aftersave-sim.js character.txt.txt client/donationshoptree.inc codes=DT_PATCH`. Python copy `oracle_sim.py aftersave` (8,141 cases: every file alone × 5 game-copy states × 16 patch states × 4 check sets, every two files in one save, 600 mixed saves; plus a check that the 20 cited C++ lines still say so, before or after a patch moves them). 11 planted bugs caught.
+
+### 1.18 Monster drops: the loader and the kill (added 2026-10-08, task F, `loaders/drops.js`, `loaders/drops-sim.js`, `edit/drops-ops.js`, `ui/drops.js`)
+**Loader** `CProject::LoadPropMoverEx` (`_Common/Project.cpp:2978-3255`), on `CScript` (defines resolved):
+- Block = `MI_X` then tokens until the first token starting with `}`. `nVal >= m_nMoverPropSize` (highest propMover.txt id + 1, `ProjectCmn.cpp:558`) or `< 0`: `continue` inside the do-while never reads on → **endless loop at startup** (`M_RANGE`). An undefined name reads as 0: slot 0 (`M_UNDEF`). End of file inside a block: `*token` is `\0`, never `}` → endless loop (`M_BRACES`).
+- `AI` (strcmpi) → `LoadPropMoverEx_AI` (`ProjectLux.cpp`): `#SCAN` / `#BATTLE` / `#MOVE` sections; an unknown word returns FALSE and **the whole file stops loading** (`M_AI`): every later monster keeps no drops.
+- Token-consuming statements: `m_* = n`, `SetEvasion`, `SetRunAway` (two more values only if a `,` follows the first), `SetCallHelper`, `randomItem { }`, `Transform`, `Maxitem = n` (the last one wins), `DropItem`, `DropKind`, `DropGold`. Anything else is skipped one token at a time (`DDropGold` line 47531, `SetLevelDropPanalty_Off`, the 5th/6th values of the 248 six-value lines).
+- `DropItem( id, prob, level, number )`: every value via `GetNumber` (MSVC `atoi`: saturates at 2,147,483,647, 518 lines); **the commas are not checked**: `DropItem(II_X 21000000, 0, 1)` reads prob = `atoi(",")` = 0 (`600269aa`). `id` 0: an error is logged and the line is kept → the drop crashes the server (`Mover.cpp:8701` dereferences a NULL prop).
+- `DropKind( IK3, a, b )`: a, b read and ignored; rarity window `(short)(level-5) .. (short)(level-2)`, at least 1. `MAX_DROPKIND` is **80** (`ProjectCmn.h:758`; the file's header says 64), checked only by ASSERT. DropItem has no limit (a vector).
+- `DropGold( min, max )`: a SEED entry in the same list as the items (prob 0xFFFFFFFF), in file order.
+- `DropItem` / `DropKind` / `DropGold` are kept only `#ifdef __WORLDSERVER` (3196 / 3218 / 3234): the game parses the file but keeps no drops, and there is no loose Client copy. A save needs only Stop / Start Server.bat (`core/after-save.js`).
+- Then `LoadDropEvent` (`propDropEvent.inc`, `Project.cpp:4013`): ~707 global lines appended after every monster's own lines (`minLv <= dwLevel <= maxLv`), minus `except.txt` "worldDrop = 0" items for LANG_USA / sublang 0; `II_GEN_SKILL_BUFFBREAKER` at half chance outside Korea (commented out in this data).
+
+**Kill** `CMover::DropItem` (`Mover.cpp:8124-8961`), from `DropItemByDied` (the top damage dealer, 8102):
+- Rolls per kill `nloop`: 1, +1 Gift Box party mode (or within 255 of the leader), +1 GET01, +2 GET02, + `DST_GIFTBOX`. Fortune Circle sets `bUnique`.
+- Each roll: level gap `d = player - monster`: ≤1 100/100, ≤2 80/100, ≤4 60/80, ≤7 30/65, else 10/50 (items % / Penya %); not for MI_CLOCKWORK1 / DEMIAN5 / KEAKOON5 / MUFFRIN5. Gate `xRandom(100) < nProbability × GetItemDropRateFactor` (GM rate × Event.lua `SetItemDropRate`: ×10 now, so it always passes).
+- Then every list entry in order: `GetAt` (`Project.cpp:184`): `dwRand = xRandom(3e9); dwRand = (DWORD)(dwRand / GetPieceItemDropRateFactor)` (float32), pass if `dwRand < prob`. **The x10 item rate does not touch the lines.**
+- Item (ground): amount `(short)(xRandom(n)+1)` (-1 = 1; **0 = `xRandom(0)` crash**); `GenRandomOptItem` (weapons / armor: `xRandom(i+1)` + `xRandom(3e9)`, 68 `RandomOptItem` entries in the UTF-16 `propItemEtc.inc`); counted lines `nNumber++`; stop when `nNumber == Maxitem`. Flying monsters: into the bag, stop when `nNumber >= Maxitem` (checked after -1 lines too; Maxitem 0 → stops after the first bag drop).
+- Penya (roll 0 only): `min + xRandom(max - min)` (**min = max: `xRandom(0)` crash**), `PenyaTable::Roll`, × Penya %, × GM rate, × Event.lua gold (×10), × Anarchy, × `DST_PENYA_RATE`; `CanAdd` → straight into the bag. A DropGold placed below counted lines can be cut off by the Maxitem stop (2 monsters, `M_GOLD_LATE`).
+- DropKind: index range of the rarity window in `m_itemKindAry[IK3]` (items by id, exchange-sorted by `dwItemRare`, not stable), uniform pick, `xRandom(11)` start upgrade, down to +0: `expDropLuck[lv][k] × dwCorrectionValue %` vs `xRandom(3e9)` (halved for Fortune Circle when ≤ 10,000,000). A world boss (RANK_SUPER) drops at most one.
+
+**What players really get.** `xRand()` is a full-period 32-bit LCG, and 2^32 is not a multiple of 3e9: the rolls 0 … 1,294,967,295 come twice as often. A line's real chance = `(T + min(T, 1,294,967,296)) / 2^32` with T its first failing roll: **a "10%" line (300,000,000) drops 13.97%; a capped "100%" line 80.15%** (not 71.6%). The editor shows and types these real chances (`FRE.drops.effChance` / `probForChance`), and the per-kill chance including the gate and the Maxitem stop (`dropsSim.exactChances`, a DP over "counted drops so far"; checked against 20,000 simulated kills).
+
+**Edits** (`edit/drops-ops.js`): a new DropItem goes after the monster's last hand-written DropItem (outside the `gen_*.ps1` blocks, which the drop commits put right after DropGold), else after DropGold / Maxitem, else below `{`; it copies that line's indent and CRLF. Values are token-span replaces. A script-made line edited or removed → `M_GEN_EDITED` (the user's choice: editable, with a warning).
+
+**Simulator:** `gjs -m tools/drops-sim.js MI_AIBATT1 kills=10000 show=2`. Python copy `oracle_sim.py drops`: its own readers (propMover.txt / Spec_Item.txt by header columns, defines without commented-out blocks), 761 monsters × 2 seeds × 25 kills + 9 special cases × 400 kills (1,530 cases, every roll identical), 15 loader edge scripts, 3 PenyaTable variants, 2 event files, 13 edit scripts (byte-identical files, sha256). 25 of 29 planted bugs caught; the 4 others cannot change a result (`CanAdd` `>`/`>=` with g > 0, the mode-1 `>`/`>=` tie, expDropLuck row 119/120 (needs rarity 200 at monster level 202+), an indented `{` (none in the data)).
 
 ## Phase 2: Encoding and line-ending forensics (all 15,299 files, raw bytes)
 

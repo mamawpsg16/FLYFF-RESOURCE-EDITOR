@@ -2464,5 +2464,149 @@ section('after saving: what each change needs (JS and Python copies agree; real 
   }
 }
 
+// ---------------------------------------------------------------- monster drops (task F)
+section('monster drops: loader, checks, kills (JS and Python copies agree)');
+{
+  const files = new Map();
+  for (const [k, e] of loadFolder(FIXTURES)) files.set(k, openSource(e));
+  const NOW = new Date(2026, 9, 8, 12, 0);          // oracle_sim.py DR_FIXED_NOW
+  const w = new FRE.Workspace(files, { only: 'drops' });
+  w.now = () => NOW;
+  w.load();
+  const m = w.models.drops, Dr = FRE.drops, Sim = FRE.dropsSim;
+  eq(m.blocks.length, 761, 'propMoverEx.inc: 761 monster blocks');
+  eq(m.stopped, null, 'the real file loads to the end');
+  const codes = {};
+  for (const d of w.diags) codes[d.code] = (codes[d.code] || 0) + 1;
+  eq(codes.M_PROB_OVERFLOW, 518, '518 chances above 2,147,483,647 (atoi caps them)');
+  eq(codes.M_COMMA || 0, 0, 'no line with a missing comma left (600269aa fixed the last ones)');
+  eq(codes.M_EXTRA_ARGS, 248, '248 six-value DropItem lines (the extra values are skipped)');
+  for (const c of Object.keys(codes)) ok(!!FRE.diagHelp[c], `help text for ${c}`);
+  eq(Dr.pct(Dr.effChance(300000000)), '13.97%', 'a "10%" line drops 13.97% (xRand() % 3e9 favours the low values)');
+  eq(Dr.pct(Dr.effChance(Dr.INT_MAX)), '80.15%', 'the highest chance the server can reach: 80.15%');
+  eq(Dr.effChance(Dr.probForChance(0.05)) >= 0.05 && Dr.effChance(Dr.probForChance(0.05) - 1) < 0.05, true, 'probForChance is the smallest value giving the chance');
+
+  const out = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} drops ${FIXTURES}`);
+  const ora = JSON.parse(new TextDecoder().decode(out[1]));
+  const ctx = w.dropContext;
+  eq(JSON.stringify([ctx.rates.item, ctx.rates.piece, ctx.rates.gold, ctx.rates.events.filter(e => e.on).map(e => e.name)]),
+    JSON.stringify([ora.rates.item, ora.rates.piece, ora.rates.gold, ora.rates.on]), 'Event.lua: the same events on, the same rates');
+  eq(JSON.stringify(ctx.events.map(e => [e.itemId, e.probability, e.levelValue, e.number, e.minLv, e.maxLv])), JSON.stringify(ora.events), `propDropEvent.inc: the same ${ctx.events.length} event lines`);
+  eq(JSON.stringify([...ctx.except].sort((a, b) => a - b)), JSON.stringify(ora.except), 'except.txt: the same worldDrop = 0 items');
+  eq(JSON.stringify(ctx.luck.map(r => r.reduce((a, b) => a + b, 0))), JSON.stringify(ora.luck), 'expDropLuck: the same table');
+  eq(JSON.stringify(ctx.randomOpt.list.map(r => [r.id, r.level, r.prob])), JSON.stringify(ora.randomopt.list), 'RandomOptItem: the same entries, same order');
+  eq(JSON.stringify(ctx.randomOpt.anIndex), JSON.stringify(ora.randomopt.index), 'RandomOptItem: the same m_anIndex');
+  let evAgree = 0;
+  for (const ef of ora.eventfiles) {
+    const lines = Dr.loadDropEvent(new FRE.SourceFile('propDropEvent.inc', B.binaryStringToBytes(ef.text)), { defines: w.defines.defines, strings: w.strings.map, except: ctx.except });
+    const j = JSON.stringify(lines.map(e => [e.itemId, e.probability, e.levelValue, e.number, e.minLv, e.maxLv]));
+    if (j === JSON.stringify(ef.lines)) evAgree++; else print(`   event file: js ${j} py ${JSON.stringify(ef.lines)}`);
+  }
+  eq(evAgree, ora.eventfiles.length, 'small propDropEvent.inc files: Buffbreaker at half chance, except.txt items left out');
+  const penyaJ = T => ({ rows: T.rows.map(r => [r.level, r.min, r.max]), pct: T.rankPct, least: T.rankAtLeast, worlds: T.worlds });
+  eq(JSON.stringify(penyaJ(ctx.penya)), JSON.stringify(ora.penya), 'PenyaTable.txt: the same table');
+
+  const monJ = mon => ({ list: mon.list.map(e => e.kind === 'gold' ? ['gold', e.minValue, e.maxValue] : ['item', e.itemId, e.probability, e.levelValue, e.number]),
+    kinds: mon.kinds.map(e => e.ik3Value), max: mon.maxValue });
+  let agree = 0, bad = [];
+  for (const [id, om] of Object.entries(ora.monsters)) {
+    const j = JSON.stringify(monJ(m.monsters.get(+id))), p = JSON.stringify(om);
+    if (j === p) agree++; else if (bad.length < 3) bad.push(`${id}: js ${j.slice(0, 200)} py ${p.slice(0, 200)}`);
+  }
+  eq(agree, Object.keys(ora.monsters).length, `every monster's drop list agrees (${agree})`);
+  bad.forEach(b => print('   ' + b));
+
+  const killJ = r => ({ g: r.rolls.map(x => x.gate), s: r.rolls.map(x => x.stop), d: r.drops.map(x => [x.from, x.id, x.n, x.plus, x.opt, x.where]), p: r.gold, x: r.crash ? r.crash.at : null });
+  const replay = (c, env) => {
+    const rnd = FRE.xRandom.rng(c.seed);
+    const kills = [];
+    for (let i = 0; i < c.kills.length; i++) kills.push(killJ(Sim.kill(env, rnd, c.opts)));
+    return { kills, next: rnd.next };
+  };
+  const compare = (cases, envOf, what) => {
+    let n = 0, b = [];
+    for (const c of cases) {
+      const r = replay(c, envOf(c));
+      const j = JSON.stringify(r), p = JSON.stringify({ kills: c.kills, next: c.next });
+      if (j === p) n++;
+      else if (b.length < 3) {
+        const k = r.kills.findIndex((x, i) => JSON.stringify(x) !== JSON.stringify(c.kills[i]));
+        b.push(`${what} monster ${c.monster} seed ${c.seed}${c.label ? ' (' + c.label + ')' : ''} kill ${k + 1}: js ${JSON.stringify(r.kills[k]).slice(0, 300)} py ${JSON.stringify(c.kills[k]).slice(0, 300)}`);
+      }
+    }
+    eq(n, cases.length, `${what}: every kill agrees (${n} cases, ${cases.reduce((a, c) => a + c.kills.length, 0)} kills, every roll)`);
+    b.forEach(x => print('   ' + x));
+  };
+  compare(ora.kills, c => Sim.envFor(w, c.monster), 'real monsters');
+
+  let sAgree = 0;
+  const scriptKills = [];
+  for (const sc of ora.scripts) {
+    const f = new FRE.SourceFile('propMoverEx.inc', B.binaryStringToBytes(sc.text));
+    const sm = Dr.loadDrops(f, { defines: w.defines.defines, strings: w.strings.map, movers: w.movers.movers });
+    const mons = {};
+    for (const [id, mon] of sm.monsters) mons[id] = monJ(mon);
+    const j = JSON.stringify({ stop: sm.stopped ? sm.stopped.reason : null, order: sm.blocks.map(b => b.id), monsters: mons });
+    const p = JSON.stringify({ stop: sc.stop, order: sc.order, monsters: sc.monsters });
+    if (j === p) sAgree++; else print(`   script "${sc.label}": js ${j} py ${p}`);
+    for (const c of sc.kills) scriptKills.push(Object.assign({ model: sm }, c));
+  }
+  eq(sAgree, ora.scripts.length, `small scripts: the loader agrees on every edge (${ora.scripts.map(s => s.label).join(', ')})`);
+  compare(scriptKills, c => Sim.envFor(w, c.monster, c.model), 'small scripts');
+  const tableKills = [];
+  let tAgree = 0;
+  for (const tc of ora.tables) {
+    const T = Dr.loadPenyaTable(new FRE.SourceFile('PenyaTable.txt', B.binaryStringToBytes(tc.text)));
+    if (JSON.stringify(penyaJ(T)) === JSON.stringify(tc.table)) tAgree++; else print(`   table: js ${JSON.stringify(penyaJ(T))} py ${JSON.stringify(tc.table)}`);
+    for (const c of tc.kills) tableKills.push(Object.assign({ T }, c));
+  }
+  eq(tAgree, ora.tables.length, 'PenyaTable variants: the same rows, ranks and worlds');
+  compare(tableKills, c => { const e = Sim.envFor(w, c.monster); e.ctx = Object.assign({}, e.ctx, { penya: c.T }); return e; }, 'PenyaTable variants');
+
+  // edit scripts: FRE.dropsOps against the Python copy's own line rules, whole files compared
+  {
+    const O = FRE.dropsOps, Dm = w.defines.defines, F = 'propmoverex.inc';
+    let same = 0;
+    for (const sc of ora.edits) {
+      let steps = 0;
+      try {
+        for (const op of sc.ops) {
+          const model = w.models.drops, id = Dm.get(op.mon), mon = model.monsters.get(id);
+          const entry = () => mon.list.filter(e => e.kind === 'item' && e.define === op.item)[op.k || 0];
+          const make = t => op.op === 'add' ? O.addDrop(t, model, id, { define: op.define, prob: op.prob, level: op.level, count: op.count }, Dm)
+            : op.op === 'set' ? O.setDrop(t, entry(), { define: op.define, prob: op.prob, level: op.level, count: op.count }, Dm)
+            : op.op === 'remove' ? O.removeEntry(t, entry())
+            : op.op === 'gold' ? O.setGold(t, model, id, op.min, op.max)
+            : op.op === 'max' ? O.setMaxitem(t, model, id, op.n)
+            : O.addKind(t, model, id, op.ik3, Dm, op.level);
+          w.apply(F, make(w.files.get(F).text), op.op);
+          steps++;
+        }
+        const bytes = w.files.get(F).serialize();
+        const sha = GLib.compute_checksum_for_bytes(GLib.ChecksumType.SHA256, new GLib.Bytes(bytes));
+        if (sha === sc.sha256 && bytes.length === sc.size) same++;
+        else print(`   edit script ${JSON.stringify(sc.ops).slice(0, 200)}: js ${bytes.length} bytes, py ${sc.size}`);
+      } catch (e) { print(`   edit script ${JSON.stringify(sc.ops).slice(0, 200)}: ${e.message}`); }
+      while (steps--) w.undo();
+    }
+    eq(same, ora.edits.length, `edit scripts: byte-identical files (${ora.edits.length} scripts: add, change, remove, Penya, max items, random gear; tabs, 8-space lines, script-made blocks)`);
+    eq(w.files.get(F).dirty, false, 'every edit undone: the file is back to its original bytes');
+  }
+
+  // the editor's exact chances against 20,000 simulated kills
+  for (const name of ['MI_AIBATT1', 'MI_BIGMUSCLE', 'MI_MOTHBEE1']) {
+    const env = Sim.envFor(w, w.defines.defines.get(name));
+    const ex = Sim.exactChances(env, {});
+    const r = Sim.run(env, { kills: 20000, seed: 3 });
+    let worst = 0;
+    ex.lines.forEach((l, i) => {
+      if (l.entry.kind !== 'item' || l.perKill * r.kills < 20) return;
+      const s = r.lines.get(i), got = s ? s.times : 0, exp = l.perKill * r.kills;
+      worst = Math.max(worst, Math.abs(got - exp) / Math.sqrt(exp * (1 - l.perKill)));
+    });
+    ok(worst < 5, `${name}: the shown chances match 20,000 simulated kills`, `worst z ${worst.toFixed(2)}`);
+  }
+}
+
 print(`\n${pass} passed, ${fail} failed`);
 if (fail) System.exit(1);

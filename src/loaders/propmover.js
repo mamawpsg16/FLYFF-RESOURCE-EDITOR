@@ -1,6 +1,6 @@
 // propMover.txt loader, ported from CProject::LoadPropMover (_Common/ProjectCmn.cpp:380).
 // Read-only: the editor needs each monster's id, display name, level and rank
-// (Battle Pass monster points are priced by level and rank).
+// (Battle Pass monster points are priced by level and rank), and for Monster Drops dwFlying and dwCorrectionValue.
 // A record is a fixed token stream: id, name, then the fields below in the
 // exact order the C++ reads them (__VER 19). Line breaks don't matter.
 (function (FRE) {
@@ -25,6 +25,8 @@
   const SCHEMA = SCHEMA_SRC.trim().split(/\s+/).map(s => { const [name, kind] = s.split(':'); return { name, kind }; });
   const LEVEL = SCHEMA.findIndex(f => f.name === 'dwLevel');
   const CLASS = SCHEMA.findIndex(f => f.name === 'dwClass');
+  const FLYING = SCHEMA.findIndex(f => f.name === 'dwFlying');
+  const CORRECTION = SCHEMA.findIndex(f => f.name === 'dwCorrectionValue');
 
   // dwClass values (defineAttribute.h RANK_*), as BattlePass.inc's row comments name them
   const RANKS = { 1: 'low', 2: 'normal', 3: 'captain', 4: 'boss', 5: 'midboss', 6: 'material', 7: 'super', 8: 'guard', 9: 'citizen' };
@@ -53,6 +55,7 @@
         id: id.value, define: id.define || file.text.slice(id.start, id.end),
         name, nameKey: nameTok.stringKey || null,
         level: vals[LEVEL], rankId: vals[CLASS], rank: RANKS[vals[CLASS]] || `rank ${vals[CLASS]}`,
+        flying: vals[FLYING], correction: vals[CORRECTION],   // the kill path: drops into the bag; DropKind's chance % (Mover.cpp:8613 / 8866)
         start: id.start,
       });
     }
