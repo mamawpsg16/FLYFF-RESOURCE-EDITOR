@@ -22,6 +22,7 @@ loaders/donation-window.js
 loaders/battlepass.js
 loaders/exchange.js
 loaders/exchange-sim.js
+loaders/donation-buy.js
 loaders/board-text.js
 validate/help.js
 validate/character.js

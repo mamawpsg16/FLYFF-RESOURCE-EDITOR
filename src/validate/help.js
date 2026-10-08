@@ -63,6 +63,8 @@
     DS_NO_ITEM: ['The item is not in Spec_Item.txt, so it cannot be bought (and the client may show a broken entry).', 'Pick an existing item, or add it to Spec_Item.txt first.'],
     DS_NO_PRICE: ['Donation prices are not in DonationShop.inc: each item\'s price is its dwReferValue1 in Spec_Item.txt (donate chips). This item has none, so the server refuses to sell it.', 'Type a chip price in the Price column (it is stored in Spec_Item.txt and shared with the chip shops), or remove the item from the shop.'],
     DS_DUP: ['The same item is listed twice. The shop keeps one entry per item, in the category of the LAST row.', 'Remove one of the rows.'],
+    DS_OVERFLOW: ['The client and the server work out the total as an int: price x quantity. A player can buy up to 9,999 at once, so above 214,769 chips the total passes 2,147,483,647 and turns negative. The chip check then passes, and the player gets the items for the chips they have (CDPSrvr::OnBuyDonationItem, DPSrvr.cpp:3636). Read from the C++, not seen in game.',
+      'Keep the chip price at 214,769 or less. The same price is used by Red Chip and Donate Chip NPC shops.'],
     DS_CRASH: ['Buying this item in the Donation Shop crashed the server every time in live tests; the cause was never found (commit ae345504). It is left out of the shop on purpose.',
       'Remove the row. Only add it back after the crash is fixed and tested in game.'],
     DS_NO_LEAF: ['The client\'s category tree (Client/Client/DonationShopTree.inc) has no category with this name, so the item is listed only under "All Items" (sorted last), not in any category.',

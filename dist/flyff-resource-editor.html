@@ -434,7 +434,7 @@ button.linkish { background: none; border: none; color: var(--accent); padding: 
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "41+", "when": "Thu 8 Oct 2026, 10:41", "rev": "842195d", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "42+", "when": "Thu 8 Oct 2026, 11:34", "rev": "f1d404b", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -2787,6 +2787,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "41+", "when
   // Bought here, these crashed the server every time; root cause never found
   // (commit ae345504, and the comment above the Shields rows in DonationShop.inc).
   const CRASH_ITEMS = ['II_ARM_ARM_SHI_NEXUS', 'II_ARM_ARM_SHI_ICECROWNPURPLE'];
+  // the highest price where 9,999 x price still fits an int (loaders/donation-buy.js)
+  const SAFE_PRICE = Math.floor(2147483647 / 9999);
 
   // ctx: { items, textOf, defines, tree (DonationShopTree.inc from Client/, or null) }
   function validateDonation(model, ctx) {
@@ -2812,6 +2814,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "41+", "when
         const chip = FRE.specItem.get(item, 'dwReferValue1');
         if (chip < 1) add({ code: 'DS_NO_PRICE', severity: 'WARN', start: r.start, end: r.end, key: `DS_NO_PRICE|${name}`, itemName: name,
           message: `${item.name || name} (${name}) has no donate-chip price (dwReferValue1 = ${chip < 0 ? '=' : chip}): the server refuses to sell it` });
+        // CWndConfirmBuyDonation::OnOK / CDPSrvr::OnBuyDonationItem: (int)( price x count ) with count up to 9,999
+        else if (chip > SAFE_PRICE) add({ code: 'DS_OVERFLOW', severity: 'BLOCK', start: r.start, end: r.end, key: `DS_OVERFLOW|${name}`, itemName: name,
+          message: `${item.name || name} (${name}) costs ${chip} Donate Chips: buying 9,999 overflows the total (price x 9,999 is over 2,147,483,647), so a player gets them for the chips they have. Keep the price at ${SAFE_PRICE} or less` });
       }
       const crash = CRASH_ITEMS.find(d => ctx.defines && ctx.defines.get(d) === r.id);
       if (crash) add({ code: 'DS_CRASH', severity: 'BLOCK', start: r.start, end: r.end, key: `DS_CRASH|${name}`, itemName: name,
@@ -2828,7 +2833,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "41+", "when
     return out;
   }
 
-  FRE.donation = { loadDonation, validateDonation, FILE, CRASH_ITEMS };
+  FRE.donation = { loadDonation, validateDonation, FILE, CRASH_ITEMS, SAFE_PRICE };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- loaders/donation-tree.js ----
@@ -3823,22 +3828,30 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "41+", "when
   }
   const clear = (p, s) => { (s.bag ? p.slots : p.equip)[s.i] = null; };
 
+  // CItemContainer::IsFull (Item.h:694): true = `num` of the item does not fit in the usable bag
+  // positions (stacks with the same id, flag and bCharged first, then empty slots)
+  function bagIsFull(env, p, id, num, flag, charged) {
+    const pr = env.prop(id), pack = short(pr.packMax);
+    const search = Math.min(p.unlocked, MAX_INVENTORY);
+    let t = short(num);
+    for (let i = 0; i < search; i++) {
+      const e = p.slots[i];
+      if (!e) { if (t > pack) t -= pack; else return false; }
+      else if (e.id === id && e.flag === flag && e.charged === charged) { if (e.num + t > pack) t -= pack - e.num; else return false; }
+    }
+    return true;
+  }
+
   // CItemContainer::IsFull + Add (via CMover::CreateItem): stack with the same id, flag and
-  // bCharged first, then empty slots; false = it does not fit (nothing is added)
-  function createItem(env, p, id, num, flag) {
+  // bCharged first, then empty slots; false = it does not fit (nothing is added).
+  // charged: the new item's m_bCharged (the exchange copies the prop's bCharged; null = that)
+  function createItem(env, p, id, num, flag, chargedIn = null) {
     const pr = env.prop(id);
     if (!pr || id === 0) return false;
-    const pack = short(pr.packMax), charged = pr.charged;
+    const pack = short(pr.packMax), charged = chargedIn === null ? pr.charged : chargedIn;
     const search = Math.min(p.unlocked, MAX_INVENTORY);
     let n = short(num);
-    // IsFull (Item.h:694)
-    let fits = false, t = n;
-    for (let i = 0; i < search && !fits; i++) {
-      const e = p.slots[i];
-      if (!e) { if (t > pack) t -= pack; else fits = true; }
-      else if (e.id === id && e.flag === flag && e.charged === charged) { if (e.num + t > pack) t -= pack - e.num; else fits = true; }
-    }
-    if (!fits) return false;
+    if (bagIsFull(env, p, id, n, flag, charged)) return false;
     if (pr.packMax !== 1) {
       for (let i = 0; i < search; i++) {
         const e = p.slots[i];
@@ -3988,7 +4001,155 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "41+", "when
   }
 
   FRE.exchangeSim = { rng, envFromWorkspace, serverTable, player, clone, getItemNum, checkCondition, payList, isFull, removeItemA, createItem,
-    resultExchange, clientReply, rowView, stockedPlayer, run, fmtText, countOf, freeSlots, RESULT, MAX_INVENTORY, MAX_INVENTORY_FREE, FILLER, NULL_ID };
+    resultExchange, clientReply, rowView, stockedPlayer, run, fmtText, countOf, freeSlots, bagIsFull, allSlots, short, RESULT, MAX_INVENTORY, MAX_INVENTORY_FREE, FILLER, NULL_ID };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/donation-buy.js ----
+// What happens when a player buys in the Donation Shop: a port of the client's confirm dialog
+// and the WorldServer's handler (custom __DONATIONSHOP, commit 7d7df4f9), run on the catalog
+// DonationShop.inc loads (FRE.donation) and the prices in Spec_Item.txt (dwReferValue1).
+//   confirm    <- CWndConfirmBuyDonation (Neuz _Interface/WndDonationShop.cpp):
+//                 Initialize (:38, no price -> message), OnChildNotify (:83, quantity 0..9999 typed,
+//                 1..9999 with + / - / Max), OnChangeBuyCount (:64, total = DWORD count x price),
+//                 OnOK (:131, 1..9999, (int)(count x price) > GetAtItemNum(II_CHP_DONATE) -> message)
+//   serverBuy  <- CDPSrvr::OnBuyDonationItem (WORLDSERVER/DPSrvr.cpp:3636)
+//                 CItemBase::GetChipCost (_Common/Item.cpp:160: "=" or no prop -> -1)
+//                 CItemContainer::GetAtItemNum (_Common/Item.h:595: every slot, locked or in a trade too)
+//                 CItemContainer::IsFull (Item.h:694), CMover::RemoveItemA (MoverParam.cpp:3964),
+//                 CMover::CreateItem (Mover.cpp:2757) -> CItemContainer::Add: the bag code is shared
+//                 with loaders/exchange-sim.js
+// The order on the server: count < 1 ignored, > 9999 cut to 9999; not in the catalog, no item or
+// no price -> ignored without a message; not enough chips (TID_GAME_LACKCHIP); bag check
+// (TID_GAME_LACKSPACE) BEFORE the chips are taken, so a chip stack that would run out does not
+// free its slot; chips taken 0x7fff at a time; the item is created with flag 0 and m_bCharged
+// FALSE (CItemElem::CItemElem, Item.cpp:223; this handler never sets it).
+// Both sides compute the total in 32 bits: from price x count > 2,147,483,647 the (int) total is
+// negative, the chip check passes, and the player gets the items for the chips they have
+// (DS_OVERFLOW; read from the C++, not seen in game).
+//
+// Not modelled: the two crash items (commit ae345504: buying them crashed the server, the cause
+// was never found; their Spec_Item rows match the safe shields except the icon and the name):
+// the outcome is CRASH and nothing changes. Also not modelled: the item log, serial numbers,
+// packet timing, and the window's grid (loaders/donation-window.js).
+(function (FRE) {
+  'use strict';
+  const MAX_BUY = 9999;                               // MAX_DS_BUY (WndDonationShop.cpp:85) / OnBuyDonationItem
+  const INT_MAX = 2147483647;
+  const SAFE_PRICE = Math.floor(INT_MAX / MAX_BUY);   // 214,769: the highest price where 9,999 x price fits an int
+  const i32 = v => v | 0;
+  const mul32 = (a, b) => Math.imul(a, b) >>> 0;      // DWORD x DWORD, wrapped
+  const X = () => FRE.exchangeSim;
+
+  // Everything the simulator needs. over: { [id]: { chip, packMax } } replaces values of an item.
+  function envFromWorkspace(ws, over = {}) {
+    const D = ws.defines.defines, m = ws.models.donation;
+    const catalog = new Map();
+    for (const [id, r] of m ? m.catalog : []) catalog.set(id >>> 0, r.category);
+    const crash = new Set(FRE.donation.CRASH_ITEMS.filter(d => D.has(d)).map(d => D.get(d) >>> 0));
+    return {
+      chipId: D.has('II_CHP_DONATE') ? D.get('II_CHP_DONATE') >>> 0 : null,
+      catalog, crash,
+      prop(id) {
+        if ((id >>> 0) === X().FILLER) return { packMax: 1, charged: 0, chip: 0xffffffff, name: '(other item)' };
+        const it = ws.itemById(id);
+        if (!it) return null;
+        const g = f => FRE.specItem.get(it, f), o = over[id >>> 0] || {};
+        return { packMax: (o.packMax !== undefined ? o.packMax : g('dwPackMax')) >>> 0, charged: g('bCharged') ? 1 : 0,
+          chip: (o.chip !== undefined ? o.chip : g('dwReferValue1')) >>> 0, name: it.name || it.nameKey || it.define, define: it.define };
+      },
+      text: name => (ws.texts ? ws.texts.get(name) : '') || '',
+    };
+  }
+
+  // A test player: spec = { unlocked, slots: { pos: [id, num, busy, flag, charged] }, fill }.
+  // Positions 0..335 are the bag, 336.. the equipment; `fill` puts other items in the first empty
+  // bag positions (locked ones too).
+  function playerOf(spec) {
+    const S = X(), p = S.player({ unlocked: spec.unlocked === undefined ? S.MAX_INVENTORY_FREE : spec.unlocked });
+    for (const [k, v] of Object.entries(spec.slots || {})) {
+      const pos = Number(k), it = { id: v[0] >>> 0, num: v[1], busy: !!v[2], flag: v[3] || 0, charged: v[4] || 0 };
+      if (pos < S.MAX_INVENTORY) p.slots[pos] = it; else p.equip[pos - S.MAX_INVENTORY] = it;
+    }
+    let left = spec.fill || 0;
+    for (let i = 0; i < S.MAX_INVENTORY && left > 0; i++) if (!p.slots[i]) { p.slots[i] = { id: S.FILLER, num: 1, flag: 0, charged: 0, busy: false }; left--; }
+    return p;
+  }
+
+  // CItemContainer::GetAtItemNum: every slot of the container, nothing skipped
+  const getAtItemNum = (p, id) => X().allSlots(p).reduce((a, s) => a + (s.it && s.it.id === id ? s.it.num : 0), 0);
+
+  // GetChipCost: -1 (as a DWORD) when there is no item or the price is "="
+  const chipCost = (env, id) => { const pr = env.prop(id); return pr ? pr.chip : 0xffffffff; };
+
+  // CWndConfirmBuyDonation: the player clicks the item, types `typed` (an int; atoi of the box)
+  // and presses OK. chips = what the client's bag holds.
+  function confirm(env, id, typed, chips) {
+    const cost = chipCost(env, id);
+    if (i32(cost) < 1) return { box: 'NO_PRICE', shown: null, sent: null };
+    const n = Math.min(Math.max(typed === undefined ? 1 : typed, 0), MAX_BUY);   // EN_CHANGE
+    const shown = mul32(n, cost);                                                 // OnChangeBuyCount, %u
+    const nBuy = Math.min(Math.max(n, 1), MAX_BUY);                               // OnOK
+    if (i32(mul32(nBuy, cost)) > chips) return { box: 'LACK_CHIPS', shown, sent: null };
+    return { box: null, shown, sent: X().short(nBuy) };
+  }
+  const CLIENT_TEXT = { NO_PRICE: 'This item has no donate-chip price set.', LACK_CHIPS: 'More Donate Chips are needed.' };
+
+  // CDPSrvr::OnBuyDonationItem with a packet { dwItemId, nNum }. Changes p.
+  function serverBuy(env, p, id, nNumIn) {
+    const S = X();
+    id = id >>> 0;
+    let nNum = S.short(nNumIn);
+    const out = { outcome: null, text: null, num: nNum, cost: null, total: null, paid: 0, chipsBefore: env.chipId === null ? 0 : getAtItemNum(p, env.chipId) };
+    const done = (outcome, text = null) => { out.outcome = outcome; out.text = text; out.chipsAfter = env.chipId === null ? 0 : getAtItemNum(p, env.chipId); return out; };
+    if (nNum < 1) return done('IGNORED_COUNT');
+    if (nNum > MAX_BUY) nNum = MAX_BUY;
+    out.num = nNum;
+    if (!env.catalog.has(id)) return done('IGNORED_NOT_LISTED');
+    const pr = env.prop(id);
+    if (!pr) return done('IGNORED_NO_ITEM');
+    const cost = pr.chip;
+    out.cost = cost;
+    if (i32(cost) < 1) return done('IGNORED_NO_PRICE');
+    const total = mul32(cost, nNum);
+    out.total = total;
+    out.overflow = total > INT_MAX;
+    if (out.chipsBefore < i32(total)) return done('LACK_CHIP', 'TID_GAME_LACKCHIP');
+    if (S.bagIsFull(env, p, id, nNum, 0, 0)) return done('LACK_SPACE', 'TID_GAME_LACKSPACE');
+    if (env.crash.has(id)) return done('CRASH');
+    let t = total;
+    while (t > 0x7fff) {
+      if (getAtItemNum(p, env.chipId) === 0) break;      // every further RemoveItemA takes nothing
+      out.paid += S.removeItemA(p, env.chipId, 0x7fff);
+      t -= 0x7fff;
+    }
+    if (t <= 0x7fff) out.paid += S.removeItemA(p, env.chipId, S.short(t));
+    return done(S.createItem(env, p, id, nNum, 0, 0) ? 'BOUGHT' : 'CREATE_FAILED');
+  }
+
+  // The whole buy: the dialog, then the packet it sends (if any). p changes.
+  function buy(env, p, id, typed) {
+    const client = confirm(env, id, typed, env.chipId === null ? 0 : getAtItemNum(p, env.chipId));
+    return { client, server: client.sent === null ? null : serverBuy(env, p, id, client.sent) };
+  }
+
+  // the bag as [position, id, num, flag, charged], other items left out
+  function dump(p) {
+    const S = X(), out = [];
+    S.allSlots(p).forEach((s, k) => { if (s.it && s.it.id !== S.FILLER) out.push([k, s.it.id, s.it.num, s.it.flag, s.it.charged]); });
+    return out;
+  }
+
+  // What players read (the editor's Try buying window)
+  function describe(env, r) {
+    if (r.client.box) return { kind: 'box', text: CLIENT_TEXT[r.client.box] };
+    const s = r.server;
+    if (s.text) return { kind: 'chat', text: env.text(s.text) || s.text };
+    if (s.outcome === 'BOUGHT') return { kind: 'ok', text: '' };
+    if (s.outcome === 'CRASH') return { kind: 'crash', text: 'The server crashes (known crash item, commit ae345504).' };
+    return { kind: 'none', text: '(nothing: the server ignores the request)' };
+  }
+
+  FRE.donationBuy = { envFromWorkspace, playerOf, getAtItemNum, confirm, serverBuy, buy, dump, describe, CLIENT_TEXT, MAX_BUY, SAFE_PRICE, INT_MAX };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- loaders/board-text.js ----
@@ -4145,6 +4306,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "41+", "when
     DS_NO_ITEM: ['The item is not in Spec_Item.txt, so it cannot be bought (and the client may show a broken entry).', 'Pick an existing item, or add it to Spec_Item.txt first.'],
     DS_NO_PRICE: ['Donation prices are not in DonationShop.inc: each item\'s price is its dwReferValue1 in Spec_Item.txt (donate chips). This item has none, so the server refuses to sell it.', 'Type a chip price in the Price column (it is stored in Spec_Item.txt and shared with the chip shops), or remove the item from the shop.'],
     DS_DUP: ['The same item is listed twice. The shop keeps one entry per item, in the category of the LAST row.', 'Remove one of the rows.'],
+    DS_OVERFLOW: ['The client and the server work out the total as an int: price x quantity. A player can buy up to 9,999 at once, so above 214,769 chips the total passes 2,147,483,647 and turns negative. The chip check then passes, and the player gets the items for the chips they have (CDPSrvr::OnBuyDonationItem, DPSrvr.cpp:3636). Read from the C++, not seen in game.',
+      'Keep the chip price at 214,769 or less. The same price is used by Red Chip and Donate Chip NPC shops.'],
     DS_CRASH: ['Buying this item in the Donation Shop crashed the server every time in live tests; the cause was never found (commit ae345504). It is left out of the shop on purpose.',
       'Remove the row. Only add it back after the crash is fixed and tested in game.'],
     DS_NO_LEAF: ['The client\'s category tree (Client/Client/DonationShopTree.inc) has no category with this name, so the item is listed only under "All Items" (sorted last), not in any category.',
@@ -8034,10 +8197,26 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "41+", "when
   }
 
   // Price input for a table cell.
+  // While typing: above the Donation Shop's safe price (DS_OVERFLOW) the box turns red at once.
   function input(ctx, info, isHere, editedKey) {
-    return FRE.dom.numInput({ value: chipOf(info), placeholder: 'no chip price', min: 1, disabled: !ctx.ws.isEditable('spec_item.txt'),
-      title: 'Chip price (dwReferValue1 in Spec_Item.txt). One price per item: it also applies in the chip shops and the Donation Shop. Empty = cannot be bought for chips.',
-      onCommit: v => set(ctx, info, v, isHere, editedKey) });
+    const title = 'Chip price (dwReferValue1 in Spec_Item.txt). One price per item: it also applies in the chip shops and the Donation Shop. Empty = cannot be bought for chips.';
+    // keyed = applies while typing (CLAUDE.md UI standards); a longer pause, because a price shared with
+    // other shops opens the "This chip price is shared" window (the red border below shows at once)
+    const el = FRE.dom.numInput({ value: chipOf(info), placeholder: 'no chip price', min: 1, disabled: !ctx.ws.isEditable('spec_item.txt'),
+      key: `chip|${info.id >>> 0}|${editedKey || ''}`, liveMs: 1000,
+      title, onCommit: v => set(ctx, info, v, isHere, editedKey) });
+    const m = ctx.ws.models.donation, safe = FRE.donation.SAFE_PRICE;
+    if (m && m.catalog.has(info.id >>> 0)) {
+      const check = () => {
+        const r = FRE.num.parseAmount(el.value, { min: 1 });
+        const over = r.ok && r.value !== null && r.value > safe;
+        el.style.borderColor = over ? 'var(--bad, #e5534b)' : '';
+        el.title = over ? `⛔ Over ${FRE.dom.fmt(safe)}: in the Donation Shop, buying 9,999 overflows the total and the player gets them for the chips they have (DS_OVERFLOW). Saving is blocked.` : title;
+      };
+      el.addEventListener('input', check);
+      check();
+    }
+    return el;
   }
 
   FRE.ui.chipPrice = { chipOf, parts, confirmShared, set, input };
@@ -10035,6 +10214,55 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "41+", "when
 
   function edit(ctx, make, label) { ctx.edit(FILE, make, label, 'ds|' + st.cat); }
 
+  // ---------------------------------------------------------------- Try buying (FRE.donationBuy)
+  // The player clicks the item, types a quantity and presses OK: the client's confirm dialog, then the
+  // server's OnBuyDonationItem, on the prices and the list as they are in the editor now (saved or not).
+  const trial = { n: 1, chips: 1000, free: 10, have: 0 };
+  function tryBuy(ctx, r) {
+    const B = FRE.donationBuy, fmt = FRE.dom.fmt, out = h('div.ex-try-out');
+    const set = (k, v) => { if (v !== null) { trial[k] = v; go(); } };
+    const num = (k, min, max) => FRE.dom.numInput({ key: 'dsbuy|' + k, value: trial[k], min, max, onCommit: v => set(k, v) });
+    function go() {
+      out.textContent = '';
+      let env, p, res;
+      try {
+        env = B.envFromWorkspace(ctx.ws);
+        const id = r.id >>> 0, slots = {};
+        let at = 0;
+        for (let left = trial.chips; left > 0 && at < 168; left -= 9999) slots[at++] = [env.chipId, Math.min(left, 9999), 0];
+        const pack = Math.max(1, (env.prop(id) || { packMax: 1 }).packMax);
+        for (let left = trial.have; left > 0 && at < 168; left -= pack) slots[at++] = [id, Math.min(left, pack), 0];
+        p = B.playerOf({ unlocked: 168, slots, fill: Math.max(0, 168 - at - trial.free) });
+        res = B.buy(env, p, id, trial.n);
+      } catch (e) { out.appendChild(h('p.warn-text', 'Cannot run: ' + e.message)); return; }
+      const pr = env.prop(r.id), name = pr ? pr.name : r.define, c = res.client, s = res.server, said = B.describe(env, res);
+      out.appendChild(h('h3', 'Confirm box'));
+      out.appendChild(h('p', c.shown === null ? 'It does not open: the item has no chip price.'
+        : `Quantity ${fmt(Math.min(Math.max(trial.n, 0), B.MAX_BUY))}, total shown ${fmt(c.shown)} Donate Chips.`));
+      out.appendChild(h('h3', 'What the player sees'));
+      if (said.kind === 'ok') out.appendChild(h('p', h('span.tag.ok', 'Bought'), ` You pay ${fmt(s.paid)} Donate Chips, you get ${name} ×${fmt(s.num)}.`));
+      else if (said.kind === 'crash') out.appendChild(h('p', h('span.tag.bad', 'the server CRASHES'), ' ', said.text));
+      else out.appendChild(h('p', h('span.muted', said.kind === 'box' ? '[message box] ' : said.kind === 'chat' ? '[chat] ' : ''), said.text));
+      if (s) out.appendChild(h('p.muted.small', `Donate Chips: ${fmt(s.chipsBefore)} → ${fmt(s.chipsAfter)}.`,
+        s.outcome === 'BOUGHT' ? ` Bag: ${B.dump(p).filter(x => x[1] === (r.id >>> 0)).map(x => `slot ${x[0] + 1} ×${fmt(x[2])}`).join(', ')}.` : ''));
+      const notes = [];
+      if (s && s.overflow) notes.push(h('li.warn-text', `${fmt(s.cost)} × ${fmt(s.num)} is over 2,147,483,647: as an int the total is ${fmt(s.total | 0)}, so the chip check passes and the player pays only the chips they have. Keep the price at ${fmt(B.SAFE_PRICE)} or less (DS_OVERFLOW).`));
+      if (s && s.outcome === 'LACK_SPACE') notes.push(h('li', 'The bag is checked before the chips are taken, so a chip stack that would run out does not free its slot. The item stacks only onto stacks of the same kind (no flag, not charged).'));
+      if (pr && pr.packMax > 1) notes.push(h('li', `One bag slot holds ${fmt(pr.packMax)} of this item.`));
+      if (notes.length) out.appendChild(h('ul.small', notes));
+    }
+    const body = h('div.ex-try',
+      h('p.muted.small', 'This buys the item the way the game does it: the confirm box (CWndConfirmBuyDonation), then the server (CDPSrvr::OnBuyDonationItem: listed? price? enough Donate Chips? room in the bag? take the chips, give the item). It uses the prices and the list as they are in the editor now, saved or not.'),
+      h('div.row.ex-tools',
+        h('label', 'Quantity typed ', num('n', 0, 99999)),
+        h('label', 'Donate Chips in the bag ', num('chips', 0, 167 * 9999)),
+        h('label', 'Empty bag slots ', num('free', 0, 167)),
+        h('label', { title: 'How many of this item the bag already holds (it can stack on them)' }, 'Already in the bag ', num('have', 0, 9999))),
+      out);
+    FRE.dom.modal({ title: `Try buying: ${(ctx.ws.itemById(r.id) || {}).name || r.define}`, wide: true, body });
+    go();
+  }
+
   const mod = {
     id: 'donation', label: 'Donation Shop', searchPlaceholder: 'Search items in the shop',
     help: 'Donation Shop: the catalog of the Donation Shop window (DonationShop.inc), its categories and Donate Chip prices',
@@ -10133,11 +10361,13 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "41+", "when
           const opts = choices.some(c => same(c, r.category)) ? choices : [r.category, ...choices];
           const cat = h('select', { disabled: !canEdit, on: { change: ev => edit(ctx, text => FRE.donationOps.setCategory(text, r, ev.target.value), `move ${r.define}`) } },
             opts.map(c => h('option', { value: c, selected: same(c, r.category) }, c)));
+          const buy = h('button.icon', { title: `Try buying ${info ? info.name : r.define}: what the game does with the prices as they are in the editor now`,
+            on: { click: () => tryBuy(ctx, r) } }, '🛒');
           const rm = h('button.icon.danger', { disabled: !canEdit, title: 'Remove from the Donation Shop',
             on: { click: () => edit(ctx, text => FRE.donationOps.removeItem(text, r), `remove ${r.define}`) } }, '✕');
           tb.appendChild(h('tr.fixed', h('td.num.line', i + 1), itemCell(info, r.define), jobCell(info),
             h('td.num', info ? FRE.ui.chipPrice.input(ctx, info, here(r.id), 'ds|' + r.category) : ''),
-            h('td', cat), h('td', rm, ' ', diagTags(rowDiags(ctx, r))),
+            h('td', cat), h('td', buy, ' ', rm, ' ', diagTags(rowDiags(ctx, r))),
             h('td', h('span.line', { title: f.text.slice(r.start, r.end) }, 'L' + (f.lineOf(r.start) + 1)))));
         });
         el.appendChild(tb);

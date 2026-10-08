@@ -310,6 +310,26 @@ Checks: `DT_ROOT`, `DT_DUP`, `DT_BRACE`, `DT_CHARS` (BLOCK), `DT_PATCH` (WARN), 
 - 20 edit scripts: byte-identical files and the same views.
 17 planted bugs caught (5 after adding cases). Not modelled: Windows `lstrcmpi` word sort (names with `-` or `'` may order differently), unstable `qsort` ties.
 
+### 1.16 Buying in the Donation Shop (added 2026-10-08, `loaders/donation-buy.js`, `tools/dsbuy-sim.js`, 🛒 Try buying)
+
+Ported from the client's `CWndConfirmBuyDonation` (Neuz `_Interface/WndDonationShop.cpp:38-157`) and the server's `CDPSrvr::OnBuyDonationItem` (`WORLDSERVER/DPSrvr.cpp:3636`), commit `7d7df4f9`.
+
+- **Client:** no chip price (`(int)GetChipCost() < 1`) shows "This item has no donate-chip price set." and the box does not open. The quantity is clamped to 0..9,999 while typing and to 1..9,999 on OK. The box shows `count x price` as a DWORD. OK checks `(int)(count x price) > GetAtItemNum(II_CHP_DONATE)` and shows "More Donate Chips are needed."; otherwise it sends `(item id, (short)count)`.
+- **Server**, in this order:
+  1. count < 1 is ignored; above 9,999 it becomes 9,999;
+  2. an item that is not in `DonationShop.inc` is ignored, with no message;
+  3. no item or no price is ignored;
+  4. `GetAtItemNum(II_CHP_DONATE) < (int)(price x count)` gives `TID_GAME_LACKCHIP`;
+  5. `IsFull` gives `TID_GAME_LACKSPACE`;
+  6. chips are taken `0x7fff` at a time;
+  7. `CreateItem`.
+- `GetAtItemNum` (`Item.h:595`) counts every slot: chips in a locked bag slot or in a trade window still pay.
+- The bag check runs **before** the chips are taken, so a chip stack that would run out does not free its slot.
+- The new item has flag 0 and `m_bCharged` FALSE (`Item.cpp:223`). It stacks only onto stacks with no flag that are not charged.
+- **Overflow (`DS_OVERFLOW`, BLOCK):** both sides compute the total in 32 bits. Above a price of 214,769, buying 9,999 makes `(int)` total negative. The chip check passes, and the server takes only the chips the player has: 9,999 items for 1,000 chips. Read from the C++, not seen in game. The current highest price is 600.
+- **Crash items** (`ae345504`): Nexus Shield and Icecrown Purple Shield. Their Spec_Item rows match the safe shields except the icon file and the name, so the data shows no cause. The simulator says CRASH and changes nothing; `DS_CRASH` still blocks.
+- Checked against `tools/oracle_sim.py dsbuy` (2,479 buys + 8 edit scripts with byte-identical files). 20 of 21 planted bugs were caught. The 21st, "first catalog row wins", cannot change a purchase: the server only checks that the item is listed.
+
 ## Phase 2: Encoding and line-ending forensics (all 15,299 files, raw bytes)
 
 **Method:** Python read every file as bytes. For each one it checked:

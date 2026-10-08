@@ -1,8 +1,26 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-08 (S part 4: Donation Shop categories user-tested + committed; next the Donation Shop simulator; handoff on top)._
+_Last updated 2026-10-08 (Donation Shop buy simulator built, waiting for the user's test; handoff on top)._
 
-> **Handoff (2026-10-08, evening) — START HERE: S part 4 (Donation Shop categories) is user-tested in Brave and committed (not pushed).** Plan: `/home/kevin/.claude/plans/compressed-marinating-adleman.md`. In game still to do (Windows): apply `docs/patches/donation-tree.diff`, build Neuz, check the window. **Next: the Donation Shop simulator (buy flow: `CDPSrvr::OnBuyDonationItem`, price = dwReferValue1, chip check, the crash items), JS + Python copy. Plan it first.** Then F (monster drops), then J (boxes).
+> **Handoff (2026-10-08, night) — START HERE: the Donation Shop buy simulator is built, NOT committed, waiting for the user's Brave test.** Plan: `/home/kevin/.claude/plans/joyful-petting-sunrise.md`.
+> - `loaders/donation-buy.js` ports the client's confirm box (`CWndConfirmBuyDonation`) and `CDPSrvr::OnBuyDonationItem`. It reuses the exchange simulator's bag code: `bagIsFull` was split out of `createItem`, and `createItem` takes the new item's `charged`. The exchange results are unchanged.
+> - **Found in the C++:** price × count is an `int`. Above 214,769 chips, buying 9,999 overflows, and the player gets them for the chips they have. New ⛔ `DS_OVERFLOW` (the user's choice: it blocks saving); the price box turns red while typing. Other findings: chips in a locked slot or a trade still pay (`GetAtItemNum`); the bag is checked before the chips are taken. INVESTIGATION §1.16.
+> - The crash items have Spec_Item rows identical to the safe shields except the icon and name. The simulator says CRASH.
+> - **🛒 Try buying** on each Donation Shop row: quantity, Donate Chips, empty slots, "already in the bag". It shows the confirm total, what the player reads, what they pay and get, chips before and after, and notes.
+> - CLI: `gjs -m tools/dsbuy-sim.js II_SYS_SYS_SCR_BXMNITRORACING n=3 chips=2000 free=5 [price=…] [have=…] [raw]`. Python copy: `oracle_sim.py dsbuy` (2,479 buys + 8 edit scripts). 20 of 21 planted bugs caught. Tests: core 1006, UI harness 322 (new stage `dsbuy`).
+>
+> **User's test:** `python3 build.py`, reload, pick `test-data`, task Donation Shop.
+> 1. Suits → 🛒 on a 600-chip suit: with 1,000 chips, quantity 1 is bought ("You pay 600…"); quantity 2 shows "More Donate Chips are needed."
+> 2. Empty bag slots 0: the chat line "Inventory is full…", plus the note that the bag is checked first.
+> 3. Type 214770 in a price (no Enter): the box turns red at once; after a 1 s pause it applies by itself (⛔ DS_OVERFLOW; Save refuses with "Cannot save"). Undo. Price boxes now apply while typing (the user's report, 2026-10-08: they had to click elsewhere first), in NPC Shops too.
+> Then commit (not pushed).
+>
+> **Next (the user's requests, 2026-10-08):**
+> 1. **Try it inside the + Menu → Exchange form**, before Create (today it is only on the ⇄ tab's cards after Create). It needs a scratch plan of the form's menus to run `exchangeSim` on.
+> 2. **"What to do after saving" per change:** today every Save says "Restart the WorldServer to apply". It should name per file: WorldServer restart, game client restart (client-only files, Client copies), or a C++ patch + rebuild once (`donation-tree.diff`, `npc-board.diff`). Research who reads each file first, then plan.
+> Then F (monster drops), then J (boxes).
+>
+> **Handoff (2026-10-08, evening) — S part 4 (Donation Shop categories) is user-tested in Brave and committed (not pushed).** Plan: `/home/kevin/.claude/plans/compressed-marinating-adleman.md`. In game still to do (Windows): apply `docs/patches/donation-tree.diff`, build Neuz, check the window. **Next: the Donation Shop simulator (buy flow: `CDPSrvr::OnBuyDonationItem`, price = dwReferValue1, chip check, the crash items), JS + Python copy. Plan it first.** Then F (monster drops), then J (boxes).
 > - **Categories editable** in the Donation Shop task (`Client/Client/DonationShopTree.inc`, client-only; written into the Client folder like the rules texts):
 >   - **+ Category** at the top of the list: one form, a name plus optional "categories inside it". None = it holds items itself (like Mounts); one or more = a group (like Weapon Skins). The user's idea after the first test (2026-10-08), replacing a separate + Group;
 >   - on a selected entry: **✎ Edit category / group** (name, Inside, + Add a category inside it: a category with items becomes a group and its items move into the new category you pick under "Its N items go to"), **↑ ↓**, and **Delete…**;

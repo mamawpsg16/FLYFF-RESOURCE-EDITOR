@@ -52,6 +52,8 @@
   // Bought here, these crashed the server every time; root cause never found
   // (commit ae345504, and the comment above the Shields rows in DonationShop.inc).
   const CRASH_ITEMS = ['II_ARM_ARM_SHI_NEXUS', 'II_ARM_ARM_SHI_ICECROWNPURPLE'];
+  // the highest price where 9,999 x price still fits an int (loaders/donation-buy.js)
+  const SAFE_PRICE = Math.floor(2147483647 / 9999);
 
   // ctx: { items, textOf, defines, tree (DonationShopTree.inc from Client/, or null) }
   function validateDonation(model, ctx) {
@@ -77,6 +79,9 @@
         const chip = FRE.specItem.get(item, 'dwReferValue1');
         if (chip < 1) add({ code: 'DS_NO_PRICE', severity: 'WARN', start: r.start, end: r.end, key: `DS_NO_PRICE|${name}`, itemName: name,
           message: `${item.name || name} (${name}) has no donate-chip price (dwReferValue1 = ${chip < 0 ? '=' : chip}): the server refuses to sell it` });
+        // CWndConfirmBuyDonation::OnOK / CDPSrvr::OnBuyDonationItem: (int)( price x count ) with count up to 9,999
+        else if (chip > SAFE_PRICE) add({ code: 'DS_OVERFLOW', severity: 'BLOCK', start: r.start, end: r.end, key: `DS_OVERFLOW|${name}`, itemName: name,
+          message: `${item.name || name} (${name}) costs ${chip} Donate Chips: buying 9,999 overflows the total (price x 9,999 is over 2,147,483,647), so a player gets them for the chips they have. Keep the price at ${SAFE_PRICE} or less` });
       }
       const crash = CRASH_ITEMS.find(d => ctx.defines && ctx.defines.get(d) === r.id);
       if (crash) add({ code: 'DS_CRASH', severity: 'BLOCK', start: r.start, end: r.end, key: `DS_CRASH|${name}`, itemName: name,
@@ -93,5 +98,5 @@
     return out;
   }
 
-  FRE.donation = { loadDonation, validateDonation, FILE, CRASH_ITEMS };
+  FRE.donation = { loadDonation, validateDonation, FILE, CRASH_ITEMS, SAFE_PRICE };
 })(globalThis.FRE = globalThis.FRE || {});

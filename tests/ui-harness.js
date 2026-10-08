@@ -845,6 +845,40 @@
     ok($('layout').getBoundingClientRect().bottom <= window.innerHeight + 1 && lastIn.getBoundingClientRect().bottom <= window.innerHeight + 1, 'focused last row is visible inside the window');
     lastIn.blur();
 
+    // ---- Try buying (loaders/donation-buy.js): the 🛒 on a row
+    {
+      click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.startsWith('Suits')));
+      const cart = [...$('editor').querySelectorAll('table.items button')].find(b => b.textContent === '🛒');
+      ok(!!cart, 'each Donation Shop row has a 🛒 Try buying button');
+      click(cart);
+      await waitFor(() => lastModalAny() && /^Try buying: /.test(lastModalAny().querySelector('header').textContent), 'Try buying window');
+      const box = lastModalAny(), ins = box.querySelectorAll('input.num-input');
+      ok(/Bought/.test(box.textContent) && /You pay [\d,]+ Donate Chips, you get .+ ×1\./.test(box.textContent), 'quantity 1 with 1,000 chips: bought, You pay … you get …');
+      ins[0].value = '9999'; ins[0].dispatchEvent(new Event('input')); ins[0].dispatchEvent(new Event('change'));
+      await tick();
+      ok(/More Donate Chips are needed/.test(lastModalAny().textContent), 'quantity 9,999: "More Donate Chips are needed." (the client\'s message box)');
+      ins[0].value = '1'; ins[0].dispatchEvent(new Event('change'));
+      ins[2].value = '0'; ins[2].dispatchEvent(new Event('change'));
+      await tick();
+      ok(/\[chat\]/.test(lastModalAny().textContent) && /checked before the chips are taken/.test(lastModalAny().textContent), 'no empty slot: the server\'s chat line and the bag note');
+      btnByText(lastModalAny().querySelector('footer'), 'Close') ? click(btnByText(lastModalAny().querySelector('footer'), 'Close')) : lastModalAny().remove();
+      // the price box applies while typing (no Enter, no click elsewhere): DS_OVERFLOW shows by itself
+      const pin = $('editor').querySelector('table.items tr.fixed input.num-input');
+      pin.focus(); pin.value = '214770'; pin.dispatchEvent(new Event('input'));
+      ok(pin.style.borderColor !== '', 'over 214,769: the price box turns red at once');
+      ok(!S.ws.diags.some(d => d.code === 'DS_OVERFLOW'), 'not applied before the pause (no half-typed price is written)');
+      FRE.dom.flushLive(); await tick();      // = the 1 s pause after the last key (no Enter, no click elsewhere)
+      ok(S.ws.newBlocking().some(d => d.code === 'DS_OVERFLOW'), 'typed price applies by itself (no Enter, no click elsewhere): ⛔ DS_OVERFLOW');
+      ok(/⛔ 1/.test($('btn-diag').textContent), 'the top badge counts the ⛔');
+      click($('btn-save'));
+      await waitFor(() => lastModalAny() && /Cannot save/.test(lastModalAny().querySelector('header').textContent), 'Cannot save window');
+      ok(/DS_OVERFLOW|214,769/.test(lastModalAny().textContent), 'Save refuses and lists DS_OVERFLOW');
+      lastModalAny().remove();
+      if (STOP === 'dsbuy') return;
+      click($('btn-undo'));
+      ok(!S.ws.diags.some(d => d.code === 'DS_OVERFLOW'), 'Undo: DS_OVERFLOW gone');
+    }
+
     // ---- Donation Shop categories (task S part 4): Client/Client/DonationShopTree.inc
     {
       const K = FRE.donationTree.KEY, tree0 = S.ws.files.get(K).text, ds0 = S.ws.files.get('donationshop.inc').text;

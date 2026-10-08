@@ -41,10 +41,26 @@
   }
 
   // Price input for a table cell.
+  // While typing: above the Donation Shop's safe price (DS_OVERFLOW) the box turns red at once.
   function input(ctx, info, isHere, editedKey) {
-    return FRE.dom.numInput({ value: chipOf(info), placeholder: 'no chip price', min: 1, disabled: !ctx.ws.isEditable('spec_item.txt'),
-      title: 'Chip price (dwReferValue1 in Spec_Item.txt). One price per item: it also applies in the chip shops and the Donation Shop. Empty = cannot be bought for chips.',
-      onCommit: v => set(ctx, info, v, isHere, editedKey) });
+    const title = 'Chip price (dwReferValue1 in Spec_Item.txt). One price per item: it also applies in the chip shops and the Donation Shop. Empty = cannot be bought for chips.';
+    // keyed = applies while typing (CLAUDE.md UI standards); a longer pause, because a price shared with
+    // other shops opens the "This chip price is shared" window (the red border below shows at once)
+    const el = FRE.dom.numInput({ value: chipOf(info), placeholder: 'no chip price', min: 1, disabled: !ctx.ws.isEditable('spec_item.txt'),
+      key: `chip|${info.id >>> 0}|${editedKey || ''}`, liveMs: 1000,
+      title, onCommit: v => set(ctx, info, v, isHere, editedKey) });
+    const m = ctx.ws.models.donation, safe = FRE.donation.SAFE_PRICE;
+    if (m && m.catalog.has(info.id >>> 0)) {
+      const check = () => {
+        const r = FRE.num.parseAmount(el.value, { min: 1 });
+        const over = r.ok && r.value !== null && r.value > safe;
+        el.style.borderColor = over ? 'var(--bad, #e5534b)' : '';
+        el.title = over ? `⛔ Over ${FRE.dom.fmt(safe)}: in the Donation Shop, buying 9,999 overflows the total and the player gets them for the chips they have (DS_OVERFLOW). Saving is blocked.` : title;
+      };
+      el.addEventListener('input', check);
+      check();
+    }
+    return el;
   }
 
   FRE.ui.chipPrice = { chipOf, parts, confirmShared, set, input };

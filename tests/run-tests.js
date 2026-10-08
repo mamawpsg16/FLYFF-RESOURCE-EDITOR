@@ -2242,5 +2242,97 @@ editCase('price conflict warning', w => {
   eq(w.newBlocking().length, 0, 'price conflict does not block');
 });
 
+// ---------------------------------------------------------------- Donation Shop: buying
+// loaders/donation-buy.js (CWndConfirmBuyDonation + CDPSrvr::OnBuyDonationItem) against the
+// independent Python copy (tools/oracle_sim.py dsbuy): every case, every slot of the bag after.
+section('donation shop buying: JS and Python copies agree');
+{
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} dsbuy ${FIXTURES}`);
+  const py = JSON.parse(new TextDecoder().decode(out));
+  const B = FRE.donationBuy, J = JSON.stringify;
+  const run = (env, c) => {
+    const over = {};
+    for (const [k, v] of Object.entries(c.over || {})) over[Number(k)] = { chip: v[0], packMax: v[1] };
+    const e = Object.keys(over).length ? Object.assign({}, env, { prop: id => { const p = env.prop(id); const o = over[id >>> 0]; return p && o ? Object.assign({}, p, { chip: o.chip >>> 0, packMax: o.packMax }) : p; } }) : env;
+    const p = B.playerOf(c.bag);
+    let client = null, server = null;
+    if (c.raw !== null) server = B.serverBuy(e, p, c.item, c.raw);
+    else ({ client, server } = B.buy(e, p, c.item, c.typed === null ? undefined : c.typed));
+    return { client, server: server && { outcome: server.outcome, text: server.text, num: server.num, paid: server.paid, before: server.chipsBefore, after: server.chipsAfter }, end: B.dump(p) };
+  };
+  const same = (c, r) => J(c.client) === J(r.client) && J(c.server) === J(r.server) && J(c.end) === J(r.end);
+  const w = dsWs(), env = B.envFromWorkspace(w);
+  eq(env.chipId, py.chip, 'II_CHP_DONATE id');
+  let bad = 0, first = '';
+  for (const c of py.cases) {
+    const r = run(env, c);
+    if (!same(c, r)) { bad++; if (!first) first = `${c.label} (item ${c.item}): py ${J([c.client, c.server])} js ${J([r.client, r.server])}`; }
+  }
+  ok(bad === 0, `${py.cases.length} buys agree (client box, server outcome, chips paid, every bag slot)`, `${bad} differ, first: ${first}`);
+  const outcomes = new Set(py.cases.map(c => (c.client && c.client.box) || (c.server && c.server.outcome)));
+  ok(['BOUGHT', 'LACK_CHIPS', 'LACK_CHIP', 'LACK_SPACE', 'NO_PRICE', 'IGNORED_NO_PRICE', 'IGNORED_COUNT', 'IGNORED_NOT_LISTED'].every(o => outcomes.has(o)), 'the cases reach every outcome');
+  const sha = t => GLib.compute_checksum_for_string(GLib.ChecksumType.SHA1, t, -1);
+  const D = w.defines.defines;
+  for (const sc of py.scripts) {
+    const ws = dsWs(), label = `edit "${sc.label}"`;
+    try {
+      for (const op of sc.ops) {
+        const m = ws.models.donation, row = d => m.rows.find(r => r.define === d), ds = () => ws.files.get('donationshop.inc').text;
+        if (op[0] === 'price') ws.apply('spec_item.txt', FRE.itemOps.setChipPrice(ws.files.get('spec_item.txt').text, itemOfDef(ws, op[1]), op[2] === '=' ? null : op[2], D), 'price');
+        else if (op[0] === 'add') ws.apply('donationshop.inc', FRE.donationOps.addItem(ds(), m, op[2], op[1]), 'add');
+        else if (op[0] === 'remove') ws.apply('donationshop.inc', FRE.donationOps.removeItem(ds(), row(op[1])), 'remove');
+        else if (op[0] === 'move') ws.apply('donationshop.inc', FRE.donationOps.setCategory(ds(), row(op[1]), op[2]), 'move');
+      }
+      ok(sha(ws.files.get('donationshop.inc').text) === sc.ds, `${label}: DonationShop.inc byte-identical`);
+      ok(sha(ws.files.get('spec_item.txt').text) === sc.spec, `${label}: Spec_Item.txt byte-identical`);
+      const e2 = B.envFromWorkspace(ws);
+      const diff = sc.cases.filter(c => !same(c, run(e2, c)));
+      ok(!diff.length, `${label}: ${sc.cases.map(c => (c.client && c.client.box) || c.server.outcome + ' ' + c.server.paid).join(', ')}`, diff.length ? J(run(e2, diff[0])) : '');
+    } catch (e) { ok(false, label, e.message); }
+  }
+}
+
+section('donation shop buying: what the edits do in game');
+{
+  const B = FRE.donationBuy, w = dsWs(), D = w.defines.defines;
+  const env = () => B.envFromWorkspace(w), chip = D.get('II_CHP_DONATE') >>> 0;
+  const def = 'II_SYS_SYS_SCR_BXMNITRORACING', id = D.get(def) >>> 0;
+  const bag = n => B.playerOf({ unlocked: 168, slots: { 0: [chip, n, 0] }, fill: 100 });
+  const spec = () => w.files.get('spec_item.txt').text;
+  let p = bag(5000), r = B.buy(env(), p, id, 2);
+  eq(r.server && r.server.paid, 1200, `${def}: 2 cost 2 x 600 = 1,200 Donate Chips`);
+  w.apply('spec_item.txt', FRE.itemOps.setChipPrice(spec(), itemOfDef(w, def), 450, D), 'price');
+  p = bag(5000); r = B.buy(env(), p, id, 2);
+  eq(r.server && r.server.paid, 900, 'after the price edit (450) the server charges 900');
+  ok(!w.newBlocking().length, 'a normal price does not block');
+  w.apply('spec_item.txt', FRE.itemOps.setChipPrice(spec(), itemOfDef(w, def), B.SAFE_PRICE, D), 'price');
+  ok(!w.diags.some(d => d.code === 'DS_OVERFLOW'), `${B.SAFE_PRICE} is the highest price without DS_OVERFLOW`);
+  w.apply('spec_item.txt', FRE.itemOps.setChipPrice(spec(), itemOfDef(w, def), B.SAFE_PRICE + 1, D), 'price');
+  ok(w.newBlocking().some(d => d.code === 'DS_OVERFLOW'), `${B.SAFE_PRICE + 1} -> DS_OVERFLOW blocks saving`);
+  while (w.undo());
+  {   // a stackable item (one slot holds 999): 9,999 fit in 11 slots
+    const e0 = env(), sid = [...e0.catalog.keys()].find(k => { const p0 = e0.prop(k); return p0 && p0.packMax === 999 && (p0.chip | 0) >= 1; });
+    const sdef = w.itemById(sid).define;
+    w.apply('spec_item.txt', FRE.itemOps.setChipPrice(spec(), itemOfDef(w, sdef), B.SAFE_PRICE + 1, D), 'price');
+    p = bag(1000); r = B.buy(env(), p, sid, 9999);
+    ok(r.server && r.server.outcome === 'BOUGHT' && r.server.paid === 1000 && r.server.overflow && r.server.num === 9999,
+      `and in game (${sdef}): 9,999 of them for the 1,000 chips the player has`, JSON.stringify(r.server));
+    while (w.undo());
+  }
+  const m = () => w.models.donation, row = () => m().rows.find(x => x.define === def);
+  w.apply('donationshop.inc', FRE.donationOps.removeItem(w.files.get('donationshop.inc').text, row()), 'remove');
+  r = B.buy(env(), bag(5000), id, 1);
+  eq(r.server && r.server.outcome, 'IGNORED_NOT_LISTED', 'a removed item: the server ignores the purchase');
+  w.undo();
+  w.apply('donationshop.inc', FRE.donationOps.setCategory(w.files.get('donationshop.inc').text, row(), 'Masks'), 'move');
+  eq(B.buy(env(), bag(5000), id, 1).server.outcome, 'BOUGHT', 'a moved item is still bought');
+  w.undo();
+  w.apply('donationshop.inc', FRE.donationOps.addItem(w.files.get('donationshop.inc').text, m(), 'Shields', 'II_ARM_ARM_SHI_NEXUS'), 'add');
+  eq(B.buy(env(), bag(5000), D.get('II_ARM_ARM_SHI_NEXUS'), 1).server.outcome, 'CRASH', 'a crash item: CRASH (and DS_CRASH blocks saving)');
+  ok(w.newBlocking().some(d => d.code === 'DS_CRASH'), 'DS_CRASH blocks');
+  w.undo();
+  eq(B.buy(env(), bag(5000), id, 1).server.outcome, 'BOUGHT', 'back to normal after undo');
+}
+
 print(`\n${pass} passed, ${fail} failed`);
 if (fail) System.exit(1);

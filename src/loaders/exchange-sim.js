@@ -171,22 +171,30 @@
   }
   const clear = (p, s) => { (s.bag ? p.slots : p.equip)[s.i] = null; };
 
+  // CItemContainer::IsFull (Item.h:694): true = `num` of the item does not fit in the usable bag
+  // positions (stacks with the same id, flag and bCharged first, then empty slots)
+  function bagIsFull(env, p, id, num, flag, charged) {
+    const pr = env.prop(id), pack = short(pr.packMax);
+    const search = Math.min(p.unlocked, MAX_INVENTORY);
+    let t = short(num);
+    for (let i = 0; i < search; i++) {
+      const e = p.slots[i];
+      if (!e) { if (t > pack) t -= pack; else return false; }
+      else if (e.id === id && e.flag === flag && e.charged === charged) { if (e.num + t > pack) t -= pack - e.num; else return false; }
+    }
+    return true;
+  }
+
   // CItemContainer::IsFull + Add (via CMover::CreateItem): stack with the same id, flag and
-  // bCharged first, then empty slots; false = it does not fit (nothing is added)
-  function createItem(env, p, id, num, flag) {
+  // bCharged first, then empty slots; false = it does not fit (nothing is added).
+  // charged: the new item's m_bCharged (the exchange copies the prop's bCharged; null = that)
+  function createItem(env, p, id, num, flag, chargedIn = null) {
     const pr = env.prop(id);
     if (!pr || id === 0) return false;
-    const pack = short(pr.packMax), charged = pr.charged;
+    const pack = short(pr.packMax), charged = chargedIn === null ? pr.charged : chargedIn;
     const search = Math.min(p.unlocked, MAX_INVENTORY);
     let n = short(num);
-    // IsFull (Item.h:694)
-    let fits = false, t = n;
-    for (let i = 0; i < search && !fits; i++) {
-      const e = p.slots[i];
-      if (!e) { if (t > pack) t -= pack; else fits = true; }
-      else if (e.id === id && e.flag === flag && e.charged === charged) { if (e.num + t > pack) t -= pack - e.num; else fits = true; }
-    }
-    if (!fits) return false;
+    if (bagIsFull(env, p, id, n, flag, charged)) return false;
     if (pr.packMax !== 1) {
       for (let i = 0; i < search; i++) {
         const e = p.slots[i];
@@ -336,5 +344,5 @@
   }
 
   FRE.exchangeSim = { rng, envFromWorkspace, serverTable, player, clone, getItemNum, checkCondition, payList, isFull, removeItemA, createItem,
-    resultExchange, clientReply, rowView, stockedPlayer, run, fmtText, countOf, freeSlots, RESULT, MAX_INVENTORY, MAX_INVENTORY_FREE, FILLER, NULL_ID };
+    resultExchange, clientReply, rowView, stockedPlayer, run, fmtText, countOf, freeSlots, bagIsFull, allSlots, short, RESULT, MAX_INVENTORY, MAX_INVENTORY_FREE, FILLER, NULL_ID };
 })(globalThis.FRE = globalThis.FRE || {});

@@ -3392,11 +3392,13 @@ def ds_catalog(text, D):
     return cat
 
 
-def ds_props(root, D):
+def ds_props(root, D, spec=None):
     """Spec_Item.txt (rows of version <= 19, by header columns): id -> (szName text, dwItemSex, dwReferValue1, dwPackMax)"""
     S = {}
     nn_strings_add(S, nn_text16(open(os.path.join(root, 'propItem.txt.txt'), 'rb').read()))
-    lines = open(os.path.join(root, 'Spec_Item.txt'), 'rb').read().decode('latin-1').split('\r\n')
+    if spec is None:
+        spec = open(os.path.join(root, 'Spec_Item.txt'), 'rb').read().decode('latin-1')
+    lines = spec.split('\r\n')
     col = {h.lstrip('/'): i for i, h in enumerate(lines[1].split('\t'))}
     def v(x):
         x = x.strip()
@@ -3730,6 +3732,264 @@ def dt_run(root):
                 blurbs={nm: [ds_blurb(nm, roots, False), ds_blurb(nm, roots, True)] for nm in names},
                 small=small, scripts=scripts, items=len(cat))
 
+# ---------------------------------------------------------------- dsbuy: a player buys in the Donation Shop
+# Written from the C++ (7d7df4f9): the client's CWndConfirmBuyDonation (Neuz _Interface/WndDonationShop.cpp
+# Initialize :38, OnChangeBuyCount :64, OnChildNotify :83, OnOK :131) and the server's
+# CDPSrvr::OnBuyDonationItem (WORLDSERVER/DPSrvr.cpp:3636), with CItemBase::GetChipCost (Item.cpp:160),
+# CItemContainer::GetAtItemNum (Item.h:595) / IsFull (Item.h:694) / Add, CMover::RemoveItemA (MoverParam.cpp:3964).
+# The crash items (ae345504) are not modelled: CRASH, nothing changes.
+DB_MAX = 9999
+DB_CRASH = ('II_ARM_ARM_SHI_NEXUS', 'II_ARM_ARM_SHI_ICECROWNPURPLE')
+U32 = lambda v: v & 0xFFFFFFFF
+
+
+def db_player(spec):
+    """spec: unlocked, slots {pos: [id, n, busy, flag, ch]} (pos >= 336 = equipment), fill"""
+    sl, eq = {}, {}
+    for k, v in spec.get('slots', {}).items():
+        k = int(k)
+        t = (v[0], v[1], v[3] if len(v) > 3 else 0, v[4] if len(v) > 4 else 0, bool(v[2]))
+        if k < BAG:
+            sl[k] = t
+        else:
+            eq[k - BAG] = t
+    return Player({'unlocked': spec.get('unlocked', FREE), 'slots': sl, 'equip': eq, 'fill': spec.get('fill', 0)})
+
+
+def db_at_num(P, iid):              # GetAtItemNum: every m_apItem, nothing skipped
+    return sum(it['n'] for it in P.box if it and it['id'] == iid)
+
+
+def db_is_full(P, iid, num, pack):  # IsFull( &itemElem (flag 0, m_bCharged FALSE), prop, nNum )
+    left = s16(num)
+    pk = s16(pack)
+    for i in range(min(P.unlocked, BAG)):
+        e = P.box[i]
+        if e is None:
+            if left > pk:
+                left -= pk
+            else:
+                return False
+        elif e['id'] == iid and e['flag'] == 0 and e['ch'] == 0:
+            if e['n'] + left > pk:
+                left -= pk - e['n']
+            else:
+                return False
+    return True
+
+
+def db_confirm(cost, typed, chips):
+    if s32(cost) < 1:                            # Initialize: "This item has no donate-chip price set."
+        return {'box': 'NO_PRICE', 'shown': None, 'sent': None}
+    n = 1 if typed is None else typed
+    n = min(max(n, 0), DB_MAX)                   # EN_CHANGE: max( n, 0 ), min( n, MAX_DS_BUY )
+    shown = U32(n * cost)                        # dwBuy * dwCost, "%u"
+    buy = min(max(n, 1), DB_MAX)                 # OnOK
+    if s32(U32(buy * cost)) > chips:
+        return {'box': 'LACK_CHIPS', 'shown': shown, 'sent': None}
+    return {'box': None, 'shown': shown, 'sent': s16(buy)}
+
+
+def db_server(W, P, iid, n):
+    iid = U32(iid)
+    n = s16(n)
+    have = db_at_num(P, W['chip'])
+    r = {'outcome': None, 'text': None, 'num': n, 'paid': 0, 'before': have}
+    def end(o, t=None):
+        r['outcome'], r['text'], r['after'] = o, t, db_at_num(P, W['chip'])
+        return r
+    if n < 1:
+        return end('IGNORED_COUNT')
+    if n > DB_MAX:
+        n = DB_MAX
+    r['num'] = n
+    if iid not in W['cat']:
+        return end('IGNORED_NOT_LISTED')
+    pr = W['props'].get(iid)
+    if pr is None:
+        return end('IGNORED_NO_ITEM')
+    cost = U32(pr[2])
+    if s32(cost) < 1:
+        return end('IGNORED_NO_PRICE')
+    total = U32(cost * n)
+    if have < s32(total):
+        return end('LACK_CHIP', 'TID_GAME_LACKCHIP')
+    if db_is_full(P, iid, n, pr[3]):
+        return end('LACK_SPACE', 'TID_GAME_LACKSPACE')
+    if iid in W['crash']:
+        return end('CRASH')
+    # for( ; dwTotal > 0x7fff; ) RemoveItemA( 0x7fff ); RemoveItemA( (short)dwTotal ): each call goes on
+    # from the first slot, so together they take min( dwTotal, chips ) from the front
+    want = min(total, have)
+    while want > 0:
+        k = min(want, 0x7fff)
+        r['paid'] += P.remove(W['chip'], k)
+        want -= k
+    ok = P.add(iid, n, 0, {iid: (pr[3], 0)})
+    return end('BOUGHT' if ok else 'CREATE_FAILED')
+
+
+def db_dump(P):
+    return [[i, it['id'], it['n'], it['flag'], it['ch']] for i, it in enumerate(P.box) if it and it['id'] != FILLER]
+
+
+def db_case(W, label, iid, bag, typed=None, raw=None, over=None):
+    props = dict(W['props'])
+    for k, (chip, pack) in (over or {}).items():
+        p0 = props.get(k, ('', 0, 0, 1))
+        props[k] = (p0[0], p0[1], chip, pack)
+    W2 = dict(W, props=props)
+    P = db_player(bag)
+    if raw is not None:
+        client = None
+        srv = db_server(W2, P, iid, raw)
+    else:
+        cost = U32(props[iid][2]) if iid in props else 0xFFFFFFFF
+        client = db_confirm(cost, typed, db_at_num(P, W['chip']))
+        srv = None if client['sent'] is None else db_server(W2, P, iid, client['sent'])
+    return {'label': label, 'item': iid, 'typed': typed, 'raw': raw, 'over': {str(k): list(v) for k, v in (over or {}).items()},
+            'bag': bag, 'client': client,
+            'server': None if srv is None else {k: srv[k] for k in ('outcome', 'text', 'num', 'paid', 'before', 'after')},
+            'end': db_dump(P)}
+
+
+def db_bag(chip, stacks, unlocked=FREE, free=None, at=0, extra=None):
+    """chip stacks from position `at`, `extra` slots, then other items until `free` usable slots are left"""
+    slots = {}
+    for i, n in enumerate(stacks):
+        slots[str(at + i)] = [chip, n, 0]
+    for k, v in (extra or {}).items():
+        slots[str(k)] = v
+    used = sum(1 for k in slots if int(k) < unlocked)
+    fill = 0 if free is None else max(0, unlocked - used - free)
+    return {'unlocked': unlocked, 'slots': slots, 'fill': fill}
+
+
+def db_chips(total):
+    out = []
+    while total > 0:
+        out.append(min(total, 9999)); total -= out[-1]
+    return out
+
+
+def db_add_row(ds, cat, define):
+    rows = ds_rows(ds)
+    m = re.match(r'[ \t]*DSItem([ \t]+)"[^"]*"([ \t]+)', ds[rows[0][0]:rows[0][1]])
+    inc = [r for r in rows if r[4] == cat]
+    a = (inc or rows)[-1]
+    line = ds[a[0]:a[1]]
+    ind = line[:len(line) - len(line.lstrip(' \t'))]
+    eol = '\r\n' if line.endswith('\r\n') else '\n'
+    return ds[:a[1]] + '%sDSItem%s"%s"%s%s%s' % (ind, m.group(1), cat, m.group(2), define, eol) + ds[a[1]:]
+
+
+def db_run(root):
+    import hashlib
+    sha = lambda t: hashlib.sha1(t.encode('utf-8')).hexdigest()
+    D = defines(root)
+    ds0 = open(os.path.join(root, 'DonationShop.inc'), 'rb').read().decode('latin-1')
+    spec0 = open(os.path.join(root, 'Spec_Item.txt'), 'rb').read().decode('latin-1')
+    chip = U32(D['II_CHP_DONATE'])
+    def world(ds, spec):
+        return {'chip': chip, 'cat': ds_catalog(ds, D), 'props': ds_props(root, D, spec),
+                'crash': {U32(D[d]) for d in DB_CRASH if d in D}}
+    W = world(ds0, spec0)
+    cat, props = W['cat'], W['props']
+    priced = lambda i: i in props and 1 <= s32(props[i][2]) <= 100000
+    stack = next(i for i in sorted(cat) if priced(i) and props[i][3] == 999)
+    single = next(i for i in sorted(cat) if priced(i) and props[i][3] == 1)
+    unlisted = next(i for i in sorted(props) if i not in cat and priced(i) and props[i][3] >= 1)
+    cases = []
+    # 1. every item of the shop: exact chips, one chip short, no room
+    for i in sorted(cat):
+        if i not in props:
+            cases.append(db_case(W, 'no item', i, db_bag(chip, [5000]), raw=1)); continue
+        c, pk = s32(props[i][2]), props[i][3]
+        if c < 1:
+            cases.append(db_case(W, 'no price', i, db_bag(chip, [5000]), typed=1))
+            cases.append(db_case(W, 'no price (packet)', i, db_bag(chip, [5000]), raw=1)); continue
+        cases.append(db_case(W, 'exact chips', i, db_bag(chip, db_chips(c), free=10), typed=1))
+        cases.append(db_case(W, 'one chip short x2', i, db_bag(chip, db_chips(2 * c - 1), free=10), typed=2))
+        cases.append(db_case(W, 'one chip short x2 (packet)', i, db_bag(chip, db_chips(2 * c - 1), free=10), raw=2))
+        cases.append(db_case(W, 'no room', i, db_bag(chip, db_chips(9 * c), free=0), typed=1))
+        if pk > 1:
+            cases.append(db_case(W, 'a stack and one more', i, db_bag(chip, db_chips(c * (pk + 1)), free=3), typed=pk + 1))
+    # 2. edge prices x quantities on a stackable and a single item
+    prices = [0xFFFFFFFF, 0, 1, 3, 214769, 214770, 429540, 0x80000000, 0xFFFFFFFE]
+    typed = [None, -1, 0, 1, 2, 999, 1000, 9999, 10000]
+    raws = [-1, 0, 1, 2, 999, 1000, 9999, 10000, 32767, 40000, 65537]
+    bags = [('rich', db_bag(chip, [9999] * 40, free=60)), ('poor', db_bag(chip, [5], free=60)), ('tight', db_bag(chip, [9999] * 3, free=2))]
+    for it in (stack, single):
+        pk = props[it][3]
+        for pr in prices:
+            for bn, b in bags:
+                for t in typed:
+                    cases.append(db_case(W, 'price %d, %s, typed %s' % (pr, bn, t), it, b, typed=t, over={it: (pr, pk)}))
+                for rw in raws:
+                    cases.append(db_case(W, 'price %d, %s, packet %d' % (pr, bn, rw), it, b, raw=rw, over={it: (pr, pk)}))
+    pc, pk = s32(props[stack][2]), props[stack][3]
+    # 3. where the chips are, and the bag
+    sp = [
+        ('chips in a locked slot', stack, db_bag(chip, [9999], unlocked=100, at=150, free=5), dict(typed=3)),
+        ('chips in a locked slot only some', stack, db_bag(chip, [10, 9999], unlocked=100, at=99, free=5), dict(typed=30)),
+        ('chips in a trade', stack, db_bag(chip, [], extra={3: [chip, 9999, 1]}, free=5), dict(typed=3)),
+        ('chips over 3 stacks', stack, db_bag(chip, [9999, 9999, 50], free=5), dict(raw=(19998 + 40) // pc)),
+        ('chips in the equipment', stack, db_bag(chip, [], extra={BAG + 2: [chip, 900, 0]}, free=5), dict(typed=1)),
+        ('full bag: the chip stack would run out', stack, db_bag(chip, [pc], free=0), dict(typed=1)),
+        ('one free slot', stack, db_bag(chip, [9999], free=1), dict(typed=pk)),
+        ('one free slot, one more', stack, db_bag(chip, [9999] * 30, free=1), dict(typed=pk + 1)),
+        ('stack on the bag\'s own', stack, db_bag(chip, [9999] * 30, free=0, extra={5: [stack, 500, 0]}), dict(typed=pk - 500)),
+        ('stack on the bag\'s own, one more', stack, db_bag(chip, [9999] * 30, free=0, extra={5: [stack, 500, 0]}), dict(typed=pk - 499)),
+        ('own stack charged', stack, db_bag(chip, [9999] * 30, free=0, extra={5: [stack, 1, 0, 0, 1]}), dict(typed=1)),
+        ('own stack with a flag', stack, db_bag(chip, [9999] * 30, free=0, extra={5: [stack, 1, 0, 2, 0]}), dict(typed=1)),
+        ('own stack in a trade', stack, db_bag(chip, [9999] * 30, free=0, extra={5: [stack, 1, 1]}), dict(typed=1)),
+        ('own stack in a locked slot', stack, db_bag(chip, [9999] * 30, unlocked=100, free=0, extra={120: [stack, 1, 0]}), dict(typed=1)),
+        ('2.5 stacks into 3 slots', stack, db_bag(chip, [9999] * 40, free=3), dict(typed=pk * 2 + pk // 2)),
+        ('singles: 3 into 3', single, db_bag(chip, [9999] * 40, free=3), dict(typed=3)),
+        ('singles: 4 into 3', single, db_bag(chip, [9999] * 40, free=3), dict(typed=4)),
+        ('not listed', unlisted, db_bag(chip, [9999] * 5, free=5), dict(raw=1)),
+        ('not an item', 0x7FFFFFF1, db_bag(chip, [9999] * 5, free=5), dict(raw=1)),
+        ('the chip itself', chip, db_bag(chip, [9999] * 5, free=5), dict(raw=1)),
+        ('overflow: 9,999 for 1,000 chips', stack, db_bag(chip, [1000], free=60), dict(typed=9999, over={stack: (214770, pk)})),
+        ('overflow: 9,999 for 0 chips', stack, db_bag(chip, [], free=60), dict(typed=9999, over={stack: (214770, pk)})),
+        ('overflow wraps past 2^32', stack, db_bag(chip, [9999] * 3, free=60), dict(typed=9999, over={stack: (429540, pk)})),
+        ('no space at all', stack, db_bag(chip, [9999], unlocked=1, free=0), dict(typed=1)),
+    ]
+    for lab, it, b, kw in sp:
+        cases.append(db_case(W, lab, it, b, **kw))
+    # 4. edits, then buy: files must match byte for byte
+    dS = lambda i: next(k for k, v in D.items() if U32(v) == i and k.startswith('II_'))
+    row = lambda ds, d: next(r for r in ds_rows(ds) if r[5] == d)
+    scripts_def = [
+        ('price 77', [('price', dS(stack), 77)], [(stack, dict(typed=3))]),
+        ('price =', [('price', dS(stack), '=')], [(stack, dict(typed=1)), (stack, dict(raw=1))]),
+        ('price 214770 (overflow)', [('price', dS(stack), 214770)], [(stack, dict(typed=9999))]),
+        ('add an item', [('add', dS(unlisted), 'Consumables')], [(unlisted, dict(typed=2))]),
+        ('remove an item', [('remove', dS(stack))], [(stack, dict(raw=1))]),
+        ('move an item', [('move', dS(stack), 'Suits')], [(stack, dict(typed=1))]),
+        ('add a crash item', [('add', 'II_ARM_ARM_SHI_NEXUS', 'Shields')], [(U32(D['II_ARM_ARM_SHI_NEXUS']), dict(typed=1))]),
+        ('add, price, then remove', [('add', dS(unlisted), 'Premium'), ('price', dS(unlisted), 5), ('remove', dS(single))],
+         [(unlisted, dict(typed=4)), (single, dict(raw=1))]),
+    ]
+    scripts = []
+    for lab, ops, buys in scripts_def:
+        ds, spec = ds0, spec0
+        for op in ops:
+            if op[0] == 'price':
+                spec = sh_spec_set(spec, op[1], 'dwReferValue1', op[2])
+            elif op[0] == 'add':
+                ds = db_add_row(ds, op[2], op[1])
+            elif op[0] == 'remove':
+                r = row(ds, op[1]); ds = ds[:r[0]] + ds[r[1]:]
+            elif op[0] == 'move':
+                r = row(ds, op[1]); ds = ds[:r[2]] + '"%s"' % op[2] + ds[r[3]:]
+        W2 = world(ds, spec)
+        b = db_bag(chip, [9999] * 40, free=20)
+        scripts.append({'label': lab, 'ops': [list(o) for o in ops], 'ds': sha(ds), 'spec': sha(spec),
+                        'cases': [db_case(W2, lab, it, b, **kw) for it, kw in buys]})
+    return {'chip': chip, 'stack': stack, 'single': single, 'unlisted': unlisted, 'cases': cases, 'scripts': scripts}
+
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -3753,6 +4013,8 @@ if __name__ == '__main__':
         print(json.dumps(nv_run(root)))
     elif what == 'dstree':
         print(json.dumps(dt_run(root)))
+    elif what == 'dsbuy':
+        print(json.dumps(db_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model
         for f in sorted(os.listdir(root)):
             if f.lower().startswith('mvr_') and f.lower().endswith('.o3d'):

@@ -38,6 +38,55 @@
 
   function edit(ctx, make, label) { ctx.edit(FILE, make, label, 'ds|' + st.cat); }
 
+  // ---------------------------------------------------------------- Try buying (FRE.donationBuy)
+  // The player clicks the item, types a quantity and presses OK: the client's confirm dialog, then the
+  // server's OnBuyDonationItem, on the prices and the list as they are in the editor now (saved or not).
+  const trial = { n: 1, chips: 1000, free: 10, have: 0 };
+  function tryBuy(ctx, r) {
+    const B = FRE.donationBuy, fmt = FRE.dom.fmt, out = h('div.ex-try-out');
+    const set = (k, v) => { if (v !== null) { trial[k] = v; go(); } };
+    const num = (k, min, max) => FRE.dom.numInput({ key: 'dsbuy|' + k, value: trial[k], min, max, onCommit: v => set(k, v) });
+    function go() {
+      out.textContent = '';
+      let env, p, res;
+      try {
+        env = B.envFromWorkspace(ctx.ws);
+        const id = r.id >>> 0, slots = {};
+        let at = 0;
+        for (let left = trial.chips; left > 0 && at < 168; left -= 9999) slots[at++] = [env.chipId, Math.min(left, 9999), 0];
+        const pack = Math.max(1, (env.prop(id) || { packMax: 1 }).packMax);
+        for (let left = trial.have; left > 0 && at < 168; left -= pack) slots[at++] = [id, Math.min(left, pack), 0];
+        p = B.playerOf({ unlocked: 168, slots, fill: Math.max(0, 168 - at - trial.free) });
+        res = B.buy(env, p, id, trial.n);
+      } catch (e) { out.appendChild(h('p.warn-text', 'Cannot run: ' + e.message)); return; }
+      const pr = env.prop(r.id), name = pr ? pr.name : r.define, c = res.client, s = res.server, said = B.describe(env, res);
+      out.appendChild(h('h3', 'Confirm box'));
+      out.appendChild(h('p', c.shown === null ? 'It does not open: the item has no chip price.'
+        : `Quantity ${fmt(Math.min(Math.max(trial.n, 0), B.MAX_BUY))}, total shown ${fmt(c.shown)} Donate Chips.`));
+      out.appendChild(h('h3', 'What the player sees'));
+      if (said.kind === 'ok') out.appendChild(h('p', h('span.tag.ok', 'Bought'), ` You pay ${fmt(s.paid)} Donate Chips, you get ${name} ×${fmt(s.num)}.`));
+      else if (said.kind === 'crash') out.appendChild(h('p', h('span.tag.bad', 'the server CRASHES'), ' ', said.text));
+      else out.appendChild(h('p', h('span.muted', said.kind === 'box' ? '[message box] ' : said.kind === 'chat' ? '[chat] ' : ''), said.text));
+      if (s) out.appendChild(h('p.muted.small', `Donate Chips: ${fmt(s.chipsBefore)} → ${fmt(s.chipsAfter)}.`,
+        s.outcome === 'BOUGHT' ? ` Bag: ${B.dump(p).filter(x => x[1] === (r.id >>> 0)).map(x => `slot ${x[0] + 1} ×${fmt(x[2])}`).join(', ')}.` : ''));
+      const notes = [];
+      if (s && s.overflow) notes.push(h('li.warn-text', `${fmt(s.cost)} × ${fmt(s.num)} is over 2,147,483,647: as an int the total is ${fmt(s.total | 0)}, so the chip check passes and the player pays only the chips they have. Keep the price at ${fmt(B.SAFE_PRICE)} or less (DS_OVERFLOW).`));
+      if (s && s.outcome === 'LACK_SPACE') notes.push(h('li', 'The bag is checked before the chips are taken, so a chip stack that would run out does not free its slot. The item stacks only onto stacks of the same kind (no flag, not charged).'));
+      if (pr && pr.packMax > 1) notes.push(h('li', `One bag slot holds ${fmt(pr.packMax)} of this item.`));
+      if (notes.length) out.appendChild(h('ul.small', notes));
+    }
+    const body = h('div.ex-try',
+      h('p.muted.small', 'This buys the item the way the game does it: the confirm box (CWndConfirmBuyDonation), then the server (CDPSrvr::OnBuyDonationItem: listed? price? enough Donate Chips? room in the bag? take the chips, give the item). It uses the prices and the list as they are in the editor now, saved or not.'),
+      h('div.row.ex-tools',
+        h('label', 'Quantity typed ', num('n', 0, 99999)),
+        h('label', 'Donate Chips in the bag ', num('chips', 0, 167 * 9999)),
+        h('label', 'Empty bag slots ', num('free', 0, 167)),
+        h('label', { title: 'How many of this item the bag already holds (it can stack on them)' }, 'Already in the bag ', num('have', 0, 9999))),
+      out);
+    FRE.dom.modal({ title: `Try buying: ${(ctx.ws.itemById(r.id) || {}).name || r.define}`, wide: true, body });
+    go();
+  }
+
   const mod = {
     id: 'donation', label: 'Donation Shop', searchPlaceholder: 'Search items in the shop',
     help: 'Donation Shop: the catalog of the Donation Shop window (DonationShop.inc), its categories and Donate Chip prices',
@@ -136,11 +185,13 @@
           const opts = choices.some(c => same(c, r.category)) ? choices : [r.category, ...choices];
           const cat = h('select', { disabled: !canEdit, on: { change: ev => edit(ctx, text => FRE.donationOps.setCategory(text, r, ev.target.value), `move ${r.define}`) } },
             opts.map(c => h('option', { value: c, selected: same(c, r.category) }, c)));
+          const buy = h('button.icon', { title: `Try buying ${info ? info.name : r.define}: what the game does with the prices as they are in the editor now`,
+            on: { click: () => tryBuy(ctx, r) } }, '🛒');
           const rm = h('button.icon.danger', { disabled: !canEdit, title: 'Remove from the Donation Shop',
             on: { click: () => edit(ctx, text => FRE.donationOps.removeItem(text, r), `remove ${r.define}`) } }, '✕');
           tb.appendChild(h('tr.fixed', h('td.num.line', i + 1), itemCell(info, r.define), jobCell(info),
             h('td.num', info ? FRE.ui.chipPrice.input(ctx, info, here(r.id), 'ds|' + r.category) : ''),
-            h('td', cat), h('td', rm, ' ', diagTags(rowDiags(ctx, r))),
+            h('td', cat), h('td', buy, ' ', rm, ' ', diagTags(rowDiags(ctx, r))),
             h('td', h('span.line', { title: f.text.slice(r.start, r.end) }, 'L' + (f.lineOf(r.start) + 1)))));
         });
         el.appendChild(tb);
