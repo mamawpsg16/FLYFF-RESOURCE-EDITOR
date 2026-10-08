@@ -656,6 +656,13 @@ New box:  [ Infinity Treasure Box ]   Type: (•) 1 random item  ( ) everything 
 
 Python copy in `tools/oracle_sim.py boxes`; planted bugs (e.g. `<=` vs `<` on the roll edge, the `Verify` top-up) must be caught.
 
+**Checked against the C++ on 2026-10-08 (the review of this plan).** Everything above holds. Found in the same check:
+1. **`DoUseItem` runs before `DoUseGiftbox`** (`WORLDSERVER/User.cpp:3204-3208`), so a random box's item also goes through the normal use-item code. A new box copies the kinds of an existing box row (`IK3_SCROLL`, like Box of Wish), which is safe. A box with another kind could also do that kind's effect: do not offer a kind choice.
+2. **A box id in both files acts as a pack.** `CPackItem::Open` is checked first (`User.cpp:3193`), so its `propGiftbox.inc` lines are never used. BLOCK.
+3. **`IK3_BINDS` and `IK3_EVENTMAIN` items are always bound.** The loader sets `IP_FLAG_BINDS` on them (`_Common/Project.cpp:4996`), so "Can be traded" has no effect for those kinds. Say so next to the switch.
+4. **Opening a random box does not open a box it gives.** The player gets the box item and opens it later. The simulator and preview show it as "then, when opened: …", not as an automatic open.
+5. **A locked (`RefuseLockedItem`, `__ITEM_LOCK`) or expired box is refused** before any box code (`User.cpp:3150-3166`). The simulator models both.
+
 ### K. Upgrade rates (asked 2026-10-06)
 - **Upgrade fees (asked 2026-10-07 at BoBoChan: "isn't there a fee they pay to the NPC?").** Penya taken from the player (C++, read 2026-10-07; no commit changes a fee):
 
