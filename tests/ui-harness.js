@@ -1156,6 +1156,31 @@
     await openTask('boxes');
     ok(S.mode === 'boxes' && document.querySelectorAll('#list .npc').length >= 600, 'Boxes: the box list (600 shown, search for more)');
     {
+      // "What's inside": a second filter (the editor's item groups); counts follow the first filter
+      const pickInside = re => {
+        const ci = document.querySelector('#list-extra .bx-inside input');
+        ci.dispatchEvent(new Event('focus')); ci.value = ''; ci.dispatchEvent(new Event('input'));
+        [...document.querySelectorAll('#list-extra .combo-opt')].find(o => re.test(o.textContent)).dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      };
+      ok(document.querySelectorAll('#list-extra select.npc-filter').length === 1 && document.querySelector('#list-extra .bx-inside'), 'Boxes: two filters (which boxes, what\'s inside)');
+      const all = document.querySelectorAll('#list .npc').length;
+      pickInside(/^Holds Fashion \(\d+\)$/);
+      const nFash = +/Holds Fashion \((\d+)\)/.exec(document.querySelector('#list-extra .bx-inside input').value)[1];
+      const m = S.ws.models.boxes, isBox = id => m.gift.boxes.has(id) || m.pack.boxes.has(id);
+      const holds = x => FRE.itemCategory.holds(S.ws, x.lines.map(l => l.item.value >>> 0), isBox);
+      const want = [...m.gift.boxes.values(), ...m.pack.boxes.values()].filter(b => holds(b).has('Fashion')).length;
+      ok(nFash === want && document.querySelectorAll("#list .npc").length === Math.min(want, 600) && want < m.gift.boxes.size + m.pack.boxes.size, `"Holds Fashion" lists the ${want} boxes that give a fashion item`);
+      pickInside(/^Hats \(\d+\)$/);
+      const nHats = document.querySelectorAll('#list .npc').length;
+      ok(nHats > 0 && nHats < Math.min(want, 600), 'a part (Hats) narrows it further');
+      const sel = document.querySelector('#list-extra select.npc-filter');
+      sel.value = 'set'; sel.dispatchEvent(new Event('change'));
+      ok(/Holds Fashion|Hats \(\d+\)/.test(document.querySelector('#list-extra .bx-inside input').value) && [...document.querySelectorAll('#list .npc .k')].every(k => /^set ·/.test(k.textContent)), 'both filters together: sets that give a hat');
+      sel.value = 'all'; sel.dispatchEvent(new Event('change'));
+      pickInside(/^Anything inside$/);
+      ok(document.querySelectorAll('#list .npc').length === all, '"Anything inside" shows every box again');
+    }
+    {
       const listSearch = $('list-search'), ed = () => $('editor');
       const g0 = S.ws.files.get('propgiftbox.inc').text, p0 = S.ws.files.get('proppackitem.inc').text;
       listSearch.value = 'II_SYS_SYS_EVE_POTION'; listSearch.dispatchEvent(new Event('input'));

@@ -164,6 +164,7 @@ ul.plan { margin: 4px 0 10px; padding-left: 20px; } ul.plan li { margin: 2px 0; 
 #left .panel-head { flex-wrap: wrap; }
 #list-extra { flex: 1 1 100%; display: flex; }
 select.npc-filter { width: 100%; padding: 6px 8px; font-size: 13px; }
+.bx-filters { flex: 1 1 100%; display: flex; flex-direction: column; gap: 6px; }
 #list-extra:empty { display: none; }
 #list-action { flex: 0 0 auto; display: flex; } #list-action:empty { display: none; }
 #list-action button { white-space: nowrap; }
@@ -340,6 +341,9 @@ button.place-edit { display: inline-flex; align-items: center; gap: 6px; padding
 .item-cat { flex: 1; min-width: 0; }
 .item-cat .combo { min-width: 0; }
 .item-cat .combo-list { min-width: 280px; max-height: 420px; }
+.bx-filters .combo { min-width: 0; }
+.bx-filters .combo-input { box-sizing: border-box; padding: 6px 8px; font-size: 13px; }
+.bx-filters .combo-list { min-width: 280px; max-height: 420px; }
 
 /* + Menu chooser and the rules-text form (ui/menu-chooser.js) */
 .menu-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }

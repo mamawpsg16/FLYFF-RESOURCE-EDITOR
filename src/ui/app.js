@@ -178,7 +178,7 @@
       if (S.ws.needsMaps()) { await phase('Reading the maps (World/)'); await loadMaps(L.res, P); }
       await phase('Building the lists');
       S.mode = id; S.task = id;
-      $('list-search').value = S.queries[id] || '';
+      S.queries[id] = ''; $('list-search').value = '';      // a task opens with an empty search, like its filters (the user, 2026-10-09)
       buildItems();
       const m = modules().find(x => x.id === id);
       if (S.ws.available[id].ok && m && m.onLoad) m.onLoad(ctx);

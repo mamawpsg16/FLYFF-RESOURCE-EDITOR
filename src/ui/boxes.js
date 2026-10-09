@@ -7,7 +7,7 @@
   const { h, fmt, modal, numInput, pctInput, toast, keepFocus } = FRE.dom;
   const { diagTags, itemCell, fieldLabel, formFooter, diagRow } = FRE.ui;
   const GIFT = 'propgiftbox.inc', PACK = 'proppackitem.inc';
-  const st = { sel: null, show: 'all', openOpts: null };
+  const st = { sel: null, show: 'all', inside: '', openOpts: null };   // inside: '' | 'Fashion' | 'Fashion|Hats'
 
   const Bx = () => FRE.boxes, Sim = () => FRE.boxesSim, O = () => FRE.boxesOps;
   const model = ctx => ctx.ws.models.boxes;
@@ -51,6 +51,11 @@
     { v: 'problems', label: 'With problems', test: (x, ctx) => diagsOf(ctx, x, x.b).some(d => d.severity !== 'INFO') },
     { v: 'edited', label: 'Edited', test: (x, ctx) => ctx.edited.has(keyOf(x.kind, x.b.id)) },
   ];
+  // "What's inside": the item groups of loaders/item-category.js (the editor's own, not game behaviour)
+  const isBox = ctx => id => model(ctx).gift.boxes.has(id) || model(ctx).pack.boxes.has(id);
+  const holdsOf = (ctx, x) => FRE.itemCategory.holds(ctx.ws, x.b.lines.map(l => l.item.value >>> 0), isBox(ctx));
+  const insideOk = (ctx, x) => !st.inside || holdsOf(ctx, x).has(st.inside);
+
   function edit(ctx, sel, make, label) {
     ctx.edit(fileOf(sel.kind), t => { const sp = make(t); if (sp.retyped) toast(`The box's line format was widened to ${sp.retyped} to hold this (same items and chances).`); return sp; }, label, keyOf(sel.kind, sel.id));
   }
@@ -63,7 +68,7 @@
     id: 'boxes', label: 'Boxes', searchPlaceholder: 'Search boxes',
     help: 'Boxes: what each random box and set gives (propGiftbox.inc, propPackItem.inc)',
     st,
-    onLoad() { st.sel = null; st.show = 'all'; st.openOpts = null; },
+    onLoad() { st.sel = null; st.show = 'all'; st.inside = ''; st.openOpts = null; },
 
     listAction(ctx) {
       const need = ['spec_item.txt', 'defineitem.h', 'propitem.txt.txt', 'mdldyna.inc', GIFT, PACK];
@@ -74,15 +79,31 @@
 
     listExtra(ctx) {
       const all = entries(ctx);
-      return h('select.npc-filter', { title: 'Which boxes to list', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
-        SHOW.map(o => h('option', { value: o.v, selected: o.v === st.show }, `${o.label} (${all.filter(x => o.test(x, ctx)).length})`)));
+      const kind = h('select.npc-filter', { title: 'Which boxes to list', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
+        SHOW.map(o => h('option', { value: o.v, selected: o.v === st.show }, `${o.label} (${all.filter(x => insideOk(ctx, x) && o.test(x, ctx)).length})`)));
+      // the second filter: boxes that give at least one item of a group / part (counts follow the first filter)
+      const test = SHOW.find(o => o.v === st.show).test, n = new Map();
+      for (const x of all) if (test(x, ctx)) for (const k of holdsOf(ctx, x)) n.set(k, (n.get(k) || 0) + 1);
+      const options = [{ v: '', label: 'Anything inside', find: 'all' }];
+      for (const g of FRE.itemCategory.GROUPS) {
+        if (!n.has(g)) continue;
+        options.push({ v: g, label: `Holds ${g} (${n.get(g)})`, group: g });
+        [...n.keys()].filter(k => k.startsWith(g + '|')).map(k => k.slice(g.length + 1)).sort((a, z) => a.localeCompare(z))
+          .forEach(sub => options.push({ v: `${g}|${sub}`, label: `${sub} (${n.get(`${g}|${sub}`)})`, group: g }));
+      }
+      if (st.inside && !options.some(o => o.v === st.inside)) options.push({ v: st.inside, label: `${st.inside.replace('|', ': ')} (0)` });
+      const inside = FRE.ui.combo({ options, value: st.inside, placeholder: "What's inside: type to search (fashion, hat…)", wordStart: true,
+        onPick: v => { st.inside = v || ''; ctx.renderList(); } });
+      inside.classList.add('bx-inside');
+      inside.title = 'Only boxes that give at least one item of this kind (the editor\'s item categories)';
+      return h('div.bx-filters', kind, inside);
     },
 
     renderList(el, ctx) {
       const q = ctx.query.toLowerCase(), test = SHOW.find(o => o.v === st.show).test;
       let shown = 0;
       for (const x of entries(ctx)) {
-        if (!test(x, ctx)) continue;
+        if (!test(x, ctx) || !insideOk(ctx, x)) continue;
         if (q && !x.name.toLowerCase().includes(q) && !(x.b.define || '').toLowerCase().includes(q)) continue;
         if (++shown > 600) continue;
         const ds = diagsOf(ctx, x, x.b), nb = ds.filter(d => d.severity === 'BLOCK').length, nw = ds.filter(d => d.severity === 'WARN').length;

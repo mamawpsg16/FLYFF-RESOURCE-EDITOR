@@ -172,6 +172,7 @@ ul.plan { margin: 4px 0 10px; padding-left: 20px; } ul.plan li { margin: 2px 0; 
 #left .panel-head { flex-wrap: wrap; }
 #list-extra { flex: 1 1 100%; display: flex; }
 select.npc-filter { width: 100%; padding: 6px 8px; font-size: 13px; }
+.bx-filters { flex: 1 1 100%; display: flex; flex-direction: column; gap: 6px; }
 #list-extra:empty { display: none; }
 #list-action { flex: 0 0 auto; display: flex; } #list-action:empty { display: none; }
 #list-action button { white-space: nowrap; }
@@ -348,6 +349,9 @@ button.place-edit { display: inline-flex; align-items: center; gap: 6px; padding
 .item-cat { flex: 1; min-width: 0; }
 .item-cat .combo { min-width: 0; }
 .item-cat .combo-list { min-width: 280px; max-height: 420px; }
+.bx-filters .combo { min-width: 0; }
+.bx-filters .combo-input { box-sizing: border-box; padding: 6px 8px; font-size: 13px; }
+.bx-filters .combo-list { min-width: 280px; max-height: 420px; }
 
 /* + Menu chooser and the rules-text form (ui/menu-chooser.js) */
 .menu-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
@@ -481,7 +485,7 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "57+", "when": "Fri 9 Oct 2026, 12:34", "rev": "1676447", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when": "Fri 9 Oct 2026, 13:09", "rev": "a57890d", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -1651,7 +1655,27 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "57+", "when
     });
   }
 
-  FRE.itemCategory = { of, tree, GROUPS, RARITY_GROUPS };
+  // Categories by item id, kept per workspace (kinds are never edited). An id missing from Spec_Item is "Other".
+  const byWs = new WeakMap();
+  function ofId(ws, id) {
+    let m = byWs.get(ws);
+    if (!m) byWs.set(ws, m = new Map());
+    id >>>= 0;
+    if (!m.has(id)) { const it = ws.itemById(id); m.set(id, it ? of(ws.itemInfo(it), ws.defines) : { group: 'Other', sub: 'Not in Spec_Item.txt' }); }
+    return m.get(id);
+  }
+  // What a box holds, for the Boxes list's "What's inside" filter: the keys 'Fashion' and 'Fashion|Hats' of every item
+  // it gives. isBox(id): a box given by a box counts as 'Boxes & tickets|Boxes & sets' (opening one never opens the other).
+  function holds(ws, ids, isBox) {
+    const s = new Set();
+    for (const id of ids) {
+      const c = isBox && isBox(id) ? { group: 'Boxes & tickets', sub: 'Boxes & sets' } : ofId(ws, id);
+      s.add(c.group); s.add(`${c.group}|${c.sub}`);
+    }
+    return s;
+  }
+
+  FRE.itemCategory = { of, ofId, holds, tree, GROUPS, RARITY_GROUPS };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- loaders/specitem.js ----
@@ -15224,7 +15248,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "57+", "when
   const { h, fmt, modal, numInput, pctInput, toast, keepFocus } = FRE.dom;
   const { diagTags, itemCell, fieldLabel, formFooter, diagRow } = FRE.ui;
   const GIFT = 'propgiftbox.inc', PACK = 'proppackitem.inc';
-  const st = { sel: null, show: 'all', openOpts: null };
+  const st = { sel: null, show: 'all', inside: '', openOpts: null };   // inside: '' | 'Fashion' | 'Fashion|Hats'
 
   const Bx = () => FRE.boxes, Sim = () => FRE.boxesSim, O = () => FRE.boxesOps;
   const model = ctx => ctx.ws.models.boxes;
@@ -15268,6 +15292,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "57+", "when
     { v: 'problems', label: 'With problems', test: (x, ctx) => diagsOf(ctx, x, x.b).some(d => d.severity !== 'INFO') },
     { v: 'edited', label: 'Edited', test: (x, ctx) => ctx.edited.has(keyOf(x.kind, x.b.id)) },
   ];
+  // "What's inside": the item groups of loaders/item-category.js (the editor's own, not game behaviour)
+  const isBox = ctx => id => model(ctx).gift.boxes.has(id) || model(ctx).pack.boxes.has(id);
+  const holdsOf = (ctx, x) => FRE.itemCategory.holds(ctx.ws, x.b.lines.map(l => l.item.value >>> 0), isBox(ctx));
+  const insideOk = (ctx, x) => !st.inside || holdsOf(ctx, x).has(st.inside);
+
   function edit(ctx, sel, make, label) {
     ctx.edit(fileOf(sel.kind), t => { const sp = make(t); if (sp.retyped) toast(`The box's line format was widened to ${sp.retyped} to hold this (same items and chances).`); return sp; }, label, keyOf(sel.kind, sel.id));
   }
@@ -15280,7 +15309,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "57+", "when
     id: 'boxes', label: 'Boxes', searchPlaceholder: 'Search boxes',
     help: 'Boxes: what each random box and set gives (propGiftbox.inc, propPackItem.inc)',
     st,
-    onLoad() { st.sel = null; st.show = 'all'; st.openOpts = null; },
+    onLoad() { st.sel = null; st.show = 'all'; st.inside = ''; st.openOpts = null; },
 
     listAction(ctx) {
       const need = ['spec_item.txt', 'defineitem.h', 'propitem.txt.txt', 'mdldyna.inc', GIFT, PACK];
@@ -15291,15 +15320,31 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "57+", "when
 
     listExtra(ctx) {
       const all = entries(ctx);
-      return h('select.npc-filter', { title: 'Which boxes to list', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
-        SHOW.map(o => h('option', { value: o.v, selected: o.v === st.show }, `${o.label} (${all.filter(x => o.test(x, ctx)).length})`)));
+      const kind = h('select.npc-filter', { title: 'Which boxes to list', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
+        SHOW.map(o => h('option', { value: o.v, selected: o.v === st.show }, `${o.label} (${all.filter(x => insideOk(ctx, x) && o.test(x, ctx)).length})`)));
+      // the second filter: boxes that give at least one item of a group / part (counts follow the first filter)
+      const test = SHOW.find(o => o.v === st.show).test, n = new Map();
+      for (const x of all) if (test(x, ctx)) for (const k of holdsOf(ctx, x)) n.set(k, (n.get(k) || 0) + 1);
+      const options = [{ v: '', label: 'Anything inside', find: 'all' }];
+      for (const g of FRE.itemCategory.GROUPS) {
+        if (!n.has(g)) continue;
+        options.push({ v: g, label: `Holds ${g} (${n.get(g)})`, group: g });
+        [...n.keys()].filter(k => k.startsWith(g + '|')).map(k => k.slice(g.length + 1)).sort((a, z) => a.localeCompare(z))
+          .forEach(sub => options.push({ v: `${g}|${sub}`, label: `${sub} (${n.get(`${g}|${sub}`)})`, group: g }));
+      }
+      if (st.inside && !options.some(o => o.v === st.inside)) options.push({ v: st.inside, label: `${st.inside.replace('|', ': ')} (0)` });
+      const inside = FRE.ui.combo({ options, value: st.inside, placeholder: "What's inside: type to search (fashion, hat…)", wordStart: true,
+        onPick: v => { st.inside = v || ''; ctx.renderList(); } });
+      inside.classList.add('bx-inside');
+      inside.title = 'Only boxes that give at least one item of this kind (the editor\'s item categories)';
+      return h('div.bx-filters', kind, inside);
     },
 
     renderList(el, ctx) {
       const q = ctx.query.toLowerCase(), test = SHOW.find(o => o.v === st.show).test;
       let shown = 0;
       for (const x of entries(ctx)) {
-        if (!test(x, ctx)) continue;
+        if (!test(x, ctx) || !insideOk(ctx, x)) continue;
         if (q && !x.name.toLowerCase().includes(q) && !(x.b.define || '').toLowerCase().includes(q)) continue;
         if (++shown > 600) continue;
         const ds = diagsOf(ctx, x, x.b), nb = ds.filter(d => d.severity === 'BLOCK').length, nw = ds.filter(d => d.severity === 'WARN').length;
@@ -16597,7 +16642,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "57+", "when
       if (S.ws.needsMaps()) { await phase('Reading the maps (World/)'); await loadMaps(L.res, P); }
       await phase('Building the lists');
       S.mode = id; S.task = id;
-      $('list-search').value = S.queries[id] || '';
+      S.queries[id] = ''; $('list-search').value = '';      // a task opens with an empty search, like its filters (the user, 2026-10-09)
       buildItems();
       const m = modules().find(x => x.id === id);
       if (S.ws.available[id].ok && m && m.onLoad) m.onLoad(ctx);

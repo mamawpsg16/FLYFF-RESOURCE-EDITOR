@@ -90,5 +90,25 @@
     });
   }
 
-  FRE.itemCategory = { of, tree, GROUPS, RARITY_GROUPS };
+  // Categories by item id, kept per workspace (kinds are never edited). An id missing from Spec_Item is "Other".
+  const byWs = new WeakMap();
+  function ofId(ws, id) {
+    let m = byWs.get(ws);
+    if (!m) byWs.set(ws, m = new Map());
+    id >>>= 0;
+    if (!m.has(id)) { const it = ws.itemById(id); m.set(id, it ? of(ws.itemInfo(it), ws.defines) : { group: 'Other', sub: 'Not in Spec_Item.txt' }); }
+    return m.get(id);
+  }
+  // What a box holds, for the Boxes list's "What's inside" filter: the keys 'Fashion' and 'Fashion|Hats' of every item
+  // it gives. isBox(id): a box given by a box counts as 'Boxes & tickets|Boxes & sets' (opening one never opens the other).
+  function holds(ws, ids, isBox) {
+    const s = new Set();
+    for (const id of ids) {
+      const c = isBox && isBox(id) ? { group: 'Boxes & tickets', sub: 'Boxes & sets' } : ofId(ws, id);
+      s.add(c.group); s.add(`${c.group}|${c.sub}`);
+    }
+    return s;
+  }
+
+  FRE.itemCategory = { of, ofId, holds, tree, GROUPS, RARITY_GROUPS };
 })(globalThis.FRE = globalThis.FRE || {});

@@ -1,6 +1,12 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-09 (H part 2 done; next: Boxes filter by what's inside, then I; handoff on top)._
+_Last updated 2026-10-09 (Boxes filter by what's inside done; next: I. Rates & Buffs, plan first; handoff on top)._
+
+> **Handoff (2026-10-09) — Boxes: filter by what's inside: user-tested in Brave and committed + pushed. Next: I. Rates & Buffs, plan first.** Plan: `/home/kevin/.claude/plans/enchanted-noodling-candy.md`.
+> - A second, searchable filter under "All boxes": "Holds Fashion (610)", its parts (Hats, Masks, …), every group of `loaders/item-category.js`. A box matches when at least one item inside is in that group; a box given by a box counts as "Boxes & sets". Counts follow the first filter. `FRE.itemCategory.holds` / `ofId`. UI only: no file written, no simulator.
+> - Also: every task now opens with an empty search box (it used to remember the last text; the user's test, step 10).
+> - C++ research for I is done (see the I section below for the earlier notes; new findings to put in the plan: rebirth fDropRate / fPenyaRate are parsed but never used; `SetItemDropRate` only scales the gate roll, so above 10 it changes nothing; the Server Buff EXP % is added, not multiplied (MoverParam.cpp:4615-4617); the couple buff is re-applied at the new level within a second (couplehelper.cpp:277, 286); GuildBuff.txt is read with atoi, so DSTs must be numbers).
+
 
 > **Handoff (2026-10-09) — H. "Where is this item from?" part 2: user-tested in Brave (all 6 steps OK, incl. "Read from the C++ in FLYFF-V19-SOURCE" on the real folder, no ⚠) and committed + pushed. Next: Boxes filter by what's inside, then I.** Plan: `/home/kevin/.claude/plans/read-claude-md-in-flyff-resource-editor-cheerful-cocoa.md`. User decisions: no quest rewards and no collecting for now; no Guild Siege per-kill prize (none exists: a kill gives points only); read-only (editing gifts comes with task I); the Guild Siege amounts are read from the C++ when FLYFF-V19-SOURCE is picked.
 > - **New sections on the item page:** 🎂 Level-up gift (level, count, bound / time limit, who, how often per character and per rebirth), ♻️ Rebirth gift, 💞 Couple gift (couple level, who: male / female / both, by mail), 🏰 Guild Siege after each siege (Red Chips per online lineup member for ranks 1-3, by the number of guilds that applied) and every week (guild bank / Total / each class / MVP ladders).

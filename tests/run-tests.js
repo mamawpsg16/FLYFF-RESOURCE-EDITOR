@@ -2643,6 +2643,16 @@ section('boxes: loader, checks, opening boxes, edits, icons (JS and Python copie
   const m = w.models.boxes, Bx = FRE.boxes, Sim = FRE.boxesSim, O = FRE.boxesOps, Dm = w.defines.defines;
   eq(m.gift.boxes.size, 487, 'propGiftbox.inc: 487 random boxes');
   eq(m.pack.boxes.size, 829, 'propPackItem.inc: 829 sets');
+  {
+    // the Boxes list's "What's inside" filter (FRE.itemCategory.holds: the editor's item groups, not game behaviour)
+    const isBox = id => m.gift.boxes.has(id) || m.pack.boxes.has(id);
+    const holds = b => FRE.itemCategory.holds(w, b.lines.map(l => l.item.value >>> 0), isBox);
+    const byDef = (src, d) => [...src.boxes.values()].find(b => b.define === d);
+    const wed = holds(byDef(m.pack, 'II_SYS_SYS_SCR_BXMWED01_1')), pot = holds(byDef(m.gift, 'II_SYS_SYS_EVE_POTION'));
+    ok(wed.has('Fashion') && wed.has('Fashion|Hats') && !wed.has('Armor'), 'what\'s inside: the wedding set holds Fashion (and Hats), not Armor');
+    ok(pot.has('Food & potions') && !pot.has('Fashion'), 'what\'s inside: the potion box holds Food & potions, not Fashion');
+    ok(FRE.itemCategory.holds(w, [byDef(m.pack, 'II_SYS_SYS_SCR_BXMWED01_1').id], isBox).has('Boxes & tickets|Boxes & sets'), 'a box given by a box counts as Boxes & sets');
+  }
   eq(m.pack.stopped, null, 'propPackItem.inc loads to the end (no set above 24 items)');
   const codes = {};
   for (const d of w.diags) codes[d.code] = (codes[d.code] || 0) + 1;
