@@ -64,6 +64,9 @@
     's.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:994 LoadServerScript (+ the game: :937 LoadCollectingInfo)' },
     'ultimate_ultimateweapon.txt': { server: STARTUP, client: null, cite: 'Project.cpp:967 LoadUltimateWeapon -> UltimateWeapon.cpp:116 (#ifdef __WORLDSERVER)' },
     'weaponrarity.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:971 LoadWeaponRarity' },
+    // Upgrade fees (K part 2): only with upgrade-fees.diff built (WorldServer + Neuz). CUpgradeFees::GetInstance reads it once,
+    // the first time a fee is needed (a static object: once per run of the WorldServer / the game)
+    'upgradefees.lua': { server: STARTUP, client: STARTUP, cite: 'upgrade-fees.diff: _Common/UpgradeFees.h CUpgradeFees()', patch: 'upgrade-fees' },
     // couple: the WorldServer, the DatabaseServer and the game each load it (couplehelper.cpp Initialize); the game's couple window
     // draws its level bar from its own copy (WndField.cpp:26910 GetExperienceRate)
     'couple.inc': { server: STARTUP, client: STARTUP, cite: 'WORLDSERVER/couplehelper.cpp:44, databaseserver/couplehelper.cpp:158, Neuz/couplehelper.cpp:33 CCoupleProperty::Initialize' },
@@ -85,8 +88,12 @@
   const PATCHES = {
     'npc-board': { file: 'docs/patches/npc-board.diff', what: 'rules text windows', marker: 'NpcBoard_%d.inc', src: '_Interface/WndWorld.cpp' },
     'donation-tree': { file: 'docs/patches/donation-tree.diff', what: 'category order and item card text', marker: 'DS_LoadTreeOrder', src: '_Interface/WndDonationShop.cpp' },
+    // server + game: the WorldServer charges the fees, the game shows them and checks the player's Penya (NOT YET TESTED IN GAME)
+    'upgrade-fees': { file: 'docs/patches/upgrade-fees.diff', what: 'upgrade fees read from UpgradeFees.lua', marker: 'CUpgradeFees', src: 'WORLDSERVER/ItemUpgrade.cpp', server: true },
   };
   const BUILD = 'build the Neuz project (Source/Source/Neuz/Neuz.sln, configuration NoGameguard). Only Neuz: no server is rebuilt. Start Server.bat then copies the new Neuz.exe (Client\\- Start Game.bat)';
+  const BUILD_BOTH = 'build the WorldServer project and the Neuz project (configuration NoGameguard). Start Server.bat then starts the new WorldServer and copies the new Neuz.exe (Client\\- Start Game.bat)';
+  const buildOf = p => (p.server ? BUILD_BOTH : BUILD);
 
   // input:
   //   changes  [{ label, files: [key] }]           one per undo step since the last save
@@ -124,6 +131,7 @@
           needs.add('reopen:donation'); why.push(`the game reads Client/Client/${name} each time the Donation Shop window opens (${r.cite})`);
           if (treePatch) { needs.add('patch:donation-tree'); why.push('a category the game\'s code does not know sorts last and gets the wrong card text until donation-tree.diff is built into Neuz'); }
         }
+        if (r.patch) { needs.add('patch:' + r.patch); why.push(`the server and the game read ${name} only with ${r.patch}.diff built into the WorldServer and Neuz; without it they keep the fees compiled in the C++`); }
         if (r.client === CLICK) {
           needs.add('click:board'); needs.add('patch:npc-board');
           why.push(`the game reads Client/Client/${name} each time the menu is clicked, but only with npc-board.diff built into Neuz`);
@@ -135,12 +143,12 @@
     }
 
     const steps = [];
-    for (const id of ['npc-board', 'donation-tree']) {
+    for (const id of Object.keys(PATCHES)) {
       if (!all.has('patch:' + id)) continue;
       const p = PATCHES[id], state = patches[id] || 'unknown';
-      steps.push({ id: 'patch:' + id, state, short: `build Neuz with ${p.file.split('/').pop()}`, text: state === 'in-source'
-        ? `C++ (once): ${p.file.split('/').pop()} (${p.what}) is already in the source. If Neuz was not built since, ${BUILD}.`
-        : `C++ (once): in FLYFF-V19-SOURCE run "git apply -p1 ../FLYFF-RESOURCE-EDITOR/${p.file}" (${p.what}), then ${BUILD}.` });
+      steps.push({ id: 'patch:' + id, state, short: `build ${p.server ? 'the WorldServer and Neuz' : 'Neuz'} with ${p.file.split('/').pop()}`, text: state === 'in-source'
+        ? `C++ (once): ${p.file.split('/').pop()} (${p.what}) is already in the source. If ${p.server ? 'they were' : 'Neuz was'} not built since, ${buildOf(p)}.`
+        : `C++ (once): in FLYFF-V19-SOURCE run "git apply -p1 ../FLYFF-RESOURCE-EDITOR/${p.file}" (${p.what}), then ${buildOf(p)}.` });
     }
     const patched = steps.length > 0;
     if (all.has('servers')) steps.push({ id: 'servers', short: 'run Stop Server.bat, then Start Server.bat', text: 'Run Stop Server.bat, then Start Server.bat. The servers only read these files when they start, and Stop Server.bat also closes the game, so the game reads its copies again too.' });
@@ -149,7 +157,7 @@
       if (all.has('reopen:donation')) steps.push({ id: 'reopen:donation', short: 'reopen the Donation Shop window', text: 'Close and reopen the Donation Shop window in the game. No restart is needed: it reads the categories each time it opens.' });
       if (all.has('click:board')) steps.push({ id: 'click:board', short: 'click the rules menu again', text: 'Click the rules menu again in the game. No restart is needed: it reads the text on every click.' });
     }
-    return { steps, changes: outChanges, notes, built: ['npc-board', 'donation-tree'].filter(id => built.has(id)) };
+    return { steps, changes: outChanges, notes, built: Object.keys(PATCHES).filter(id => built.has(id)) };
   }
 
   // The input of compute() for a workspace about to be saved:

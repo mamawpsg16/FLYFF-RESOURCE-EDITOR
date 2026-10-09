@@ -157,6 +157,8 @@
     ok([...document.querySelectorAll('.task-card')].every(b => b.disabled), 'tasks wait for the folder');
     click($('btn-root'));
     await waitFor(() => S.layout, 'folder detected');
+    // the cards are drawn after the patch check (io/patch-state.js reads one C++ file per patch)
+    await waitFor(() => document.querySelector('.task-card:not(:disabled)'), 'task cards enabled');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
     ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 8 && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 8 tasks to pick (exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
@@ -1517,6 +1519,38 @@
       if (STOP === 'upgradecalc') { $('toasts').textContent = ''; return; }
       while (S.ws.history.length) click($('btn-undo'));
       ok(!S.ws.dirtyFiles().length, 'Undo all: nothing left to save');
+      // ---- K part 2: Upgrade fees (UpgradeFees.lua does not exist yet: the first change makes it, Save creates it)
+      sec('fees');
+      ok(/upgrade-fees\.diff/.test(ed().textContent) && /made on the first change/.test(ed().textContent), 'Upgrade fees: the patch note and "UpgradeFees.lua · made on the first change"');
+      const fb = k => ed().querySelector(`input[data-key="up|fee|${k}"]`);
+      ok(fb('nPiercingPenya') && fb('nPiercingPenya').value.replace(/,/g, '') === '100000' && fb('nRemovePiercingPenya').value.replace(/,/g, '') === '1000000', 'five fee boxes: piercing 100,000, remove a card 1,000,000');
+      ok(/100,000 Penya will be paid/.test(ed().textContent), 'the remove-element text is shown');
+      fb('nPiercingPenya').value = '25000'; fb('nPiercingPenya').dispatchEvent(new Event('change'));
+      fb('nPiercingPenya').value = '250000'; fb('nPiercingPenya').dispatchEvent(new Event('change'));
+      const fl = S.ws.files.get('upgradefees.lua');
+      ok(/^-- UpgradeFees\.lua/.test(fl.text) && /\r\nnPiercingPenya = 250000\r\n$/.test(fl.text) && S.ws.history.length === 1, 'typing 25000 then 250000: one step, the new file holds the header + nPiercingPenya = 250000');
+      ok(/250,000 Penya \(was 100,000\)/.test([...$('toasts').children].pop().textContent), '… the toast says 250,000 Penya (was 100,000)');
+      fb('nRemoveAttributePenya').value = '50000'; fb('nRemoveAttributePenya').dispatchEvent(new Event('change'));
+      ok(/And 50,000 Penya will be paid/.test(S.ws.strings.map.get('IDS_TEXTCLIENT_INC_001814')) && S.ws.history.length === 2, 'remove element 50,000: the text says 50,000 Penya in the same step');
+      ok(ed().querySelector('button') && [...ed().querySelectorAll('button')].some(b => /↺ 100,000/.test(b.textContent)), '↺ 100,000 puts a fee back');
+      sec('pierce');
+      ok(/250,000 Penya every try/.test(ed().textContent), 'Piercing says 250,000 Penya every try');
+      if (STOP === 'upgradefees') { sec('fees'); $('toasts').textContent = ''; return; }
+      click($('btn-save'));
+      await waitFor(() => btnByText(document, 'Back up and write'), 'review dialog (fees)');
+      const rv = document.querySelector('.modal').textContent;
+      { const hd = [...document.querySelectorAll('.modal h3')].find(x => x.textContent === 'UpgradeFees.lua'), d = hd && hd.nextElementSibling;
+        ok(d && d.querySelector('.add') && !d.querySelector('.del'), 'review: the new file shows only + lines (no empty "1 -" line)'); }
+      ok(/UpgradeFees\.lua/.test(rv) && /upgrade-fees\.diff/.test(rv) && /WorldServer project and the Neuz project/.test(rv), 'review: UpgradeFees.lua and "build the WorldServer and Neuz with upgrade-fees.diff"');
+      click(btnByText(document, 'Back up and write'));
+      await waitFor(() => [...document.querySelectorAll('.modal header')].some(h => /^Saved|failed/.test(h.textContent)), 'save finished (fees)');
+      const nf = res.children.get('UpgradeFees.lua');
+      ok(nf && /nPiercingPenya = 250000\r\n/.test(new TextDecoder().decode(nf.bytes)) && fl.handle === nf && !fl.serverNew, 'Saved: UpgradeFees.lua created in Server/Resource');
+      ok(!S.client || (clientDir.children.get('UpgradeFees.lua') && FRE.bytes.bytesEqual(clientDir.children.get('UpgradeFees.lua').bytes, nf.bytes)), '… and its Client copy (ticked by default)');
+      const bk = [...backups.children.values()].pop(), man = JSON.parse(new TextDecoder().decode(bk.children.get('manifest.json').bytes));
+      ok(!bk.children.has('UpgradeFees.lua') && man.files.some(x => x.name === 'UpgradeFees.lua' && x.created), 'backup: no old copy (it is new), the manifest says created');
+      ok(S.ws.dirtyFiles().length === 0, 'clean after save');
+      for (const m of [...document.querySelectorAll('.modal')]) { const b = btnByText(m, 'Close'); if (b) click(b); }
     }
 
     // ---- Battle Pass

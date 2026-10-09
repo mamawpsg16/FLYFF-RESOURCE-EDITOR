@@ -89,6 +89,22 @@
         }
       }
     }
+    // ---- UpgradeFees.lua (part 2: docs/patches/upgrade-fees.diff, _Common/UpgradeFees.h CUpgradeFees)
+    const F = model.fees, FEE = 'UpgradeFees.lua';
+    if (F && !F.empty) {
+      for (const e of F.errors) push(FEE, 'UP_FEE_LUA', 'BLOCK', e, `${e.message.replace('ItemUpgrade.lua', FEE)}. The script stops: the server and the game log "UpgradeFees.lua Run Failed" and keep every old fee.`, e.message);
+      if (!F.failed) for (const r of F.rows) {
+        if (r.ignored) push(FEE, 'UP_FEE_BAD', 'WARN', r.span, `${r.label}: "${r.raw}" is not a whole number from 0 to 2,147,483,647, so it is ignored: players pay the old ${FRE.num.group(r.def)} Penya.`, r.key);
+        else if (r.present && r.read !== Math.trunc(r.read)) push(FEE, 'UP_FEE_BAD', 'INFO', r.span, `${r.label}: ${r.raw} is cut to ${FRE.num.group(r.value)} (static_cast<int>).`, r.key + '|cut');
+        if (r.count > 1) push(FEE, 'UP_FEE_DUP', 'INFO', r.stmt, `${r.key} is set ${r.count} times: the last line wins (${FRE.num.group(r.value)} Penya).`, r.key);
+      }
+    }
+    // the remove-element text names its fee (TID_GAME_REMOVE_ATTRIBUTE, WndField.cpp:25596)
+    if (F && model.feeText) {
+      const n = FRE.upgradeFees.textNumber(model.feeText.text), fee = FRE.upgradeFees.feeOf(F, 'nRemoveAttributePenya');
+      if (n && n.value !== fee) push('textClient.txt.txt', 'UP_FEE_TEXT', 'WARN', { start: model.feeText.start + n.start, end: model.feeText.start + n.end },
+        `The remove-element window says "${FRE.num.group(n.value)} Penya", but the fee in UpgradeFees.lua is ${FRE.num.group(fee)}. Change the fee again in Upgrade fees (it rewrites the text), or edit IDS_TEXTCLIENT_INC_001814.`, 'remove-attr');
+    }
     // ---- comments that still hold the old number (INFO): an edited line with a -- / // comment
     if (ws) for (const [key, file, re] of [['itemupgrade.lua', LUA, /--/], ['s.txt', ST, /\/\//], ['ultimate_ultimateweapon.txt', ULT, /\/\//]]) {
       const f = ws.files.get(key);

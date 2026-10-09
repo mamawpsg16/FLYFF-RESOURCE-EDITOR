@@ -156,10 +156,13 @@
       // collector chances: LoadServerScript, WorldServer; the game reads the collecting blocks of its LF copy, 15091d5f),
       // Ultimate_UltimateWeapon.txt (WorldServer only), WeaponRarity.inc (both, 3168003d). Spec_Item is read for the rate scrolls.
       id: 'upgrade', label: 'Upgrade Rates',
-      required: ['ItemUpgrade.lua'], optional: ['s.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc'],
-      editable: ['ItemUpgrade.lua', 's.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc'],
-      client: ['s.txt', 'WeaponRarity.inc'],
-      deps: ['s.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc'],
+      // Part 2: UpgradeFees.lua (docs/patches/upgrade-fees.diff: the WorldServer and the game read it; created by the editor when
+      // there is none: `creates`) and the remove-element text in textClient.txt.txt that names its fee.
+      required: ['ItemUpgrade.lua'], optional: ['s.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc', 'UpgradeFees.lua', 'textClient.txt.txt'],
+      editable: ['ItemUpgrade.lua', 's.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc', 'UpgradeFees.lua', 'textClient.txt.txt'],
+      client: ['s.txt', 'WeaponRarity.inc', 'UpgradeFees.lua', 'textClient.txt.txt'],
+      deps: ['s.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc', 'UpgradeFees.lua'],
+      creates: ['UpgradeFees.lua'],
       parse(ws) { return FRE.upgrade.fromWorkspace(ws); },
       validate(ws, model) { return FRE.upgradeChecks(model, { ws }); },
     },
@@ -212,6 +215,14 @@
         const miss = m.required.filter(n => !files.has(n.toLowerCase()));
         this.available[m.id] = !this.active.has(m.id) ? { ok: false, missing: [], off: true } : miss.length ? { ok: false, missing: miss } : { ok: true };
         if (!miss.length && this.shown.has(m.id)) m.editable.forEach(n => this.editable.add(n.toLowerCase()));
+        // a file the task may create (UpgradeFees.lua): an empty one with no handle; io/save.js creates it in Server/Resource
+        // when it gets text (serverNew), and an Undo back to empty leaves nothing to save
+        if (!miss.length && this.shown.has(m.id)) for (const n of m.creates || []) {
+          if (files.has(n.toLowerCase())) continue;
+          const f = new FRE.SourceFile(n, new Uint8Array(0));
+          f.serverNew = true;
+          files.set(n.toLowerCase(), f);
+        }
       }
       if (!task || task.editsSpec) CORE_EDITABLE.forEach(n => { if (files.has(n.toLowerCase())) this.editable.add(n.toLowerCase()); });
     }

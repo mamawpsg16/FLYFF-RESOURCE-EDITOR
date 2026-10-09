@@ -76,5 +76,33 @@
     return T.replaceSpan(row.luck, v);
   }
 
-  FRE.upgradeOps = { setNumber, setChance, setAttrField, setSingle, setMakeGem, setRarityNumber, setRarityName, setRarityColor, setDropLuck, colorHex };
+  // ---------------------------------------------------------------- UpgradeFees.lua (part 2, upgrade-fees.diff)
+  const FEE_HEAD = [
+    '-- UpgradeFees.lua: the Penya fees of the upgrade windows (FLYFF-RESOURCE-EDITOR docs/patches/upgrade-fees.diff).',
+    '-- Read once at startup by the WorldServer (Server/Resource) and by the game (Client): keep both copies the same.',
+    '-- A missing line keeps the fee compiled in the C++. Whole numbers from 0 to 2147483647.',
+  ];
+  // the fee `key` -> v: the last "key = n" gets the new number; no line yet -> "key = v" at the end (a new file starts with FEE_HEAD)
+  // text: UpgradeFees.lua's current text ('' for a file the editor creates)
+  function setFee(fees, text, key, v) {
+    const f = FRE.upgradeFees.BY_KEY.get(key);
+    if (!f) throw new Error(`Unknown fee ${key}`);
+    T.checkAmount(v, 0, FRE.upgradeFees.INT_MAX, `${f.label} (Penya)`);
+    if (fees.failed) throw new Error('UpgradeFees.lua does not run (see the problems panel): fix it first');
+    const row = fees.rows.find(r => r.key === key);
+    if (row && row.span) return T.replaceSpan(row.span, v);
+    const eol = T.dominantEol(text), line = `${key} = ${v}`;
+    if (!text.trim()) return [{ start: 0, end: text.length, insert: [...FEE_HEAD, line].join(eol) + eol }];
+    const needEol = !/[\r\n]$/.test(text);
+    return [{ start: text.length, end: text.length, insert: (needEol ? eol : '') + line + eol }];
+  }
+  // the remove-element text (textClient.txt.txt IDS_TEXTCLIENT_INC_001814): its "100,000 Penya" -> v (commas: it is a text players read)
+  function setFeeText(feeText, v) {
+    if (!feeText) throw new Error('textClient.txt.txt has no IDS_TEXTCLIENT_INC_001814 line');
+    const n = FRE.upgradeFees.textNumber(feeText.text);
+    if (!n) throw new Error('The remove-element text has no "<number> Penya" to change');
+    return [{ start: feeText.start + n.start, end: feeText.start + n.end, insert: FRE.num.group(v) }];
+  }
+
+  FRE.upgradeOps = { setFee, setFeeText, FEE_HEAD, setNumber, setChance, setAttrField, setSingle, setMakeGem, setRarityNumber, setRarityName, setRarityColor, setDropLuck, colorHex };
 })(globalThis.FRE = globalThis.FRE || {});

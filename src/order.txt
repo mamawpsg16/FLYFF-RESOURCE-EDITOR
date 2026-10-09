@@ -59,6 +59,7 @@ loaders/couple.js
 loaders/couple-sim.js
 validate/couple.js
 loaders/upgrade.js
+loaders/upgrade-fees.js
 loaders/upgrade-sim.js
 validate/upgrade.js
 core/workspace.js

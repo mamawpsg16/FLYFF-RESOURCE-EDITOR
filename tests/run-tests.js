@@ -3404,5 +3404,78 @@ section('upgrade rates (K): ItemUpgrade.lua, s.txt, Ultimate, WeaponRarity; trie
     'UP_ULT_MISSING', 'UP_ULT_DUP', 'UP_TRANS_OWN', 'UP_RARITY_DUP', 'UP_RARITY_INHERIT', 'UP_RARITY_DROP', 'UP_RARITY_SUM', 'UP_STALE_COMMENT']) ok(FRE.diagHelp[k], `help text for ${k}`);
 }
 
+section('upgrade fees (K part 2): UpgradeFees.lua read like CUpgradeFees, charges, the game, edits (JS and Python copies agree)');
+{
+  const J = JSON.stringify;
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} fees x`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py fees) gave no readable result', e.message); }
+  const F = FRE.upgradeFees, S = FRE.upgradeSim, O = FRE.upgradeOps;
+  const sf = t => new FRE.SourceFile('UpgradeFees.lua', new TextEncoder().encode(t));
+  const feesOf = M => Object.fromEntries(M.rows.map(r => [r.key, F.feeOf(M, r.key)]));
+  if (py) {
+    let same = 0, n = 0;
+    for (const r of py.reads) {
+      const M = F.load(r.text === null ? null : sf(r.text)), got = feesOf(M);
+      n++; if (J(got) === J(r.fees)) same++; else ok(false, `fees of ${JSON.stringify(r.text)}`, `${J(got)} vs ${J(r.fees)}`);
+      for (const c of r.charges) { n++; const x = S.charge(M, c[0], c[1], { cards: c[2] }); if (J([x.ok, x.paid, x.gold]) === J(c.slice(3))) same++; else ok(false, `charge ${c[0]} gold ${c[1]} cards ${c[2]} (${JSON.stringify(r.text)})`, `${J([x.ok, x.paid, x.gold])} vs ${J(c.slice(3))}`); }
+      for (const c of r.unpatched) { n++; const x = S.charge(M, c[0], c[1], { patched: false }); if (J([x.ok, x.paid, x.gold]) === J(c.slice(2))) same++; else ok(false, `without the patch: ${c[0]} gold ${c[1]}`, J([x, c])); }
+      for (const g of r.game) { n++; const v = S.gameView(M, g[0]); if (v.piercePrice === g[1] && v.safeGoes === g[2]) same++; else ok(false, `the game with ${g[0]} Penya`, J([v, g])); }
+    }
+    eq(same, n, `${py.reads.length} made-up UpgradeFees.lua files: ${n} fee reads, charges and game views agree`);
+    let es = 0, en = 0;
+    for (const e of py.edits) {
+      const f = sf(e.start);
+      e.ops.forEach(([key, v], i) => {
+        f.applySplices(O.setFee(F.load(f.text.trim() ? f : null), f.text, key, v), 'x');
+        en++; if (f.text === e.steps[i]) es++; else ok(false, `edit ${key} = ${v} on ${JSON.stringify(e.start)}`, JSON.stringify([f.text, e.steps[i]]));
+      });
+      en++; if (J(feesOf(F.load(f))) === J(e.fees)) es++; else ok(false, 'fees after the edits', J([feesOf(F.load(f)), e.fees]));
+    }
+    for (const x of py.texts) {
+      let got = null;
+      try { const sp = O.setFeeText({ text: x.text, start: 0, end: x.text.length }, x.v); got = x.text.slice(0, sp[0].start) + sp[0].insert + x.text.slice(sp[0].end); } catch (e) { got = null; }
+      en++; if (got === x.out) es++; else ok(false, `remove-element text with ${x.v}`, J([got, x.out]));
+    }
+    eq(es, en, `${py.edits.length} edit scripts + ${py.texts.length} texts: byte-identical`);
+  }
+  // the workspace: no UpgradeFees.lua -> an empty new file the first edit fills; one undo step with the remove-element text
+  const fresh = () => { const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e)); return new FRE.Workspace(fs, { only: 'upgrade' }).load(); };
+  const W = fresh(), m = W.models.upgrade, f = W.files.get('upgradefees.lua');
+  ok(f && f.serverNew && !f.handle && f.text === '' && !f.dirty, 'no UpgradeFees.lua: the task holds an empty new file (nothing to save yet)');
+  ok(m.fees.empty && m.fees.rows.every(r => r.value === r.def), '… every fee is the compiled one (100,000; remove a card 1,000,000)');
+  ok(m.feeText && /100,000 Penya/.test(m.feeText.text), 'the remove-element text says 100,000 Penya');
+  W.applyGroup([{ file: 'upgradefees.lua', splices: O.setFee(m.fees, f.text, 'nRemoveAttributePenya', 50000) },
+    { file: 'textclient.txt.txt', splices: O.setFeeText(m.feeText, 50000) }], 'fee');
+  const m2 = W.models.upgrade;
+  ok(f.dirty && /^-- UpgradeFees\.lua/.test(f.text) && /\r\nnRemoveAttributePenya = 50000\r\n$/.test(f.text), 'the first fee: the header + "nRemoveAttributePenya = 50000" (CRLF)');
+  eq(F.feeOf(m2.fees, 'nRemoveAttributePenya'), 50000, '… the fee is 50,000');
+  ok(/And 50,000 Penya/.test(m2.feeText.text) && !W.diags.some(d => d.code === 'UP_FEE_TEXT'), '… the text says 50,000 Penya in the same step (no UP_FEE_TEXT)');
+  ok(W.dirtyFiles().map(x => x.name).sort().join() === 'UpgradeFees.lua,textClient.txt.txt', 'two files to save: UpgradeFees.lua (new) and textClient.txt.txt');
+  ok(W.clientCopiesNeeded().includes('UpgradeFees.lua') && W.clientCopiesNeeded().includes('textClient.txt.txt'), 'both go to Client/ too');
+  W.apply('upgradefees.lua', O.setFee(W.models.upgrade.fees, f.text, 'nRemoveAttributePenya', 70000), 'fee2');
+  ok(W.diags.some(d => d.code === 'UP_FEE_TEXT'), 'a fee changed without its text: UP_FEE_TEXT (WARN)');
+  W.undo(); W.undo();
+  ok(!f.dirty && f.text === '' && !W.dirtyFiles().length, 'Undo twice: the new file is empty again, nothing to save');
+  W.apply('upgradefees.lua', O.setFee(W.models.upgrade.fees, f.text, 'nPiercingPenya', 250000), 'fee3');
+  const e1 = S.expect(W.models.upgrade, 'suit', 0, 4, { protect: true }), e0 = S.expect(W.models.upgrade, 'suit', 0, 4, { protect: true, patched: false });
+  ok(Math.abs(e1.per.penya - e1.per.tries * 250000) < 1e-6 && Math.abs(e0.per.penya - e0.per.tries * 100000) < 1e-6, 'the calculator: piercing Penya = tries × 250,000 (100,000 without the patch)');
+  const e2 = S.expect(W.models.upgrade, 'suit', 0, 4, { window: 'safe' });
+  ok(Math.abs(e2.per.penya - e2.per.tries * 100000) < 1e-6, '… the safe window uses its own fee (still 100,000)');
+  W.apply('upgradefees.lua', [{ start: f.text.length, end: f.text.length, insert: 'nSafePiercingPenya = -1\r\nPrint( 1 )\r\n' }], 'bad');
+  ok(W.diags.some(d => d.code === 'UP_FEE_LUA' && d.severity === 'BLOCK'), 'a call to an unknown function: UP_FEE_LUA (BLOCK)');
+  W.undo();
+  W.apply('upgradefees.lua', [{ start: f.text.length, end: f.text.length, insert: 'nSafePiercingPenya = -1\r\n' }], 'bad2');
+  ok(W.diags.some(d => d.code === 'UP_FEE_BAD'), 'a negative fee: UP_FEE_BAD (ignored, the old fee stays)');
+  throws(() => O.setFee(W.models.upgrade.fees, f.text, 'nPiercingPenya', -1), 'a negative fee is refused');
+  throws(() => O.setFee(W.models.upgrade.fees, f.text, 'nPiercingPenya', 2147483648), 'a fee above 2,147,483,647 is refused');
+  // After saving: the patch step (WorldServer + Neuz) unless it is ticked as built
+  const r1 = FRE.afterSave.compute({ changes: [{ label: 'fee', files: ['upgradefees.lua'] }], client: { 'upgradefees.lua': 'created' }, patches: {} });
+  ok(r1.steps[0].id === 'patch:upgrade-fees' && /WorldServer project and the Neuz project/.test(r1.steps[0].text) && r1.steps.some(s => s.id === 'servers'), 'After saving: build the WorldServer and Neuz with upgrade-fees.diff, then Stop / Start Server.bat');
+  const r2 = FRE.afterSave.compute({ changes: [{ label: 'fee', files: ['upgradefees.lua'] }], client: { 'upgradefees.lua': 'written' }, patches: { 'upgrade-fees': 'built' } });
+  ok(!r2.steps.some(s => s.id.startsWith('patch:')) && J(r2.built) === J(['upgrade-fees']), '… marked as built: only the restart');
+  for (const k of ['UP_FEE_LUA', 'UP_FEE_BAD', 'UP_FEE_DUP', 'UP_FEE_TEXT']) ok(FRE.diagHelp[k], `help text for ${k}`);
+}
+
 print(`\n${pass} passed, ${fail} failed`);
 if (fail) System.exit(1);

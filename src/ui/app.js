@@ -10,7 +10,7 @@
   const ROW_H = 40;
 
   const S = {
-    ws: null, resDir: null, backupDir: null, client: null, createMissing: new Set(), mode: 'npc',
+    ws: null, resDir: null, backupDir: null, client: null, createMissing: new Set(), createAsked: new Set(), mode: 'npc',
     layout: null, pendingRoot: null, task: null, busy: false,
     queries: {}, items: [], filtered: [], rarity: new Set(), ik1: '', ik3: '', itemQuery: '',
     diagOpen: false,
@@ -26,6 +26,9 @@
     // list badges: the keys of the edits still in the undo history, so Undo removes a badge and Redo brings it back
     get edited() { return new Set(S.ws ? S.ws.history.flatMap(e => e.tags || []) : []); },
     renderAll: (withItems) => renderAll(withItems),
+    // a C++ patch's state (io/patch-state.js): 'in-source' | 'missing' | 'unknown' | 'built'
+    patchState: id => FRE.patchState.effective(S.patchSrc)[id] || 'unknown',
+    setPatchBuilt: (id, on) => FRE.patchState.setTicked(id, on),
     // [{ stamp, bytes }] of every backup copy of a file, or null when no backups folder is known
     backupsOf: name => (S.backupDir ? FRE.fsa.backupCopies(S.backupDir, name) : Promise.resolve(null)),
     get backupKey() { return S.backupDir ? S.backupDir.name : null; },
@@ -197,6 +200,7 @@
       await phase('Reading the items, names and defines, then checking the files');
       S.ws = new FRE.Workspace(files, { only: id, cpp: S.cpp || null }).load();
       S.resDir = L.res;
+      S.ws.resDir = L.res;     // io/save.js creates new server files here (UpgradeFees.lua)
       S.client = null;
       if (L.client) { await phase('Reading the game client\'s copies (Client/)'); await loadClient(L.client, P, phase); }
       if (S.ws.needsMaps()) { await phase('Reading the maps (World/)'); await loadMaps(L.res, P); }
@@ -659,7 +663,9 @@
   // ------------------------------------------------------------------ save
   // Changed lines of `f`: saved text vs. current text, or any before/after pair (edit previews).
   function renderDiff(f, before = f.originalText, after = f.text) {
-    const a = FRE.diff.splitKeepEol(before), b = FRE.diff.splitKeepEol(after);
+    // an empty text has no lines (a file the editor creates, UpgradeFees.lua: no "1 -" line)
+    const split = s => (s === '' ? [] : FRE.diff.splitKeepEol(s));
+    const a = split(before), b = split(after);
     const hs = FRE.diff.hunks(FRE.diff.diffLines(a, b), 2);
     const box = h('div.diff');
     const strip = s => f.display(s).replace(/\r\n$|\r$|\n$/, '');
@@ -719,15 +725,17 @@
   }
 
   const NEED_TEXT = { servers: 'server restart', game: 'game restart', 'reopen:donation': 'reopen the Donation Shop window',
-    'click:board': 'click the menu again', 'patch:npc-board': 'npc-board.diff built into Neuz', 'patch:donation-tree': 'donation-tree.diff built into Neuz' };
+    'click:board': 'click the menu again', 'patch:npc-board': 'npc-board.diff built into Neuz', 'patch:donation-tree': 'donation-tree.diff built into Neuz',
+    'patch:upgrade-fees': 'upgrade-fees.diff built into the WorldServer and Neuz' };
+  const builtInto = id => (FRE.afterSave.PATCHES[id] && FRE.afterSave.PATCHES[id].server ? 'the WorldServer and Neuz' : 'Neuz');
   // live: the patch steps get the "I built it into Neuz" tickbox (the review window); redraw() after a tick
   function afterSaveBox(res, live, redraw) {
     const tick = id => h('label.check', ' ', h('input', { type: 'checkbox', checked: FRE.patchState.ticked(id),
-      on: { change: e => { if (!FRE.patchState.setTicked(id, e.target.checked)) toast('This browser cannot remember the tick (site storage is blocked).', 'bad'); else toast(e.target.checked ? `Marked ${id}.diff as built into Neuz.` : `${id}.diff: no longer marked as built.`); redraw(); } } }),
-      ' I built it into Neuz (remembered in this browser)');
+      on: { change: e => { if (!FRE.patchState.setTicked(id, e.target.checked)) toast('This browser cannot remember the tick (site storage is blocked).', 'bad'); else toast(e.target.checked ? `Marked ${id}.diff as built into ${builtInto(id)}.` : `${id}.diff: no longer marked as built.`); redraw(); } } }),
+      ` I built it into ${builtInto(id)} (remembered in this browser)`);
     return h('div.after-save', h('h3', 'After saving: what players need to see it'),
       h('ol.plan', res.steps.map(s => h('li', s.text, live && s.id.startsWith('patch:') && s.state !== 'missing' ? tick(s.id.slice(6)) : null))),
-      res.built.map(id => h('p.muted.small', `✓ ${id}.diff is marked as built into Neuz.`, live ? tick(id) : null)),
+      res.built.map(id => h('p.muted.small', `✓ ${id}.diff is marked as built into ${builtInto(id)}.`, live ? tick(id) : null)),
       res.notes.map(n => h('p', { style: 'color:var(--warn)' }, '⚠ ' + n.text)),
       res.changes.length ? h('details', h('summary', `Each change (${res.changes.length})`),
         h('ul.plan', res.changes.map(c => h('li', h('b', c.label), ': ', c.needs.length ? c.needs.map(n => NEED_TEXT[n] || n).join(' + ') : 'nothing in the game reads it',
@@ -758,6 +766,8 @@
     if (S.client) {
       if (!(await FRE.fsa.ensurePermission(S.client.dir))) { toast('Write permission to the Client folder was not granted.', 'bad'); return; }
       const plan = FRE.clientSync.plan(ws, S.client);
+      // a file the editor creates (UpgradeFees.lua) needs its game copy too: ticked unless untick by hand
+      for (const p of plan) if (p.mode === 'missing' && p.server.serverNew && !S.createAsked.has(p.lower)) { S.createMissing.add(p.lower); S.createAsked.add(p.lower); }
       clientBox = plan.length ? [h('h3', `Client/ (${S.client.dir.name})`), h('ul.plan', plan.map(p => h('li', h('b', p.name), ': ', p.text,
         p.mode === 'missing' ? h('label.check', ' ', h('input', { type: 'checkbox', checked: S.createMissing.has(p.lower),
           on: { change: e => { e.target.checked ? S.createMissing.add(p.lower) : S.createMissing.delete(p.lower); } } }), ' create Client/' + p.name + ' as a copy of the server file') : null)))] : null;

@@ -4132,7 +4132,20 @@ AS_CITES = [
     ('_Common/Project.cpp', 893, 'ServerBuffManage::loadServerBuffFile()'),
     ('_Common/Project.cpp', 892, '#ifdef __WORLDSERVER'),
     ('_Common/Project.cpp', 928, 'LoadRebirthProp()'),
+    # upgrade-fees.diff: the 8 compiled fee lines it replaces (one line lower once its #include is in)
+    ('WORLDSERVER/ItemUpgrade.cpp', (231, 232), 'int nCost = '),
+    ('WORLDSERVER/ItemUpgrade.cpp', (447, 448), 'int nPayPenya = '),
+    ('WORLDSERVER/ItemUpgrade.cpp', (797, 798), 'int nCost = '),
+    ('WORLDSERVER/DPSrvr.cpp', (6849, 6850), 'int nPayPenya = '),
+    ('WORLDSERVER/DPSrvr.cpp', (12498, 12499), 'nCost\t= '),
+    ('_Interface/WndPiercing.cpp', (111, 112), 'nCost = '),
+    ('_Interface/WndField.cpp', (28195, 28196), 'GetGold() < '),
+    ('_Interface/WndField.cpp', (28245, 28246), 'GetGold() < '),
 ]
+AS_PATCHES = ('npc-board', 'donation-tree', 'upgrade-fees')
+# UpgradeFees.lua: read by _Common/UpgradeFees.h CUpgradeFees (upgrade-fees.diff) in the WorldServer AND Neuz, once per run;
+# without the patch nobody reads it
+AS_FEES = 'upgradefees.lua'
 
 
 def as_who(key):
@@ -4182,20 +4195,22 @@ def as_compute(changes, client, patches, codes):
                     need.add('patch:donation-tree')
             elif cl == 'click':
                 need |= {'click:board', 'patch:npc-board'}
-        for pid in ('npc-board', 'donation-tree'):
+            if k == AS_FEES:
+                need.add('patch:upgrade-fees')
+        for pid in AS_PATCHES:
             if 'patch:' + pid in need and patches.get(pid) == 'built':
                 need.discard('patch:' + pid)
                 ticked.add(pid)
         every |= need
         per.append(sorted(need))
-    steps = [['patch:' + pid, patches.get(pid, 'unknown')] for pid in ('npc-board', 'donation-tree') if 'patch:' + pid in every]
+    steps = [['patch:' + pid, patches.get(pid, 'unknown')] for pid in AS_PATCHES if 'patch:' + pid in every]
     if 'servers' in every:
         steps.append(['servers', None])
     elif 'game' in every or steps:
         steps.append(['game', None])
     else:
         steps += [[x, None] for x in ('reopen:donation', 'click:board') if x in every]
-    return {'steps': steps, 'changes': per, 'notes': notes, 'built': [p for p in ('npc-board', 'donation-tree') if p in ticked]}
+    return {'steps': steps, 'changes': per, 'notes': notes, 'built': [p for p in AS_PATCHES if p in ticked]}
 
 
 def as_run(root):
@@ -4203,7 +4218,7 @@ def as_run(root):
     rnd = random.Random(1019)
     keys = AS_SHARED + [AS_TREE, 'client/npcboard_282.inc', 'client/npcboard_300.inc', 'world/wdmadrigal/wdmadrigal.dyo',
                         'world/wdvolcane/wdvolcane.dyo', 'propmoverex.inc', 'propgiftbox.inc', 'propskill.txt',
-                        'event.lua', 'serverbuff.txt', 'guildbuff.txt', '1rebirth.inc', 'couple.inc']
+                        'event.lua', 'serverbuff.txt', 'guildbuff.txt', '1rebirth.inc', 'couple.inc', AS_FEES]
     states = ['written', 'created', 'datares', 'different', 'none']
     pstates = ['in-source', 'missing', 'unknown', 'built']
     codesets = [[], ['DT_PATCH'], ['DT_ORDER'], ['NN_RULES_PATCH']]
@@ -4215,8 +4230,12 @@ def as_run(root):
                     for cs in codesets:
                         inp = {'changes': [{'label': k, 'files': [k]}], 'client': {k: st}, 'patches': {'npc-board': pa, 'donation-tree': pb}, 'codes': cs}
                         cases.append(inp)
+                if k == AS_FEES:                          # the fee patch's own state
+                    for pc in pstates:
+                        cases.append({'changes': [{'label': k, 'files': [k]}], 'client': {k: st}, 'patches': {'npc-board': pa, 'upgrade-fees': pc}, 'codes': []})
     pairs = [{'npc-board': 'built', 'donation-tree': 'built'}, {'npc-board': 'built', 'donation-tree': 'unknown'},
-             {'npc-board': 'in-source', 'donation-tree': 'built'}]
+             {'npc-board': 'in-source', 'donation-tree': 'built'}, {'npc-board': 'built', 'upgrade-fees': 'missing'},
+             {'donation-tree': 'built', 'upgrade-fees': 'built'}]
     for i, k1 in enumerate(keys):                         # every two files in one save: which steps win, and their order
         for k2 in keys[i + 1:]:
             for pa in pairs:
@@ -4227,7 +4246,7 @@ def as_run(root):
         ch = [{'label': 'c%d' % j, 'files': rnd.sample(keys, rnd.randint(1, 4))} for j in range(rnd.randint(1, 4))]
         allk = sorted({k for c in ch for k in c['files']})
         inp = {'changes': ch, 'client': {k: rnd.choice(states) for k in allk if rnd.random() < 0.9},
-               'patches': {p: rnd.choice(pstates) for p in ('npc-board', 'donation-tree') if rnd.random() < 0.85},
+               'patches': {p: rnd.choice(pstates) for p in AS_PATCHES if rnd.random() < 0.85},
                'codes': rnd.sample(['DT_PATCH', 'DT_ORDER', 'NN_RULES_PATCH', 'C_PRICE_MIN1'], rnd.randint(0, 2))}
         cases.append(inp)
     cases.append({'changes': [], 'client': {}, 'patches': {}, 'codes': []})
@@ -4244,6 +4263,172 @@ def as_run(root):
         at = line if isinstance(line, tuple) else (line,)     # a line a patch moves: before / after it
         cites.append({'path': path, 'line': at[0], 'ok': any(n <= len(lines) and text in lines[n - 1] for n in at)})
     return {'cases': cases, 'cites': cites}
+
+
+# ===================================================================================================
+# fees: the upgrade fees (task K part 2), straight from docs/patches/upgrade-fees.diff (NOT YET TESTED IN GAME):
+#   _Common/UpgradeFees.h CUpgradeFees(): defaults 100000 / 100000 / 100000 / 100000 / 1000000; fopen("UpgradeFees.lua") fails ->
+#     defaults; RunScript != 0 -> Error + defaults; Read(): lua_isnumber (Lua 5.3: a number, or a string that converts) and
+#     0 <= d <= 2147483647.0 -> static_cast<int>(d), else the default stays. Globals: the last assignment wins.
+#   Charges: ItemUpgrade.cpp OnPiercingSize :231 / SmeltSafetyPiercingSize :797 ("if( 0 < nCost )" then GetGold() < nCost ->
+#     LACKMONEY, else AddGold(-nCost)); OnPiercingRemove :447 (GetGold() < nPayPenya -> LACKMONEY; then the loop from the last slot:
+#     the first filled one is emptied and paid for, once); DPSrvr.cpp OnRemoveAttribute :6849 and OnAwakening :12498 (GetGold() <
+#     fee -> LACKMONEY, else paid). Neuz: WndPiercing.cpp:111 shows nPiercing; WndField.cpp:28195 / 28245 stop the safe window when
+#     GetGold() < nSafePiercing. Without the patch every fee is the compiled one.
+#   Edits: the editor's own way of writing the file (the last "key = n" gets the number, else "key = n" at the end; a new file starts
+#     with 3 comment lines) and the remove-element text (the number before "Penya", with commas).
+# Not modelled (and not in the cases): a value computed from another global or an expression, several statements on one line.
+# ===================================================================================================
+FEE_DEF = [('nAwakeningPenya', 100000), ('nRemoveAttributePenya', 100000), ('nPiercingPenya', 100000),
+           ('nSafePiercingPenya', 100000), ('nRemovePiercingPenya', 1000000)]
+FEE_HEAD = ['-- UpgradeFees.lua: the Penya fees of the upgrade windows (FLYFF-RESOURCE-EDITOR docs/patches/upgrade-fees.diff).',
+            '-- Read once at startup by the WorldServer (Server/Resource) and by the game (Client): keep both copies the same.',
+            '-- A missing line keeps the fee compiled in the C++. Whole numbers from 0 to 2147483647.']
+FEE_ACTION = {'pierce': 'nPiercingPenya', 'safePierce': 'nSafePiercingPenya', 'removePiercing': 'nRemovePiercingPenya',
+              'removeAttribute': 'nRemoveAttributePenya', 'awaken': 'nAwakeningPenya'}
+
+
+def fee_tonumber(raw):
+    """lua_isnumber + lua_tonumber of the value as written -> float or None"""
+    s = raw.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in '"\'':
+        s = s[1:-1].strip()
+    neg = s.startswith('-')
+    body = s[1:] if s[:1] in '+-' else s
+    try:
+        if re.fullmatch(r'0[xX][0-9a-fA-F]+', body):
+            v = float(int(body, 16))
+        elif re.fullmatch(r'(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?', body):
+            v = float(body)
+        else:
+            return None
+    except ValueError:
+        return None
+    return -v if neg else v
+
+
+def fee_assignments(t):
+    """top-level "name = value" statements, comments blanked: -> [(name, raw, value start, value end)]"""
+    tk, errs = up_lua_tokens(t)
+    out = []
+    for i, k in enumerate(tk):
+        if k[0] == 'w' and i + 2 < len(tk) and tk[i + 1][1] == '=' and (i == 0 or tk[i - 1][1] not in ('.', ':')):
+            if i + 2 < len(tk) and tk[i + 2][1] == '=':
+                continue
+            j = i + 2
+            st = tk[j][2]
+            if tk[j][1] in ('-', '+') and j + 1 < len(tk):
+                j += 1
+            en = tk[j][3]
+            # 0x10: the tokenizer gives "0" then "x10"
+            if tk[j][0] == 'n' and j + 1 < len(tk) and tk[j + 1][0] == 'w' and tk[j + 1][2] == en and re.fullmatch(r'[xX][0-9a-fA-F]+', tk[j + 1][1]):
+                en = tk[j + 1][3]
+            out.append((k[1], t[st:en], st, en))
+    return out
+
+
+def fee_read(t):
+    """the five fees CUpgradeFees ends with -> {'fees': {key: int}, 'ran': bool, 'used': {key: raw or None}}"""
+    fees = dict(FEE_DEF)
+    if t is None or not t.strip():
+        return {'fees': fees, 'ran': t is not None and False, 'used': {}}
+    if not up_lua(t)['ok']:
+        return {'fees': fees, 'ran': False, 'used': {}}
+    last = {}
+    for name, raw, s, e in fee_assignments(t):
+        last[name] = raw
+    used = {}
+    for key, d in FEE_DEF:
+        if key in last:
+            v = fee_tonumber(last[key])
+            if v is not None and 0 <= v <= 2147483647.0:
+                fees[key] = int(v)
+                used[key] = last[key]
+    return {'fees': fees, 'ran': True, 'used': used}
+
+
+def fee_charge(fees, action, gold, cards):
+    fee = fees[FEE_ACTION[action]]
+    if action in ('pierce', 'safePierce'):
+        if not (0 < fee):
+            return [True, 0, gold]
+        if gold < fee:
+            return [False, 0, gold]
+        return [True, fee, gold - fee]
+    if gold < fee:
+        return [False, 0, gold]
+    if action == 'removePiercing' and cards == 0:
+        return [True, 0, gold]
+    return [True, fee, gold - fee]
+
+
+def fee_edit(t, key, v):
+    """the editor's write of one fee (t: the file's text, '' for a new file)"""
+    hits = [a for a in fee_assignments(t) if a[0] == key] if t.strip() else []
+    if hits:
+        s, e = hits[-1][2], hits[-1][3]
+        return t[:s] + str(v) + t[e:]
+    crlf = t.count('\r\n')
+    eol = '\r\n' if crlf >= t.count('\n') - crlf else '\n'
+    line = '%s = %d' % (key, v)
+    if not t.strip():
+        return eol.join(FEE_HEAD + [line]) + eol
+    return t + ('' if t.endswith(('\r', '\n')) else eol) + line + eol
+
+
+def fee_text_edit(s, v):
+    m = re.search(r'(\d{1,3}(?:,\d{3})+|\d+)(?=\s*[Pp][Ee][Nn][Yy][Aa])', s)
+    if not m:
+        return None
+    return s[:m.start()] + '{:,}'.format(v) + s[m.end():]
+
+
+def fees_run():
+    files = [
+        None, '', '-- nothing\r\n',
+        'nPiercingPenya = 250000\r\n',
+        'nAwakeningPenya = 0\r\nnRemoveAttributePenya = 50000\r\nnPiercingPenya = 1\r\nnSafePiercingPenya = 2147483647\r\nnRemovePiercingPenya = 999\r\n',
+        'nPiercingPenya = -5\nnSafePiercingPenya = 2147483648\nnRemovePiercingPenya = "500000"\nnAwakeningPenya = "lots"\n',
+        'nPiercingPenya = 12.9\r\nnSafePiercingPenya = 1e5\r\nnRemoveAttributePenya = 0x10\r\nnAwakeningPenya = 2147483647.5\r\n',
+        'nPiercingPenya = 100\r\nnPiercingPenya = 300\r\n-- nPiercingPenya = 7\r\nnSafePiercingPenya = nil\r\n',
+        '--[[ nPiercingPenya = 5 ]]\nnRemovePiercingPenya = 123 -- old 1000000\n',
+        'nPiercingPenya = 5000\nPrintSomething( 1 )\n',
+        'nPiercingPenya = 5000\nt = { 1, 2\n',
+        'nPiercingPenya = \'  777  \'\nnSafePiercingPenya = "-1"\nnRemovePiercingPenya = "0x20"\n',
+        'local x = 1\nnAwakeningPenya=4000;nPiercingPenya = 8000;\n',
+        'nPiercingPenya = 5000',
+    ]
+    reads = []
+    for t in files:
+        r = fee_read(t)
+        golds = sorted({0, 1, 99999, 100000, 100001, 2147483647} | {max(0, f + d) for f in r['fees'].values() for d in (-1, 0, 1)})
+        ch = [[a, g, c] + fee_charge(r['fees'], a, g, c) for a in sorted(FEE_ACTION) for g in golds for c in ((0, 1) if a == 'removePiercing' else (1,))]
+        un = [[a, g] + fee_charge(dict(FEE_DEF), a, g, 1) for a in sorted(FEE_ACTION) for g in (0, 99999, 100000, 1000000)]
+        game = [[g, r['fees']['nPiercingPenya'], not (g < r['fees']['nSafePiercingPenya'])] for g in golds]
+        reads.append({'text': t, 'fees': r['fees'], 'charges': ch, 'unpatched': un, 'game': game})
+    scripts = [
+        ('', [['nPiercingPenya', 250000]]),
+        ('', [['nPiercingPenya', 250000], ['nPiercingPenya', 300000], ['nRemovePiercingPenya', 0]]),
+        ('-- fees\n', [['nAwakeningPenya', 1]]),
+        ('nPiercingPenya = 100\r\nnPiercingPenya = 300\r\n', [['nPiercingPenya', 5]]),
+        ('nSafePiercingPenya = 7', [['nSafePiercingPenya', 8], ['nAwakeningPenya', 9]]),
+        ('nRemovePiercingPenya = "500000"\r\n', [['nRemovePiercingPenya', 600000]]),
+        ('-- nPiercingPenya = 1\r\nnAwakeningPenya = 2 -- note\r\n', [['nPiercingPenya', 3], ['nAwakeningPenya', 4]]),
+        ('a = 1\nb = 2\r\nc = 3\r\n', [['nRemoveAttributePenya', 2147483647]]),
+    ]
+    edits = []
+    for start, ops in scripts:
+        t, steps = start, []
+        for key, v in ops:
+            t = fee_edit(t, key, v)
+            steps.append(t)
+        edits.append({'start': start, 'ops': ops, 'steps': steps, 'fees': fee_read(t)['fees']})
+    texts = []
+    for s in ('That weapon will be removed element upgrading. And 100,000 Penya will be paid from your inventory.',
+              'It costs 5000 penya.', 'Free of charge.', 'Pay 1,000,000 Penya now'):
+        for v in (0, 7, 1000, 250000, 2147483647):
+            texts.append({'text': s, 'v': v, 'out': fee_text_edit(s, v)})
+    return {'reads': reads, 'edits': edits, 'texts': texts}
 
 # ===================================================================================================
 # drops: monster drops (task F). Straight from the C++:
@@ -9082,6 +9267,8 @@ if __name__ == '__main__':
         print(json.dumps(cp_run_all(root)))
     elif what == 'upgrade':
         print(json.dumps(up_run_all(root)))
+    elif what == 'fees':                        # the upgrade fees (upgrade-fees.diff): reads, charges, the game, edits
+        print(json.dumps(fees_run()))
     elif what == 'dds':                         # a folder of .dds icons -> {file: [w, h, sha256 of the RGBA]}
         print(json.dumps(dds_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model

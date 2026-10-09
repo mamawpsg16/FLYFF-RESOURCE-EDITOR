@@ -50,11 +50,20 @@
 
     const blocking = ws.newBlocking();
     if (blocking.length) { step(`Aborted: ${blocking.length} new blocking problem(s). Nothing was written.`); report.blocking = blocking; return report; }
-    for (const f of dirty) if (!f.handle) { step(`Aborted: ${f.name} has no file handle.`); return report; }
+    // a file the task creates (UpgradeFees.lua: f.serverNew, no handle) is written into Server/Resource (ws.resDir)
+    for (const f of dirty) if (!f.handle && !(f.serverNew && ws.resDir)) { step(`Aborted: ${f.name} has no file handle.`); return report; }
 
     // 1. conflict check: the disk must still hold exactly what we loaded
     const onDisk = new Map();
     for (const f of dirty) {
+      if (!f.handle) {
+        if (await exists(ws.resDir, f.name)) {
+          step(`Aborted: ${f.name} appeared in ${ws.resDir.name} since it was loaded. Nothing was written. Reload the folder.`);
+          report.conflict = f.name;
+          return report;
+        }
+        continue;
+      }
       const cur = await FRE.fsa.readHandle(f.handle);
       if (!B.bytesEqual(cur.bytes, f.bytes)) {
         step(`Aborted: ${f.name} was changed on disk since it was loaded (another program, git, or another tab). Nothing was written. Reload the folder.`);
@@ -110,7 +119,7 @@
     const folder = await FRE.fsa.newFolder(backupDir, stampName() + (ws.only ? '_' + ws.only : ''));   // e.g. 2026-10-06_08-10-00_exchange
     report.backupFolder = folder.name;
     // files in a sub-folder (World/<map>/<map>.dyo) keep their path in the backup
-    for (const f of dirty) await FRE.fsa.newFile(await FRE.fsa.dirAt(folder, f.dir, true), f.name, onDisk.get(f));
+    for (const f of dirty) if (f.handle) await FRE.fsa.newFile(await FRE.fsa.dirAt(folder, f.dir, true), f.name, onDisk.get(f));
     const existing = targets.filter(t => t.client);
     const oldBoards = boards.filter(f => boardDisk.has(f));
     if (existing.length || oldBoards.length) {
@@ -118,14 +127,23 @@
       for (const t of existing) await FRE.fsa.newFile(await FRE.fsa.dirAt(cf, t.client.dir, true), t.client.name, t.client.bytes);
       for (const f of oldBoards) await FRE.fsa.newFile(await FRE.fsa.dirAt(cf, f.dir, true), f.name, boardDisk.get(f));
     }
-    const inClient = existing.length + oldBoards.length, created = boards.length - oldBoards.length;
-    step(`Backup written and verified: ${backupDir.name}/${folder.name}/ (${dirty.length} file(s)${inClient ? ` + ${inClient} in Client/` : ''}${created ? `; ${created} new file(s), listed in the manifest` : ''})`);
+    const inClient = existing.length + oldBoards.length, created = boards.length - oldBoards.length + dirty.filter(f => !f.handle).length;
+    step(`Backup written and verified: ${backupDir.name}/${folder.name}/ (${dirty.filter(f => f.handle).length} file(s)${inClient ? ` + ${inClient} in Client/` : ''}${created ? `; ${created} new file(s), listed in the manifest` : ''})`);
 
     // 3. write + verify each file; restore on failure
     const written = [];
     try {
       for (const f of dirty) {
         const candidate = f.serialize();
+        if (!f.handle) {
+          const handle = await FRE.fsa.newFile(ws.resDir, f.name, candidate);
+          const back = await FRE.fsa.readHandle(handle);
+          written.push({ f, candidate, stamp: back.stamp, handle, created: true });
+          if (!B.bytesEqual(back.bytes, candidate)) throw new Error(`${f.name}: the new file reads back different`);
+          report.files.push({ name: label(f), before: 0, after: candidate.length, changes: changeSummary(f), created: true });
+          step(`Created and verified ${label(f)} in ${ws.resDir.name} (${candidate.length} bytes).`);
+          continue;
+        }
         const stamp = await FRE.fsa.writeVerified(f.handle, candidate);
         written.push({ f, candidate, stamp });
         report.files.push({ name: label(f), before: f.bytes.length, after: candidate.length, changes: changeSummary(f) });
@@ -152,6 +170,7 @@
       for (const w of written) {
         try {
           if (w.board && !w.f.handle) await w.dirHandle.removeEntry(w.f.name);
+          else if (w.created) await ws.resDir.removeEntry(w.f.name);
           else await FRE.fsa.writeVerified(w.f.handle, w.board ? boardDisk.get(w.f) : onDisk.get(w.f));
           step(`Restored ${w.board ? 'Client/' + label(w.f) : w.f.name}.`);
         } catch (e2) { step(`!! Could not restore ${w.f.name}: ${e2.message}. Copy it back manually from ${folder.name}.`); }
@@ -169,7 +188,7 @@
     }
 
     await writeManifest(folder, report, 'ok');
-    for (const w of written) { if (w.board) w.f.handle = w.handle; w.f.commitSaved(w.candidate, w.stamp); }
+    for (const w of written) { if (w.board || w.created) w.f.handle = w.handle; if (w.created) w.f.serverNew = false; w.f.commitSaved(w.candidate, w.stamp); }
     ws.markSaved();
     report.ok = true;
     step('Saved.');

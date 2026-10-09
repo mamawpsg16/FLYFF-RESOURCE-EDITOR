@@ -5,7 +5,8 @@
   'use strict';
   const { h, fmt, numInput, pctInput, toast, keepFocus } = FRE.dom;
   const { diagTags, diagRow } = FRE.ui;
-  const LUA = 'itemupgrade.lua', ST = 's.txt', ULT = 'ultimate_ultimateweapon.txt', WR = 'weaponrarity.inc';
+  const LUA = 'itemupgrade.lua', ST = 's.txt', ULT = 'ultimate_ultimateweapon.txt', WR = 'weaponrarity.inc', FEE = 'upgradefees.lua', TXT = 'textclient.txt.txt';
+  const PATCH = 'upgrade-fees';
   const st = { sel: 'general', calc: null };
   const U = () => FRE.upgrade, O = () => FRE.upgradeOps, Sim = () => FRE.upgradeSim;
   const model = ctx => ctx.ws.models.upgrade;
@@ -27,6 +28,7 @@
     { id: 'coll', label: 'Collector upgrade', sub: ctx => (model(ctx).s.missing ? 's.txt not found' : ladderSub(ctx, 'coll', 'moonstone, +0 → +')) },
     { id: 'ult', label: 'Ultimate weapons', sub: ctx => (model(ctx).ult.missing ? 'Ultimate_UltimateWeapon.txt not found' : 'transforms, +1 → +10, gems') },
     { id: 'rarity', label: 'Weapon Rarity', sub: ctx => (model(ctx).rarity.missing ? 'WeaponRarity.inc not found' : `${model(ctx).rarity.tiers.size} tiers (Weapon Rarity Scroll)`) },
+    { id: 'fees', label: 'Upgrade fees', sub: ctx => feesSub(ctx) },
     { id: 'calc', label: '🧮 Upgrade calculator', sub: () => 'Tries, scrolls and Penya to reach +N' },
   ];
   function ladderSub(ctx, sys, what) {
@@ -34,7 +36,7 @@
     if (!lad.length) return 'no chances';
     return `${what}${lad.length}; last step ${pc(lad[lad.length - 1].chance)}`;
   }
-  const sectionFiles = { general: [LUA], attr: [LUA], pierce: [LUA], acc: [ST], coll: [ST], ult: [ULT], rarity: [WR] };
+  const sectionFiles = { general: [LUA], attr: [LUA], pierce: [LUA], acc: [ST], coll: [ST], ult: [ULT], rarity: [WR], fees: [FEE, TXT, LUA] };
   const SEC_CODES = { attr: /^UP_ATTR_/ };
   function sectionDiags(ctx, id) {
     const fs = sectionFiles[id];
@@ -44,6 +46,7 @@
   // which section a problem belongs to (ItemUpgrade.lua and s.txt hold several)
   function sectionOf(d) {
     const f = d.file.toLowerCase(), k = String(d.key || '');
+    if (f === FEE || f === TXT || d.code === 'UP_TRANSY_MISSING') return 'fees';
     if (f === ST) return /coll|COLL/.test(k) || d.code === 'UP_COLL_EMPTY' ? 'coll' : 'acc';
     if (f === ULT) return 'ult';
     if (f === WR) return 'rarity';
@@ -79,6 +82,7 @@
         else if (st.sel === 'ult') ultView(el, ctx);
         else if (st.sel === 'rarity') rarityView(el, ctx);
         else if (st.sel === 'calc') calcView(el, ctx);
+        else if (st.sel === 'fees') feesView(el, ctx);
         else ladderView(el, ctx, st.sel);
       });
     },
@@ -169,7 +173,8 @@
   function pierceView(el, ctx) {
     const m = model(ctx), f = ctx.ws.files.get(LUA);
     title(el, ctx, 'Piercing', LUA, 'ItemUpgrade.lua · tWeaponProb / tSuitProb');
-    el.appendChild(h('p.muted.small', `Adding a card slot, with a moonstone and ${fmt(Sim().PIERCE_PENYA)} Penya every try (compiled). Slot n is the chance to add the n-th slot. The item's own slot limit is not in this file.`));
+    const pf = k => fmt(FRE.upgradeFees.feeOf(m.fees, k, patched(ctx)));
+    el.appendChild(h('p.muted.small', `Adding a card slot, with a moonstone and ${pf('nPiercingPenya')} Penya every try (${pf('nSafePiercingPenya')} in the safe window; see Upgrade fees). Slot n is the chance to add the n-th slot. The item's own slot limit is not in this file.`));
     for (const sys of ['weapon', 'suit']) {
       el.appendChild(h('h3', U().SYSTEMS[sys].label));
       const tb = h('table.items.up', h('tr', h('th', 'Slot'), h('th', 'Chance'), h('th', 'Tries on average'), h('th', 'If it fails'), h('th', '')));
@@ -315,7 +320,7 @@
     const sc = m.scrolls.filter(s => kinds.includes(s.kind));
     if (sc.length) el.appendChild(h('div.dr-line', h('span', 'Success scrolls every try:'), ...sc.map(s => h('label', h('input', { type: 'checkbox', checked: c.scrolls.includes(s.id),
       on: { change: e => { c.scrolls = e.target.checked ? [...c.scrolls, s.id] : c.scrolls.filter(x => x !== s.id); redo(); } } }), ` ${s.name} (+${Number((s.value / (s.kind === 'transform' ? 1 : 100)).toFixed(2))}% at +${s.min}-+${s.max})`))));
-    const o = { window: c.window, protect: c.protect, weapon: c.weapon, smelting: c.smelting, scrolls: m.scrolls.filter(s => c.scrolls.includes(s.id) && kinds.includes(s.kind)), to: c.to2 };
+    const o = { patched: patched(ctx), window: c.window, protect: c.protect, weapon: c.weapon, smelting: c.smelting, scrolls: m.scrolls.filter(s => c.scrolls.includes(s.id) && kinds.includes(s.kind)), to: c.to2 };
     const from = c.sys === 'transform' ? 0 : Math.min(c.from, max - 1), to = c.sys === 'transform' ? 1 : Math.max(from + 1, Math.min(c.to, max));
     const e = Sim().expect(m, c.sys, from, to, o);
     const tb = h('table.items.up', h('tr', h('th', 'Step'), h('th', 'Chance'), h('th', 'If it fails'), h('th', 'Items that get here'), h('th', 'Tries here (per item)')));
@@ -339,6 +344,78 @@
         `${fmt(t.tries)} tries, ${fmt(t.protect)} protect scrolls, ${fmt(t.scrolls)} success scrolls${t.penya ? `, ${fmt(t.penya)} Penya` : ''}. `,
         t.reached ? `Per finished item: ${(t.tries / t.reached).toFixed(1)} tries.` : ''));
     }
+  }
+
+  // ------------------------------------------------------------- upgrade fees (part 2: docs/patches/upgrade-fees.diff, UpgradeFees.lua)
+  // the fees count only with the patch: 'missing' in the source = not applied; unknown (test-data) = assumed built, with a note
+  const patched = ctx => ctx.patchState(PATCH) !== 'missing';
+  function feesSub(ctx) {
+    const F = model(ctx).fees;
+    const set = F.rows.filter(r => r.present && !r.ignored).length;
+    return F.empty ? 'all compiled · UpgradeFees.lua is made on the first change' : `${set} of ${F.rows.length} set in UpgradeFees.lua`;
+  }
+  function patchBanner(el, ctx) {
+    const s = ctx.patchState(PATCH);
+    const apply = 'In FLYFF-V19-SOURCE run "git apply -p1 ../FLYFF-RESOURCE-EDITOR/docs/patches/upgrade-fees.diff", then build the WorldServer and Neuz (NoGameguard).';
+    const tick = h('label.check', ' ', h('input', { type: 'checkbox', checked: s === 'built', on: { change: e => {
+      if (!ctx.setPatchBuilt(PATCH, e.target.checked)) toast('This browser cannot remember the tick (site storage is blocked).', 'bad');
+      else toast(e.target.checked ? 'Marked upgrade-fees.diff as built into the WorldServer and Neuz.' : 'upgrade-fees.diff: no longer marked as built.');
+      ctx.renderAll(false); } } }), ' I built it into the WorldServer and Neuz (remembered in this browser)');
+    if (s === 'missing') el.appendChild(h('div.banner.bad', '⛔ upgrade-fees.diff is not in FLYFF-V19-SOURCE: the server and the game ignore UpgradeFees.lua and keep the fees compiled in the C++ (the "In game now" column). ', apply));
+    else if (s === 'in-source') el.appendChild(h('div.banner.warn', 'upgrade-fees.diff is in the source. If the WorldServer and Neuz were not built since, build them once (Neuz: NoGameguard).', tick));
+    else if (s === 'built') el.appendChild(h('div.banner', '✓ upgrade-fees.diff is marked as built into the WorldServer and Neuz.', tick));
+    else el.appendChild(h('div.banner.warn', '⚠ These fees need the C++ change docs/patches/upgrade-fees.diff (NOT YET TESTED IN GAME), built into the WorldServer and Neuz. Without it the server ignores UpgradeFees.lua. ', apply, tick));
+  }
+  function feesView(el, ctx) {
+    const m = model(ctx), F = m.fees, f = ctx.ws.files.get(FEE), on = patched(ctx);
+    title(el, ctx, 'Upgrade fees', FEE, F.empty ? 'UpgradeFees.lua · made on the first change' : 'UpgradeFees.lua');
+    el.appendChild(h('p.muted.small', 'The Penya each upgrade action costs. The WorldServer takes it; the game shows the piercing price and stops the safe piercing window when a player has less (it reads its own Client/UpgradeFees.lua, made when you save). A fee left out keeps the value compiled in the C++. 0 = free.'));
+    patchBanner(el, ctx);
+    if (F.failed) el.appendChild(h('div.banner.bad', 'UpgradeFees.lua would not run: the server and the game keep every compiled fee. See the problems below.'));
+    const tb = h('table.items.up', h('tr', h('th', 'Action'), h('th', 'Fee (Penya)'), h('th', 'In game now'), h('th', 'Where it is charged'), h('th', '')));
+    for (const r of F.rows) {
+      const key = keyOf('fees', r.key), fee = FRE.upgradeFees.feeOf(F, r.key, on);
+      const box = numInput({ value: r.value, min: 0, max: FRE.upgradeFees.INT_MAX, key: `up|fee|${r.key}`, disabled: !can(ctx, FEE) || F.failed,
+        onCommit: v => { if (v === null || v === r.value) return; setFee(ctx, r, v, key); } });
+      const back = r.present && r.value !== r.def && can(ctx, FEE) && !F.failed
+        ? h('button.small', { title: `Back to the compiled ${fmt(r.def)}`, on: { click: () => setFee(ctx, r, r.def, key) } }, `↺ ${fmt(r.def)}`) : null;
+      tb.appendChild(h('tr', h('td', h('b', r.label), h('div.muted.small', r.what)), h('td', box, ' ', back,
+        h('div.muted.small', r.present ? (r.ignored ? `file: ${r.raw} (ignored)` : `UpgradeFees.lua L${f.lineOf(r.span.start) + 1}`) : `not in the file: compiled ${fmt(r.def)}`)),
+        h('td.small', on ? `${fmt(fee)}` : `${fmt(r.def)} (compiled; the patch is not applied)`),
+        h('td.small.muted', `${r.server}${r.game ? ` · game: ${r.game}` : ''}`),
+        h('td', r.span ? diagTags(spanDiags(ctx, FEE, r.span.start, r.span.end)) : null)));
+    }
+    el.appendChild(tb);
+    if (m.feeText) {
+      const n = FRE.upgradeFees.textNumber(m.feeText.text);
+      el.appendChild(h('p.muted.small', 'The remove-element window says: ', h('i', `"${m.feeText.text}"`), n ? ' — changing that fee rewrites the number in this text (textClient.txt.txt, Server + Client) in the same step.' : ' (no "<number> Penya" in it to keep in step).'));
+    }
+    // the gender change: already read from ItemUpgrade.lua (ItemUpgrade.cpp:118), no patch needed
+    const L = m.lua;
+    el.appendChild(h('h3', 'Gender change (Transy)'));
+    el.appendChild(h('p.muted.small', 'ItemUpgrade.lua already holds these (ItemUpgrade.cpp:118, no C++ change needed). A missing line costs 0 Penya.'));
+    const tt = h('table.items.up', h('tr', h('th', 'Item level'), h('th', 'Fee (Penya)'), h('th', '')));
+    for (const [n, label] of [['nItemTransyLowLevel', 'Low level items'], ['nItemTransyHighLevel', 'High level items']]) {
+      const sp = L.numbers[n], key = keyOf('fees', n);
+      tt.appendChild(h('tr', h('td', h('b', label), h('div.muted.small', n)),
+        h('td', sp ? numInput({ value: sp.value, min: 0, max: FRE.upgradeFees.INT_MAX, key: `up|fee|${n}`, disabled: !can(ctx, LUA) || L.failed,
+          onCommit: v => { if (v === null || v === sp.value) return; typed(ctx, LUA, `fee|${n}`, () => O().setNumber(sp, v, 0, FRE.upgradeFees.INT_MAX, `${label} (Penya)`), `Upgrade fee: gender change, ${label.toLowerCase()} ${fmt(v)} Penya (was ${fmt(sp.value)})`, key); } })
+          : h('span.muted', 'not in ItemUpgrade.lua (0 Penya)')),
+        h('td', sp ? h('span.line', `L${ctx.ws.files.get(LUA).lineOf(sp.start) + 1}`) : null)));
+    }
+    el.appendChild(tt);
+    problems(el, ctx, 'fees');
+  }
+  // one fee -> UpgradeFees.lua (+ the remove-element text) as ONE undo step; typing pauses fold into it
+  function setFee(ctx, r, v, key) {
+    try {
+      ctx.editGroup(() => {
+        const parts = [{ file: FEE, splices: O().setFee(model(ctx).fees, ctx.ws.files.get(FEE).text, r.key, v) }];
+        const ft = model(ctx).feeText;
+        if (r.text && ft && ctx.ws.isEditable(TXT) && FRE.upgradeFees.textNumber(ft.text)) parts.push({ file: TXT, splices: O().setFeeText(ft, v) });
+        return parts;
+      }, `Upgrade fee: ${r.label} ${fmt(v)} Penya (was ${fmt(r.value)})`, [key], `up|fee|${r.key}`);
+    } catch (e) { toast(e.message, 'bad'); }
   }
 
   FRE.ui.modules.push(mod);

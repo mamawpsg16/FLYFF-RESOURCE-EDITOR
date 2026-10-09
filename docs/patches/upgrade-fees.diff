@@ -1,0 +1,170 @@
+--- a/Source/Source/_Common/UpgradeFees.h
++++ b/Source/Source/_Common/UpgradeFees.h
+@@ -0,0 +1,58 @@
++// UpgradeFees.h: the Penya fees of the upgrade windows, read from UpgradeFees.lua (resource editor patch upgrade-fees.diff).
++// The WorldServer charges them (Server/Resource/UpgradeFees.lua); Neuz shows them and checks the player's Penya before
++// sending (Client/UpgradeFees.lua). Keep both copies the same.
++// No file, a script error, or a missing / non-number / negative / too large value keeps the old compiled fee.
++#ifndef __UPGRADEFEES_H__
++#define __UPGRADEFEES_H__
++
++#include "LuaBase.h"
++
++class CUpgradeFees
++{
++public:
++	int		nAwakening;			// OnAwakening (DPSrvr.cpp), was 100000
++	int		nRemoveAttribute;	// OnRemoveAttribute (DPSrvr.cpp), was 100000
++	int		nPiercing;			// OnPiercingSize (ItemUpgrade.cpp) + WndPiercing, was 100000
++	int		nSafePiercing;		// SmeltSafetyPiercingSize (ItemUpgrade.cpp) + CWndSmeltSafety, was 100000
++	int		nRemovePiercing;	// OnPiercingRemove (ItemUpgrade.cpp), was 1000000
++
++	static CUpgradeFees* GetInstance( void )
++	{
++		static CUpgradeFees sUpgradeFees;
++		return &sUpgradeFees;
++	}
++
++private:
++	CUpgradeFees( void )
++	: nAwakening( 100000 ), nRemoveAttribute( 100000 ), nPiercing( 100000 ), nSafePiercing( 100000 ), nRemovePiercing( 1000000 )
++	{
++		FILE* f = fopen( "UpgradeFees.lua", "r" );
++		if( f == NULL )
++			return;
++		fclose( f );
++		CLuaBase lua;
++		if( lua.RunScript( "UpgradeFees.lua" ) != 0 )
++		{
++			Error( "CUpgradeFees - UpgradeFees.lua Run Failed, the old fees are used" );
++			return;
++		}
++		Read( lua, "nAwakeningPenya", nAwakening );
++		Read( lua, "nRemoveAttributePenya", nRemoveAttribute );
++		Read( lua, "nPiercingPenya", nPiercing );
++		Read( lua, "nSafePiercingPenya", nSafePiercing );
++		Read( lua, "nRemovePiercingPenya", nRemovePiercing );
++	}
++	static void Read( CLuaBase& lua, char* szName, int& nValue )
++	{
++		lua.GetGloabal( szName );
++		if( lua_isnumber( lua.GetLuaState(), -1 ) )
++		{
++			double d = lua.ToNumber( -1 );
++			if( d >= 0 && d <= 2147483647.0 )
++				nValue = static_cast<int>( d );
++		}
++		lua.Pop( 1 );
++	}
++};
++
++#endif // __UPGRADEFEES_H__
+--- a/Source/Source/WORLDSERVER/ItemUpgrade.cpp
++++ b/Source/Source/WORLDSERVER/ItemUpgrade.cpp
+@@ -1,5 +1,6 @@
+ #include "stdafx.h"
+ #include ".\itemupgrade.h"
++#include "..\_Common\UpgradeFees.h"	// upgrade-fees.diff
+ 
+ #if __VER >= 12 // __EXT_PIERCING
+ #include "defineObj.h"
+@@ -228,7 +229,7 @@
+ 	aLogItem.RecvName = "PIERCING";
+ 	aLogItem.WorldId = pUser->GetWorld()->GetID();
+ 
+-	int nCost = 100000;
++	int nCost = CUpgradeFees::GetInstance()->nPiercing;	// was 100000 (upgrade-fees.diff)
+ 
+ 	if( 0 < nCost )
+ 	{
+@@ -444,7 +445,7 @@
+ 	}
+ #endif // __NEW_ITEM_VARUNA
+ 
+-	int nPayPenya = 1000000; // ÁöºÒÇÒ Æä³Ä
++	int nPayPenya = CUpgradeFees::GetInstance()->nRemovePiercing;	// was 1000000 (upgrade-fees.diff) // ÁöºÒÇÒ Æä³Ä
+ 	if( pUser->GetGold() < nPayPenya )	// Æä³Ä°¡ ºÎÁ·ÇÏ´Ù.
+ 	{
+ 		pUser->AddDefinedText( TID_GAME_LACKMONEY );
+@@ -794,7 +795,7 @@
+ 	aLogItem.RecvName = "PIERCING_SMELTSAFETY";
+ 	aLogItem.WorldId = pUser->GetWorld()->GetID();
+ 
+-	int nCost = 100000;
++	int nCost = CUpgradeFees::GetInstance()->nSafePiercing;	// was 100000 (upgrade-fees.diff)
+ 
+ 	if( 0 < nCost )
+ 	{
+--- a/Source/Source/WORLDSERVER/DPSrvr.cpp
++++ b/Source/Source/WORLDSERVER/DPSrvr.cpp
+@@ -36,6 +36,7 @@
+ 
+ #if __VER >= 11 // __SYS_IDENTIFY
+ #include "randomoption.h"
++#include "..\_Common\UpgradeFees.h"	// upgrade-fees.diff
+ #endif	// __SYS_IDENTIFY
+ 
+ #if __VER >= 11 // __SYS_PLAYER_DATA
+@@ -6846,7 +6847,7 @@
+ #if __VER >= 10 // __REMOVE_ATTRIBUTE
+ void CDPSrvr::OnRemoveAttribute( CAr & ar, DPID dpidCache, DPID dpidUser, LPBYTE lpBuf, u_long uBufSize)
+ {
+-	int nPayPenya = 100000; //ï¿½Ó¼ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Å½ï¿½ ï¿½Ê¿ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½
++	int nPayPenya = CUpgradeFees::GetInstance()->nRemoveAttribute;	// was 100000 (upgrade-fees.diff) //ï¿½Ó¼ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½Å½ï¿½ ï¿½Ê¿ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½
+ 
+ 	CUser* pUser	= g_UserMng.GetUser( dpidCache, dpidUser );
+ 	if( !IsValidObj( pUser ) )
+@@ -12495,7 +12496,7 @@
+ 		if( !CNpcChecker::GetInstance()->IsCloseNpc( MMI_ITEM_AWAKENING, pUser->GetWorld(), pUser->GetPos() ) )
+ 			return;
+ 
+-		const int	nCost	= 100000;
++		const int	nCost	= CUpgradeFees::GetInstance()->nAwakening;	// was 100000 (upgrade-fees.diff)
+ 		if( pUser->GetGold() < nCost )
+ 		{
+ 			pUser->AddDefinedText( TID_GAME_LACKMONEY, "" );
+--- a/Source/Source/_Interface/WndPiercing.cpp
++++ b/Source/Source/_Interface/WndPiercing.cpp
+@@ -1,4 +1,5 @@
+ #include "stdafx.h"
++#include "..\_Common\UpgradeFees.h"	// upgrade-fees.diff
+ #include "defineitem.h"
+ #include "defineText.h"
+ #include "defineObj.h"
+@@ -108,7 +109,7 @@
+ 		ItemProp* pItemProp = m_pItemElem[0]->GetProp();
+ 		if( pItemProp )
+ #if __VER >= 12 // __EXT_PIERCING
+-			nCost = 100000;
++			nCost = CUpgradeFees::GetInstance()->nPiercing;	// was 100000 (upgrade-fees.diff)
+ #else // __EXT_PIERCING
+ 			nCost = pItemProp->dwItemRare * ( 200  + ( m_pItemElem[0]->GetPiercingSize()+1) * 200 );
+ #endif // __EXT_PIERCING
+--- a/Source/Source/_Interface/WndField.cpp
++++ b/Source/Source/_Interface/WndField.cpp
+@@ -3,6 +3,7 @@
+ //////////////////////////////////////////////////////////////////////
+ 
+ #include "stdafx.h"
++#include "..\_Common\UpgradeFees.h"	// upgrade-fees.diff
+ #include "defineObj.h"
+ #include "DefineItem.h"
+ #include "defineFilter.h"
+@@ -28192,7 +28193,7 @@
+ 
+ 	if(m_eWndMode == WND_PIERCING)
+ 	{
+-		if(g_pPlayer != NULL && g_pPlayer->GetGold() < 100000)
++		if(g_pPlayer != NULL && g_pPlayer->GetGold() < CUpgradeFees::GetInstance()->nSafePiercing)	// was 100000 (upgrade-fees.diff)
+ 			return FALSE;
+ 	}
+ 
+@@ -28242,7 +28243,7 @@
+ #endif // __15_5TH_ELEMENTAL_SMELT_SAFETY
+ 			}
+ 		}
+-		else if(m_eWndMode == WND_PIERCING && g_pPlayer != NULL && g_pPlayer->GetGold() < 100000)
++		else if(m_eWndMode == WND_PIERCING && g_pPlayer != NULL && g_pPlayer->GetGold() < CUpgradeFees::GetInstance()->nSafePiercing)	// was 100000 (upgrade-fees.diff)
+ 		{
+ 			nTid = TID_GAME_LACKMONEY;
+ 		}

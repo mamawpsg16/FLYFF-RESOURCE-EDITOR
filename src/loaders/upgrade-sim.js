@@ -8,9 +8,17 @@
 //            takes only II_SYS_SYS_SCR_SMELTING: +1000 below +7 (:623-643).
 //   attr     EnchantAttribute :1659: GetAttributeEnchantProb (no cut), SMELPROT buff, II_SYS_SYS_SCR_SMELTING2 buff +1000 below +10
 //            (:1723), IK3_GEN_ATT_ENCHANT_RATE buff (:1769); fail if xRandom( 10000 ) > chance; from +3 without SMELPROT: destroyed.
-//   weapon / suit  piercing: OnPiercingSize :181: 100,000 Penya every try (:231), chance GetSizeProb (slot = size + 1, :309),
+//   weapon / suit  piercing: OnPiercingSize :181: the piercing fee every try, before the roll (:231; 100,000 compiled, nPiercingPenya
+//            with upgrade-fees.diff), chance GetSizeProb (slot = size + 1, :309),
 //            fail if chance < xRandom( 10000 ) (:262); a fail without the II_SYS_SYS_SCR_PIEPROT item destroys the item (:274);
-//            safe window SmeltSafetyPiercingSize :771: PIEPROT used up every try, 100,000 Penya, fail = nothing lost (:838).
+//            safe window SmeltSafetyPiercingSize :771: PIEPROT used up every try, the safe piercing fee (:797; nSafePiercingPenya),
+//            fail = nothing lost (:838).
+//   fees     (part 2, upgrade-fees.diff, NOT YET TESTED IN GAME) `charge`: what the server takes for one action and when it refuses
+//            (OnPiercingSize :231-243, SmeltSafetyPiercingSize :797-808: "0 < nCost" then GetGold() < nCost -> TID_GAME_LACKMONEY;
+//            OnPiercingRemove :447-461: refuse below the fee, then one fee per card taken out (the last filled slot), nothing when
+//            the item has no card; OnRemoveAttribute DPSrvr.cpp:6849 / :6863: refuse below the fee, paid when the element is removed;
+//            OnAwakening DPSrvr.cpp:12498: refuse below the fee, paid on a valid awakening item). `gameView`: what the game shows
+//            (WndPiercing.cpp:111 the piercing price) and when the safe window stops by itself (WndField.cpp:28195 / 28245).
 //   acc      RefineAccessory :866: success if xRandom( 10000 ) < chance (:900); fail from +3 without the SMELPROT4 buff: destroyed (:920);
 //            safe SmeltSafetyAccessory :699: SMELPROT4 used up, fail if xRandom( 10000 ) > chance (:743), nothing lost. Max +20 (MAX_AAO).
 //   coll     RefineCollector :935: success if xRandom( 1000 ) < chance (:963), a fail loses only the moonstone; max = the row count.
@@ -28,7 +36,27 @@
 (function (FRE) {
   'use strict';
   const U = () => FRE.upgrade;
-  const PIERCE_PENYA = 100000;                                    // ItemUpgrade.cpp:231 / :797 (compiled)
+  const PIERCE_PENYA = 100000;                                    // ItemUpgrade.cpp:231 / :797 (compiled; the fees without the patch)
+  // the Penya one try costs: piercing only. opts.patched === false: the compiled fees (no upgrade-fees.diff)
+  function penyaPerTry(model, sys, opts = {}) {
+    if (sys !== 'weapon' && sys !== 'suit') return 0;
+    return FRE.upgradeFees.feeOf(model.fees, opts.window === 'safe' ? 'nSafePiercingPenya' : 'nPiercingPenya', opts.patched !== false);
+  }
+  // one action on the server -> { ok, paid, gold (after) }. action: 'pierce' | 'safePierce' | 'removePiercing' | 'removeAttribute' | 'awaken';
+  // cards: how many filled card slots (removePiercing). A refusal = TID_GAME_LACKMONEY, nothing changes.
+  const ACTION_KEY = { pierce: 'nPiercingPenya', safePierce: 'nSafePiercingPenya', removePiercing: 'nRemovePiercingPenya', removeAttribute: 'nRemoveAttributePenya', awaken: 'nAwakeningPenya' };
+  function charge(fees, action, gold, { patched = true, cards = 1 } = {}) {
+    const fee = FRE.upgradeFees.feeOf(fees, ACTION_KEY[action], patched);
+    if ((action === 'pierce' || action === 'safePierce') && !(0 < fee)) return { ok: true, paid: 0, gold };
+    if (gold < fee) return { ok: false, paid: 0, gold };
+    if (action === 'removePiercing' && cards <= 0) return { ok: true, paid: 0, gold };
+    return { ok: true, paid: fee, gold: gold - fee };
+  }
+  // the game: the piercing window's price text, and whether the safe piercing window keeps going with `gold`
+  function gameView(fees, gold, patched = true) {
+    return { piercePrice: FRE.upgradeFees.feeOf(fees, 'nPiercingPenya', patched),
+      safeGoes: !(gold < FRE.upgradeFees.feeOf(fees, 'nSafePiercingPenya', patched)) };
+  }
 
   // the chance of one try at `level` (before the roll), the roll size and how it compares
   //   opts: { window: 'normal'|'safe', protect: bool, scrolls: [scroll], smelting: bool (safe general / SMELTING2 for attr), weapon: bool }
@@ -84,7 +112,7 @@
   // one try with a roll from rng -> { level, roll, ok, result: 'up'|'keep'|'break', used, penya }
   function attempt(model, sys, level, opts, rng) {
     const p = plan(model, sys, level, opts);
-    const penya = (sys === 'weapon' || sys === 'suit') ? PIERCE_PENYA : 0;
+    const penya = penyaPerTry(model, sys, opts);
     const r = rng.random(p.n);
     const ok = succeeds(p, r);
     return { level, roll: r, ok, result: ok ? 'up' : p.fail, used: p.used, penya, protect: protectUsed(sys, opts, level) };
@@ -137,7 +165,7 @@
       tries += here;
       protect += here * protectUsed(sys, opts, L);
       scrolls += here * p.used.length;
-      if (sys === 'weapon' || sys === 'suit') penya += here * PIERCE_PENYA;
+      penya += here * penyaPerTry(model, sys, opts);
       if (c <= 0) { never = L; reach = 0; break; }
       if (p.fail === 'break') reach *= c;
     }
@@ -145,5 +173,5 @@
     return { rows, reach, triesPerItem: tries, per, never };
   }
 
-  FRE.upgradeSim = { PIERCE_PENYA, plan, maxLevel, attempt, run, expect, chanceOf };
+  FRE.upgradeSim = { PIERCE_PENYA, ACTION_KEY, penyaPerTry, charge, gameView, plan, maxLevel, attempt, run, expect, chanceOf };
 })(globalThis.FRE = globalThis.FRE || {});

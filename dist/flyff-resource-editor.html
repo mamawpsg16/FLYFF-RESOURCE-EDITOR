@@ -487,7 +487,7 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when": "Fri 9 Oct 2026, 21:18", "rev": "d5c98e0", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when": "Sat 10 Oct 2026, 07:49", "rev": "fa08436", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -6259,6 +6259,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     UP_LUA_VALUE: ['A value in ItemUpgrade.lua is not a number (or AddAttribute has the wrong number of values). The server reads it as 0.', 'Write a whole number.'],
     UP_TABLE_MISSING: ['The server reads tGeneral, tSuitProb, tWeaponProb and tAttribute after running ItemUpgrade.lua. One of them is not there.', 'Put the table back (Undo, or copy it from the git history of FLYFF-V19-SOURCE).'],
     UP_TRANSY_MISSING: ['nItemTransyLowLevel / nItemTransyHighLevel set the Penya the gender change (Transy) costs. Without the line the server reads 0.', 'Put the line back, e.g. nItemTransyLowLevel = 500000.'],
+    UP_FEE_LUA: ['UpgradeFees.lua (upgrade-fees.diff) is real Lua. A script error stops it, and the WorldServer and the game keep every fee compiled in the C++.', 'Fix the line shown, or Undo the change that broke it.'],
+    UP_FEE_BAD: ['A fee is read as a number from 0 to 2,147,483,647 (decimals are cut). Text, a negative or a bigger number is ignored, and the old compiled fee stays.', 'Type the fee again in Upgrade fees.'],
+    UP_FEE_DUP: ['The same fee is set on more than one line of UpgradeFees.lua. Lua keeps the last one.', 'Remove the extra lines by hand, or leave them: the editor changes the last one.'],
+    UP_FEE_TEXT: ['The window that removes an element upgrade shows a text with the fee written in it (textClient.txt.txt IDS_TEXTCLIENT_INC_001814). It does not follow UpgradeFees.lua by itself.', 'Change the fee in Upgrade fees: the editor rewrites the text in the same step.'],
     UP_ZERO: ['This step has a 0% chance: no try ever passes, so no item gets past this level.', 'Type a chance above 0 if players should be able to get there.'],
     UP_RISE: ['This step is easier than the one below it. Each step is normally harder than the last, so this is often a typing slip.', 'Check the number; leave it if it is meant.'],
     UP_CAPPED: ['The file value is higher than what 100% needs, so every try passes. Higher numbers change nothing.', 'Nothing to do, or type 100% to write the exact value.'],
@@ -9214,7 +9218,35 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     return T.replaceSpan(row.luck, v);
   }
 
-  FRE.upgradeOps = { setNumber, setChance, setAttrField, setSingle, setMakeGem, setRarityNumber, setRarityName, setRarityColor, setDropLuck, colorHex };
+  // ---------------------------------------------------------------- UpgradeFees.lua (part 2, upgrade-fees.diff)
+  const FEE_HEAD = [
+    '-- UpgradeFees.lua: the Penya fees of the upgrade windows (FLYFF-RESOURCE-EDITOR docs/patches/upgrade-fees.diff).',
+    '-- Read once at startup by the WorldServer (Server/Resource) and by the game (Client): keep both copies the same.',
+    '-- A missing line keeps the fee compiled in the C++. Whole numbers from 0 to 2147483647.',
+  ];
+  // the fee `key` -> v: the last "key = n" gets the new number; no line yet -> "key = v" at the end (a new file starts with FEE_HEAD)
+  // text: UpgradeFees.lua's current text ('' for a file the editor creates)
+  function setFee(fees, text, key, v) {
+    const f = FRE.upgradeFees.BY_KEY.get(key);
+    if (!f) throw new Error(`Unknown fee ${key}`);
+    T.checkAmount(v, 0, FRE.upgradeFees.INT_MAX, `${f.label} (Penya)`);
+    if (fees.failed) throw new Error('UpgradeFees.lua does not run (see the problems panel): fix it first');
+    const row = fees.rows.find(r => r.key === key);
+    if (row && row.span) return T.replaceSpan(row.span, v);
+    const eol = T.dominantEol(text), line = `${key} = ${v}`;
+    if (!text.trim()) return [{ start: 0, end: text.length, insert: [...FEE_HEAD, line].join(eol) + eol }];
+    const needEol = !/[\r\n]$/.test(text);
+    return [{ start: text.length, end: text.length, insert: (needEol ? eol : '') + line + eol }];
+  }
+  // the remove-element text (textClient.txt.txt IDS_TEXTCLIENT_INC_001814): its "100,000 Penya" -> v (commas: it is a text players read)
+  function setFeeText(feeText, v) {
+    if (!feeText) throw new Error('textClient.txt.txt has no IDS_TEXTCLIENT_INC_001814 line');
+    const n = FRE.upgradeFees.textNumber(feeText.text);
+    if (!n) throw new Error('The remove-element text has no "<number> Penya" to change');
+    return [{ start: feeText.start + n.start, end: feeText.start + n.end, insert: FRE.num.group(v) }];
+  }
+
+  FRE.upgradeOps = { setFee, setFeeText, FEE_HEAD, setNumber, setChance, setAttrField, setSingle, setMakeGem, setRarityNumber, setRarityName, setRarityColor, setDropLuck, colorHex };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- validate/newnpc.js ----
@@ -11847,6 +11879,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     const m = { lua, t: luaTables(lua), s: loadS(ws.files.get('s.txt'), D), ult: loadUltimate(ws.files.get('ultimate_ultimateweapon.txt')),
       rarity: loadRarity(ws.files.get('weaponrarity.inc'), D) };
     m.scrolls = rateScrolls(ws);
+    // part 2: the fees (UpgradeFees.lua, upgrade-fees.diff) + the remove-element text that names its fee (textClient.txt.txt)
+    m.fees = FRE.upgradeFees.load(ws.files.get('upgradefees.lua'));
+    const tk = 'IDS_TEXTCLIENT_INC_001814', tm = ws.strings && ws.strings.meta.get(tk);
+    m.feeText = tm ? { key: tk, text: ws.strings.map.get(tk), file: tm.file, start: tm.start, end: tm.end } : null;
     return m;
   }
   // the success-rate scrolls in Spec_Item (IK3_… _ENCHANT_RATE / _UPGRADE_RATE): nEffectValue in the enchant range
@@ -11867,6 +11903,88 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     countOf, cut90, uncut90, singleChance, fromWorkspace, rateScrolls };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/upgrade-fees.js ----
+// Upgrade fees (task K part 2): UpgradeFees.lua, read the way CUpgradeFees reads it (docs/patches/upgrade-fees.diff,
+// Source/Source/_Common/UpgradeFees.h; NOT YET TESTED IN GAME). One reader for the WorldServer (Server/Resource/UpgradeFees.lua)
+// and the game (Client/UpgradeFees.lua, a loose file only: fopen + luaL_dofile, no data.res).
+//   no file                      -> every fee keeps the old compiled value
+//   the script fails to run      -> Error( "… Run Failed, the old fees are used" ), every fee keeps the old value
+//   per global: lua_isnumber (a number, or a string Lua can read as one) and 0 <= d <= 2147483647 -> (int)d (cut toward 0);
+//                anything else (missing, nil, text, negative, too large) keeps the old value. A name written twice: the last wins.
+// Without the patch built, the server ignores this file and charges the compiled values below.
+// Transy (gender change) is not here: ItemUpgrade.lua already holds nItemTransyLowLevel / HighLevel (ItemUpgrade.cpp:118).
+(function (FRE) {
+  'use strict';
+  const INT_MAX = 2147483647;
+  // key: the Lua global; def: the value compiled in the C++ (and kept when the file does not set it)
+  const FEES = [
+    { key: 'nAwakeningPenya', label: 'Awakening', what: 'random stats on an item (the Awakening NPC menu)', def: 100000,
+      server: 'DPSrvr.cpp:12498 OnAwakening', game: null },
+    { key: 'nRemoveAttributePenya', label: 'Remove an element upgrade', what: 'takes the element and its +N off a weapon or armor', def: 100000,
+      server: 'DPSrvr.cpp:6849 OnRemoveAttribute', game: null, text: 'IDS_TEXTCLIENT_INC_001814' },
+    { key: 'nPiercingPenya', label: 'Piercing: add a card slot', what: 'every try in the piercing window', def: 100000,
+      server: 'ItemUpgrade.cpp:231 OnPiercingSize', game: 'WndPiercing.cpp:111 (the price shown)' },
+    { key: 'nSafePiercingPenya', label: 'Piercing in the safe upgrade window', what: 'every try, with a piercing protection scroll', def: 100000,
+      server: 'ItemUpgrade.cpp:797 SmeltSafetyPiercingSize', game: 'WndField.cpp:28195 / 28245 (stops when the player has less)' },
+    { key: 'nRemovePiercingPenya', label: 'Remove a card from a slot', what: 'each card taken out (the last filled slot first)', def: 1000000,
+      server: 'ItemUpgrade.cpp:447 OnPiercingRemove', game: null },
+  ];
+  const BY_KEY = new Map(FEES.map(f => [f.key, f]));
+
+  // lua_isnumber + lua_tonumber of a literal: decimal / hex numbers, or a string holding one (Lua 5.3 string coercion)
+  function luaNumber(raw) {
+    let t = String(raw).trim();
+    const q = /^(["'])(.*)\1$/.exec(t);
+    if (q) t = q[2].trim();
+    if (/^[-+]?0[xX][0-9a-fA-F]+$/.test(t)) return Number.parseInt(t, 16);
+    if (/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(t)) return Number(t);
+    return NaN;
+  }
+  // the value CUpgradeFees::Read keeps: (int)d when 0 <= d <= INT_MAX, else null (the old value stays)
+  function usable(d) {
+    return Number.isFinite(d) && d >= 0 && d <= INT_MAX ? Math.trunc(d) : null;
+  }
+
+  // file: SourceFile or null -> { file, missing, empty, failed, errors, rows: [{ ...FEES[i], present, raw, value (used), span, count }] }
+  function load(file) {
+    const res = { file: 'UpgradeFees.lua', missing: !file, empty: !file || !file.text.trim(), failed: false, errors: [], rows: [] };
+    let L = null;
+    if (file && file.text.trim()) {
+      L = FRE.upgrade.loadLua(file);
+      res.failed = L.failed;
+      res.errors = L.errors.filter(e => !e.warn);
+    }
+    for (const f of FEES) {
+      const n = L && L.numbers[f.key];
+      const count = L ? (file.text.match(new RegExp(`(^|[^\\w.])${f.key}\\s*=(?!=)`, 'g')) || []).length : 0;
+      // the loader blanks strings, so a quoted value is read again from the text: "500000" is a number for lua_isnumber
+      const raw = n ? (/^("[^"\r\n]*"|'[^'\r\n]*'|[^\s;]+)/.exec(file.text.slice(n.start)) || [n.raw])[0] : null;
+      const d = n ? luaNumber(raw) : NaN;
+      if (n && raw.length !== n.end - n.start) n.end = n.start + raw.length;
+      const ok = !res.failed && n ? usable(d) : null;
+      res.rows.push({ ...f, present: !!n, raw, read: d, value: ok === null ? f.def : ok, ignored: !!n && !res.failed && ok === null,
+        span: n ? { start: n.start, end: n.end } : null, stmt: n ? n.stmt : null, count });
+    }
+    return res;
+  }
+  // the fee the server charges for key (with the patch); without it: the compiled value
+  function feeOf(fees, key, patched = true) {
+    const f = BY_KEY.get(key);
+    if (!patched || !fees) return f.def;
+    const r = fees.rows.find(x => x.key === key);
+    return r ? r.value : f.def;
+  }
+
+  // The remove-element text (TID_GAME_REMOVE_ATTRIBUTE = IDS_TEXTCLIENT_INC_001814, shown by WndField.cpp:25596): the
+  // number written before "Penya" -> { start, end, value } inside the string value, or null
+  function textNumber(s) {
+    const m = /(\d{1,3}(?:,\d{3})+|\d+)(?=\s*penya)/i.exec(s || '');
+    return m ? { start: m.index, end: m.index + m[1].length, value: Number(m[1].replace(/,/g, '')) } : null;
+  }
+
+  FRE.upgradeFees = { FEES, BY_KEY, INT_MAX, luaNumber, usable, load, feeOf, textNumber };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- loaders/upgrade-sim.js ----
 // Upgrading in game (task K): one try, many tries with the server's rolls, and the exact averages. Ports (WORLDSERVER/ItemUpgrade.cpp
 // unless noted; __UPGRADE_SUCCESS_SCROLL is ON and __SM_ITEM_2ND_EX / __15_5TH_ELEMENTAL_SMELT_SAFETY are OFF, VersionCommon.h):
@@ -11878,9 +11996,17 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
 //            takes only II_SYS_SYS_SCR_SMELTING: +1000 below +7 (:623-643).
 //   attr     EnchantAttribute :1659: GetAttributeEnchantProb (no cut), SMELPROT buff, II_SYS_SYS_SCR_SMELTING2 buff +1000 below +10
 //            (:1723), IK3_GEN_ATT_ENCHANT_RATE buff (:1769); fail if xRandom( 10000 ) > chance; from +3 without SMELPROT: destroyed.
-//   weapon / suit  piercing: OnPiercingSize :181: 100,000 Penya every try (:231), chance GetSizeProb (slot = size + 1, :309),
+//   weapon / suit  piercing: OnPiercingSize :181: the piercing fee every try, before the roll (:231; 100,000 compiled, nPiercingPenya
+//            with upgrade-fees.diff), chance GetSizeProb (slot = size + 1, :309),
 //            fail if chance < xRandom( 10000 ) (:262); a fail without the II_SYS_SYS_SCR_PIEPROT item destroys the item (:274);
-//            safe window SmeltSafetyPiercingSize :771: PIEPROT used up every try, 100,000 Penya, fail = nothing lost (:838).
+//            safe window SmeltSafetyPiercingSize :771: PIEPROT used up every try, the safe piercing fee (:797; nSafePiercingPenya),
+//            fail = nothing lost (:838).
+//   fees     (part 2, upgrade-fees.diff, NOT YET TESTED IN GAME) `charge`: what the server takes for one action and when it refuses
+//            (OnPiercingSize :231-243, SmeltSafetyPiercingSize :797-808: "0 < nCost" then GetGold() < nCost -> TID_GAME_LACKMONEY;
+//            OnPiercingRemove :447-461: refuse below the fee, then one fee per card taken out (the last filled slot), nothing when
+//            the item has no card; OnRemoveAttribute DPSrvr.cpp:6849 / :6863: refuse below the fee, paid when the element is removed;
+//            OnAwakening DPSrvr.cpp:12498: refuse below the fee, paid on a valid awakening item). `gameView`: what the game shows
+//            (WndPiercing.cpp:111 the piercing price) and when the safe window stops by itself (WndField.cpp:28195 / 28245).
 //   acc      RefineAccessory :866: success if xRandom( 10000 ) < chance (:900); fail from +3 without the SMELPROT4 buff: destroyed (:920);
 //            safe SmeltSafetyAccessory :699: SMELPROT4 used up, fail if xRandom( 10000 ) > chance (:743), nothing lost. Max +20 (MAX_AAO).
 //   coll     RefineCollector :935: success if xRandom( 1000 ) < chance (:963), a fail loses only the moonstone; max = the row count.
@@ -11898,7 +12024,27 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
 (function (FRE) {
   'use strict';
   const U = () => FRE.upgrade;
-  const PIERCE_PENYA = 100000;                                    // ItemUpgrade.cpp:231 / :797 (compiled)
+  const PIERCE_PENYA = 100000;                                    // ItemUpgrade.cpp:231 / :797 (compiled; the fees without the patch)
+  // the Penya one try costs: piercing only. opts.patched === false: the compiled fees (no upgrade-fees.diff)
+  function penyaPerTry(model, sys, opts = {}) {
+    if (sys !== 'weapon' && sys !== 'suit') return 0;
+    return FRE.upgradeFees.feeOf(model.fees, opts.window === 'safe' ? 'nSafePiercingPenya' : 'nPiercingPenya', opts.patched !== false);
+  }
+  // one action on the server -> { ok, paid, gold (after) }. action: 'pierce' | 'safePierce' | 'removePiercing' | 'removeAttribute' | 'awaken';
+  // cards: how many filled card slots (removePiercing). A refusal = TID_GAME_LACKMONEY, nothing changes.
+  const ACTION_KEY = { pierce: 'nPiercingPenya', safePierce: 'nSafePiercingPenya', removePiercing: 'nRemovePiercingPenya', removeAttribute: 'nRemoveAttributePenya', awaken: 'nAwakeningPenya' };
+  function charge(fees, action, gold, { patched = true, cards = 1 } = {}) {
+    const fee = FRE.upgradeFees.feeOf(fees, ACTION_KEY[action], patched);
+    if ((action === 'pierce' || action === 'safePierce') && !(0 < fee)) return { ok: true, paid: 0, gold };
+    if (gold < fee) return { ok: false, paid: 0, gold };
+    if (action === 'removePiercing' && cards <= 0) return { ok: true, paid: 0, gold };
+    return { ok: true, paid: fee, gold: gold - fee };
+  }
+  // the game: the piercing window's price text, and whether the safe piercing window keeps going with `gold`
+  function gameView(fees, gold, patched = true) {
+    return { piercePrice: FRE.upgradeFees.feeOf(fees, 'nPiercingPenya', patched),
+      safeGoes: !(gold < FRE.upgradeFees.feeOf(fees, 'nSafePiercingPenya', patched)) };
+  }
 
   // the chance of one try at `level` (before the roll), the roll size and how it compares
   //   opts: { window: 'normal'|'safe', protect: bool, scrolls: [scroll], smelting: bool (safe general / SMELTING2 for attr), weapon: bool }
@@ -11954,7 +12100,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
   // one try with a roll from rng -> { level, roll, ok, result: 'up'|'keep'|'break', used, penya }
   function attempt(model, sys, level, opts, rng) {
     const p = plan(model, sys, level, opts);
-    const penya = (sys === 'weapon' || sys === 'suit') ? PIERCE_PENYA : 0;
+    const penya = penyaPerTry(model, sys, opts);
     const r = rng.random(p.n);
     const ok = succeeds(p, r);
     return { level, roll: r, ok, result: ok ? 'up' : p.fail, used: p.used, penya, protect: protectUsed(sys, opts, level) };
@@ -12007,7 +12153,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
       tries += here;
       protect += here * protectUsed(sys, opts, L);
       scrolls += here * p.used.length;
-      if (sys === 'weapon' || sys === 'suit') penya += here * PIERCE_PENYA;
+      penya += here * penyaPerTry(model, sys, opts);
       if (c <= 0) { never = L; reach = 0; break; }
       if (p.fail === 'break') reach *= c;
     }
@@ -12015,7 +12161,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     return { rows, reach, triesPerItem: tries, per, never };
   }
 
-  FRE.upgradeSim = { PIERCE_PENYA, plan, maxLevel, attempt, run, expect, chanceOf };
+  FRE.upgradeSim = { PIERCE_PENYA, ACTION_KEY, penyaPerTry, charge, gameView, plan, maxLevel, attempt, run, expect, chanceOf };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- validate/upgrade.js ----
@@ -12109,6 +12255,22 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
           push(WR, 'UP_RARITY_SUM', 'WARN', R.dropBlock.open, `The Drop chances add up to ${R.dropTotal}, not 100 (the server logs an error). ${R.dropTotal < 100 ? `${Math.round(ch.nothing * 100)}% of scrolls change nothing.` : 'The tiers at the end get less than written (the roll is 0-99).'}`, 'sum');
         }
       }
+    }
+    // ---- UpgradeFees.lua (part 2: docs/patches/upgrade-fees.diff, _Common/UpgradeFees.h CUpgradeFees)
+    const F = model.fees, FEE = 'UpgradeFees.lua';
+    if (F && !F.empty) {
+      for (const e of F.errors) push(FEE, 'UP_FEE_LUA', 'BLOCK', e, `${e.message.replace('ItemUpgrade.lua', FEE)}. The script stops: the server and the game log "UpgradeFees.lua Run Failed" and keep every old fee.`, e.message);
+      if (!F.failed) for (const r of F.rows) {
+        if (r.ignored) push(FEE, 'UP_FEE_BAD', 'WARN', r.span, `${r.label}: "${r.raw}" is not a whole number from 0 to 2,147,483,647, so it is ignored: players pay the old ${FRE.num.group(r.def)} Penya.`, r.key);
+        else if (r.present && r.read !== Math.trunc(r.read)) push(FEE, 'UP_FEE_BAD', 'INFO', r.span, `${r.label}: ${r.raw} is cut to ${FRE.num.group(r.value)} (static_cast<int>).`, r.key + '|cut');
+        if (r.count > 1) push(FEE, 'UP_FEE_DUP', 'INFO', r.stmt, `${r.key} is set ${r.count} times: the last line wins (${FRE.num.group(r.value)} Penya).`, r.key);
+      }
+    }
+    // the remove-element text names its fee (TID_GAME_REMOVE_ATTRIBUTE, WndField.cpp:25596)
+    if (F && model.feeText) {
+      const n = FRE.upgradeFees.textNumber(model.feeText.text), fee = FRE.upgradeFees.feeOf(F, 'nRemoveAttributePenya');
+      if (n && n.value !== fee) push('textClient.txt.txt', 'UP_FEE_TEXT', 'WARN', { start: model.feeText.start + n.start, end: model.feeText.start + n.end },
+        `The remove-element window says "${FRE.num.group(n.value)} Penya", but the fee in UpgradeFees.lua is ${FRE.num.group(fee)}. Change the fee again in Upgrade fees (it rewrites the text), or edit IDS_TEXTCLIENT_INC_001814.`, 'remove-attr');
     }
     // ---- comments that still hold the old number (INFO): an edited line with a -- / // comment
     if (ws) for (const [key, file, re] of [['itemupgrade.lua', LUA, /--/], ['s.txt', ST, /\/\//], ['ultimate_ultimateweapon.txt', ULT, /\/\//]]) {
@@ -12287,10 +12449,13 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
       // collector chances: LoadServerScript, WorldServer; the game reads the collecting blocks of its LF copy, 15091d5f),
       // Ultimate_UltimateWeapon.txt (WorldServer only), WeaponRarity.inc (both, 3168003d). Spec_Item is read for the rate scrolls.
       id: 'upgrade', label: 'Upgrade Rates',
-      required: ['ItemUpgrade.lua'], optional: ['s.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc'],
-      editable: ['ItemUpgrade.lua', 's.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc'],
-      client: ['s.txt', 'WeaponRarity.inc'],
-      deps: ['s.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc'],
+      // Part 2: UpgradeFees.lua (docs/patches/upgrade-fees.diff: the WorldServer and the game read it; created by the editor when
+      // there is none: `creates`) and the remove-element text in textClient.txt.txt that names its fee.
+      required: ['ItemUpgrade.lua'], optional: ['s.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc', 'UpgradeFees.lua', 'textClient.txt.txt'],
+      editable: ['ItemUpgrade.lua', 's.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc', 'UpgradeFees.lua', 'textClient.txt.txt'],
+      client: ['s.txt', 'WeaponRarity.inc', 'UpgradeFees.lua', 'textClient.txt.txt'],
+      deps: ['s.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc', 'UpgradeFees.lua'],
+      creates: ['UpgradeFees.lua'],
       parse(ws) { return FRE.upgrade.fromWorkspace(ws); },
       validate(ws, model) { return FRE.upgradeChecks(model, { ws }); },
     },
@@ -12343,6 +12508,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
         const miss = m.required.filter(n => !files.has(n.toLowerCase()));
         this.available[m.id] = !this.active.has(m.id) ? { ok: false, missing: [], off: true } : miss.length ? { ok: false, missing: miss } : { ok: true };
         if (!miss.length && this.shown.has(m.id)) m.editable.forEach(n => this.editable.add(n.toLowerCase()));
+        // a file the task may create (UpgradeFees.lua): an empty one with no handle; io/save.js creates it in Server/Resource
+        // when it gets text (serverNew), and an Undo back to empty leaves nothing to save
+        if (!miss.length && this.shown.has(m.id)) for (const n of m.creates || []) {
+          if (files.has(n.toLowerCase())) continue;
+          const f = new FRE.SourceFile(n, new Uint8Array(0));
+          f.serverNew = true;
+          files.set(n.toLowerCase(), f);
+        }
       }
       if (!task || task.editsSpec) CORE_EDITABLE.forEach(n => { if (files.has(n.toLowerCase())) this.editable.add(n.toLowerCase()); });
     }
@@ -12821,6 +12994,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     's.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:994 LoadServerScript (+ the game: :937 LoadCollectingInfo)' },
     'ultimate_ultimateweapon.txt': { server: STARTUP, client: null, cite: 'Project.cpp:967 LoadUltimateWeapon -> UltimateWeapon.cpp:116 (#ifdef __WORLDSERVER)' },
     'weaponrarity.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:971 LoadWeaponRarity' },
+    // Upgrade fees (K part 2): only with upgrade-fees.diff built (WorldServer + Neuz). CUpgradeFees::GetInstance reads it once,
+    // the first time a fee is needed (a static object: once per run of the WorldServer / the game)
+    'upgradefees.lua': { server: STARTUP, client: STARTUP, cite: 'upgrade-fees.diff: _Common/UpgradeFees.h CUpgradeFees()', patch: 'upgrade-fees' },
     // couple: the WorldServer, the DatabaseServer and the game each load it (couplehelper.cpp Initialize); the game's couple window
     // draws its level bar from its own copy (WndField.cpp:26910 GetExperienceRate)
     'couple.inc': { server: STARTUP, client: STARTUP, cite: 'WORLDSERVER/couplehelper.cpp:44, databaseserver/couplehelper.cpp:158, Neuz/couplehelper.cpp:33 CCoupleProperty::Initialize' },
@@ -12842,8 +13018,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
   const PATCHES = {
     'npc-board': { file: 'docs/patches/npc-board.diff', what: 'rules text windows', marker: 'NpcBoard_%d.inc', src: '_Interface/WndWorld.cpp' },
     'donation-tree': { file: 'docs/patches/donation-tree.diff', what: 'category order and item card text', marker: 'DS_LoadTreeOrder', src: '_Interface/WndDonationShop.cpp' },
+    // server + game: the WorldServer charges the fees, the game shows them and checks the player's Penya (NOT YET TESTED IN GAME)
+    'upgrade-fees': { file: 'docs/patches/upgrade-fees.diff', what: 'upgrade fees read from UpgradeFees.lua', marker: 'CUpgradeFees', src: 'WORLDSERVER/ItemUpgrade.cpp', server: true },
   };
   const BUILD = 'build the Neuz project (Source/Source/Neuz/Neuz.sln, configuration NoGameguard). Only Neuz: no server is rebuilt. Start Server.bat then copies the new Neuz.exe (Client\\- Start Game.bat)';
+  const BUILD_BOTH = 'build the WorldServer project and the Neuz project (configuration NoGameguard). Start Server.bat then starts the new WorldServer and copies the new Neuz.exe (Client\\- Start Game.bat)';
+  const buildOf = p => (p.server ? BUILD_BOTH : BUILD);
 
   // input:
   //   changes  [{ label, files: [key] }]           one per undo step since the last save
@@ -12881,6 +13061,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
           needs.add('reopen:donation'); why.push(`the game reads Client/Client/${name} each time the Donation Shop window opens (${r.cite})`);
           if (treePatch) { needs.add('patch:donation-tree'); why.push('a category the game\'s code does not know sorts last and gets the wrong card text until donation-tree.diff is built into Neuz'); }
         }
+        if (r.patch) { needs.add('patch:' + r.patch); why.push(`the server and the game read ${name} only with ${r.patch}.diff built into the WorldServer and Neuz; without it they keep the fees compiled in the C++`); }
         if (r.client === CLICK) {
           needs.add('click:board'); needs.add('patch:npc-board');
           why.push(`the game reads Client/Client/${name} each time the menu is clicked, but only with npc-board.diff built into Neuz`);
@@ -12892,12 +13073,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     }
 
     const steps = [];
-    for (const id of ['npc-board', 'donation-tree']) {
+    for (const id of Object.keys(PATCHES)) {
       if (!all.has('patch:' + id)) continue;
       const p = PATCHES[id], state = patches[id] || 'unknown';
-      steps.push({ id: 'patch:' + id, state, short: `build Neuz with ${p.file.split('/').pop()}`, text: state === 'in-source'
-        ? `C++ (once): ${p.file.split('/').pop()} (${p.what}) is already in the source. If Neuz was not built since, ${BUILD}.`
-        : `C++ (once): in FLYFF-V19-SOURCE run "git apply -p1 ../FLYFF-RESOURCE-EDITOR/${p.file}" (${p.what}), then ${BUILD}.` });
+      steps.push({ id: 'patch:' + id, state, short: `build ${p.server ? 'the WorldServer and Neuz' : 'Neuz'} with ${p.file.split('/').pop()}`, text: state === 'in-source'
+        ? `C++ (once): ${p.file.split('/').pop()} (${p.what}) is already in the source. If ${p.server ? 'they were' : 'Neuz was'} not built since, ${buildOf(p)}.`
+        : `C++ (once): in FLYFF-V19-SOURCE run "git apply -p1 ../FLYFF-RESOURCE-EDITOR/${p.file}" (${p.what}), then ${buildOf(p)}.` });
     }
     const patched = steps.length > 0;
     if (all.has('servers')) steps.push({ id: 'servers', short: 'run Stop Server.bat, then Start Server.bat', text: 'Run Stop Server.bat, then Start Server.bat. The servers only read these files when they start, and Stop Server.bat also closes the game, so the game reads its copies again too.' });
@@ -12906,7 +13087,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
       if (all.has('reopen:donation')) steps.push({ id: 'reopen:donation', short: 'reopen the Donation Shop window', text: 'Close and reopen the Donation Shop window in the game. No restart is needed: it reads the categories each time it opens.' });
       if (all.has('click:board')) steps.push({ id: 'click:board', short: 'click the rules menu again', text: 'Click the rules menu again in the game. No restart is needed: it reads the text on every click.' });
     }
-    return { steps, changes: outChanges, notes, built: ['npc-board', 'donation-tree'].filter(id => built.has(id)) };
+    return { steps, changes: outChanges, notes, built: Object.keys(PATCHES).filter(id => built.has(id)) };
   }
 
   // The input of compute() for a workspace about to be saved:
@@ -13109,6 +13290,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
 // With FLYFF-V19-SOURCE picked, the patched C++ file is READ (never written) for one line the patch adds:
 //   npc-board.diff     -> Source/Source/_Interface/WndWorld.cpp        "NpcBoard_%d.inc"
 //   donation-tree.diff -> Source/Source/_Interface/WndDonationShop.cpp "DS_LoadTreeOrder"
+//   upgrade-fees.diff  -> Source/Source/WORLDSERVER/ItemUpgrade.cpp    "CUpgradeFees" (WorldServer + Neuz)
 // in-source: the line is there (Neuz may still need a build); missing: not applied; unknown: no source here
 // (test-data). "I built it into Neuz" is a tickbox remembered in this browser (localStorage): 'built'.
 (function (FRE) {
@@ -13231,11 +13413,20 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
 
     const blocking = ws.newBlocking();
     if (blocking.length) { step(`Aborted: ${blocking.length} new blocking problem(s). Nothing was written.`); report.blocking = blocking; return report; }
-    for (const f of dirty) if (!f.handle) { step(`Aborted: ${f.name} has no file handle.`); return report; }
+    // a file the task creates (UpgradeFees.lua: f.serverNew, no handle) is written into Server/Resource (ws.resDir)
+    for (const f of dirty) if (!f.handle && !(f.serverNew && ws.resDir)) { step(`Aborted: ${f.name} has no file handle.`); return report; }
 
     // 1. conflict check: the disk must still hold exactly what we loaded
     const onDisk = new Map();
     for (const f of dirty) {
+      if (!f.handle) {
+        if (await exists(ws.resDir, f.name)) {
+          step(`Aborted: ${f.name} appeared in ${ws.resDir.name} since it was loaded. Nothing was written. Reload the folder.`);
+          report.conflict = f.name;
+          return report;
+        }
+        continue;
+      }
       const cur = await FRE.fsa.readHandle(f.handle);
       if (!B.bytesEqual(cur.bytes, f.bytes)) {
         step(`Aborted: ${f.name} was changed on disk since it was loaded (another program, git, or another tab). Nothing was written. Reload the folder.`);
@@ -13291,7 +13482,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     const folder = await FRE.fsa.newFolder(backupDir, stampName() + (ws.only ? '_' + ws.only : ''));   // e.g. 2026-10-06_08-10-00_exchange
     report.backupFolder = folder.name;
     // files in a sub-folder (World/<map>/<map>.dyo) keep their path in the backup
-    for (const f of dirty) await FRE.fsa.newFile(await FRE.fsa.dirAt(folder, f.dir, true), f.name, onDisk.get(f));
+    for (const f of dirty) if (f.handle) await FRE.fsa.newFile(await FRE.fsa.dirAt(folder, f.dir, true), f.name, onDisk.get(f));
     const existing = targets.filter(t => t.client);
     const oldBoards = boards.filter(f => boardDisk.has(f));
     if (existing.length || oldBoards.length) {
@@ -13299,14 +13490,23 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
       for (const t of existing) await FRE.fsa.newFile(await FRE.fsa.dirAt(cf, t.client.dir, true), t.client.name, t.client.bytes);
       for (const f of oldBoards) await FRE.fsa.newFile(await FRE.fsa.dirAt(cf, f.dir, true), f.name, boardDisk.get(f));
     }
-    const inClient = existing.length + oldBoards.length, created = boards.length - oldBoards.length;
-    step(`Backup written and verified: ${backupDir.name}/${folder.name}/ (${dirty.length} file(s)${inClient ? ` + ${inClient} in Client/` : ''}${created ? `; ${created} new file(s), listed in the manifest` : ''})`);
+    const inClient = existing.length + oldBoards.length, created = boards.length - oldBoards.length + dirty.filter(f => !f.handle).length;
+    step(`Backup written and verified: ${backupDir.name}/${folder.name}/ (${dirty.filter(f => f.handle).length} file(s)${inClient ? ` + ${inClient} in Client/` : ''}${created ? `; ${created} new file(s), listed in the manifest` : ''})`);
 
     // 3. write + verify each file; restore on failure
     const written = [];
     try {
       for (const f of dirty) {
         const candidate = f.serialize();
+        if (!f.handle) {
+          const handle = await FRE.fsa.newFile(ws.resDir, f.name, candidate);
+          const back = await FRE.fsa.readHandle(handle);
+          written.push({ f, candidate, stamp: back.stamp, handle, created: true });
+          if (!B.bytesEqual(back.bytes, candidate)) throw new Error(`${f.name}: the new file reads back different`);
+          report.files.push({ name: label(f), before: 0, after: candidate.length, changes: changeSummary(f), created: true });
+          step(`Created and verified ${label(f)} in ${ws.resDir.name} (${candidate.length} bytes).`);
+          continue;
+        }
         const stamp = await FRE.fsa.writeVerified(f.handle, candidate);
         written.push({ f, candidate, stamp });
         report.files.push({ name: label(f), before: f.bytes.length, after: candidate.length, changes: changeSummary(f) });
@@ -13333,6 +13533,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
       for (const w of written) {
         try {
           if (w.board && !w.f.handle) await w.dirHandle.removeEntry(w.f.name);
+          else if (w.created) await ws.resDir.removeEntry(w.f.name);
           else await FRE.fsa.writeVerified(w.f.handle, w.board ? boardDisk.get(w.f) : onDisk.get(w.f));
           step(`Restored ${w.board ? 'Client/' + label(w.f) : w.f.name}.`);
         } catch (e2) { step(`!! Could not restore ${w.f.name}: ${e2.message}. Copy it back manually from ${folder.name}.`); }
@@ -13350,7 +13551,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     }
 
     await writeManifest(folder, report, 'ok');
-    for (const w of written) { if (w.board) w.f.handle = w.handle; w.f.commitSaved(w.candidate, w.stamp); }
+    for (const w of written) { if (w.board || w.created) w.f.handle = w.handle; if (w.created) w.f.serverNew = false; w.f.commitSaved(w.candidate, w.stamp); }
     ws.markSaved();
     report.ok = true;
     step('Saved.');
@@ -19309,7 +19510,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
   'use strict';
   const { h, fmt, numInput, pctInput, toast, keepFocus } = FRE.dom;
   const { diagTags, diagRow } = FRE.ui;
-  const LUA = 'itemupgrade.lua', ST = 's.txt', ULT = 'ultimate_ultimateweapon.txt', WR = 'weaponrarity.inc';
+  const LUA = 'itemupgrade.lua', ST = 's.txt', ULT = 'ultimate_ultimateweapon.txt', WR = 'weaponrarity.inc', FEE = 'upgradefees.lua', TXT = 'textclient.txt.txt';
+  const PATCH = 'upgrade-fees';
   const st = { sel: 'general', calc: null };
   const U = () => FRE.upgrade, O = () => FRE.upgradeOps, Sim = () => FRE.upgradeSim;
   const model = ctx => ctx.ws.models.upgrade;
@@ -19331,6 +19533,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     { id: 'coll', label: 'Collector upgrade', sub: ctx => (model(ctx).s.missing ? 's.txt not found' : ladderSub(ctx, 'coll', 'moonstone, +0 → +')) },
     { id: 'ult', label: 'Ultimate weapons', sub: ctx => (model(ctx).ult.missing ? 'Ultimate_UltimateWeapon.txt not found' : 'transforms, +1 → +10, gems') },
     { id: 'rarity', label: 'Weapon Rarity', sub: ctx => (model(ctx).rarity.missing ? 'WeaponRarity.inc not found' : `${model(ctx).rarity.tiers.size} tiers (Weapon Rarity Scroll)`) },
+    { id: 'fees', label: 'Upgrade fees', sub: ctx => feesSub(ctx) },
     { id: 'calc', label: '🧮 Upgrade calculator', sub: () => 'Tries, scrolls and Penya to reach +N' },
   ];
   function ladderSub(ctx, sys, what) {
@@ -19338,7 +19541,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     if (!lad.length) return 'no chances';
     return `${what}${lad.length}; last step ${pc(lad[lad.length - 1].chance)}`;
   }
-  const sectionFiles = { general: [LUA], attr: [LUA], pierce: [LUA], acc: [ST], coll: [ST], ult: [ULT], rarity: [WR] };
+  const sectionFiles = { general: [LUA], attr: [LUA], pierce: [LUA], acc: [ST], coll: [ST], ult: [ULT], rarity: [WR], fees: [FEE, TXT, LUA] };
   const SEC_CODES = { attr: /^UP_ATTR_/ };
   function sectionDiags(ctx, id) {
     const fs = sectionFiles[id];
@@ -19348,6 +19551,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
   // which section a problem belongs to (ItemUpgrade.lua and s.txt hold several)
   function sectionOf(d) {
     const f = d.file.toLowerCase(), k = String(d.key || '');
+    if (f === FEE || f === TXT || d.code === 'UP_TRANSY_MISSING') return 'fees';
     if (f === ST) return /coll|COLL/.test(k) || d.code === 'UP_COLL_EMPTY' ? 'coll' : 'acc';
     if (f === ULT) return 'ult';
     if (f === WR) return 'rarity';
@@ -19383,6 +19587,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
         else if (st.sel === 'ult') ultView(el, ctx);
         else if (st.sel === 'rarity') rarityView(el, ctx);
         else if (st.sel === 'calc') calcView(el, ctx);
+        else if (st.sel === 'fees') feesView(el, ctx);
         else ladderView(el, ctx, st.sel);
       });
     },
@@ -19473,7 +19678,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
   function pierceView(el, ctx) {
     const m = model(ctx), f = ctx.ws.files.get(LUA);
     title(el, ctx, 'Piercing', LUA, 'ItemUpgrade.lua · tWeaponProb / tSuitProb');
-    el.appendChild(h('p.muted.small', `Adding a card slot, with a moonstone and ${fmt(Sim().PIERCE_PENYA)} Penya every try (compiled). Slot n is the chance to add the n-th slot. The item's own slot limit is not in this file.`));
+    const pf = k => fmt(FRE.upgradeFees.feeOf(m.fees, k, patched(ctx)));
+    el.appendChild(h('p.muted.small', `Adding a card slot, with a moonstone and ${pf('nPiercingPenya')} Penya every try (${pf('nSafePiercingPenya')} in the safe window; see Upgrade fees). Slot n is the chance to add the n-th slot. The item's own slot limit is not in this file.`));
     for (const sys of ['weapon', 'suit']) {
       el.appendChild(h('h3', U().SYSTEMS[sys].label));
       const tb = h('table.items.up', h('tr', h('th', 'Slot'), h('th', 'Chance'), h('th', 'Tries on average'), h('th', 'If it fails'), h('th', '')));
@@ -19619,7 +19825,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     const sc = m.scrolls.filter(s => kinds.includes(s.kind));
     if (sc.length) el.appendChild(h('div.dr-line', h('span', 'Success scrolls every try:'), ...sc.map(s => h('label', h('input', { type: 'checkbox', checked: c.scrolls.includes(s.id),
       on: { change: e => { c.scrolls = e.target.checked ? [...c.scrolls, s.id] : c.scrolls.filter(x => x !== s.id); redo(); } } }), ` ${s.name} (+${Number((s.value / (s.kind === 'transform' ? 1 : 100)).toFixed(2))}% at +${s.min}-+${s.max})`))));
-    const o = { window: c.window, protect: c.protect, weapon: c.weapon, smelting: c.smelting, scrolls: m.scrolls.filter(s => c.scrolls.includes(s.id) && kinds.includes(s.kind)), to: c.to2 };
+    const o = { patched: patched(ctx), window: c.window, protect: c.protect, weapon: c.weapon, smelting: c.smelting, scrolls: m.scrolls.filter(s => c.scrolls.includes(s.id) && kinds.includes(s.kind)), to: c.to2 };
     const from = c.sys === 'transform' ? 0 : Math.min(c.from, max - 1), to = c.sys === 'transform' ? 1 : Math.max(from + 1, Math.min(c.to, max));
     const e = Sim().expect(m, c.sys, from, to, o);
     const tb = h('table.items.up', h('tr', h('th', 'Step'), h('th', 'Chance'), h('th', 'If it fails'), h('th', 'Items that get here'), h('th', 'Tries here (per item)')));
@@ -19645,6 +19851,78 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     }
   }
 
+  // ------------------------------------------------------------- upgrade fees (part 2: docs/patches/upgrade-fees.diff, UpgradeFees.lua)
+  // the fees count only with the patch: 'missing' in the source = not applied; unknown (test-data) = assumed built, with a note
+  const patched = ctx => ctx.patchState(PATCH) !== 'missing';
+  function feesSub(ctx) {
+    const F = model(ctx).fees;
+    const set = F.rows.filter(r => r.present && !r.ignored).length;
+    return F.empty ? 'all compiled · UpgradeFees.lua is made on the first change' : `${set} of ${F.rows.length} set in UpgradeFees.lua`;
+  }
+  function patchBanner(el, ctx) {
+    const s = ctx.patchState(PATCH);
+    const apply = 'In FLYFF-V19-SOURCE run "git apply -p1 ../FLYFF-RESOURCE-EDITOR/docs/patches/upgrade-fees.diff", then build the WorldServer and Neuz (NoGameguard).';
+    const tick = h('label.check', ' ', h('input', { type: 'checkbox', checked: s === 'built', on: { change: e => {
+      if (!ctx.setPatchBuilt(PATCH, e.target.checked)) toast('This browser cannot remember the tick (site storage is blocked).', 'bad');
+      else toast(e.target.checked ? 'Marked upgrade-fees.diff as built into the WorldServer and Neuz.' : 'upgrade-fees.diff: no longer marked as built.');
+      ctx.renderAll(false); } } }), ' I built it into the WorldServer and Neuz (remembered in this browser)');
+    if (s === 'missing') el.appendChild(h('div.banner.bad', '⛔ upgrade-fees.diff is not in FLYFF-V19-SOURCE: the server and the game ignore UpgradeFees.lua and keep the fees compiled in the C++ (the "In game now" column). ', apply));
+    else if (s === 'in-source') el.appendChild(h('div.banner.warn', 'upgrade-fees.diff is in the source. If the WorldServer and Neuz were not built since, build them once (Neuz: NoGameguard).', tick));
+    else if (s === 'built') el.appendChild(h('div.banner', '✓ upgrade-fees.diff is marked as built into the WorldServer and Neuz.', tick));
+    else el.appendChild(h('div.banner.warn', '⚠ These fees need the C++ change docs/patches/upgrade-fees.diff (NOT YET TESTED IN GAME), built into the WorldServer and Neuz. Without it the server ignores UpgradeFees.lua. ', apply, tick));
+  }
+  function feesView(el, ctx) {
+    const m = model(ctx), F = m.fees, f = ctx.ws.files.get(FEE), on = patched(ctx);
+    title(el, ctx, 'Upgrade fees', FEE, F.empty ? 'UpgradeFees.lua · made on the first change' : 'UpgradeFees.lua');
+    el.appendChild(h('p.muted.small', 'The Penya each upgrade action costs. The WorldServer takes it; the game shows the piercing price and stops the safe piercing window when a player has less (it reads its own Client/UpgradeFees.lua, made when you save). A fee left out keeps the value compiled in the C++. 0 = free.'));
+    patchBanner(el, ctx);
+    if (F.failed) el.appendChild(h('div.banner.bad', 'UpgradeFees.lua would not run: the server and the game keep every compiled fee. See the problems below.'));
+    const tb = h('table.items.up', h('tr', h('th', 'Action'), h('th', 'Fee (Penya)'), h('th', 'In game now'), h('th', 'Where it is charged'), h('th', '')));
+    for (const r of F.rows) {
+      const key = keyOf('fees', r.key), fee = FRE.upgradeFees.feeOf(F, r.key, on);
+      const box = numInput({ value: r.value, min: 0, max: FRE.upgradeFees.INT_MAX, key: `up|fee|${r.key}`, disabled: !can(ctx, FEE) || F.failed,
+        onCommit: v => { if (v === null || v === r.value) return; setFee(ctx, r, v, key); } });
+      const back = r.present && r.value !== r.def && can(ctx, FEE) && !F.failed
+        ? h('button.small', { title: `Back to the compiled ${fmt(r.def)}`, on: { click: () => setFee(ctx, r, r.def, key) } }, `↺ ${fmt(r.def)}`) : null;
+      tb.appendChild(h('tr', h('td', h('b', r.label), h('div.muted.small', r.what)), h('td', box, ' ', back,
+        h('div.muted.small', r.present ? (r.ignored ? `file: ${r.raw} (ignored)` : `UpgradeFees.lua L${f.lineOf(r.span.start) + 1}`) : `not in the file: compiled ${fmt(r.def)}`)),
+        h('td.small', on ? `${fmt(fee)}` : `${fmt(r.def)} (compiled; the patch is not applied)`),
+        h('td.small.muted', `${r.server}${r.game ? ` · game: ${r.game}` : ''}`),
+        h('td', r.span ? diagTags(spanDiags(ctx, FEE, r.span.start, r.span.end)) : null)));
+    }
+    el.appendChild(tb);
+    if (m.feeText) {
+      const n = FRE.upgradeFees.textNumber(m.feeText.text);
+      el.appendChild(h('p.muted.small', 'The remove-element window says: ', h('i', `"${m.feeText.text}"`), n ? ' — changing that fee rewrites the number in this text (textClient.txt.txt, Server + Client) in the same step.' : ' (no "<number> Penya" in it to keep in step).'));
+    }
+    // the gender change: already read from ItemUpgrade.lua (ItemUpgrade.cpp:118), no patch needed
+    const L = m.lua;
+    el.appendChild(h('h3', 'Gender change (Transy)'));
+    el.appendChild(h('p.muted.small', 'ItemUpgrade.lua already holds these (ItemUpgrade.cpp:118, no C++ change needed). A missing line costs 0 Penya.'));
+    const tt = h('table.items.up', h('tr', h('th', 'Item level'), h('th', 'Fee (Penya)'), h('th', '')));
+    for (const [n, label] of [['nItemTransyLowLevel', 'Low level items'], ['nItemTransyHighLevel', 'High level items']]) {
+      const sp = L.numbers[n], key = keyOf('fees', n);
+      tt.appendChild(h('tr', h('td', h('b', label), h('div.muted.small', n)),
+        h('td', sp ? numInput({ value: sp.value, min: 0, max: FRE.upgradeFees.INT_MAX, key: `up|fee|${n}`, disabled: !can(ctx, LUA) || L.failed,
+          onCommit: v => { if (v === null || v === sp.value) return; typed(ctx, LUA, `fee|${n}`, () => O().setNumber(sp, v, 0, FRE.upgradeFees.INT_MAX, `${label} (Penya)`), `Upgrade fee: gender change, ${label.toLowerCase()} ${fmt(v)} Penya (was ${fmt(sp.value)})`, key); } })
+          : h('span.muted', 'not in ItemUpgrade.lua (0 Penya)')),
+        h('td', sp ? h('span.line', `L${ctx.ws.files.get(LUA).lineOf(sp.start) + 1}`) : null)));
+    }
+    el.appendChild(tt);
+    problems(el, ctx, 'fees');
+  }
+  // one fee -> UpgradeFees.lua (+ the remove-element text) as ONE undo step; typing pauses fold into it
+  function setFee(ctx, r, v, key) {
+    try {
+      ctx.editGroup(() => {
+        const parts = [{ file: FEE, splices: O().setFee(model(ctx).fees, ctx.ws.files.get(FEE).text, r.key, v) }];
+        const ft = model(ctx).feeText;
+        if (r.text && ft && ctx.ws.isEditable(TXT) && FRE.upgradeFees.textNumber(ft.text)) parts.push({ file: TXT, splices: O().setFeeText(ft, v) });
+        return parts;
+      }, `Upgrade fee: ${r.label} ${fmt(v)} Penya (was ${fmt(r.value)})`, [key], `up|fee|${r.key}`);
+    } catch (e) { toast(e.message, 'bad'); }
+  }
+
   FRE.ui.modules.push(mod);
 })(globalThis.FRE = globalThis.FRE || {});
 
@@ -19661,7 +19939,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
   const ROW_H = 40;
 
   const S = {
-    ws: null, resDir: null, backupDir: null, client: null, createMissing: new Set(), mode: 'npc',
+    ws: null, resDir: null, backupDir: null, client: null, createMissing: new Set(), createAsked: new Set(), mode: 'npc',
     layout: null, pendingRoot: null, task: null, busy: false,
     queries: {}, items: [], filtered: [], rarity: new Set(), ik1: '', ik3: '', itemQuery: '',
     diagOpen: false,
@@ -19677,6 +19955,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     // list badges: the keys of the edits still in the undo history, so Undo removes a badge and Redo brings it back
     get edited() { return new Set(S.ws ? S.ws.history.flatMap(e => e.tags || []) : []); },
     renderAll: (withItems) => renderAll(withItems),
+    // a C++ patch's state (io/patch-state.js): 'in-source' | 'missing' | 'unknown' | 'built'
+    patchState: id => FRE.patchState.effective(S.patchSrc)[id] || 'unknown',
+    setPatchBuilt: (id, on) => FRE.patchState.setTicked(id, on),
     // [{ stamp, bytes }] of every backup copy of a file, or null when no backups folder is known
     backupsOf: name => (S.backupDir ? FRE.fsa.backupCopies(S.backupDir, name) : Promise.resolve(null)),
     get backupKey() { return S.backupDir ? S.backupDir.name : null; },
@@ -19848,6 +20129,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
       await phase('Reading the items, names and defines, then checking the files');
       S.ws = new FRE.Workspace(files, { only: id, cpp: S.cpp || null }).load();
       S.resDir = L.res;
+      S.ws.resDir = L.res;     // io/save.js creates new server files here (UpgradeFees.lua)
       S.client = null;
       if (L.client) { await phase('Reading the game client\'s copies (Client/)'); await loadClient(L.client, P, phase); }
       if (S.ws.needsMaps()) { await phase('Reading the maps (World/)'); await loadMaps(L.res, P); }
@@ -20310,7 +20592,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
   // ------------------------------------------------------------------ save
   // Changed lines of `f`: saved text vs. current text, or any before/after pair (edit previews).
   function renderDiff(f, before = f.originalText, after = f.text) {
-    const a = FRE.diff.splitKeepEol(before), b = FRE.diff.splitKeepEol(after);
+    // an empty text has no lines (a file the editor creates, UpgradeFees.lua: no "1 -" line)
+    const split = s => (s === '' ? [] : FRE.diff.splitKeepEol(s));
+    const a = split(before), b = split(after);
     const hs = FRE.diff.hunks(FRE.diff.diffLines(a, b), 2);
     const box = h('div.diff');
     const strip = s => f.display(s).replace(/\r\n$|\r$|\n$/, '');
@@ -20370,15 +20654,17 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
   }
 
   const NEED_TEXT = { servers: 'server restart', game: 'game restart', 'reopen:donation': 'reopen the Donation Shop window',
-    'click:board': 'click the menu again', 'patch:npc-board': 'npc-board.diff built into Neuz', 'patch:donation-tree': 'donation-tree.diff built into Neuz' };
+    'click:board': 'click the menu again', 'patch:npc-board': 'npc-board.diff built into Neuz', 'patch:donation-tree': 'donation-tree.diff built into Neuz',
+    'patch:upgrade-fees': 'upgrade-fees.diff built into the WorldServer and Neuz' };
+  const builtInto = id => (FRE.afterSave.PATCHES[id] && FRE.afterSave.PATCHES[id].server ? 'the WorldServer and Neuz' : 'Neuz');
   // live: the patch steps get the "I built it into Neuz" tickbox (the review window); redraw() after a tick
   function afterSaveBox(res, live, redraw) {
     const tick = id => h('label.check', ' ', h('input', { type: 'checkbox', checked: FRE.patchState.ticked(id),
-      on: { change: e => { if (!FRE.patchState.setTicked(id, e.target.checked)) toast('This browser cannot remember the tick (site storage is blocked).', 'bad'); else toast(e.target.checked ? `Marked ${id}.diff as built into Neuz.` : `${id}.diff: no longer marked as built.`); redraw(); } } }),
-      ' I built it into Neuz (remembered in this browser)');
+      on: { change: e => { if (!FRE.patchState.setTicked(id, e.target.checked)) toast('This browser cannot remember the tick (site storage is blocked).', 'bad'); else toast(e.target.checked ? `Marked ${id}.diff as built into ${builtInto(id)}.` : `${id}.diff: no longer marked as built.`); redraw(); } } }),
+      ` I built it into ${builtInto(id)} (remembered in this browser)`);
     return h('div.after-save', h('h3', 'After saving: what players need to see it'),
       h('ol.plan', res.steps.map(s => h('li', s.text, live && s.id.startsWith('patch:') && s.state !== 'missing' ? tick(s.id.slice(6)) : null))),
-      res.built.map(id => h('p.muted.small', `✓ ${id}.diff is marked as built into Neuz.`, live ? tick(id) : null)),
+      res.built.map(id => h('p.muted.small', `✓ ${id}.diff is marked as built into ${builtInto(id)}.`, live ? tick(id) : null)),
       res.notes.map(n => h('p', { style: 'color:var(--warn)' }, '⚠ ' + n.text)),
       res.changes.length ? h('details', h('summary', `Each change (${res.changes.length})`),
         h('ul.plan', res.changes.map(c => h('li', h('b', c.label), ': ', c.needs.length ? c.needs.map(n => NEED_TEXT[n] || n).join(' + ') : 'nothing in the game reads it',
@@ -20409,6 +20695,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     if (S.client) {
       if (!(await FRE.fsa.ensurePermission(S.client.dir))) { toast('Write permission to the Client folder was not granted.', 'bad'); return; }
       const plan = FRE.clientSync.plan(ws, S.client);
+      // a file the editor creates (UpgradeFees.lua) needs its game copy too: ticked unless untick by hand
+      for (const p of plan) if (p.mode === 'missing' && p.server.serverNew && !S.createAsked.has(p.lower)) { S.createMissing.add(p.lower); S.createAsked.add(p.lower); }
       clientBox = plan.length ? [h('h3', `Client/ (${S.client.dir.name})`), h('ul.plan', plan.map(p => h('li', h('b', p.name), ': ', p.text,
         p.mode === 'missing' ? h('label.check', ' ', h('input', { type: 'checkbox', checked: S.createMissing.has(p.lower),
           on: { change: e => { e.target.checked ? S.createMissing.add(p.lower) : S.createMissing.delete(p.lower); } } }), ' create Client/' + p.name + ' as a copy of the server file') : null)))] : null;

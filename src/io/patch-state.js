@@ -2,6 +2,7 @@
 // With FLYFF-V19-SOURCE picked, the patched C++ file is READ (never written) for one line the patch adds:
 //   npc-board.diff     -> Source/Source/_Interface/WndWorld.cpp        "NpcBoard_%d.inc"
 //   donation-tree.diff -> Source/Source/_Interface/WndDonationShop.cpp "DS_LoadTreeOrder"
+//   upgrade-fees.diff  -> Source/Source/WORLDSERVER/ItemUpgrade.cpp    "CUpgradeFees" (WorldServer + Neuz)
 // in-source: the line is there (Neuz may still need a build); missing: not applied; unknown: no source here
 // (test-data). "I built it into Neuz" is a tickbox remembered in this browser (localStorage): 'built'.
 (function (FRE) {

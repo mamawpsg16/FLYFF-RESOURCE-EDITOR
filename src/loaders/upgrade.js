@@ -328,6 +328,10 @@
     const m = { lua, t: luaTables(lua), s: loadS(ws.files.get('s.txt'), D), ult: loadUltimate(ws.files.get('ultimate_ultimateweapon.txt')),
       rarity: loadRarity(ws.files.get('weaponrarity.inc'), D) };
     m.scrolls = rateScrolls(ws);
+    // part 2: the fees (UpgradeFees.lua, upgrade-fees.diff) + the remove-element text that names its fee (textClient.txt.txt)
+    m.fees = FRE.upgradeFees.load(ws.files.get('upgradefees.lua'));
+    const tk = 'IDS_TEXTCLIENT_INC_001814', tm = ws.strings && ws.strings.meta.get(tk);
+    m.feeText = tm ? { key: tk, text: ws.strings.map.get(tk), file: tm.file, start: tm.start, end: tm.end } : null;
     return m;
   }
   // the success-rate scrolls in Spec_Item (IK3_… _ENCHANT_RATE / _UPGRADE_RATE): nEffectValue in the enchant range
