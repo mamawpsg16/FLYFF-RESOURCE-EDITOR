@@ -23,6 +23,7 @@ loaders/battlepass.js
 loaders/drops.js
 loaders/drops-sim.js
 loaders/boxes.js
+loaders/mdldyna.js
 loaders/dds.js
 loaders/exchange.js
 loaders/exchange-sim.js

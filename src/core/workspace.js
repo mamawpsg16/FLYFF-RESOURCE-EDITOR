@@ -112,16 +112,28 @@
     {
       // propGiftbox.inc (CProject::LoadGiftbox, Project.cpp:4261) = random boxes, server only (UTF-16);
       // propPackItem.inc (CProject::LoadPackItem, Project.cpp:4492) = sets; the game reads its own LF copy (Item Wiki, e08528a5).
-      id: 'boxes', label: 'Boxes',
-      required: ['propGiftbox.inc', 'propPackItem.inc'], editable: ['propGiftbox.inc', 'propPackItem.inc'], client: ['propPackItem.inc'],
+      // + New box (J part 2) also writes the box item the 949f2cc2 way: Spec_Item.txt (editsSpec), defineItem.h, propItem.txt.txt,
+      // and its ground model line in mdlDyna.inc (Project.cpp:768 m_modelMng.LoadScript); all with a Client copy.
+      id: 'boxes', label: 'Boxes', editsSpec: true,
+      required: ['propGiftbox.inc', 'propPackItem.inc'],
+      editable: ['propGiftbox.inc', 'propPackItem.inc', 'defineItem.h', 'propItem.txt.txt', 'mdlDyna.inc'],
+      client: ['propPackItem.inc', 'defineItem.h', 'propItem.txt.txt', 'mdlDyna.inc'],
+      deps: ['mdlDyna.inc'],
       parse(ws) {
         const m = FRE.boxes.loadBoxes(ws.files, { defines: ws.defines.defines, strings: ws.strings.map });
+        const mf = ws.files.get('mdldyna.inc');
+        m.mdl = mf ? FRE.mdlDyna.loadMdlDyna(mf, { defines: ws.defines.defines }) : null;
         // the boxes when the task opened: a box whose contents are removed later gets BX_EMPTIED
         if (!ws._boxIds) ws._boxIds = { gift: new Set(m.gift.boxes.keys()), pack: new Set(m.pack.boxes.keys()), stack: FRE.boxes.stackKeys(m, ws.items.items) };
         return m;
       },
       validate(ws, model) {
-        return FRE.boxes.validateBoxes(model, { items: ws.items.items, original: ws._boxIds });
+        const out = FRE.boxes.validateBoxes(model, { items: ws.items.items, original: ws._boxIds });
+        // the same model twice stops the startup with a message box (ModelMng.cpp:455)
+        for (const e of model.mdl ? model.mdl.dups : []) out.push({ module: 'boxes', file: 'mdlDyna.inc', code: 'BX_MODEL_DUP', severity: 'BLOCK',
+          start: e.idx.start, end: e.idx.end, key: `BX_MODEL_DUP|${e.type}|${e.index}`,
+          message: `mdlDyna.inc lists model ${e.define || e.index} (type ${e.type}) twice: the server and the game stop at startup with a message box` });
+        return out;
       },
     },
   ];

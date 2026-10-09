@@ -203,8 +203,110 @@
     return out;
   }
 
+  // ---------------------------------------------------------------- + New box (J part 2)
+  // A new box = a new item (itemOps.newItemPlan: defineItem.h, Spec_Item.txt, propItem.txt.txt, the 949f2cc2 way)
+  // + its ground model (mdlDyna.inc: the line of a box with the same icon, only the II_ changed; without one a dropped
+  //   box shows the vagrant helmet, ModelMng.cpp:42-44)
+  // + its contents, appended after a blank line: a GiftBoxN block (propGiftbox.inc) or a PackItem block (propPackItem.inc).
+  // All in one undo step (Workspace.applyGroup), Server + the Client copies.
+  const TEMPLATE = 'II_SYS_SYS_SCR_BXMCOOK01';   // the box row 949f2cc2 copied (IK3_SCROLL, usable, stack 1)
+  const PREFIX = 'II_SYS_SYS_SCR_';
+
+  // The looks a new box can take: every icon a box uses, with how many boxes use it, and a box with that icon that
+  // has a ground model in mdlDyna.inc (only those looks are offered; the user, 2026-10-08).
+  // -> [{ icon, count, example: box id, source: box id | null }], most used first
+  function lookChoices(ws) {
+    const m = ws.models.boxes, mdl = m && m.mdl;
+    const by = new Map();
+    const ids = [...new Set([...m.gift.boxes.keys(), ...m.pack.boxes.keys()])].sort((a, b) => a - b);
+    for (const id of ids) {
+      const it = ws.itemById(id);
+      if (!it) continue;
+      const icon = String(FRE.specItem.get(it, 'szIcon') || '').trim();
+      if (!icon) continue;
+      const k = icon.toLowerCase();
+      if (!by.has(k)) by.set(k, { icon, count: 0, example: id, source: null });
+      const x = by.get(k);
+      x.count++;
+      if (x.source === null && mdl) { const e = mdl.items.get(id); if (e && e.oneLine) x.source = id; }
+    }
+    return [...by.values()].sort((a, b) => b.count - a.count || a.icon.localeCompare(b.icon));
+  }
+
+  // II_SYS_SYS_SCR_<NAME> from the box name (_2, _3 … when taken)
+  function defineFor(ws, name) {
+    const base = PREFIX + (String(name || '').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'NEWBOX');
+    const D = ws.defines.defines;
+    if (!D.has(base)) return base;
+    for (let k = 2; ; k++) if (!D.has(`${base}_${k}`)) return `${base}_${k}`;
+  }
+
+  // The smallest GiftBox type that holds the lines' columns and chances (the lines' w are out of 1,000,000)
+  function typeFor(st) {
+    const list = CANDIDATES[colsOf(st)];
+    const fits = ty => st.every(x => x.w % Bx().TYPES[ty].prec === 0);
+    return list.find(fits) || list[list.length - 1];
+  }
+
+  // The default description: what the box gives, in the item names players read
+  function descFor(ws, spec) {
+    const nm = d => { const id = ws.defines.defines.get(d), it = id === undefined ? null : ws.itemById(id); return it && it.name ? it.name : d; };
+    const cnt = x => (x.num > 1 ? ` x${x.num}` : '');
+    if (spec.kind === 'set') return 'Contains: ' + spec.lines.map(x => nm(x.define) + cnt(x)).join(', ');
+    return 'Gives one of: ' + spec.lines.map(x => `${nm(x.define)}${cnt(x)} (${Number((x.w / 10000).toFixed(4))}%)`).join(', ');
+  }
+
+  // spec: { name, define (optional), kind: 'random' | 'set', lines: [{ define, num, w, flag, minutes, upgrade }], span (set),
+  //         look: icon file name, cost, packMax, tradeable, desc (optional) }
+  // -> { id, define, type, item (newItemPlan), lines: { block, model }, parts } ; throws when it cannot be built
+  function newBoxPlan(ws, spec) {
+    const random = spec.kind === 'random';
+    const file = ws.files.get(random ? 'propgiftbox.inc' : 'proppackitem.inc'), mf = ws.files.get('mdldyna.inc');
+    if (!file || !mf) throw new Error(`${random ? 'propGiftbox.inc' : 'propPackItem.inc'} and mdlDyna.inc are needed for a new box`);
+    const D = ws.defines.defines;
+    const lines = spec.lines || [];
+    if (!lines.length) throw new Error('A box needs at least one item');
+    if (random && lines.length > Bx().MAX_GIFTBOX_ITEM) throw new Error(`A random box holds at most ${Bx().MAX_GIFTBOX_ITEM} items`);
+    if (!random && lines.length > Bx().MAX_ITEM_PER_PACK) throw new Error(`A set holds at most ${Bx().MAX_ITEM_PER_PACK} items`);
+    for (const x of lines) {
+      checkItem(x.define, D); checkNum(x.num); checkUpgrade(x.upgrade || 0);
+      if (random) { checkFlag(x.flag || 0); checkMinutes(x.minutes || 0); T.checkAmount(x.w, 0, TOTAL, 'A chance'); }
+    }
+    if (!random) checkMinutes(spec.span || 0);
+    const look = lookChoices(ws).find(l => l.icon.toLowerCase() === String(spec.look || '').toLowerCase());
+    if (!look) throw new Error('Pick a look');
+    if (look.source === null) throw new Error(`No box with the look ${look.icon} has a ground model in mdlDyna.inc`);
+    const define = spec.define || defineFor(ws, spec.name);
+    const desc = spec.desc && String(spec.desc).trim() ? spec.desc : descFor(ws, spec);
+    const item = FRE.itemOps.newItemPlan(ws, { define, name: spec.name, desc, icon: look.icon, cost: spec.cost, packMax: spec.packMax || 1,
+      tradeable: spec.tradeable !== false, template: TEMPLATE });
+
+    // mdlDyna.inc: the source box's line again, right after it, with the new II_ name
+    const e = ws.models.boxes.mdl.items.get(look.source), mt = mf.text;
+    const model = mt.slice(e.line.start, e.idx.start) + define + mt.slice(e.idx.end, e.line.end);
+    const modelPart = { file: 'mdldyna.inc', splices: [{ start: e.line.end, end: e.line.end, insert: /[\r\n]$/.test(model) ? model : model + T.dominantEol(mt) }] };
+
+    // the contents block
+    const eol = T.dominantEol(file.text);
+    let block, type = null;
+    if (random) {
+      const st = lines.map(x => ({ w: x.w, num: x.num, flag: x.flag || 0, minutes: x.minutes || 0, upgrade: x.upgrade || 0, define: x.define }));
+      type = typeFor(st);
+      const prec = Bx().TYPES[type].prec, q = quantize(st.map(x => x.w), prec);
+      st.forEach((x, i) => { x.w = q[i]; });
+      if (st.reduce((a, x) => a + x.w, 0) !== TOTAL) throw new Error('The chances must add up to 100%');
+      const cols = Bx().TYPES[type].cols;
+      block = `${type}\t${define}${eol}{${eol}` + st.map(x => `\t${[x.define, x.w / prec, x.num, ...cols.map(c => x[c])].join('\t')}${eol}`).join('') + `}${eol}`;
+    } else {
+      block = `PackItem\t${define}\t${spec.span || 0}${eol}{${eol}` + lines.map(x => `\t${x.define}\t${x.upgrade || 0}\t${x.num}${eol}`).join('') + `}${eol}`;
+    }
+    const contentPart = { file: random ? 'propgiftbox.inc' : 'proppackitem.inc', splices: [FRE.npcOps.appendSplice(file.text, block, eol)] };
+    return { id: item.id, define, type, desc, item, look, lines: { block, model }, parts: [...item.parts, modelPart, contentPart] };
+  }
+
   FRE.boxesOps = {
     stateOf, chooseType, quantize, setChance, setLine, addLine, removeLine, spreadEvenly,
     addPackLine, setPackLine, removePackLine, setPackMinutes, removeContents, MAX_NUM, MAX_UPGRADE, MAX_MINUTES,
+    lookChoices, defineFor, typeFor, descFor, newBoxPlan, TEMPLATE,
   };
 })(globalThis.FRE = globalThis.FRE || {});

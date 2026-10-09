@@ -1,6 +1,23 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-08 (J. Boxes part 1 user-tested + committed; next session: step-by-step IN-GAME test of everything waiting; handoff on top)._
+_Last updated 2026-10-09 (J. Boxes part 2 user-tested + committed; next: V. Save History, plan first; the in-game test steps are in the guides repo; handoff on top)._
+
+> **Handoff (2026-10-09) — J part 2 (+ New box, ✎ Edit box settings) is user-tested in Brave (all 7 steps + Save) and committed + pushed. Next: V. Save History, plan first.** After the first test the forms also show the picked item's full tooltip (stats, effects, editor info): under the item in + Add an item, and for the last picked row in + New box (hover an icon for the others; the user is fine with that).
+> Earlier: **J part 2 built** Plan: `/home/kevin/.claude/plans/hazy-beaming-leaf.md`. The in-game test of the 8 waiting items is the user's, with `FLYFF-SOURCES-EDIT-GUIDES/SOURCES DOCUMENTATION/RESOURCE-EDITOR-IN-GAME-TEST.md`; results come back later.
+> - **+ New box** (Boxes task, next to the search): name, Random (1 of N, chances kept at 100%) or Everything inside (time limit for every item), the items (count with "max N", bound, time limit, +N), the look (a searchable combo of the 65 box icons that have a ground model, the icon at 3× and the box in a bag slot with its in-game tooltip), shop price (sells back for 1/4), can be traded, stack size, description (default "Gives one of: …" / "Contains: …"). **🎲 Try it** opens the planned box N times before Create (scratch copies read by the real loaders). **Create box** = one undo step over defineItem.h, Spec_Item.txt, propItem.txt.txt, mdlDyna.inc and propGiftbox.inc / propPackItem.inc (Server + Client). The new box is selected; the preview gives `/createitem <id> 1`.
+> - **✎ Edit box settings** (under every box's title): price, can be traded, stack size on its Spec_Item row; IK3_BINDS / EVENTMAIN boxes say they are always bound.
+> - Written the `949f2cc2` way + an mdlDyna line (INVESTIGATION §1.19): id 31671 next, keys 017062/3, template row `II_SYS_SYS_SCR_BXMCOOK01`. New checks: `BX_EMPTY`, `BX_ID_RANGE`, `BX_TEMPLATE_MISSING` (form), `BX_MODEL_DUP` (BLOCK, workspace). After saving: Stop / Start Server.bat (defineItem.h, propItem.txt.txt, mdlDyna.inc added to `core/after-save.js` + Python `aftersave`, with their C++ lines).
+> - Simulator: `gjs -m tools/boxes-sim.js --new=tools/newbox-example.json n=2000`. Python copy `oracle_sim.py newbox` (21 cases); 22 of 22 planted bugs caught. Tests: core 1122, UI harness 396 (new stages `newbox`, `boxsettings`).
+>
+> **User's test:** run `tools/refresh-fixtures.sh test-data` (new: the Client copies of defineItem.h, propItem.txt.txt, mdlDyna.inc) and `python3 build.py`, reload, pick `test-data`, task **Boxes**.
+> 1. **+ New box**: Create is greyed. Type a name, pick Moonstone, pick the look "Box of Lucky": the picture, the bag slot and the tooltip show; the preview lists the five files and `/createitem 31671 1`.
+> 2. + Add an item twice, type 50 in a chance: the others share the rest, Total 100%. Tick Bound on one, give one 7 days, +3 on a weapon.
+> 3. 🎲 Try it → Run: the rates match the chances; nothing is "not saved".
+> 4. Create box: one toast, the box is selected in the list, Undo removes it from every file. Redo.
+> 5. Switch to Everything inside on a second box with 2 items and 30 minutes → Create.
+> 6. ✎ Edit box settings on the new box: untick Can be traded → Apply → "cannot be traded". On Box of Change: price 1000 → "sells back for 250".
+> 7. Save once: the backup holds the six files (+ Client copies); After saving says Stop / Start Server.bat.
+> Then commit + push, TODOS → Waiting for the in-game test (+ item 9 in the in-game guide).
 
 > **Handoff (2026-10-08, night) — START HERE: next session = a step-by-step IN-GAME test of everything in TODOS "Waiting for the in-game test"** (the user has time on the Windows PC). J part 1 (Boxes) is user-tested in Brave and committed + pushed. J part 2 (+ New box) waits until after the in-game session.
 > - **The steps are written out:** `FLYFF-SOURCES-EDIT-GUIDES/SOURCES DOCUMENTATION/RESOURCE-EDITOR-IN-GAME-TEST.md` (2026-10-08: setup, GM commands, per item the editor clicks, the "After saving" check, the in-game checks with numbers from the simulators, the undo line, a results table). The user runs it alone on Windows and brings back the results + error lines.

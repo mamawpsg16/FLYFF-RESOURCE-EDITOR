@@ -2727,6 +2727,85 @@ section('boxes: loader, checks, opening boxes, edits, icons (JS and Python copie
     eq(w.files.get(F.gift).dirty || w.files.get(F.pack).dirty, false, 'every edit undone: both files are back to their original bytes');
   }
 
+  // + New box (J part 2): FRE.boxesOps.newBoxPlan against the Python copy's own rules (oracle_sim.py newbox): the six
+  // files byte-identical, then every new box opened in both copies; Try it (boxesSim.scratch) gives the same opens as after Create
+  {
+    const o3 = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} newbox ${FIXTURES}`);
+    let nb = null;
+    try { nb = JSON.parse(new TextDecoder().decode(o3[1])); } catch (e) { ok(false, 'the Python copy (oracle_sim.py newbox) gave no readable result', e.message); }
+    const NAMES = ['defineitem.h', 'spec_item.txt', 'propitem.txt.txt', 'mdldyna.inc', 'propgiftbox.inc', 'proppackitem.inc'];
+    const sha = b => GLib.compute_checksum_for_bytes(GLib.ChecksumType.SHA256, new GLib.Bytes(b));
+    const opensOf = (env, sp) => {
+      const start = Sim.bag(env, { id: sp.box, num: sp.num, bound: sp.bound, keep: sp.keep, locked: sp.locked, expired: sp.expired }, { free: sp.free, have: sp.have || [] });
+      const rnd = FRE.xRandom.rng(sp.seed), opens = [];
+      for (let i = 0; i < sp.n; i++) {
+        const r = Sim.open(env, FRE.exchangeSim.clone(start), 0, rnd, { trading: sp.trading });
+        opens.push([r.refused, r.line, r.used, r.got.map(rowJ), r.lost.map(rowJ), r.crash ? 'no-prop' : null]);
+      }
+      return JSON.stringify({ opens, next: rnd.next });
+    };
+    let same = 0, oAgree = 0, oAll = 0, tryAgree = 0, tryAll = 0, clean = 0, loaded = 0;
+    for (const c of nb || []) {
+      let steps = 0;
+      try {
+        const made = [], scr = [];
+        for (const sp of c.steps) {
+          const plan = O.newBoxPlan(w, sp);
+          scr.push({ id: plan.id, sc: Sim.scratch(w, plan) });
+          w.applyGroup(plan.parts, 'new box');
+          steps++;
+          made.push({ id: plan.id, define: plan.define });
+        }
+        const files = {};
+        for (const n of NAMES) { const b = w.files.get(n).serialize(); files[n] = [sha(b), b.length]; }
+        if (JSON.stringify(made) === JSON.stringify(c.made) && JSON.stringify(files) === JSON.stringify(c.files)) same++;
+        else print(`   new box ${c.steps.map(x => x.name).join(' + ')}: js ${JSON.stringify(made)} ${NAMES.filter(n => JSON.stringify(files[n]) !== JSON.stringify(c.files[n])).join(', ')} differ`);
+        if (!w.newBlocking().length) clean++; else print(`   new box ${c.steps[0].name}: ${w.newBlocking().map(d => d.code + ' ' + d.message).join('; ').slice(0, 300)}`);
+        const M = w.models.boxes;
+        const nameOk = (x, i) => w.itemById(x.id) && w.itemById(x.id).name === c.steps[i].name.replace(/[\t\r\n]+/g, ' ').trim();
+        if (made.every((x, i) => nameOk(x, i) && (c.steps[i].kind === 'random' ? M.gift : M.pack).boxes.has(x.id)
+          && FRE.itemTooltip.build(w, w.itemById(x.id)).game.length)) loaded++;
+        else print(`   new box ${c.steps.map(x => x.name).join(' + ')}: not loaded back as a box (${made.map(x => (w.itemById(x.id) || {}).name).join(', ')})`);
+        const envN = Sim.envFor(w);
+        for (const cs of c.cases) {
+          oAll++;
+          const j = opensOf(envN, cs.spec);
+          if (j === JSON.stringify({ opens: cs.opens, next: cs.next })) oAgree++;
+          else if (oAll - oAgree < 4) print(`   new box open ${JSON.stringify(cs.spec)}: js ${j.slice(0, 200)} py ${JSON.stringify(cs.opens).slice(0, 200)}`);
+        }
+        // Try it (scratch, before Create) = after Create, for the first box of each case (a later step's scratch saw the boxes before it)
+        const first = scr[0];
+        for (const cs of c.cases.filter(x => x.spec.box === first.id)) {
+          tryAll++;
+          if (opensOf(first.sc.env, cs.spec) === JSON.stringify({ opens: cs.opens, next: cs.next })) tryAgree++;
+        }
+      } catch (e) { print(`   new box ${c.steps.map(x => x.name).join(' + ')}: ${e.message}`); }
+      while (steps--) w.undo();
+    }
+    const n = (nb || []).length;
+    eq(same, n, `+ New box: byte-identical files in both copies (${n} cases: every GiftBox type, sets of 1-24, 128 lines, names that clash or have no letters, settings, 2-3 boxes in a row)`);
+    eq(clean, n, '+ New box: no new ⛔ problem after Create');
+    eq(loaded, n, '+ New box: the box loads back as a box item with its name and tooltip');
+    eq(oAgree, oAll, `+ New box: every open of the new boxes agrees (${oAll} bags)`);
+    eq(tryAgree, tryAll, `+ New box: Try it before Create gives the same opens as after Create (${tryAll} bags)`);
+    eq(NAMES.some(x => w.files.get(x).dirty), false, '+ New box: every case undone (the six files are back to their bytes)');
+  }
+
+  // ✎ Edit box settings: price, trading and stack size on the box's row; "=" kept when nothing changes
+  {
+    const it = w.itemById(Dm.get('II_SYS_SYS_SCR_BXCHANGE')), t = w.files.get('spec_item.txt').text, IO = FRE.itemOps;
+    eq(IO.setItemSettings(t, it, { tradeable: IO.isTradeable(w, it).tradeable, packMax: FRE.specItem.get(it, 'dwPackMax') }, Dm).length, 0, 'box settings: no change, no splice');
+    w.apply('spec_item.txt', IO.setItemSettings(t, it, { cost: 5000, tradeable: false, packMax: 10 }, Dm), 'settings');
+    const it2 = w.itemById(Dm.get('II_SYS_SYS_SCR_BXCHANGE'));
+    eq(JSON.stringify([FRE.specItem.get(it2, "dwCost"), FRE.specItem.get(it2, "dwPackMax"), IO.isTradeable(w, it2).tradeable]), JSON.stringify([5000, 10, false]), 'box settings: price 5,000, stack 10, cannot be traded');
+    ok(Sim.envFor(w).prop(it2.id).binds, 'box settings: the simulator sees the box as bound (IP_FLAG_BINDS)');
+    w.apply('spec_item.txt', IO.setItemSettings(w.files.get('spec_item.txt').text, it2, { tradeable: true }, Dm), 'settings');
+    eq(IO.isTradeable(w, w.itemById(it2.id)).tradeable, true, 'box settings: trading switched back on');
+    w.undo(); w.undo();
+    eq(w.files.get('spec_item.txt').dirty, false, 'box settings: undone');
+    eq([IO.flagText('=', true), IO.flagText('=', false), IO.flagText('1', true), IO.flagText('5', false), IO.flagText('4', false)].join(' '), '= 1 0 5 5', 'box settings: the bind bit on "=", 1, 4, 5');
+  }
+
   // the shown chances against 20,000 opens
   for (const name of ['II_SYS_SYS_SCR_BXPIG', 'II_SYS_SYS_SCR_BXSSUIT', 'II_SYS_SYS_EVE_COMMERGIFTBOX27_S']) {
     const id = Dm.get(name), b = m.gift.boxes.get(id), ch = Bx.chances(b);

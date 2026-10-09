@@ -8,7 +8,10 @@
 
   function render(ws, id) {
     const it = ws.itemById(Number(id));
-    if (!it) return null;
+    return it ? body(ws, it) : null;
+  }
+  // the tooltip of one item (also one not in the workspace yet), drawn where the caller puts it
+  function body(ws, it) {
     const t = FRE.itemTooltip.build(ws, it);
     const lines = ls => ls.map(l => h('div.tt-line', l.map(s => h('span', { style: `color:${s.color}${s.bold ? ';font-weight:600' : ''}` }, s.text || ' '))));
     return h('div', lines(t.game), t.editor.length ? h('div.tt-editor', h('div.tt-head', 'Editor info (not shown in game)'), lines(t.editor)) : null);
@@ -44,5 +47,5 @@
     document.addEventListener('scroll', hide, true);
   }
 
-  FRE.ui.tooltip = { init, render, hide };
+  FRE.ui.tooltip = { init, render, body, hide };
 })(globalThis.FRE = globalThis.FRE || {});

@@ -4,21 +4,41 @@
 // with the server's random generator, each open on the same starting bag, and prints how often each item came out
 // next to the chance the editor shows. `have` = the bag already holds 1 of each item (shows stacking).
 // Reads test-data (or test-data/fixtures); never writes any file.
+// A new box first (+ New box, in memory only): --new=<spec.json>, a spec or a list of specs as boxesOps.newBoxPlan takes them
+//   ({ name, kind: 'random' | 'set', look: icon file, lines: [{ define, num, w (of 1,000,000), flag, minutes, upgrade }], span, cost, packMax, tradeable }).
+//   It prints what would be written; the box to open is the last new one unless an II_ name is given.
 // Example: gjs -m tools/boxes-sim.js II_SYS_SYS_SCR_BXPIG n=10000
 //          gjs -m tools/boxes-sim.js II_SYS_SYS_SCR_BXMBLKDRAGON01 free=3 show=2
-import { FRE, ROOT, loadFolder, openSource } from '../tests/gjs-env.js';
+//          gjs -m tools/boxes-sim.js --new=tools/newbox-example.json n=2000
+import { FRE, ROOT, loadFolder, openSource, readText } from '../tests/gjs-env.js';
 
 const argv = [...ARGV];
 const flag = f => { const i = argv.indexOf(f); if (i >= 0) argv.splice(i, 1); return i >= 0; };
 const fixtures = flag('--fixtures'), bound = flag('bound'), locked = flag('locked'), expired = flag('expired'), trading = flag('trading'), have = flag('have');
 const opt = (k, d) => { const a = argv.find(x => x.startsWith(k + '=')); if (a) argv.splice(argv.indexOf(a), 1); return a ? Number(a.slice(k.length + 1)) : d; };
 const n = opt('n', 1000), free = opt('free', 10), seed = opt('seed', 1), keep = opt('keep', 0), show = opt('show', 0);
-const def = argv[0];
-if (!def) throw new Error('usage: gjs -m tools/boxes-sim.js <II_ box> [n=] [free=] [seed=] [keep=] [bound] [locked] [expired] [trading] [have] [show=]');
+const newArg = argv.find(x => x.startsWith('--new='));
+if (newArg) argv.splice(argv.indexOf(newArg), 1);
+let def = argv[0];
+if (!def && !newArg) throw new Error('usage: gjs -m tools/boxes-sim.js <II_ box> | --new=<spec.json> [n=] [free=] [seed=] [keep=] [bound] [locked] [expired] [trading] [have] [show=]');
 
 const files = new Map();
 for (const [k, e] of loadFolder(ROOT + (fixtures ? '/test-data/fixtures' : '/test-data') + '/Resource')) files.set(k, openSource(e));
 const ws = new FRE.Workspace(files, { only: 'boxes' }).load();
+if (newArg) {
+  const j = JSON.parse(readText(newArg.slice(6)));
+  for (const sp of Array.isArray(j) ? j : [j]) {
+    const plan = FRE.boxesOps.newBoxPlan(ws, sp);
+    print(`\nNew box ${sp.name}: item ${plan.id} = ${plan.define} (in memory; nothing is written). /createitem ${plan.id} 1`);
+    for (const [f, x] of [['defineItem.h', plan.item.lines.define], ['Spec_Item.txt', plan.item.lines.row], ['propItem.txt.txt', plan.item.lines.strings],
+      ['mdlDyna.inc', plan.lines.model], [sp.kind === 'random' ? 'propGiftbox.inc' : 'propPackItem.inc', plan.lines.block]])
+      print(`  ${f}:\n    ${x.replace(/\r/g, '').replace(/\n$/, '').replace(/\n/g, '\n    ').slice(0, 900)}`);
+    ws.applyGroup(plan.parts, 'new box');
+    const bad = ws.newBlocking();
+    if (bad.length) print(`  ⛔ ${bad.map(d => d.message).join('\n  ⛔ ')}`);
+    if (!argv[0]) def = plan.define;
+  }
+}
 const D = ws.defines.defines, S = FRE.boxesSim, Bx = FRE.boxes, fmt = v => FRE.num.group(v);
 if (!D.has(def)) throw new Error(`${def} is not defined`);
 const id = D.get(def) >>> 0, m = ws.models.boxes;

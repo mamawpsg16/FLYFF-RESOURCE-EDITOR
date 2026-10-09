@@ -459,6 +459,18 @@ The game loads at startup before the login screen (`Neuz.cpp:1589 BeginLoadThrea
 
 **Icons** (`loaders/dds.js`): Client/Item has 16-bit A1R5G5B5 (4,015), A4R4G4B4, X1R5G5B5, 24/32-bit and DXT1/3/5. The magenta key colour is drawn transparent. One icon per format is checked against an independent Python decode.
 
+**A new box (J part 2, added 2026-10-08, `boxesOps.newBoxPlan`, `itemOps.newItemPlan`, `loaders/mdldyna.js`).** Written the way `949f2cc2` added the Black Dragon Set boxes (verified in game), plus a ground model line:
+- `defineItem.h`: `#define\tII_SYS_SYS_SCR_<NAME>\t\t\t<id>` in front of the last `#endif` (the line ending of the line above it; the Server copy mixes CRLF / LF, the Client copy is the same text in LF). `Source/Resource/defineItem.h` is only on the compiler's include path, and no C++ uses a new box's id, so it is not written.
+- The id: one above the highest item id below 60,000 (31,671 today; 60,000+ is `__NEW_STACKABLE_AMPS`, `ProjectCmn.cpp:593`; the mounts use 224,882+, `40f34b52`).
+- `Spec_Item.txt`: the `II_SYS_SYS_SCR_BXMCOOK01` row (IK3_SCROLL, usable, stack 1, the row `949f2cc2` copied) with dwID, szName, dwPackMax, dwCost, dwFlag, szIcon and szCommand (the description key) changed, appended. `"""x"""` is 3 tokens, x being szIcon.
+- `propItem.txt.txt` (UTF-16): the next two `IDS_PROPITEM_TXT_` keys (017062 / 017063 today), name and description. The default description lists what the box gives.
+- `mdlDyna.inc` (UTF-16, read through the "model" line of Masquerade.prj, `Project.cpp:768`): `CModelMng::LoadScript` (`ModelMng.cpp:314-470`) keeps one model per (type, index); the same pair twice stops the startup with a message box (`ModelMng.cpp:455`, `BX_MODEL_DUP`). An item without a model is drawn with the vagrant helmet on the ground (`ModelMng.cpp:42-44`; the `949f2cc2` boxes have none). The new box repeats the line of the lowest-numbered box with the same icon, under it, with its own II_ name. 65 of the 66 box icons have such a line (`Itm_SysSysEveBxDraw01.dds` has none and is not offered).
+- The contents block, appended after an empty line: the smallest GiftBox type that holds the columns and the chances (steps of 100 / 10 / 1 of 1,000,000; the largest line takes the rounding), or a PackItem block.
+- **Can be traded** = the `IP_FLAG_BINDS` bit of dwFlag (`ProjectCmn.h:360`, checked by `CItemElem::IsBinds`, `Item.cpp:434`); "=" stays "=" when nothing changes. `bCanTrade` is never read. IK3_BINDS / IK3_EVENTMAIN are always bound.
+- **Try it** before Create: the plan is spliced into scratch copies of Spec_Item.txt and the box file and read back by the real loaders (`boxesSim.scratch`).
+- All in one undo step over the six files; the Client copies (Spec_Item.txt, defineItem.h, propItem.txt.txt, mdlDyna.inc, propPackItem.inc) get the same change. After saving: Stop / Start Server.bat (all are startup loads, `core/after-save.js`).
+- Not proven in game yet: no commit adds an mdlDyna line for a box, or a GiftBox block for a new item. First in-game check: `/createitem 31671 1`, drop it (the box model), open it.
+
 ## Phase 2: Encoding and line-ending forensics (all 15,299 files, raw bytes)
 
 **Method:** Python read every file as bytes. For each one it checked:

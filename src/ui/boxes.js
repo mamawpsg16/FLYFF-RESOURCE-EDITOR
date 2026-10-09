@@ -65,6 +65,13 @@
     st,
     onLoad() { st.sel = null; st.show = 'all'; st.openOpts = null; },
 
+    listAction(ctx) {
+      const need = ['spec_item.txt', 'defineitem.h', 'propitem.txt.txt', 'mdldyna.inc', GIFT, PACK];
+      const ok = ctx.ws && need.every(n => ctx.ws.isEditable(n));
+      return h('button.primary', { disabled: !ok, title: ok ? 'Make a new box item: what it gives, its look, its price'
+        : `Needs ${need.filter(n => !ctx.ws || !ctx.ws.isEditable(n)).join(', ')} (editable)`, on: { click: () => newBoxForm(ctx) } }, '+ New box');
+    },
+
     listExtra(ctx) {
       const all = entries(ctx);
       return h('select.npc-filter', { title: 'Which boxes to list', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
@@ -130,7 +137,14 @@
     el.appendChild(h('div.npc-title.bx-title', FRE.dds.picture(ctx, iconOf(it), { scale: 2, cls: '.bx-icon-big' }),
       h('h2', boxName(ctx, b)), h('span.def', b.define || String(b.id)), h('span.muted', ' ' + what),
       h('span.line', `${f.name} L${f.lineOf(b.blocks[0].kw.start) + 1}`), canEdit(ctx, sel.kind) ? null : h('span.tag.bad', 'read-only')));
-    if (!it) el.appendChild(h('p.bad', 'This box is not an item in Spec_Item.txt: no player can own it.'));
+    if (!it) { el.appendChild(h('p.bad', 'This box is not an item in Spec_Item.txt: no player can own it.')); return; }
+    const tr = FRE.itemOps.isTradeable(ctx.ws, it), cost = FRE.specItem.get(it, 'dwCost'), pm = FRE.specItem.get(it, 'dwPackMax') >>> 0;
+    el.appendChild(h('div.dr-line.small',
+      h('span', `Shop price ${cost > 0 ? fmt(cost) + ' Penya · sells back for ' + fmt(Math.floor(cost / 4)) : 'none'}`), ' · ',
+      h('span', tr.tradeable ? 'can be traded' : tr.forced ? 'never tradeable (its item type is always bound)' : 'cannot be traded'), ' · ',
+      h('span', `up to ${fmt(pm)} in one bag slot`), ' ',
+      h('button', { disabled: !ctx.ws.isEditable('spec_item.txt'), title: 'Price, trading and stack size of the box item (Spec_Item.txt)',
+        on: { click: () => settingsWindow(ctx, sel, b) } }, FRE.ui.pencil(), ' Edit box settings')));
   }
   function tools(ctx, sel, b, extra) {
     const ed = canEdit(ctx, sel.kind);
@@ -229,7 +243,7 @@
   function addForm(ctx, sel, define) {
     const ws = ctx.ws, b0 = boxOf(ctx, sel), name = boxName(ctx, b0), random = sel.kind === 'random';
     const s = { define: define || null, u: random ? Math.round(Bx().TOTAL / (b0.lines.length + 1)) : null, num: 1, bound: false, minutes: random ? null : 0, upgrade: 0 };
-    const body = h('div.nn-form'), checks = h('div'), preview = h('div');
+    const body = h('div.nn-form'), checks = h('div'), preview = h('div'), tip = h('div.bx-tip');
     let btn = null;
     const itemOpts = ws._itemOpts || [...ws.items.items.values()].map(it => ws.itemInfo(it)).sort((a, z) => a.name.localeCompare(z.name)).map(i => ({ v: i.define, label: `${i.name} (${i.define})`, find: i.define }));
     ws._itemOpts = itemOpts;
@@ -240,8 +254,9 @@
     };
     const idOf = () => (s.define && ws.defines.defines.has(s.define) ? ws.defines.defines.get(s.define) >>> 0 : null);
     function refresh() {
-      checks.textContent = ''; preview.textContent = '';
+      checks.textContent = ''; preview.textContent = ''; tip.textContent = '';
       const probs = [], id = idOf(), max = id !== null ? packMaxOf(ctx, id) : null;
+      if (id !== null && itemOf(ctx, id)) tip.appendChild(tooltipOf(ws, itemOf(ctx, id), true));
       if (!s.define) probs.push(['BLOCK', 'Still needs: the item']);
       if (random && !s.u) probs.push(['BLOCK', 'Still needs: the chance']);
       if (random && s.minutes === null) probs.push(['BLOCK', 'Still needs: the time limit (Permanent or 0 = it never expires)']);
@@ -270,6 +285,7 @@
     const row = (label, req, ...el) => h('div.nn-row', fieldLabel(label, req), ...el);
     body.appendChild(h('div',
       row('Item', true, h('div', { style: 'flex:1' }, FRE.ui.combo({ options: itemOpts, value: s.define, placeholder: 'Type an item name…', onPick: v => { s.define = v; refresh(); } }))),
+      tip,
       random ? row('Chance', true, pctInput({ value: s.u, key: 'bx|add|p', live: true, onCommit: u => { s.u = u; refresh(); } })) : null,
       row('Count (how many they get)', true, numInput({ value: 1, min: 1, max: O().MAX_NUM, key: 'bx|add|n', onCommit: v => { s.num = v || 1; refresh(); } })),
       random ? row('Bound', false, h('label', h('input', { type: 'checkbox', on: { change: e => { s.bound = e.target.checked; refresh(); } } }), ' the item cannot be traded')) : null,
@@ -301,14 +317,15 @@
   }
 
   // ------------------------------------------------------------- 🎲 Open it N times
-  function openWindow(ctx, sel) {
-    const ws = ctx.ws, b = boxOf(ctx, sel), name = boxName(ctx, b);
+  // scr (+ New box → Try it): { env, b, name } of the planned box, read from scratch copies (boxesSim.scratch)
+  function openWindow(ctx, sel, scr) {
+    const ws = ctx.ws, b = scr ? scr.b : boxOf(ctx, sel), name = scr ? scr.name : boxName(ctx, b);
     const o = st.openOpts && st.openOpts.id === b.id ? st.openOpts : { id: b.id, n: 1000, free: 10, seed: 1, bound: false, keep: 0, locked: false, expired: false, trading: false, have: false };
     st.openOpts = o;
     const out = h('div');
     const run = () => {
       out.textContent = '';
-      const env = Sim().envFor(ws);
+      const env = scr ? scr.env : Sim().envFor(ws);
       const have = o.have ? b.lines.map(l => ({ id: l.item.value >>> 0, num: 1 })).filter(x => itemOf(ctx, x.id)) : [];
       const t0 = Date.now();
       const r = Sim().run(env, b.id, { n: o.n, free: o.free, seed: o.seed, bound: o.bound, keep: o.keep, locked: o.locked, expired: o.expired, trading: o.trading, have });
@@ -344,10 +361,233 @@
           ['have', 'The bag already holds 1 of each item']].map(([k, label]) => h('label', h('input', { type: 'checkbox', checked: o[k], on: { change: e => { o[k] = e.target.checked; } } }), ' ' + label)),
         h('label', 'The box has a time limit of ', daysInput(o.keep, { onCommit: v => { o.keep = v; } }))),
       h('button.primary', { on: { click: run } }, 'Run'), out);
-    modal({ title: `Open ${name} N times`, body, wide: true });
+    modal({ title: scr ? `Try it: open ${name} N times (not created yet)` : `Open ${name} N times`, body, wide: true });
     run();
   }
 
+  // ------------------------------------------------------------- ✎ Edit box settings
+  function settingsWindow(ctx, sel, b) {
+    const ws = ctx.ws, it = itemOf(ctx, b.id), name = boxName(ctx, b), D = ws.defines.defines;
+    const tr = FRE.itemOps.isTradeable(ws, it);
+    const was = { cost: FRE.specItem.get(it, 'dwCost'), packMax: FRE.specItem.get(it, 'dwPackMax') >>> 0, tradeable: tr.tradeable };
+    const s = { cost: was.cost === -1 ? null : was.cost, packMax: was.packMax, tradeable: was.tradeable };
+    const body = h('div.nn-form'), checks = h('div'), preview = h('div');
+    let btn = null;
+    const plan = () => FRE.itemOps.setItemSettings(ws.files.get('spec_item.txt').text, ws.itemById(b.id),
+      { cost: s.cost === was.cost || (s.cost === null && was.cost === -1) ? undefined : s.cost, packMax: s.packMax, tradeable: tr.forced ? undefined : s.tradeable }, D);
+    function refresh() {
+      checks.textContent = ''; preview.textContent = '';
+      const probs = [];
+      if (!s.packMax) probs.push(['BLOCK', 'Still needs: the stack size (at least 1)']);
+      if (s.packMax && s.packMax < was.packMax) probs.push(['WARN', `Stacks bigger than ${fmt(s.packMax)} that players already have stay as they are; new ones stop at ${fmt(s.packMax)}`]);
+      for (const [sev, msg] of probs) checks.appendChild(diagRow({ severity: sev, code: '', message: msg }));
+      if (!probs.length) checks.appendChild(h('p.muted.small', 'No problems.'));
+      let sp = [];
+      try { if (!probs.some(p => p[0] === 'BLOCK')) sp = plan(); } catch (e) { preview.appendChild(h('p.bad', e.message)); }
+      if (btn) btn.disabled = !sp.length || probs.some(p => p[0] === 'BLOCK');
+      preview.appendChild(h('p', s.cost ? `A Penya shop sells it for ${fmt(s.cost)} Penya (unless a shop line sets its own price); selling it to an NPC gives ${fmt(Math.floor(s.cost / 4))}.` : 'No Penya price: a shop that sells it charges 1 Penya.'));
+      preview.appendChild(h('p', `${s.tradeable && !tr.forced ? 'Players can trade it' : 'Players cannot trade it'}; up to ${fmt(s.packMax || 0)} fit in one bag slot.`));
+      if (!sp.length) preview.appendChild(h('p.muted', 'No change yet.'));
+      else preview.appendChild(h('pre.preview', 'Spec_Item.txt (Server + Client), ' + name + '\'s row: ' + sp.length + ' value' + (sp.length === 1 ? '' : 's') + ' change'));
+    }
+    const row = (label, req, ...el) => h('div.nn-row', fieldLabel(label, req), ...el);
+    body.appendChild(h('div',
+      row('Shop price (Penya)', false, numInput({ value: s.cost, min: 0, key: 'bxs|cost', onCommit: v => { s.cost = v; refresh(); } }), h('span.muted.small', 'dwCost; empty = no price')),
+      row('Can be traded', false, h('label', h('input', { type: 'checkbox', checked: s.tradeable, disabled: tr.forced, on: { change: e => { s.tradeable = e.target.checked; refresh(); } } }),
+        tr.forced ? ' its item type is always bound (IK3_BINDS / IK3_EVENTMAIN)' : ' players can trade it, sell it in a shop and drop it')),
+      row('Stack size', true, numInput({ value: s.packMax, min: 1, max: FRE.itemOps.MAX_PACK, key: 'bxs|pm', onCommit: v => { s.packMax = v; refresh(); } }), h('span.muted.small', 'how many fit in one bag slot (dwPackMax)'))));
+    body.appendChild(h('p.muted.small', 'A copy of the box with a time limit can never be traded, whatever this says.'));
+    formFooter({ checks, action: 'Apply changes', previewTitle: 'What players will see / what will be written', preview }).forEach(x => body.appendChild(x));
+    const m = modal({ title: `Edit box settings: ${name}`, body, wide: true, buttons: [
+      { label: 'Cancel' },
+      { label: 'Apply changes', cls: 'primary', id: 'bxs-apply', onClick: () => {
+        const parts = [];
+        if (s.cost !== was.cost && !(s.cost === null && was.cost === -1)) parts.push(`price ${s.cost === null ? 'none' : fmt(s.cost)} (was ${was.cost === -1 ? 'none' : fmt(was.cost)})`);
+        if (s.tradeable !== was.tradeable) parts.push(s.tradeable ? 'can be traded' : 'cannot be traded');
+        if (s.packMax !== was.packMax) parts.push(`stack size ${fmt(s.packMax)} (was ${fmt(was.packMax)})`);
+        ctx.edit('spec_item.txt', () => plan(), `${name}: ${parts.join(', ')}`, keyOf(sel.kind, sel.id));
+      } },
+    ] });
+    btn = m.el.querySelector('#bxs-apply');
+    refresh();
+  }
+
+  // ------------------------------------------------------------- + New box
+  // One form: name, what kind, what it gives, its look, its settings. Create writes the box item (defineItem.h,
+  // Spec_Item.txt, propItem.txt.txt), its ground model (mdlDyna.inc) and its contents as ONE undo step (boxesOps.newBoxPlan).
+  let nb = null;       // the form, kept while the task is open
+  function newBoxForm(ctx) {
+    const ws = ctx.ws, D = ws.defines.defines, TOTAL = Bx().TOTAL;
+    if (!nb || nb.ws !== ws) nb = { ws, name: '', kind: 'random', lines: [], span: 0, look: null, cost: null, packMax: 1, tradeable: true, desc: '', touched: false };
+    const looks = O().lookChoices(ws).filter(l => l.source !== null);
+    const lookOpts = looks.map(l => ({ v: l.icon, label: `${itemName(ctx, l.example)} look — used by ${fmt(l.count)} box${l.count === 1 ? '' : 'es'}`, find: l.icon }));
+    const itemOpts = ws._itemOpts || [...ws.items.items.values()].map(it => ws.itemInfo(it)).sort((a, z) => a.name.localeCompare(z.name)).map(i => ({ v: i.define, label: `${i.name} (${i.define})`, find: i.define }));
+    ws._itemOpts = itemOpts;
+    const body = h('div.nn-form'), checks = h('div'), preview = h('div'), lookBox = h('div.nn-row');
+    let btn = null, tryBtn = null;
+    const random = () => nb.kind === 'random';
+    const spec = () => ({ name: nb.name, kind: nb.kind, look: nb.look, cost: nb.cost, packMax: nb.packMax || 1, tradeable: nb.tradeable, desc: nb.desc, span: nb.span || 0,
+      lines: nb.lines.filter(x => x.define).map(x => ({ define: x.define, num: x.num || 1, w: x.w || 0, flag: x.bound ? Bx().FLAG_BOUND : 0, minutes: x.minutes || 0, upgrade: x.upgrade || 0 })) });
+    const idOf = d => (d && D.has(d) ? D.get(d) >>> 0 : null);
+    const rebalanceTo = (j, u) => {
+      const vals = FRE.exchangeOps.rebalance(nb.lines.map(x => x.w || 0), j, u, TOTAL);
+      nb.lines.forEach((x, i) => { x.w = vals[i]; });
+    };
+    const addLine = define => {
+      nb.lines.push({ define: define || null, num: 1, w: 0, bound: false, minutes: 0, upgrade: 0 });
+      const n = nb.lines.length;
+      rebalanceTo(n - 1, n === 1 ? TOTAL : Math.round(TOTAL / n));
+    };
+    if (!nb.lines.length) addLine(null);
+
+    function problems() {
+      const out = [], sp = spec();
+      const add = (sev, code, msg) => out.push({ severity: sev, code, message: msg });
+      if (!nb.name.trim()) add('BLOCK', '', 'Still needs: the name');
+      if (!nb.look) add('BLOCK', '', 'Still needs: the look');
+      if (!sp.lines.length) add('BLOCK', 'BX_EMPTY', 'Still needs: at least one item in the box');
+      if (nb.lines.some(x => !x.define)) add('BLOCK', '', 'An item row is empty: pick its item or remove the row (✕)');
+      if (FRE.itemOps.nextItemId(ws) === null) add('BLOCK', 'BX_ID_RANGE', `No free item id below ${fmt(FRE.itemOps.ID_LIMIT)}`);
+      if (!D.has(O().TEMPLATE) || !ws.itemById(D.get(O().TEMPLATE))) add('BLOCK', 'BX_TEMPLATE_MISSING', `The box row new boxes copy (${O().TEMPLATE}) is not in Spec_Item.txt`);
+      if (random() && nb.lines.length > Bx().MAX_GIFTBOX_ITEM) add('BLOCK', 'BX_TOO_MANY', `A random box holds at most ${Bx().MAX_GIFTBOX_ITEM} items`);
+      if (!random() && nb.lines.length > Bx().MAX_ITEM_PER_PACK) add('BLOCK', 'BX_PACK_TOO_MANY', `A set holds at most ${Bx().MAX_ITEM_PER_PACK} items`);
+      nb.lines.forEach((x, i) => {
+        const id = idOf(x.define), max = id !== null ? packMaxOf(ctx, id) : null;
+        if (max !== null && (x.num || 1) > max) add('BLOCK', 'BX_NUM_STACK', `Row ${i + 1}: one bag slot holds at most ${fmt(max)} of ${itemName(ctx, id)}: add a second row for more`);
+        if (random() && !x.w) add('WARN', '', `Row ${i + 1}: chance 0%: players never get ${x.define ? itemName(ctx, id) : 'it'}`);
+        if (id !== null && insideText(ctx, id)) add('WARN', '', `Row ${i + 1} is a box itself: players get the box and open it later (${insideText(ctx, id)})`);
+      });
+      const dup = sp.lines.map(x => x.define).filter((d, i, a) => a.indexOf(d) !== i);
+      if (dup.length) add('WARN', '', `${[...new Set(dup)].map(d => itemName(ctx, idOf(d), d)).join(', ')} is in the box twice: both rows stay`);
+      if (!random() && sp.lines.length) add('INFO', '', `Opening the set needs ${sp.lines.length} free bag slot${sp.lines.length === 1 ? '' : 's'} (one per item)`);
+      return out;
+    }
+    function planOrError() {
+      try { return { plan: O().newBoxPlan(ws, spec()) }; } catch (e) { return { error: e.message }; }
+    }
+    function refresh() {
+      checks.textContent = ''; preview.textContent = ''; lookBox.textContent = '';
+      const probs = problems(), blocked = probs.some(p => p.severity === 'BLOCK');
+      if (!nb.touched && blocked) checks.appendChild(h('p.muted', 'Fill in the fields above; the checks show here as you type.'));
+      else if (!probs.length) checks.appendChild(h('p.ok', '✓ No problem found.'));
+      for (const p of probs) if (nb.touched || p.severity !== 'BLOCK') checks.appendChild(diagRow(p));
+      const r = blocked ? null : planOrError();
+      if (r && r.error) checks.appendChild(diagRow({ severity: 'BLOCK', code: '', message: r.error }));
+      const ok = r && r.plan;
+      if (btn) btn.disabled = !ok;
+      if (tryBtn) tryBtn.disabled = !ok;
+      // the look: the icon at 3x, and the box in a bag slot with the tooltip players will read
+      if (nb.look) lookBox.appendChild(FRE.dds.picture(ctx, nb.look, { scale: 3, cls: '.bx-look' }));
+      if (ok) {
+        // the planned row alone, read by the Spec_Item loader with the new #define and texts (the full scratch load is for Try it)
+        const D2 = new Map(D).set(r.plan.define, r.plan.id), S2 = new Map(ws.strings.map).set(r.plan.item.keys.name, r.plan.item.name).set(r.plan.item.keys.desc, r.plan.item.desc);
+        const it = FRE.specItem.loadSpecItem({ name: 'Spec_Item.txt', text: r.plan.item.lines.row }, { defines: D2, strings: S2 }).items.get(r.plan.id);
+        lookBox.appendChild(h('div.bx-slotview', h('div.bx-slot', FRE.dds.picture(ctx, nb.look, { cls: '.bx-icon' })), tooltipOf(ws, it)));
+      }
+      if (!ok) { preview.appendChild(h('p.muted', 'Fix the ⛔ problems to see the exact text.')); return; }
+      const p = r.plan, show = (t, x) => { preview.appendChild(h('div.muted.small', t)); preview.appendChild(h('pre.nn-pre', x.replace(/\r/g, '').replace(/\n$/, ''))); };
+      preview.appendChild(h('p', `${nb.name.trim()} becomes item ${fmt(p.id)} (${p.define}); a GM gets it with `, h('code', `/createitem ${p.id} 1`), '.'));
+      show('defineItem.h (Server + Client), before #endif:', p.item.lines.define);
+      show('Spec_Item.txt (Server + Client), appended (a copy of ' + O().TEMPLATE + '\'s row):', p.item.lines.row);
+      show('propItem.txt.txt (Server + Client), appended (name and description):', p.item.lines.strings);
+      show(`mdlDyna.inc (Server + Client), after ${itemName(ctx, p.look.source)}'s line (the box on the ground):`, p.lines.model);
+      show(`${random() ? 'propGiftbox.inc (server only)' : 'propPackItem.inc (Server + Client)'}, appended${p.type ? ` (line format ${p.type})` : ''}:`, p.lines.block);
+    }
+
+    const row = (label, req, ...el) => h('div.nn-row', fieldLabel(label, req), ...el);
+    const touch = () => { nb.touched = true; };
+    function render() {
+      keepFocus(body, () => {
+        body.textContent = '';
+        body.appendChild(row('Name', true, h('input', { value: nb.name, placeholder: 'Infinity Treasure Box', maxLength: 60, 'data-key': 'nb|name',
+          on: { input: e => { nb.name = e.target.value; touch(); refresh(); } } }), h('span.muted.small', 'What players read on the item.')));
+        body.appendChild(row('What it gives', true,
+          ...[['random', 'Random: players get 1 of these'], ['set', 'Everything inside: players get all of them']].map(([v, t]) => h('label.nn-radio',
+            h('input', { type: 'radio', name: 'nb-kind', checked: nb.kind === v, on: { change: () => { nb.kind = v; touch(); render(); } } }), t))));
+        if (!random()) body.appendChild(row('Time limit for every item', false, daysInput(nb.span, { key: 'nb|span', onCommit: v => { nb.span = v || 0; touch(); refresh(); } }),
+          h('span.muted.small', '0 = permanent')));
+        const tb = h('table.items.dr.bx', h('tr', h('th', ''), h('th', 'Item'), random() ? h('th', 'Chance') : null, h('th', 'Count'),
+          random() ? h('th', { title: 'Bound: the item cannot be traded' }, 'Bound') : null, random() ? h('th', 'Time limit') : null, h('th', 'Upgrade'), h('th', '')));
+        nb.lines.forEach((x, j) => {
+          const id = idOf(x.define), max = id !== null ? packMaxOf(ctx, id) : null;
+          tb.appendChild(h('tr',
+            h('td', { 'data-item-id': id !== null ? id : null, title: id !== null ? '' : null }, id !== null ? FRE.dds.picture(ctx, iconOf(itemOf(ctx, id)), { cls: '.bx-icon' }) : null),
+            h('td', { style: 'min-width:260px' }, FRE.ui.combo({ options: itemOpts, value: x.define, placeholder: 'Type an item name…', onPick: v => { x.define = v; nb.shown = j; touch(); render(); } })),
+            random() ? h('td', pctInput({ value: x.w, key: `nb|w|${j}`, live: true, onCommit: u => { if (u === null) return; rebalanceTo(j, u); touch(); render(); } })) : null,
+            h('td.dr-amt', '×', numInput({ value: x.num, min: 1, max: O().MAX_NUM, key: `nb|n|${j}`, onCommit: v => { x.num = v || 1; touch(); refresh(); } }), max ? h('span.muted.small', ` max ${fmt(max)}`) : null),
+            random() ? h('td', h('input', { type: 'checkbox', checked: x.bound, on: { change: e => { x.bound = e.target.checked; touch(); refresh(); } } })) : null,
+            random() ? h('td.dr-amt', daysInput(x.minutes, { key: `nb|m|${j}`, onCommit: v => { x.minutes = v || 0; touch(); refresh(); } })) : null,
+            h('td.dr-amt', '+', numInput({ value: x.upgrade, min: 0, max: O().MAX_UPGRADE, key: `nb|u|${j}`, onCommit: v => { x.upgrade = v || 0; touch(); refresh(); } })),
+            h('td', h('button.icon.danger', { disabled: nb.lines.length < 2, title: 'Remove this row', on: { click: () => {
+              nb.lines.splice(j, 1); if (nb.lines.length) rebalanceTo(null, 0); touch(); render(); } } }, '✕'))));
+        });
+        body.appendChild(h('h3', 'What it gives'));
+        body.appendChild(tb);
+        // the picked item's in-game tooltip (stats, effects); hover an icon for the others
+        const showN = nb.shown != null && nb.lines[nb.shown] ? nb.shown : nb.lines.findIndex(x => x.define);
+        const shownIt = showN >= 0 ? itemOf(ctx, idOf(nb.lines[showN].define)) : null;
+        if (shownIt) body.appendChild(h('div.bx-tip', h('div.muted.small', `Row ${showN + 1}: ${shownIt.name || shownIt.define} — hover an item's icon to see the others`), tooltipOf(ws, shownIt, true)));
+        const total = nb.lines.reduce((a, x) => a + (x.w || 0), 0);
+        body.appendChild(h('div.dr-line',
+          h('button', { on: { click: () => { addLine(null); touch(); render(); } } }, '+ Add an item'),
+          random() ? h('button', { disabled: nb.lines.length < 2, on: { click: () => {
+            const n = nb.lines.length, base = Math.floor(TOTAL / n), extra = TOTAL - base * n;
+            nb.lines.forEach((x, i) => { x.w = base + (i < extra ? 1 : 0); }); touch(); render(); } } }, 'Same chance for all') : null,
+          random() ? h('span.small' + (total === TOTAL ? '.muted' : '.bad'), ` Total: ${pct(total / TOTAL)}${total === TOTAL ? ' ✓' : ''}`) : null));
+        body.appendChild(h('h3', 'Look'));
+        body.appendChild(row('Look', true, h('div', { style: 'flex:1' }, FRE.ui.combo({ options: lookOpts, value: nb.look, placeholder: 'Search a box look (Box of Lucky…)',
+          onPick: v => { nb.look = v; touch(); refresh(); } })), h('span.muted.small', `${looks.length} looks: only those with a model for the ground`)));
+        body.appendChild(lookBox);
+        body.appendChild(h('h3', 'Settings'));
+        body.appendChild(row('Shop price (Penya)', false, numInput({ value: nb.cost, min: 0, key: 'nb|cost', onCommit: v => { nb.cost = v; touch(); refresh(); } }),
+          h('span.muted.small', nb.cost ? `sells back for ${fmt(Math.floor(nb.cost / 4))}` : 'empty = the template\'s (0)')));
+        body.appendChild(row('Can be traded', false, h('label', h('input', { type: 'checkbox', checked: nb.tradeable, on: { change: e => { nb.tradeable = e.target.checked; touch(); refresh(); } } }),
+          ' players can trade it (a copy with a time limit never can)')));
+        body.appendChild(row('Stack size', true, numInput({ value: nb.packMax, min: 1, max: FRE.itemOps.MAX_PACK, key: 'nb|pm', onCommit: v => { nb.packMax = v || 1; touch(); refresh(); } }),
+          h('span.muted.small', 'how many fit in one bag slot')));
+        body.appendChild(row('Description', false, h('input', { value: nb.desc, placeholder: 'empty = "Gives one of: …" / "Contains: …" from the items', style: 'flex:1', maxLength: 200, 'data-key': 'nb|desc',
+          on: { input: e => { nb.desc = e.target.value; touch(); refresh(); } } })));
+        formFooter({ checks, action: 'Create', previewTitle: 'What will be written', preview }).forEach(z => body.appendChild(z));
+      });
+      refresh();
+    }
+    render();
+    const m = modal({ title: 'New box', body, wide: true, buttons: [
+      { label: 'Close' },
+      { label: 'Reset form', onClick: () => { nb = null; nb = { ws, name: '', kind: 'random', lines: [], span: 0, look: null, cost: null, packMax: 1, tradeable: true, desc: '', touched: false }; addLine(null); render(); return false; } },
+      { label: '🎲 Try it', id: 'nb-try', onClick: () => {
+        const r = planOrError();
+        if (!r.plan) { toast(r.error || 'Fix the ⛔ problems first', 'bad'); return false; }
+        const sc = Sim().scratch(ws, r.plan), b = random() ? sc.model.gift.boxes.get(sc.id) : sc.model.pack.boxes.get(sc.id);
+        openWindow(ctx, { kind: nb.kind, id: sc.id }, { env: sc.env, b, name: nb.name.trim() });
+        return false;
+      } },
+      { label: 'Create box', cls: 'primary', id: 'nb-create', onClick: () => {
+        const r = planOrError();
+        if (!r.plan) { toast(r.error, 'bad'); return false; }
+        const p = r.plan, kind = nb.kind, name = nb.name.trim(), n = spec().lines.length;
+        const before = ws.history.length;
+        ctx.editGroup(() => p.parts, `new box ${name} (item ${p.id}, ${kind === 'random' ? `random: 1 of ${n}` : `set of ${n}`})`, [keyOf(kind, p.id)]);
+        if (ws.history.length === before) return false;
+        st.sel = { kind, id: p.id };
+        nb = null;
+        toast(`${name} created (not saved yet). Save writes defineItem.h, Spec_Item.txt, propItem.txt.txt, mdlDyna.inc and ${kind === 'random' ? 'propGiftbox.inc' : 'propPackItem.inc'}, Server and Client. One Undo removes it all.`, 'ok');
+        ctx.renderAll(false);
+        return true;
+      } },
+    ] });
+    btn = m.el.querySelector('#nb-create');
+    tryBtn = m.el.querySelector('#nb-try');
+    refresh();
+  }
+  // the in-game tooltip of an item (a planned one too), drawn in place; full = with the editor's info (price, id)
+  function tooltipOf(ws, it, full = false) {
+    if (!it) return null;
+    if (full) return h('div.bx-tt', FRE.ui.tooltip.body(ws, it));
+    const t = FRE.itemTooltip.build(ws, it);
+    return h('div.bx-tt', t.game.map(l => h('div.tt-line', l.map(x => h('span', { style: `color:${x.color}${x.bold ? ';font-weight:600' : ''}` }, x.text || ' ')))));
+  }
+
   FRE.ui.modules.push(mod);
-  FRE.ui.boxes = { addForm, openWindow };
+  FRE.ui.boxes = { addForm, openWindow, newBoxForm, settingsWindow };
 })(globalThis.FRE = globalThis.FRE || {});

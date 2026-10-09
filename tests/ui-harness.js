@@ -1176,6 +1176,52 @@
       ok(S.ws.diags.some(d => d.code === 'BX_EMPTIED'), 'removing the contents warns: players who own it can no longer open it');
       while (S.ws.history.length) click($('btn-undo'));
       ok(S.ws.files.get('propgiftbox.inc').text === g0 && S.ws.files.get('proppackitem.inc').text === p0 && !S.ws.dirtyFiles().length, 'every edit undone');
+
+      // + New box (J part 2): one form, Try it, Create = one undo step over six files
+      const pickIn = async (root, combo, text, re) => {
+        const ci = combo.querySelector('input');
+        ci.dispatchEvent(new Event('focus')); ci.value = text; ci.dispatchEvent(new Event('input'));
+        await waitFor(() => [...root.querySelectorAll('.combo-opt')].some(x => re.test(x.textContent)), 'combo option ' + text);
+        [...root.querySelectorAll('.combo-opt')].find(x => re.test(x.textContent)).dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      };
+      click(btnByText(document, '+ New box'));
+      await waitFor(() => lastModalAny() && /New box/.test(lastModalAny().querySelector('header').textContent), 'new box form');
+      const nf = lastModalAny();
+      const create = () => nf.querySelector('#nb-create');
+      ok(create().disabled && /Fill in the fields/.test(nf.textContent), 'Create greyed until the form is filled');
+      const nameIn = nf.querySelector('input[data-key="nb|name"]');
+      nameIn.value = 'Harness Box'; nameIn.dispatchEvent(new Event('input'));
+      await pickIn(nf, nf.querySelector('table.bx .combo'), 'II_GEN_MAT_MOONSTONE', /II_GEN_MAT_MOONSTONE\)/);
+      const lookCombo = () => [...nf.querySelectorAll('.combo')].find(c => /box look/.test(c.querySelector('input').placeholder));
+      await pickIn(nf, lookCombo(), 'Itm_SysSysScrBxLuck', /look — used by/);
+      await waitFor(() => !create().disabled, 'Create enabled');
+      ok(/\/createitem 31671 1/.test(nf.textContent) && /GiftBox\tII_SYS_SYS_SCR_HARNESS_BOX/.test(nf.textContent) && /#define\tII_SYS_SYS_SCR_HARNESS_BOX\t\t\t31671/.test(nf.textContent),
+        'preview: item 31671, the #define, the GiftBox block');
+      ok(/SysSysScrBxCom/.test(nf.textContent) && /IDS_PROPITEM_TXT_017062\tHarness Box/.test(nf.textContent), 'preview: the ground model line and the name line');
+      await waitFor(() => [...nf.querySelectorAll('.bx-tt')].some(t => /Harness Box/.test(t.textContent)), 'the tooltip of the planned box');
+      ok([...nf.querySelectorAll('.bx-tt')].some(t => /Moonstone/.test(t.textContent) && /Penya price/.test(t.textContent)), 'the picked item\'s tooltip shows in the form');
+      click(btnByText(nf.querySelector('footer'), 'Try it'));
+      await waitFor(() => lastModalAny() !== nf && /not created yet/.test(lastModalAny().querySelector('header').textContent) && /opens in \d+ ms/.test(lastModalAny().textContent), 'Try it window');
+      ok(/Moonstone/.test(lastModalAny().textContent) && !S.ws.dirtyFiles().length, 'Try it opens the planned box; nothing in the workspace changed');
+      click(btnByText(lastModalAny().querySelector('footer'), 'Close'));
+      if (STOP === 'newbox') { $('toasts').textContent = ''; return; }
+      click(create());
+      ok(S.ws.history.length === 1 && /new box Harness Box/.test(S.ws.history[0].label || S.ws.files.get('spec_item.txt')._undo.slice(-1)[0].label), 'Create: one undo step');
+      ok(['defineitem.h', 'spec_item.txt', 'propitem.txt.txt', 'mdldyna.inc', 'propgiftbox.inc'].every(n => S.ws.files.get(n).dirty), 'six-file box: defineItem.h, Spec_Item.txt, propItem.txt.txt, mdlDyna.inc, propGiftbox.inc changed');
+      ok(/Harness Box/.test(ed().textContent) && /the player gets 1 of 1/.test(ed().textContent) && S.ws.newBlocking().length === 0, 'the new box is selected, no new problem');
+      // ✎ Edit box settings
+      click(btnByText(ed(), 'Edit box settings'));
+      await waitFor(() => lastModalAny() && /Edit box settings: Harness Box/.test(lastModalAny().querySelector('header').textContent), 'settings dialog');
+      const sf = lastModalAny();
+      ok(sf.querySelector('#bxs-apply').disabled && /No change yet/.test(sf.textContent), 'settings: Apply greyed while nothing changes');
+      const tradeBox = [...sf.querySelectorAll('input[type=checkbox]')][0];
+      tradeBox.checked = false; tradeBox.dispatchEvent(new Event('change'));
+      await waitFor(() => !sf.querySelector('#bxs-apply').disabled && /cannot trade it/.test(sf.textContent), 'settings ready');
+      if (STOP === 'boxsettings') { $('toasts').textContent = ''; return; }
+      click(sf.querySelector('#bxs-apply'));
+      ok(/cannot be traded/.test(ed().textContent) && !FRE.itemOps.isTradeable(S.ws, S.ws.itemById(31671)).tradeable, 'settings applied: the box cannot be traded');
+      while (S.ws.history.length) click($('btn-undo'));
+      ok(!S.ws.dirtyFiles().length && !S.ws.itemById(31671), 'Undo removes the new box from every file');
       listSearch.value = ''; listSearch.dispatchEvent(new Event('input'));
     }
 

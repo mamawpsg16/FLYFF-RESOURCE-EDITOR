@@ -191,5 +191,26 @@
   }
   function lineStat(out, i) { if (!out.lines.has(i)) out.lines.set(i, { times: 0, qty: 0, lost: 0, stacked: 0 }); return out.lines.get(i); }
 
-  FRE.boxesSim = { envFor, open, addItem, boxBinds, bag, run, BINDS, EXPIRED };
+  // A new box before Create (+ New box → Try it): the plan (boxesOps.newBoxPlan) spliced into scratch copies of
+  // Spec_Item.txt and the box file, read back by the real loaders with the new #define and texts. Nothing changes
+  // in the workspace. -> { env, model, item, id }
+  function scratch(ws, plan) {
+    const D = new Map(ws.defines.defines);
+    D.set(plan.define, plan.id);
+    const strings = new Map(ws.strings.map);
+    strings.set(plan.item.keys.name, plan.item.name);
+    strings.set(plan.item.keys.desc, plan.item.desc);
+    const textOf = name => {
+      const f = ws.files.get(name), part = plan.parts.find(p => p.file === name);
+      return part ? f.preview(part.splices) : f.text;
+    };
+    const items = FRE.specItem.loadSpecItem({ name: 'Spec_Item.txt', text: textOf('spec_item.txt') }, { defines: D, strings });
+    const ctx = { defines: D, strings };
+    const model = { gift: Bx().loadGiftboxes({ name: Bx().GIFT, text: textOf('propgiftbox.inc') }, ctx),
+      pack: Bx().loadPacks({ name: Bx().PACK, text: textOf('proppackitem.inc') }, ctx) };
+    const view = { defines: { defines: D }, texts: ws.texts, itemById: id => items.items.get(id >>> 0) || null, models: { boxes: model } };
+    return { env: envFor(view, model), model, item: view.itemById(plan.id), id: plan.id, items };
+  }
+
+  FRE.boxesSim = { envFor, open, addItem, boxBinds, bag, run, scratch, BINDS, EXPIRED };
 })(globalThis.FRE = globalThis.FRE || {});

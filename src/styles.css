@@ -386,6 +386,14 @@ table.dr td .dr-amt { white-space: nowrap; }
 table.bx td input.num-input { width: 72px; }
 table.bx td input.pct-input { width: 80px; }
 .warn-text { color: var(--warn, #c80); }
+.bx-look { display: inline-block; margin-right: 12px; }
+.bx-slotview { display: flex; gap: 10px; align-items: flex-start; }
+.bx-slot { width: 36px; height: 36px; border: 1px solid #4a5a73; border-radius: 4px; background: #1a2230; display: flex; align-items: center; justify-content: center; }
+.bx-tt { max-width: 380px; padding: 8px 10px; background: rgba(10, 14, 22, .96); border: 1px solid #4a5a73; border-radius: 6px; font-size: 12px; line-height: 1.45; }
+.bx-tt .tt-line { white-space: pre-wrap; }
+.bx-tt .tt-editor { margin-top: 6px; padding-top: 6px; border-top: 1px dashed #3a465a; }
+.bx-tt .tt-head { color: #7f8fa3; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+.bx-tip { margin: 6px 0 8px; display: flex; flex-direction: column; gap: 4px; }
 .bx-chat { background: var(--panel, #111); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; margin: 8px 0; font-size: 12px; }
 .dur-wrap { white-space: nowrap; }
 input.num-input.dur-input { width: 64px; }

@@ -14,6 +14,7 @@
 //     (Project.cpp:3196 / 3218 / 3234), and it has no loose Client copy: a drop change needs only the server restart.
 //   propGiftbox.inc (Boxes): LoadGiftbox is #ifdef __WORLDSERVER (Project.cpp:836-847), no Client copy: server restart only.
 //   propPackItem.inc (Boxes): LoadPackItem (Project.cpp:855) runs in both; the game reads Client/propPackItem.inc (Item Wiki).
+//   defineItem.h / propItem.txt.txt / mdlDyna.inc (+ New box): LoadDefines / LoadStrings / the model script, at startup in both.
 //   Client/Client/DonationShopTree.inc: each time the Donation Shop window opens (WndDonationShop.cpp:346; 409 with donation-tree.diff).
 //   Client/Client/NpcBoard_<id>.inc: on every click of the menu, once docs/patches/npc-board.diff is built.
 // Stop Server.bat closes Neuz and every server; Start Server.bat starts them and then the game
@@ -43,6 +44,10 @@
     // random boxes: LoadGiftbox sits in #ifdef __WORLDSERVER (Project.cpp:836-847); sets: the game loads its own copy too (Item Wiki, e08528a5)
     'propgiftbox.inc': { server: STARTUP, client: null, cite: 'Project.cpp:842 LoadGiftbox (#ifdef __WORLDSERVER :836)' },
     'proppackitem.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:855 LoadPackItem (the game too: Item Wiki)' },
+    // a new box item (J part 2, the 949f2cc2 way): its #define, its name / description, its ground model
+    'defineitem.h': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1376 LoadDefines' },
+    'propitem.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1261 LoadStrings' },
+    'mdldyna.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:768 m_modelMng.LoadScript (the "model" line of Masquerade.prj)' },
     'client/donationshoptree.inc': { server: null, client: WINDOW, cite: 'WndDonationShop.cpp:346 (409 with donation-tree.diff) LoadTreeScript' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };

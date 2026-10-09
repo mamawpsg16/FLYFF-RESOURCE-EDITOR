@@ -4004,7 +4004,8 @@ def db_run(root):
 #   Stop Server.bat kills Neuz.exe and all 7 servers; Start Server.bat starts them and then Client\- Start Game.bat.
 AS_SHARED = ['spec_item.txt', 'character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt',
              'defineneuz.h', 'definetext.h', 'etc.inc', 'etc.txt.txt', 'textclient.inc', 'textclient.txt.txt',
-             'exchange_script.txt', 'donationshop.inc', 'battlepass.inc', 'proppackitem.inc']
+             'exchange_script.txt', 'donationshop.inc', 'battlepass.inc', 'proppackitem.inc',
+             'defineitem.h', 'propitem.txt.txt', 'mdldyna.inc']      # + New box: the item's define, texts and ground model
 AS_TREE = 'client/donationshoptree.inc'
 # (path, line, text that must be on that line): the loads this table relies on
 AS_CITES = [
@@ -4026,6 +4027,9 @@ AS_CITES = [
     ('_Common/ProjectCmn.cpp', 1366, 'LoadText( "textClient.inc" )'),
     ('_Common/ProjectCmn.cpp', 1373, '"defineNeuz.h"'),
     ('_Common/ProjectCmn.cpp', 1383, '"defineText.h"'),
+    ('_Common/ProjectCmn.cpp', 1376, '"defineItem.h"'),
+    ('_Common/ProjectCmn.cpp', 1261, '"propItem.txt.txt"'),
+    ('_Common/Project.cpp', 768, 'm_modelMng.LoadScript( scanner.token )'),
     ('_Common/WorldFile.cpp', 269, '#ifdef __WORLDSERVER'),
     ('_Common/WorldFile.cpp', 305, '.dyo'),
     ('_Common/WorldFile.cpp', 382, '#endif'),
@@ -5833,6 +5837,300 @@ def bx_run(root):
     return out
 
 
+# ---- + New box (J part 2): a new box item written the way 949f2cc2 added two (verified in game), then opened ----
+# Server copies only (the save mirrors them into Client/):
+#   defineItem.h      "#define<TAB>II_X<TAB><TAB><TAB><id>" in front of the last #endif, with the line ending of the line above
+#   Spec_Item.txt     the II_SYS_SYS_SCR_BXMCOOK01 row with dwID, szName, dwPackMax, dwCost, dwFlag, szIcon and the
+#                     description (szComment) changed, appended. LoadPropItem reads """x""" as 3 tokens, x being szIcon.
+#   propItem.txt.txt  "<key><TAB><name>" and "<key+1><TAB><description>", appended; the keys are the next IDS_PROPITEM_TXT_ numbers
+#   mdlDyna.inc       the ground model: CModelMng::LoadScript (ModelMng.cpp:314) keeps one model per (type, index); the
+#                     line of the lowest-numbered box with the same icon is repeated right under it with the new II_ name
+#   propGiftbox.inc / propPackItem.inc  the contents block, appended after an empty line
+# The new id is one above the highest item id below 60000 (60000+ is __NEW_STACKABLE_AMPS, ProjectCmn.cpp:593).
+NB_TEMPLATE = 'II_SYS_SYS_SCR_BXMCOOK01'
+NB_LIMIT = 60000
+NB_COLS = {'GiftBox': 0, 'GiftBox2': 0, 'GiftBox3': 1, 'GiftBox4': 2, 'GiftBox5': 2, 'GiftBox6': 3}
+
+
+def nb_eol(t):
+    crlf = t.count('\r\n')
+    return '\r\n' if crlf >= t.count('\n') - crlf else '\n'
+
+
+def nb_append(t, body, lead=''):
+    if t and t[-1] not in '\r\n':
+        t += nb_eol(t)
+    return t + lead + body
+
+
+def nb_clean(x):
+    return re.sub(r'[\t\r\n]+', ' ', x or '').strip()
+
+
+class NbFiles:
+    """the six files as text, plus what is derived from them"""
+    NAMES = ['defineItem.h', 'Spec_Item.txt', 'propItem.txt.txt', 'mdlDyna.inc', 'propGiftbox.inc', 'propPackItem.inc']
+    WIDE = {'propItem.txt.txt', 'mdlDyna.inc', 'propGiftbox.inc'}
+
+    def __init__(self, root):
+        self.root = root
+        self.t = {}
+        for n in self.NAMES:
+            b = open(os.path.join(root, n), 'rb').read()
+            self.t[n] = nn_text16(b) if n in self.WIDE else b.decode('latin-1')
+        self.D = dr_defines(root)
+        self.S = {}
+        for f in sorted(os.listdir(root)):
+            if f.lower().endswith('.txt.txt') and f != 'propItem.txt.txt':
+                nn_strings_add(self.S, nn_text16(open(os.path.join(root, f), 'rb').read()))
+        self.base_S = dict(self.S)
+
+    def data(self, n):
+        return (b'\xff\xfe' + self.t[n].encode('utf-16-le', 'surrogatepass')) if n in self.WIDE else self.t[n].encode('latin-1')
+
+    def strings(self):
+        S = dict(self.base_S)
+        nn_strings_add(S, self.t['propItem.txt.txt'])
+        for k, v in self.base_S.items():        # LoadStrings: the first file that has a key wins (propItem is read early)
+            S.setdefault(k, v)
+        return S
+
+    def rows(self):
+        """Spec_Item rows: (line text without its end, its columns)"""
+        out = []
+        for line in re.split(r'\r\n|\n', self.t['Spec_Item.txt']):
+            c = line.split('\t')
+            if len(c) > 2 and not line.lstrip().startswith('//'):
+                out.append((line, c))
+        return out
+
+
+def nb_head(F):
+    for line in re.split(r'\r\n|\n', F.t['Spec_Item.txt'])[:4]:
+        c = [x.strip().lstrip('/') for x in line.split('\t')]
+        if 'szIcon' in c and 'dwFlag' in c:
+            return {k: i for i, k in enumerate(c)}
+    raise ValueError('no Spec_Item header')
+
+
+def nb_items(F):
+    """id -> columns of the row the server keeps (version <= 19, later rows replace earlier ones)"""
+    out = {}
+    for line, c in F.rows():
+        if dr_val(c[0], F.D) > 19:
+            continue
+        out[dr_val(c[1], F.D) & 0xFFFFFFFF] = c
+    return out
+
+
+def nb_models(F):
+    """II_ index -> (line start, line end incl. EOL, define start, define end) of the first item model"""
+    t = F.t['mdlDyna.inc']
+    clean = re.sub(r'/\*.*?\*/', lambda m: re.sub(r'[^\r\n]', ' ', m.group(0)), t, flags=re.S)
+    clean = re.sub(r'//[^\r\n]*', lambda m: ' ' * len(m.group(0)), clean)
+    out, depth, section, pos = {}, 0, None, 0
+    for line in clean.splitlines(True):
+        body = line.rstrip('\r\n')
+        if depth == 0:
+            m = re.match(r'^[ \t]*"([^"]*)"[ \t]+(\d+)[ \t]*$', body)
+            if m:
+                section = int(m.group(2))
+        m = re.match(r'^[ \t]*"[^"]*"[ \t]+(\w+)[ \t]+MODELTYPE_\w+[ \t]+"[^"]*"(?:[ \t]+\S+){8}[ \t]*$', body)
+        if m and depth >= 1 and section == 4 and m.group(1) in F.D:
+            idx = F.D[m.group(1)] & 0xFFFFFFFF
+            if idx not in out:
+                out[idx] = (pos, pos + len(line), pos + m.start(1), pos + m.end(1))
+        depth += body.count('{') - body.count('}')
+        pos += len(line)
+    return out
+
+
+def nb_build(F, spec):
+    """the new box: changes F.t, returns {'id', 'define'}"""
+    D, H = F.D, nb_head(F)
+    items = nb_items(F)
+    # the name of the #define: II_SYS_SYS_SCR_ + the name in capitals, other characters as _
+    base = 'II_SYS_SYS_SCR_' + (re.sub(r'[^A-Z0-9]+', '_', (spec['name'] or '').upper()).strip('_')[:40] or 'NEWBOX')
+    define, k = base, 2
+    while define in D:
+        define, k = '%s_%d' % (base, k), k + 1
+    # the id
+    top = 0
+    for line, c in F.rows():
+        v = dr_val(c[1], D) & 0xFFFFFFFF
+        if v < NB_LIMIT:
+            top = max(top, v)
+    for n, v in D.items():
+        if n.startswith('II_') and (v & 0xFFFFFFFF) < NB_LIMIT:
+            top = max(top, v & 0xFFFFFFFF)
+    new_id = top + 1
+    # the text keys
+    hi = 0
+    for txt in [F.t['propItem.txt.txt'], F.t['Spec_Item.txt']] + list(F.S.keys()):
+        for m in re.finditer(r'IDS_PROPITEM_TXT_(\d+)', txt):
+            hi = max(hi, int(m.group(1)))
+    k_name, k_desc = 'IDS_PROPITEM_TXT_%06d' % (hi + 1), 'IDS_PROPITEM_TXT_%06d' % (hi + 2)
+    # the look: the icon of the boxes using it, the model of the lowest-numbered one that has a model line
+    models = nb_models(F)
+    gift = bx_gift(F.data('propGiftbox.inc'), D)
+    pack = bx_pack(F.data('propPackItem.inc'), D)
+    icon_text, source = None, None
+    for bid in sorted(set(gift['boxes']) | set(pack['boxes'])):
+        c = items.get(bid)
+        if c is None:
+            continue
+        ic = c[H['szIcon']].strip().strip('"')
+        if not ic or ic.lower() != spec['look'].lower():
+            continue
+        if icon_text is None:
+            icon_text = ic
+        if source is None and bid in models:
+            source = bid
+    S = F.strings()
+
+    def iname(d):
+        c = items.get(D.get(d, -1) & 0xFFFFFFFF)
+        if c is None:
+            return d
+        key = c[H['szName']].strip()
+        return S.get(key, key).rstrip() or d
+    lines = spec['lines']
+    if spec.get('desc') and spec['desc'].strip():
+        desc = spec['desc']
+    elif spec['kind'] == 'set':
+        desc = 'Contains: ' + ', '.join(iname(x['define']) + (' x%d' % x['num'] if x['num'] > 1 else '') for x in lines)
+    else:
+        desc = 'Gives one of: ' + ', '.join('%s%s (%s%%)' % (iname(x['define']), ' x%d' % x['num'] if x['num'] > 1 else '',
+                                                            ('%.4f' % (x['w'] / 10000)).rstrip('0').rstrip('.')) for x in lines)
+    name = nb_clean(spec['name'])
+    desc = nb_clean(desc) or name
+    # defineItem.h
+    t = F.t['defineItem.h']
+    e = t.rfind('#endif')
+    at = t.rfind('\n', 0, e) + 1
+    above = t[:at]
+    eol = '\r\n' if above.endswith('\r\n') else '\n' if above.endswith('\n') else nb_eol(t)
+    F.t['defineItem.h'] = t[:at] + '#define\t%s\t\t\t%d%s' % (define, new_id, eol) + t[at:]
+    # Spec_Item.txt
+    tpl = None
+    for line, c in F.rows():
+        if c[1].strip() == NB_TEMPLATE:
+            tpl = list(c)
+    tpl[-1] = tpl[-1].rstrip(' ')
+    raw = tpl[H['dwFlag']].strip()
+    v = 0 if raw == '=' else int(raw)
+    now = v & ~1 if spec.get('tradeable', True) else v | 1
+    tpl[H['dwFlag']] = raw if now == v else '=' if (now == 0 and raw == '=') else str(now & 0xFFFFFFFF)
+    tpl[H['dwID']] = define
+    tpl[H['szName']] = k_name
+    tpl[H['dwPackMax']] = str(spec.get('packMax') or 1)
+    if spec.get('cost') is not None:
+        tpl[H['dwCost']] = str(spec['cost'])
+    tpl[H['szIcon']] = '"""%s"""' % icon_text
+    tpl[H['szComment']] = k_desc
+    st = F.t['Spec_Item.txt']
+    F.t['Spec_Item.txt'] = nb_append(st, '\t'.join(tpl).rstrip(' \t') + nb_eol(st))
+    # propItem.txt.txt
+    pt = F.t['propItem.txt.txt']
+    pe = nb_eol(pt)
+    F.t['propItem.txt.txt'] = nb_append(pt, '%s\t%s%s%s\t%s%s' % (k_name, name, pe, k_desc, desc, pe))
+    # mdlDyna.inc: the source line again, under it
+    mt = F.t['mdlDyna.inc']
+    a, b, da, db = models[source]
+    copy = mt[a:da] + define + mt[db:b]
+    if not copy.endswith(('\r', '\n')):
+        copy += nb_eol(mt)
+    F.t['mdlDyna.inc'] = mt[:b] + copy + mt[b:]
+    # the contents
+    if spec['kind'] == 'random':
+        need = 3 if any(x.get('upgrade') for x in lines) else 2 if any(x.get('minutes') for x in lines) else 1 if any(x.get('flag') for x in lines) else 0
+        cands = [['GiftBox', 'GiftBox2'], ['GiftBox3', 'GiftBox5'], ['GiftBox4', 'GiftBox5'], ['GiftBox6']][need]
+        typ = next((c for c in cands if all(x['w'] % BX_TYPES[c][0] == 0 for x in lines)), cands[-1])
+        prec = BX_TYPES[typ][0]
+        q = [(2 * x['w'] + prec) // (2 * prec) * prec for x in lines]
+        if q and sum(q) != BX_TOTAL:
+            q[q.index(max(q))] += BX_TOTAL - sum(q)
+        gt = F.t['propGiftbox.inc']
+        ge = nb_eol(gt)
+        rows = ''
+        for x, w in zip(lines, q):
+            vals = [x['define'], w // prec, x['num']] + [x.get(f, 0) for f in ('flag', 'minutes', 'upgrade')][:NB_COLS[typ]]
+            rows += '\t' + '\t'.join(str(y) for y in vals) + ge
+        F.t['propGiftbox.inc'] = nb_append(gt, '%s\t%s%s{%s%s}%s' % (typ, define, ge, ge, rows, ge), ge)
+    else:
+        kt = F.t['propPackItem.inc']
+        ke = nb_eol(kt)
+        rows = ''.join('\t%s\t%d\t%d%s' % (x['define'], x.get('upgrade', 0), x['num'], ke) for x in lines)
+        F.t['propPackItem.inc'] = nb_append(kt, 'PackItem\t%s\t%d%s{%s%s}%s' % (define, spec.get('span', 0), ke, ke, rows, ke), ke)
+    F.D = dict(D)
+    F.D[define] = new_id
+    F.S[k_name] = name
+    F.S[k_desc] = desc
+    return {'id': new_id, 'define': define}
+
+
+def nb_specs():
+    L = lambda d, n=1, w=0, **k: dict({'define': d, 'num': n, 'w': w}, **k)
+    luck, bal, rnd32 = 'Itm_SysSysScrBxLuck.dds', 'itm_EveBalPbox.DDS', 'Itm_RandomPackbox01-32.dds'
+    R = lambda name, lines, look=luck, **k: dict({'name': name, 'kind': 'random', 'look': look, 'lines': lines, 'cost': None, 'packMax': 1, 'tradeable': True}, **k)
+    P = lambda name, lines, look=bal, span=0, **k: dict({'name': name, 'kind': 'set', 'look': look, 'lines': lines, 'span': span, 'cost': None, 'packMax': 1, 'tradeable': True}, **k)
+    mo, oc, su, ch = 'II_GEN_MAT_MOONSTONE', 'II_GEN_MAT_ORICHALCUM02', 'II_GEN_MAT_ORICHALCUM01', 'II_SYS_SYS_SCR_BXCHANGE'
+    return [
+        [R('Infinity Treasure Box', [L(mo, 5, 400000), L(oc, 1, 350000), L(su, 1, 250000)], cost=100000, tradeable=False)],
+        [R('Fine Chance Box', [L(mo, 1, 123457), L(su, 2, 876543)])],
+        [R('Bound Box', [L(mo, 3, 500000, flag=2), L(su, 1, 500000)], look=bal)],
+        [R('Week Box', [L(mo, 1, 300000, minutes=10080), L(su, 1, 700000)], look=rnd32)],
+        [R('Week Fine Box', [L(mo, 1, 300010, minutes=60, flag=2), L(su, 1, 699990)])],
+        [R('Upgrade Box', [L('II_WEA_SWO_ANGEL', 1, 250000, upgrade=5, minutes=0), L(mo, 10, 750000)])],
+        [R('Upgrade Fine', [L('II_WEA_SWO_ANGEL', 1, 123455, upgrade=2), L(mo, 1, 876545)])],     # GiftBox6 steps of 10: rounded, the largest takes the rest
+        [R('Upgrade Fine First', [L(mo, 1, 876545), L('II_WEA_SWO_ANGEL', 1, 123455, upgrade=2)])],   # the same with the largest line first
+        [R('One Thing', [L(mo, 99, 1000000)])],
+        [R('Stack Box', [L(mo, 999, 500000), L(su, 1, 500000)], packMax=999, cost=0)],
+        [R('Box of a box', [L(ch, 1, 100000), L(mo, 1, 900000)], look='itm_EveBalPbox.dds')],
+        [R("Kevin's   Box!!", [L(mo, 1, 1000000)], desc='Open\tme\nnow')],
+        [R('!!!', [L(mo, 1, 1000000)])],
+        [R('BXCHANGE', [L(mo, 1, 1000000)])],
+        [R('Many', [L(mo, 1, 7813 if i else 1000000 - 7813 * 127) for i in range(128)])],
+        [P('Single Item Box', [L(mo, 7)])],
+        [P('Starter Pack', [L(mo, 3), L(ch, 1), L('II_WEA_SWO_ANGEL', 1, upgrade=3)], span=30, look=luck)],
+        [P('Full Set', [L(mo if i % 2 else su, 1 + i) for i in range(24)], span=10080)],
+        [P('Tradeless Set', [L(su, 2)], tradeable=False, cost=250)],
+        [R('Twin', [L(mo, 1, 500000), L(su, 1, 500000)]), P('Twin', [L(oc, 1)], look=rnd32)],
+        [P('Chain One', [L(mo, 1)]), R('Chain Two', [L(su, 1, 1000000)]), P('Chain Three', [L(oc, 2)], span=5)],
+    ]
+
+
+def nb_run(root):
+    import hashlib, shutil, tempfile
+    out = []
+    tmp = tempfile.mkdtemp(prefix='nb_')
+    try:
+        for steps in nb_specs():
+            F = NbFiles(root)
+            made = []
+            for sp in steps:
+                made.append(nb_build(F, sp))
+            files = {}
+            for n in F.NAMES:
+                b = F.data(n)
+                files[n.lower()] = [hashlib.sha256(b).hexdigest(), len(b)]
+            # open the new boxes in the changed world
+            open(os.path.join(tmp, 'Spec_Item.txt'), 'wb').write(F.data('Spec_Item.txt'))
+            W = BxWorld.__new__(BxWorld)
+            W.D = F.D
+            W.items = bx_items(tmp, F.D)
+            W.gift = bx_gift(F.data('propGiftbox.inc'), F.D)
+            W.pack = bx_pack(F.data('propPackItem.inc'), F.D)
+            cases = []
+            for n, m in enumerate(made):
+                for v, bg in enumerate([{'free': 5}, {'free': 0}, {'free': 1, 'num': 2}, {'free': 3, 'bound': True}, {'free': 30, 'n': 200}]):
+                    cases.append(bx_case(W, dict({'box': m['id'], 'seed': 900 + n * 11 + v, 'n': 10}, **bg)))
+            out.append({'steps': steps, 'made': made, 'files': files, 'cases': cases})
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return out
+
+
 # ---- DDS item icons (Client/Item): an independent decode, compared by the hash of the RGBA pixels ----
 def dds_decode(b):
     if len(b) < 128 or b[:4] != b'DDS ':
@@ -5944,6 +6242,8 @@ if __name__ == '__main__':
         print(json.dumps(dr_run(root)))
     elif what == 'boxes':
         print(json.dumps(bx_run(root)))
+    elif what == 'newbox':
+        print(json.dumps(nb_run(root)))
     elif what == 'dds':                         # a folder of .dds icons -> {file: [w, h, sha256 of the RGBA]}
         print(json.dumps(dds_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model

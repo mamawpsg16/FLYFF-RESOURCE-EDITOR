@@ -218,6 +218,10 @@
     BX_DUP: ['The same box appears in two blocks. The server adds their lines together into one box (a set takes its time limit from the last block).', 'Move the lines into one block.'],
     BX_NOT_ITEM: ['The box id has no row in Spec_Item.txt, so no player can own this box.', 'Nothing to do unless the box should exist; then add the item first.'],
     BX_SKIPPED: ['The server does not know this word here (only GiftBox and GiftBox2 - GiftBox6 start a box). It skips words one by one until the next box keyword, so whatever box this was is not loaded.', 'Fix the keyword (exact case: GiftBox, GiftBox3 …).'],
+    BX_EMPTY: ['A new box needs at least one item: opening an empty box would do nothing.', 'Add an item to the box.'],
+    BX_ID_RANGE: ['Every item id below 60,000 is taken. Ids from 60,000 are used by the stackable amplifications (__NEW_STACKABLE_AMPS, ProjectCmn.cpp:593), so the editor does not hand them out.', 'Free an old id by hand first.'],
+    BX_TEMPLATE_MISSING: ['A new box copies the Spec_Item.txt row of II_SYS_SYS_SCR_BXMCOOK01 (a usable box with stack 1, like the boxes 949f2cc2 added). That row is missing.', 'Put the row back, or ask for another template.'],
+    BX_MODEL_DUP: ['mdlDyna.inc lists the same model (type and index) twice. CModelMng::LoadScript stops the server and the game at startup with a message box (ModelMng.cpp:455).', 'Remove one of the two lines.'],
     BX_EMPTIED: ['The box no longer has any contents. Players who already own it keep the item, but using it does nothing.', 'Undo if that was not meant, or remove the box from shops and drops too.'],
   };
 })(globalThis.FRE = globalThis.FRE || {});

@@ -1,0 +1,13 @@
+{
+  "name": "Infinity Treasure Box",
+  "kind": "random",
+  "look": "Itm_SysSysScrBxLuck.dds",
+  "cost": 100000,
+  "packMax": 1,
+  "tradeable": false,
+  "lines": [
+    { "define": "II_GEN_MAT_MOONSTONE", "num": 5, "w": 400000 },
+    { "define": "II_GEN_MAT_ORICHALCUM02", "num": 1, "w": 350000, "flag": 2, "minutes": 10080 },
+    { "define": "II_GEN_MAT_ORICHALCUM01", "num": 1, "w": 250000 }
+  ]
+}

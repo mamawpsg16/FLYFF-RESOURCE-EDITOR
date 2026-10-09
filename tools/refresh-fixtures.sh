@@ -33,7 +33,9 @@ for d in $SRC/Client/World/*/; do
 done
 cp -p $SRC/Client/character.inc $SRC/Client/character.txt.txt $SRC/Client/DonationShop.inc $SRC/Client/BattlePass.inc $SRC/Client/Spec_Item.txt \
   $SRC/Client/Exchange_Script.txt $SRC/Client/defineNeuz.h $SRC/Client/etc.inc $SRC/Client/etc.txt.txt \
-  $SRC/Client/defineText.h $SRC/Client/textClient.inc $SRC/Client/textClient.txt.txt $SRC/Client/propPackItem.inc "$DST/Client/"
+  $SRC/Client/defineText.h $SRC/Client/textClient.inc $SRC/Client/textClient.txt.txt $SRC/Client/propPackItem.inc \
+  $SRC/Client/defineItem.h $SRC/Client/propItem.txt.txt $SRC/Client/mdlDyna.inc "$DST/Client/"
+# (defineItem.h, propItem.txt.txt, mdlDyna.inc: + New box writes the box item into the game's copies too)
 cp -p $SRC/Client/Client/DonationShopTree.inc "$DST/Client/Client/"
 # Client/Model: file names only (Add New NPC checks each model's .o3d / .ani files)
 ls "$SRC/Client/Model" > "$DST/Client/Model.list"
