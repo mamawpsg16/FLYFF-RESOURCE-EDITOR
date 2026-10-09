@@ -409,3 +409,11 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 .task-card.loading { border-color: var(--accent, #4aa3ff); }
 .task-card .loading-tag { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--text); }
 .nn-paste { min-width: 360px !important; flex: 1; }
+
+/* Where is this item from? (ui/where.js) */
+.wh-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.wh-head h2 { margin: 0; }
+.wh-sec { margin: 14px 0; }
+.wh-sec h3 { margin: 0 0 4px; }
+.wh-table td { vertical-align: top; }
+.wh-table tr.muted td { opacity: .65; }

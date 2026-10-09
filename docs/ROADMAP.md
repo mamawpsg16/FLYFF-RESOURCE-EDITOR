@@ -1,6 +1,23 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-09 (V. Save History skipped by the user after steps 0 + 0b; next: H; handoff on top)._
+_Last updated 2026-10-09 (H part 1 built: Where is this item from?; waiting for the user's Brave test; handoff on top)._
+
+> **Handoff (2026-10-09) — H. "Where is this item from?" part 1 is built, NOT committed: waiting for the user's Brave test.** Plan: `/home/kevin/.claude/plans/read-claude-md-in-flyff-resource-editor-quiet-tulip.md`. User decisions: 2 parts; a new start card.
+> - **New task card "Where is this item from?"** (`MODULES` id `where`, read-only: every model parsed, maps read, nothing editable; Client/Model is not listed for it). Pick an item (search on the left, or + on the right); the page lists: 🛒 NPC shops (price players pay, tab, town, "not in the game" when unplaced / hidden, "auto" for rule items), 💎 Donation Shop, 🔁 exchange rewards (who, costs, chance per exchange), ⚔️ monsters (in % of kills), 🎉 propDropEvent.inc extra drops (per monster), 🎲 random gear (DropKind, per item), 🎁 random boxes, 📦 sets, 🏆 Battle Pass levels, 🔧 the exchanges that take it, and "Opening it gives …" for a box. Checks: can't be obtained in game, an AddShopItem price set server-wide, Donation crash items. Every line: **Open in NPC Shops / Monster Drops / Boxes / Donation Shop / Battle Pass** (the task opens at that NPC / monster / box; coming back shows the same item).
+> - **New exact maths** (INVESTIGATION §1.20): PAY n ≥ 2 reward chance (`where.payChances`, every GetPayItemList pick sequence, modulo-biased rolls) and DropKind per item (`where.kindChances`). **Bug fixed in `dropsSim.exactChances`** (also what Monster Drops shows): without a Maxitem line the first uncounted drop stops the list on the ground (`nNumber == m_dwMax`, Mover.cpp:8714); e.g. MI_MINECATCHER's lines were shown too high.
+> - Also: NpcBoard rules files are editable only in NPC Shops (they were added as editable in every task).
+> - Python copy `oracle_sim.py where`: 5,038 items + 50 without a source + 5 made-up file cases, every fact agrees; 17 of 18 planted bugs caught. Tool: `gjs -m tools/where-sim.js <II_ item>`. Tests: core 1155 (+24: the where section), UI harness 420 (new stage `where`; 6 start cards).
+> - **User's Brave test 2026-10-09:** steps 1-7 OK. Found: Gricky Gauntlet (DropKind only) was in "Items nothing gives or uses" and said "nothing gives it": the list index skipped DropKind. Fixed (DropKind chances worked out once when the task opens, +~90 ms); test: the index = the items the Python copy finds (5,038).
+>
+> **User's test:** `python3 build.py`, reload, pick `test-data`, card **Where is this item from?**
+> 1. Type `awake` on the left, click Scroll of Awakening: 🛒 Peach and Raia, 100,000 Penya, "auto", their towns; a random box (Faded Box 2%) and a set (Scroll of Reversion Box ×10).
+> 2. Right item list: search Red Chips, press **+**: 🏆 5 Battle Pass levels, ⚔️ the monsters with % of kills, the 2 Secret Room Manager shops.
+> 3. Name Color Scroll (3 Days): 🔁 Collins, exchange 1, 100% per exchange, with the five pieces it costs. Topaz Piece: 🔧 used in 5 Collins exchanges.
+> 4. Sword of BoBoKu: 🎉 extra drop from 46 monsters of level 10–20. Gricky Gauntlet: 🎲 random gear from 6 monsters ("one of 16").
+> 5. Scroll of Reversion Box: "Opening it gives everything in it".
+> 6. Pick an item nothing gives (filter "Items nothing gives or uses"): "Can't be obtained in game".
+> 7. On Scroll of Awakening press **Open in NPC Shops**: NPC Shops opens on that NPC; Change task → Where is this item from?: the same item is shown.
+> Then commit + push; next: H part 2 (quests, level-up / rebirth / couple gifts, collecting, Guild Siege prizes), plan first.
 
 > **Handoff (2026-10-09) — V. Save History is SKIPPED (the user's decision). Next: H. "Where is this item from?" (plan first).**
 > - Why: every Save already writes a verified backup (`<backups>/<stamp>_<task>/`), the real files are in the FLYFF-V19-SOURCE git repo (each tested change is committed and pushed, so `git diff` / `git revert <hash>` give history and per-save undo), and Ctrl+Z covers unsaved work. The History screen + 3-way undo would have been the largest task so far for a rare case.
@@ -642,7 +659,7 @@ Result: "works", "your level is too low", "can't be used on this server", or "un
 
 Tests: the table parse (count, the `#ifdef` handling, the `open` cut-off) and the simulator cases, checked by an independent Python copy of the same file. Planted bugs (e.g. `continue` instead of `break`) must be caught.
 
-### H. "Where is this item from / used?" (asked 2026-10-06; widened the same day: "where can it be dropped or obtained")
+### H. "Where is this item from / used?" (asked 2026-10-06; widened the same day: "where can it be dropped or obtained"; part 1 built 2026-10-09, see the handoff)
 **For players' words:** pick any item and see every way a player can GET it, and where it is USED. Example:
 ```
 Scroll of Awakening

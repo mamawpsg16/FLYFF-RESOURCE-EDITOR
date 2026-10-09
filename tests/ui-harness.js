@@ -155,7 +155,7 @@
     click($('btn-root'));
     await waitFor(() => S.layout, 'folder detected');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
-    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 5 && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]'), 'real-files tag; 5 tasks to pick (exchanges are in NPC Shops; Monster Drops; Boxes)');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 6 && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]'), 'real-files tag; 6 tasks to pick (exchanges are in NPC Shops; Monster Drops; Boxes; Where is this item from?)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
@@ -1261,6 +1261,39 @@
       while (S.ws.history.length) click($('btn-undo'));
       ok(!S.ws.dirtyFiles().length && !S.ws.itemById(31671), 'Undo removes the new box from every file');
       listSearch.value = ''; listSearch.dispatchEvent(new Event('input'));
+    }
+
+    // ---- Where is this item from? (task H)
+    {
+      await openTask('where');
+      const ed = () => $('editor'), search = $('list-search');
+      ok(S.mode === 'where' && S.ws.editable.size === 0 && $('btn-save').disabled && /Pick an item/.test(ed().textContent), 'Where is this item from?: read-only task, asks for an item');
+      ok(!S.client || !S.client.models, 'the where task does not list Client/Model');
+      search.value = 'II_SYS_SYS_SCR_AWAKE'; search.dispatchEvent(new Event('input'));
+      const row = [...document.querySelectorAll('#list .npc')].find(n => /II_SYS_SYS_SCR_AWAKE\b/.test(n.textContent));
+      ok(!!row, 'search by define lists the item');
+      click(row);
+      ok(/🛒 Bought from an NPC \(2\)/.test(ed().textContent) && /Peach/.test(ed().textContent) && /100,000 Penya/.test(ed().textContent) && /auto/.test(ed().textContent), 'Scroll of Awakening: Peach and Raya, 100,000 Penya (auto rule rows)');
+      ok(/Found in a random box/.test(ed().textContent) && /In a set/.test(ed().textContent), 'boxes and sets that give it');
+      // the + of the item list on the right shows an item too
+      const isearch = $('item-search');
+      isearch.value = 'II_CHP_RED'; isearch.dispatchEvent(new Event('input'));
+      const redRow = () => [...document.querySelectorAll('#item-list .item')].find(r => r.querySelector('.def') && r.querySelector('.def').textContent === 'II_CHP_RED');
+      await waitFor(() => redRow(), 'item list: Red Chip');
+      click(redRow().querySelector('button'));
+      ok(/🏆 Battle Pass reward \(5\)/.test(ed().textContent) && /⚔️ Dropped by/.test(ed().textContent) && /of kills/.test(ed().textContent), 'Red Chip (+ on the right): Battle Pass levels and the monsters that drop it, with the chance');
+      isearch.value = ''; isearch.dispatchEvent(new Event('input'));
+      if (STOP === 'where') { $('toasts').textContent = ''; return; }
+      // Open in …: the other task opens at that NPC; coming back shows the same item
+      search.value = 'II_SYS_SYS_SCR_AWAKE'; search.dispatchEvent(new Event('input'));
+      click([...document.querySelectorAll('#list .npc')].find(n => /II_SYS_SYS_SCR_AWAKE\b/.test(n.textContent)));
+      click(btnByText(ed().querySelector('.wh-sec'), 'Open in NPC Shops'));
+      await waitFor(() => S.task === 'npc' && S.ws && !S.busy, 'jump to NPC Shops');
+      const npcMod = FRE.ui.modules.find(m => m.id === 'npc');
+      ok(/MaEw_Raya|MaFl_Peach/.test(npcMod.st.sel) && /Awakening|AWAKE/i.test(ed().textContent), 'Open in NPC Shops: the NPC that sells it is selected');
+      await openTask('where');
+      ok(/🛒 Bought from an NPC/.test(ed().textContent) && FRE.ui.modules.find(m => m.id === 'where').st.id === S.ws.defines.defines.get('II_SYS_SYS_SCR_AWAKE'), 'back in Where is this item from?: the same item');
+      search.value = ''; search.dispatchEvent(new Event('input'));
     }
 
     // ---- Battle Pass

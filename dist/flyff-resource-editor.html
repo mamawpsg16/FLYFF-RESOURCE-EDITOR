@@ -418,6 +418,14 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 .task-card .loading-tag { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--text); }
 .nn-paste { min-width: 360px !important; flex: 1; }
 
+/* Where is this item from? (ui/where.js) */
+.wh-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.wh-head h2 { margin: 0; }
+.wh-sec { margin: 14px 0; }
+.wh-sec h3 { margin: 0 0 4px; }
+.wh-table td { vertical-align: top; }
+.wh-table tr.muted td { opacity: .65; }
+
 </style>
 </head>
 <body class="start">
@@ -473,7 +481,7 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "52+", "when": "Fri 9 Oct 2026, 09:27", "rev": "4805d0c", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "55+", "when": "Fri 9 Oct 2026, 10:56", "rev": "df10e42", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -4375,7 +4383,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "52+", "when
         if (!dist[c]) continue;
         next[c] += dist[c] * (1 - p);
         const nc = counts ? c + 1 : c;
-        const stop = mv.flying ? u32(nc) >= max && !o.bagFull : (counts && u32(nc) === max);
+        // ground: nNumber == m_dwMax after EVERY drop, counted or not (Mover.cpp:8714): with no Maxitem line (m_dwMax 0)
+        // the first uncounted drop (amount "=" / -1, every event line) stops the list
+        const stop = mv.flying ? u32(nc) >= max && !o.bagFull : u32(nc) === max;
         if (!stop) next[nc] += dist[c] * p;
       }
       while (next.length > 1 && !next[next.length - 1]) next.pop();
@@ -9286,6 +9296,313 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "52+", "when
   FRE.newNpcSim = { keyPrefix, keyFrom, inGame, describe, rightClick, opensOf, OWN_CASE, modelNames, modelEntries, missingModelFiles, unusedCompleteModels, visibleNpcs, provenModels, seenBefore, o3dTextures, SEEN_BEFORE, buildingNames, structures, freeStructureIds, tagOf, whereAt, regions, TID_MMI_DIALOG };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/where.js ----
+// Where is this item from? (task H part 1). No DOM: gjs-testable. Read-only: it reports what the other loaders and
+// simulators give, for one item:
+//   shops      vendor-sim (ProcessRegenItem: fixed, chip and rule-made items; pricedTab: what players pay)
+//   donation   DonationShop.inc catalog, the price is dwReferValue1 (Donate Chips)
+//   exchange   exchange-sim serverTable; the chance of a reward per press = payChances (CExchange::GetPayItemList,
+//              Exchange.cpp:328, every pick sequence with the modulo-biased xRandom odds); CONDITION lines = "used in"
+//   drops      drops-sim exactChances (CMover::DropItem, Mover.cpp:8483-8716): the monster's lines and the event lines
+//              (propDropEvent.inc, Project.cpp:4048); DropKind per item = kindChance (Mover.cpp:8823-8956)
+//   boxes      CGiftboxMan chances (random boxes), CPackItem (sets: always every item; a set is checked first)
+//   battlepass the live BPReward rows (nType of the login pass)
+// Each line has `facts`: the plain values the independent Python copy (tools/oracle_sim.py where) must find too.
+(function (FRE) {
+  'use strict';
+  const u32 = v => v >>> 0;
+  const f32 = Math.fround;
+  const INT_MIN = -2147483648;
+  const toInt = v => (Number.isNaN(v) || v >= 2147483648 || v < -2147483648) ? INT_MIN : Math.trunc(v);
+  const PROB_TOTAL = 1000000;
+  const DROP_ONE = 3000000000;
+  const CURRENCY = ['Penya', 'Red Chips', 'Donate Chips'];
+  const round12 = x => Number(x.toPrecision(12));
+
+  // ---------------------------------------------------------------- exact chances
+  // CExchange::GetPayItemList: nRandom = xRandom( nProb ); the first line whose running total is above it is given,
+  // taken out, nProb -= its chance, roll again over what is left, until PAY n lines are given (n <= 0: never equal,
+  // so until nProb <= 0). -> chance (0..1) per pay line that it is among the rewards of one press, or null when the
+  // pick sequences are too many to list (only with a large PAY n).
+  function payChances(set, limit = 200000) {
+    const lines = set.pay, n = lines.length, want = set.payNum;
+    const belowP = FRE.drops.belowP;
+    const memo = new Map();
+    let states = 0;
+    // from a state (the lines still in, in file order): P(each line is given from here on)
+    function from(rem, nProb, count) {
+      const key = rem.join(',');
+      if (memo.has(key)) return memo.get(key);
+      if (++states > limit) throw new Error('too many');
+      const out = new Array(n).fill(0);
+      let sum = 0;
+      for (let j = 0; j < rem.length; j++) {
+        const lo = sum;
+        sum += lines[rem[j]].prob;
+        const q = belowP(nProb, Math.min(Math.max(sum, 0), nProb)) - belowP(nProb, Math.min(Math.max(lo, 0), nProb));
+        if (q <= 0) continue;
+        out[rem[j]] += q;
+        if (count + 1 === want) continue;
+        const np = nProb - lines[rem[j]].prob;
+        if (np <= 0) continue;
+        const next = from(rem.filter((_, k) => k !== j), np, count + 1);
+        for (let k = 0; k < n; k++) out[k] += q * next[k];
+      }
+      memo.set(key, out);
+      return out;
+    }
+    try { return from(lines.map((_, i) => i), PROB_TOTAL, 0); } catch (e) { if (e.message === 'too many') return null; throw e; }
+  }
+
+  // DropKind (Mover.cpp:8823-8956), per roll that passes the gate: for each DropKind line in order, the rarity window
+  // (monster level -5 .. -2) gives an index range of m_itemKindAry[ik3]; one item of it is picked (xRandom( n )), then
+  // the upgrade start xRandom( 11 ) and the tries kk = start .. 0: xRandom( 3e9 ) < expDropLuck[lv-1][kk] × correction%
+  // (Fortune Circle halves the roll when the chance is <= 10,000,000). A RANK_SUPER monster stops after the first DropKind
+  // item that lands on the ground. -> expected drops of `itemId` per kill (all its DropKind lines), and the details.
+  // -> Map item id -> { perKill: expected drops per kill (all its DropKind lines), among }
+  function kindChances(env, opts) {
+    const ex = FRE.dropsSim.exactChances(env, opts);
+    const o = Object.assign({ loops: 1, fortune: false, bagFull: false }, opts || {});
+    const D = FRE.drops, belowP = D.belowP;
+    const mv = env.mover || { level: 1, rankId: 1, flying: 0, correction: 100, id: 0 };
+    const [lo, hi] = D.kindWindow(mv.level | 0);
+    const corr = f32(f32(u32(mv.correction)) / f32(100));
+    const superStop = mv.rankId === env.defines.get('RANK_SUPER') && !(mv.flying && !o.bagFull);
+    const memo = new Map();
+    const pDrop = pick => {                    // P(the tries give it) once this item is picked
+      const lvIdx = pick.lv > 120 ? 119 : pick.lv - 1;
+      if (lvIdx < 0 || !env.ctx.luck) return 0;    // dwItemLV 0: the server reads out of bounds (the kill simulator stops there)
+      if (memo.has(lvIdx)) return memo.get(lvIdx);
+      const q = [];
+      for (let kk = 0; kk <= 10; kk++) {
+        const p = u32(toInt(f32(f32(env.ctx.luck[lvIdx][kk]) * corr)));
+        q.push(belowP(DROP_ONE, o.fortune && p <= 10000000 ? Math.min(DROP_ONE, 2 * p) : Math.min(DROP_ONE, p)));
+      }
+      let total = 0;
+      for (let s = 0; s <= 10; s++) {           // start = xRandom( 11 ): modulo-biased like every roll
+        let miss = 1;
+        for (let kk = s; kk >= 0; kk--) miss *= 1 - q[kk];
+        total += (belowP(11, s + 1) - belowP(11, s)) * (1 - miss);
+      }
+      memo.set(lvIdx, total);
+      return total;
+    };
+    let reach = 1;
+    const out = new Map();     // item id -> { perKill, among (items in the window of its first DropKind line) }
+    for (const kd of env.kinds) {
+      let mn = -1, mx = -1;
+      for (let j = lo; j <= hi; j++) { mn = D.minIdx(env.ctx.kinds, kd.ik3Value, j); if (mn !== -1) break; }
+      for (let j = hi; j >= lo; j--) { mx = D.maxIdx(env.ctx.kinds, kd.ik3Value, j); if (mx !== -1) break; }
+      if (mn < 0 || mx < 0) continue;
+      const ary = env.ctx.kinds.get(kd.ik3Value).list, count = mx - mn + 1;
+      let any = 0;
+      for (let i = mn; i <= mx; i++) {
+        const pick = ary[i];
+        if (!pick) continue;
+        const p = pDrop(pick) * (belowP(count, i - mn + 1) - belowP(count, i - mn));    // ary[mn + xRandom( n )]
+        any += p;
+        const x = out.get(pick.id) || { perKill: 0, among: count };
+        x.perKill += ex.gate * reach * p * o.loops;
+        out.set(pick.id, x);
+      }
+      if (superStop) reach *= 1 - any;
+    }
+    return out;
+  }
+  const kindChance = (env, itemId, opts) => kindChances(env, opts).get(u32(itemId)) || { perKill: 0, among: 0 };
+
+  // ---------------------------------------------------------------- the index
+  // itemId -> [ref]: every place the item shows up, cheap (built once per parse; sources() fills in the numbers).
+  function index(ws) {
+    const idx = new Map();
+    const add = (id, ref) => { id = u32(id); if (!idx.has(id)) idx.set(id, []); idx.get(id).push(ref); };
+    if (ws.chars) for (const npc of ws.chars.npcs) {
+      if (!npc.statements.some(r => FRE.character.shopEntry(r))) continue;
+      const sim = ws.simulate(npc);
+      sim.tabs.forEach((tab, slot) => {
+        tab.entries.forEach((en, i) => add(en.prop.id, { k: 'shop', npc, slot, i }));
+        tab.dropped.forEach(d => { if (d.prop) add(d.prop.id, { k: 'shop', npc, slot, dropped: d.reason }); });
+      });
+    }
+    const dm = ws.models.donation;
+    if (dm) for (const [id, row] of dm.catalog) add(id, { k: 'donation', row });
+    const table = ws.models.exchange ? FRE.exchangeSim.serverTable(ws.models.exchange) : null;
+    const gold = u32(ws.defines.defines.get('II_GOLD_SEED1'));
+    if (table) for (const [mmi, m] of table.menus) if (u32(mmi) !== 0xFFFFFFFF) m.sets.forEach((set, si) => {
+      const seen = new Set();
+      set.pay.forEach(p => { if (!seen.has(p.id)) { seen.add(p.id); add(p.id, { k: 'exchange', mmi, menu: m, set, si }); } });
+      const used = new Set();
+      set.cond.forEach(c => { if (!c.penya && c.id !== gold && !used.has(c.id)) { used.add(c.id); add(c.id, { k: 'use', mmi, menu: m, set, si }); } });
+    });
+    const drops = ws.models.drops;
+    // DropKind: the chance of every item of every monster's windows, worked out once here (also used by sources())
+    const kinds = new Map();         // monster id -> Map item id -> { perKill, among }
+    if (drops) for (const [mid, mon] of drops.monsters) {
+      const ids = new Set(mon.list.filter(e => e.kind === 'item').map(e => e.itemId));
+      for (const id of ids) add(id, { k: 'drop', mid });
+      if (!mon.kinds.length || !ws.dropContext) continue;
+      const kc = kindChances(FRE.dropsSim.envFor(ws, mid));
+      kinds.set(mid, kc);
+      for (const [id, x] of kc) if (x.perKill > 0) add(id, { k: 'kind', mid });
+    }
+    const events = drops && ws.dropContext ? ws.dropContext.events : [];
+    for (const e of events) add(e.itemId, { k: 'event', e });
+    const bx = ws.models.boxes;
+    if (bx) {
+      if (bx.pack) for (const b of bx.pack.boxes.values()) b.lines.forEach((l, i) => add(l.item.value, { k: 'set', box: b, i }));
+      if (bx.gift) for (const b of bx.gift.boxes.values()) {
+        if (bx.pack && bx.pack.boxes.has(b.id)) continue;         // an id in both files is opened as a set (boxes-sim.js:111)
+        b.lines.forEach((l, i) => add(l.item.value, { k: 'box', box: b, i }));
+      }
+    }
+    const bp = ws.models.battlepass;
+    if (bp && bp.pass) for (const r of bp.rows.BP4) if (r.type.value === bp.pass.type.value && bp.ladder.get(r.level.value) === r) add(r.id, { k: 'bp', row: r });
+    return { idx, table, cache: { ex: new Map(), kinds } };
+  }
+
+  // ---------------------------------------------------------------- one item
+  // -> { id, item, lines: [line], contains: [line] (the item is a box), checks: [{ severity, text }] }
+  //   line = { kind, who, key (to open it in its editor), facts, ... }
+  function sources(ws, itemId, model) {
+    itemId = u32(itemId);
+    model = model || ws.models.where || index(ws);
+    const refs = model.idx.get(itemId) || [];
+    const item = ws.itemById(itemId);
+    const lines = [], checks = [];
+    const nameOfItem = id => { const it = ws.itemById(id); return it ? (it.name || it.nameKey || it.define) : `item ${u32(id)}`; };
+    const moverOf = id => (ws.movers && ws.movers.movers.get(id)) || null;
+    const costs = ws.chars ? ws.costs() : null;
+    // per monster, cached in the model (rebuilt with it after every reparse)
+    const cache = model.cache || (model.cache = { ex: new Map(), kinds: new Map() });
+    const exOf = mid => { if (!cache.ex.has(mid)) cache.ex.set(mid, FRE.dropsSim.exactChances(FRE.dropsSim.envFor(ws, mid))); return cache.ex.get(mid); };
+    const kindsOf = mid => { if (!cache.kinds.has(mid)) cache.kinds.set(mid, kindChances(FRE.dropsSim.envFor(ws, mid))); return cache.kinds.get(mid); };
+
+    // shops: one line per NPC tab (an item listed twice in a tab is one line)
+    const shopSeen = new Set();
+    for (const r of refs.filter(r => r.k === 'shop')) {
+      const key = `${r.npc.file}|${r.npc.key}|${r.slot}|${r.dropped ? 'x' : ''}`;
+      if (shopSeen.has(key)) continue;
+      shopSeen.add(key);
+      const npc = r.npc, chip = npc.venderType === 1 || npc.venderType === 2;
+      const status = ws.placed ? FRE.world.npcStatus(npc, ws.placed) : { inGame: null, why: 'map files not read' };
+      const base = { kind: 'shop', npc, slot: r.slot, who: npc.name || npc.key, tab: npc.slotTitles[r.slot], where: ws.whereOf(npc.key),
+        inGame: status.inGame, why: status.why, currency: chip ? npc.venderType : 0 };
+      if (r.dropped) { lines.push(Object.assign(base, { dropped: r.dropped, facts: null })); continue; }
+      const en = ws.simulate(npc).tabs[r.slot].entries[r.i];
+      let price;
+      if (chip) price = en.prop.chip;
+      else price = ws.pricedTab(npc, r.slot)[r.i].pay;
+      const how = en.kind === 'generated' ? 'rule' : en.kind;
+      lines.push(Object.assign(base, { price, how,
+        facts: { kind: 'shop', file: npc.file, npc: npc.key, tab: r.slot + 1, currency: base.currency, price, how } }));
+    }
+    for (const r of refs.filter(r => r.k === 'donation')) {
+      const price = item ? FRE.specItem.get(item, 'dwReferValue1') : 0;
+      lines.push({ kind: 'donation', who: 'Donation Shop', category: r.row.category, price, where: ws.whereOf('MaFl_DONATION'),
+        crash: FRE.donation.CRASH_ITEMS.some(d => ws.defines.defines.get(d) === itemId),
+        facts: { kind: 'donation', category: r.row.category, price } });
+    }
+    // exchanges: the NPCs that open the menu, what it costs, the chance this reward comes per press
+    const byMenu = ws.npcInfoByMenu ? ws.npcInfoByMenu() : null;
+    for (const r of refs.filter(r => r.k === 'exchange' || r.k === 'use')) {
+      const npcs = (byMenu && byMenu.get(r.mmi)) || [];
+      const base = { menu: r.menu, mmi: r.mmi, set: r.set, si: r.si, npcs, who: npcs.length ? npcs.map(x => x.name).join(', ') : r.menu.name,
+        live: ws.isLiveMenu ? ws.isLiveMenu(r.menu.menu) : null };
+      if (r.k === 'use') {
+        const num = r.set.cond.filter(c => c.id === itemId).reduce((a, c) => a + c.num, 0);
+        lines.push(Object.assign(base, { kind: 'use', num, facts: { kind: 'use', menu: r.mmi, set: r.si + 1, num } }));
+        continue;
+      }
+      const ch = payChances(r.set);
+      const mine = r.set.pay.map((p, i) => ({ p, i })).filter(x => x.p.id === itemId);
+      const chance = ch ? mine.reduce((a, x) => a + ch[x.i], 0) : null;
+      const num = mine.length ? mine[0].p.num : 0;
+      lines.push(Object.assign(base, { kind: 'exchange', num, chance, payNum: r.set.payNum, picks: r.set.pay.length,
+        cost: r.set.cond.map(c => ({ id: c.id, num: c.num, penya: c.penya, name: c.penya ? 'Penya' : nameOfItem(c.id) })),
+        facts: { kind: 'exchange', menu: r.mmi, set: r.si + 1, num, chance: chance === null ? null : round12(chance) } }));
+    }
+    // monster drops: the monster's own lines, then the event lines (per monster), then DropKind
+    const dropMons = [...new Set(refs.filter(r => r.k === 'drop').map(r => r.mid))];
+    for (const mid of dropMons) {
+      const ex = exOf(mid);
+      const mine = ex.lines.filter(l => l.entry.kind === 'item' && !l.entry.event && l.entry.itemId === itemId);
+      const perKill = mine.reduce((a, l) => a + l.perKill, 0);
+      const mv = moverOf(mid);
+      lines.push({ kind: 'drop', mid, who: mv ? mv.name : String(mid), level: mv ? mv.level : null, perKill,
+        number: Math.max(...mine.map(l => (l.entry.number === 0xFFFFFFFF ? 1 : l.entry.number))),
+        facts: { kind: 'drop', monster: mid, perKill: round12(perKill) } });
+    }
+    const evs = refs.filter(r => r.k === 'event').map(r => r.e);
+    if (evs.length && ws.models.drops) {
+      for (const [mid] of ws.models.drops.monsters) {
+        const mv = moverOf(mid);
+        if (!mv || !evs.some(e => u32(mv.level) >= e.minLv && u32(mv.level) <= e.maxLv)) continue;
+        const ex = exOf(mid);
+        const perKill = ex.lines.filter(l => l.entry.event && l.entry.itemId === itemId).reduce((a, l) => a + l.perKill, 0);
+        lines.push({ kind: 'event', mid, who: mv.name, level: mv.level, perKill, facts: { kind: 'event', monster: mid, perKill: round12(perKill) } });
+      }
+    }
+    for (const mid of refs.filter(r => r.k === 'kind').map(r => r.mid)) {
+      {
+        const r = kindsOf(mid).get(itemId);
+        const mv = moverOf(mid);
+        lines.push({ kind: 'kind', mid, who: mv ? mv.name : String(mid), level: mv ? mv.level : null, perKill: r.perKill,
+          among: r.among, facts: { kind: 'kind', monster: mid, perKill: round12(r.perKill) } });
+      }
+    }
+    // boxes
+    for (const r of refs.filter(r => r.k === 'box' || r.k === 'set')) {
+      const l = r.box.lines[r.i], bi = ws.itemById(r.box.id);
+      const base = { box: r.box, who: bi ? (bi.name || bi.define) : (r.box.define || String(r.box.id)), num: l.num.value,
+        upgrade: FRE.boxes.upgradeOf(l), minutes: FRE.boxes.minutesOf(l) };
+      if (r.k === 'set') {
+        lines.push(Object.assign(base, { kind: 'set', facts: { kind: 'set', box: r.box.id, num: base.num, upgrade: base.upgrade, minutes: r.box.span || 0 } }));
+        continue;
+      }
+      const chance = FRE.boxes.chances(r.box)[r.i];
+      const bound = (FRE.boxes.flagOf(l) & FRE.boxes.FLAG_BOUND) !== 0;
+      lines.push(Object.assign(base, { kind: 'box', chance, bound,
+        facts: { kind: 'box', box: r.box.id, num: base.num, chance: round12(chance), bound, minutes: base.minutes, upgrade: base.upgrade } }));
+    }
+    for (const r of refs.filter(r => r.k === 'bp')) {
+      const row = r.row;
+      // the server clamps the cost to 1..10000 and the count to at least 1 (loaders/battlepass.js)
+      const points = Math.min(Math.max(row.points.value, 1), 10000), num = Math.max(row.qty.value, 1);
+      lines.push({ kind: 'bp', who: 'Battle Pass', level: row.level.value, points, num, facts: { kind: 'bp', level: row.level.value, points, num } });
+    }
+
+    // the item is a box: what opening it gives
+    const contains = [];
+    const bx = ws.models.boxes;
+    const pack = bx && bx.pack && bx.pack.boxes.get(itemId), gift = !pack && bx && bx.gift && bx.gift.boxes.get(itemId);
+    if (pack) pack.lines.forEach(l => contains.push({ kind: 'set', id: u32(l.item.value), name: nameOfItem(l.item.value), num: l.num.value, upgrade: FRE.boxes.upgradeOf(l), minutes: pack.span || 0 }));
+    if (gift) { const ch = FRE.boxes.chances(gift); gift.lines.forEach((l, i) => contains.push({ kind: 'box', id: u32(l.item.value), name: nameOfItem(l.item.value), num: l.num.value, chance: ch[i],
+      bound: (FRE.boxes.flagOf(l) & FRE.boxes.FLAG_BOUND) !== 0, minutes: FRE.boxes.minutesOf(l), upgrade: FRE.boxes.upgradeOf(l) })); }
+
+    // checks
+    const gets = lines.filter(l => l.kind !== 'use' && !l.dropped);
+    const real = gets.filter(l => !(l.kind === 'shop' && l.inGame === false) && !(l.kind === 'exchange' && l.live === false)
+      && !((l.kind === 'drop' || l.kind === 'event' || l.kind === 'kind') && !(l.perKill > 0)));
+    if (!gets.length) checks.push({ severity: 'WARN', code: 'W_NONE', text: 'Can\'t be obtained in game: no shop, exchange, monster, box or Battle Pass gives it (only a GM can create it).' });
+    else if (!real.length) checks.push({ severity: 'WARN', code: 'W_HIDDEN', text: 'Can\'t be obtained in game: only from NPCs or exchanges that are not in the game (not placed on a map, or hidden).' });
+    const set = costs && costs.get(itemId);
+    if (set && set.by.length) {
+      const last = set.by[set.by.length - 1];
+      checks.push({ severity: 'INFO', code: 'W_PRICE_SET', text: `Its Penya price is set by an AddShopItem line in ${last.npc.name || last.npc.key}'s shop: ${FRE.num.group(set.cost)} in every Penya shop (Spec_Item.txt says ${FRE.num.group(set.base)}).` });
+    }
+    if (lines.some(l => l.kind === 'donation' && l.crash)) checks.push({ severity: 'BLOCK', code: 'W_CRASH', text: 'Buying it in the Donation Shop crashed the server (commit ae345504).' });
+    return { id: itemId, item, lines, contains, checks };
+  }
+
+  // the canonical facts of one item, sorted (what tests/run-tests.js compares with the Python copy)
+  function factsOf(res) {
+    const key = f => JSON.stringify(f);
+    return res.lines.filter(l => l.facts).map(l => l.facts).sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
+  }
+
+  FRE.where = { index, sources, factsOf, payChances, kindChances, kindChance, CURRENCY };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- core/workspace.js ----
 // Workspace: the loaded Resource folder as the editor sees it. No DOM here,
 // so it can be tested outside the browser (tests/run-tests.js under gjs).
@@ -9425,6 +9742,16 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "52+", "when
         return out;
       },
     },
+    {
+      // Where is this item from? (task H, loaders/where.js): every model above parsed read-only, nothing editable.
+      // Last, so its parse sees the other models. maps: towns of the NPCs, and whether they stand in the game.
+      id: 'where', label: 'Where is this item from?',
+      required: [], editable: [], client: [],
+      uses: ['npc', 'donation', 'exchange', 'drops', 'boxes', 'battlepass'],
+      maps: true,
+      parse(ws) { return FRE.where.index(ws); },
+      validate() { return []; },
+    },
   ];
   const ALL_FILES = [...new Set([...CORE, ...MODULES.flatMap(m => [...m.required, ...(m.optional || [])]), ...OPTIONAL])];
 
@@ -9546,7 +9873,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "52+", "when
       f.dir = 'Client';
       const lower = 'client/' + f.name.toLowerCase();
       this.files.set(lower, f);
-      if (!f.readOnly) this.editable.add(lower);
+      if (!f.readOnly && this.shown.has('npc')) this.editable.add(lower);     // rules texts are edited in NPC Shops only
       return { lower, file: f };
     }
     // -> { lower, file } of NpcBoard_<id>.inc; create: an empty one (no bytes yet) when there is none
@@ -9603,7 +9930,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "52+", "when
       this.placed = placed;
       const get = rel => worldFiles.get(rel.toLowerCase()) || this.files.get(rel.toLowerCase()) || null;
       this.area = FRE.area.build({ defines: this.defines.defines, get, dyo });
-      for (const m of MODULES) if (m.maps && this.available[m.id].ok) this.reparse(m.required[0].toLowerCase());
+      for (const m of MODULES) {
+        if (!m.maps || !this.available[m.id].ok) continue;
+        if (m.required.length) this.reparse(m.required[0].toLowerCase());
+        else this.models[m.id] = m.parse(this);       // a task without files of its own (where)
+      }
     }
     // The .dyo files as SourceFiles (binary, with handles), so a task may edit them. They are kept
     // in this.files under 'world/<map>/<file>.dyo'; the NPC task may write them.
@@ -15262,6 +15593,200 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "52+", "when
   };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- ui/where.js ----
+// Where is this item from? (task H part 1): pick any item, see every way players get it and where it is used, in game
+// words, each line with a button that opens it in its own task. Read-only. The numbers: loaders/where.js.
+(function (FRE) {
+  'use strict';
+  const { h, fmt } = FRE.dom;
+  const st = { id: null, show: 'all', recent: [] };
+  const MAX_ROWS = 25;                  // per section; the rest fold under "▸ n more"
+
+  const W = () => FRE.where;
+  const group = n => FRE.num.group(n);
+  const pct = x => FRE.drops.pct(x);
+  const iconOf = it => (it ? String(FRE.specItem.get(it, 'szIcon') || '').replace(/"/g, '').trim() : '');
+  const itemName = (ws, id) => { const it = ws.itemById(id); return it ? (it.name || it.nameKey || it.define) : `item ${id >>> 0}`; };
+  const money = (n, currency) => `${group(n)} ${W().CURRENCY[currency] || 'Penya'}`;
+  const durText = m => (m ? FRE.dom.durationText(m) : '');
+  const model = ctx => ctx.ws.models.where;
+
+  function show(ctx, id) {
+    st.id = id >>> 0;
+    st.recent = [st.id, ...st.recent.filter(x => x !== st.id)].slice(0, 20);
+    ctx.renderAll(false);
+  }
+  // open another task at one NPC / monster / box (it reloads the folder: a few seconds)
+  function openIn(task, label, setup) {
+    return h('button.small', { title: `Opens the ${label} task here (the files are read again: a few seconds)`, on: { click: () => {
+      FRE.app.ctx.openTask(task, c => { const m = FRE.ui.modules.find(x => x.id === task); if (m) setup(m.st, c); });
+    } } }, `Open in ${label}`);
+  }
+  const openNpc = (npc, tab) => openIn('npc', 'NPC Shops', s => { s.show = 'all'; s.sel = `${npc.file}|${npc.key}`; s.tab = tab; });
+  const openMonster = mid => openIn('drops', 'Monster Drops', s => { s.show = 'all'; s.sel = mid; });
+  const openBox = (kind, id) => openIn('boxes', 'Boxes', s => { s.show = 'all'; s.sel = { kind, id }; });
+
+  // where an NPC stands, short, or why players can't use it
+  function npcWhere(l) {
+    if (l.inGame === false) return h('span.tag.warn', { title: l.why || '' }, `not in the game: ${l.why || 'not placed'}`);
+    return h('span.muted', FRE.ui.whereText(l.where) || '');
+  }
+  const exNpcs = l => (l.npcs.length
+    ? l.npcs.map(x => h('div', x.name, ' ', x.inGame === false ? h('span.tag.warn', { title: x.why || '' }, 'not in the game') : h('span.muted', FRE.ui.whereText(x.where) || '')))
+    : h('span.tag.warn', 'no NPC opens this menu'));
+  const costText = (ws, l) => l.cost.length ? l.cost.map(c => c.penya ? `${group(c.num)} Penya` : `${group(c.num)} × ${c.name}`).join(', ') : 'nothing';
+
+  // one section: a title with the count, a table, rows past MAX_ROWS folded
+  function section(icon, title, head, rows, note) {
+    if (!rows.length) return null;
+    const table = (list) => h('table.items.wh-table', h('tr', head.map(x => h('th', x))), list);
+    return h('div.wh-sec', h('h3', `${icon} ${title} (${rows.length})`), note ? h('p.muted.small', note) : null,
+      table(rows.slice(0, MAX_ROWS)),
+      rows.length > MAX_ROWS ? h('details', h('summary', `▸ ${rows.length - MAX_ROWS} more`), table(rows.slice(MAX_ROWS))) : null);
+  }
+
+  function itemPage(el, ctx) {
+    const ws = ctx.ws, r = W().sources(ws, st.id, model(ctx));
+    const it = r.item;
+    el.appendChild(h('div.wh-head',
+      it ? FRE.dds.picture(ctx, iconOf(it), { scale: 2, cls: '.bx-icon-big' }) : null,
+      h('div', h('h2', { 'data-item-id': it ? st.id : null }, it ? (it.name || it.nameKey || it.define) : `Item ${st.id}`),
+        h('div.muted.small', `${it ? it.define : 'not in Spec_Item.txt'} · id ${st.id} · GM: /createitem ${st.id} 1`))));
+    for (const c of r.checks) el.appendChild(h('div.banner.' + (c.severity === 'BLOCK' ? 'bad' : c.severity === 'WARN' ? 'warn' : 'info'), c.text));
+    const of = k => r.lines.filter(l => l.kind === k);
+    const put = x => { if (x) el.appendChild(x); };     // an empty section is left out
+
+    // 🛒 shops (sold first, then "listed but not sold")
+    const shops = of('shop').sort((a, b) => (a.dropped ? 1 : 0) - (b.dropped ? 1 : 0) || (a.inGame === false) - (b.inGame === false) || a.who.localeCompare(b.who));
+    put(section('🛒', 'Bought from an NPC', ['NPC', 'Where', 'Tab', 'Price', ''], shops.map(l => h('tr' + (l.dropped || l.inGame === false ? '.muted' : ''),
+      h('td', l.who), h('td', npcWhere(l)), h('td', l.tab || `tab ${l.slot + 1}`),
+      h('td', l.dropped ? h('span.tag.warn', `listed but not sold: ${l.dropped}`)
+        : [l.currency && l.price < 1 ? h('span.tag.warn', { title: `dwReferValue1 is ${l.price}: an AddShopItem line in a chip shop skips the chip price check (C_FIXED_IN_CHIP)` }, 'no chip price') : money(l.price, l.currency), l.how === 'rule' ? h('span.muted.small', { title: 'Added by an AddVendorItem rule (every item of a kind and rarity)' }, ' · auto') : null]),
+      h('td', openNpc(l.npc, l.slot)))),
+      'Prices are what players pay at the normal shop rates.'));
+    // 💎 Donation Shop
+    put(section('💎', 'Donation Shop', ['Category', 'Price', 'Where', ''], of('donation').map(l => h('tr',
+      h('td', l.category), h('td', money(l.price, 2), l.crash ? h('span.tag.bad', ' crashes the server') : null),
+      h('td.muted', FRE.ui.whereText(l.where) || ''),
+      h('td', openIn('donation', 'Donation Shop', (s, c) => { s.cat = l.category; c.setQuery(it ? (it.name || '') : ''); }))))));
+    // 🔁 exchange rewards
+    put(section('🔁', 'Exchange reward', ['NPC', 'Exchange', 'Costs', 'Gets', 'Chance', ''], of('exchange').map(l => h('tr' + (l.live === false ? '.muted' : ''),
+      h('td', exNpcs(l)), h('td', `${l.menu.name}, exchange ${l.si + 1}`), h('td', costText(ws, l)), h('td', `×${group(l.num)}`),
+      h('td', l.chance === null ? `one of ${l.payNum} picks` : l.chance >= 0.999999 ? 'always' : `${pct(l.chance)} per exchange`,
+        l.payNum > 1 ? h('div.muted.small', `${l.payNum} rewards per exchange`) : null),
+      h('td', l.npcs.length ? openNpc(l.npcs[0].npc, 'ex:' + l.menu.name) : null)))));
+    // ⚔️ monster drops
+    const byChance = (a, b) => b.perKill - a.perKill;
+    put(section('⚔️', 'Dropped by', ['Monster', 'Level', 'Chance', ''], of('drop').sort(byChance).map(l => h('tr',
+      h('td', l.who), h('td', l.level === null ? '' : String(l.level)),
+      h('td', `in ${pct(l.perKill)} of kills`, l.number > 1 ? h('span.muted.small', ` · 1–${group(l.number)} at a time`) : null),
+      h('td', openMonster(l.mid)))),
+      'For a player at the monster\'s level, with the server rates of Event.lua (as in Monster Drops).'));
+    const ev = of('event').sort(byChance);
+    if (ev.length) {
+      const lv = ev.map(l => l.level), lo = Math.min(...lv), hi = Math.max(...lv);
+      put(section('🎉', 'Extra drop from every monster in a level range (propDropEvent.inc)', ['Monster', 'Level', 'Chance', ''], ev.map(l => h('tr',
+        h('td', l.who), h('td', String(l.level)), h('td', `in ${pct(l.perKill)} of kills`), h('td', openMonster(l.mid)))),
+        `${ev.length} monster${ev.length === 1 ? '' : 's'} of level ${lo}–${hi}: about ${pct(ev[ev.length - 1].perKill)} to ${pct(ev[0].perKill)} per kill.`));
+    }
+    put(section('🎲', 'Random gear drop (DropKind)', ['Monster', 'Level', 'Chance', ''], of('kind').sort(byChance).map(l => h('tr',
+      h('td', l.who), h('td', l.level === null ? '' : String(l.level)),
+      h('td', `in ${pct(l.perKill)} of kills`, h('div.muted.small', `one of ${l.among} items of its kind and rarity`)),
+      h('td', openMonster(l.mid))))));
+    // 🎁 boxes
+    put(section('🎁', 'Found in a random box', ['Box', 'Chance', 'Count', '', ''], of('box').sort((a, b) => b.chance - a.chance).map(l => h('tr',
+      h('td', { 'data-item-id': l.box.id }, l.who), h('td', pct(l.chance)), h('td', `×${group(l.num)}`),
+      h('td.muted.small', [l.bound ? 'bound' : null, l.minutes ? durText(l.minutes) : null, l.upgrade ? `+${l.upgrade}` : null].filter(Boolean).join(' · ')),
+      h('td', openBox('random', l.box.id))))));
+    put(section('📦', 'In a set (everything inside)', ['Set', 'Count', '', ''], of('set').map(l => h('tr',
+      h('td', { 'data-item-id': l.box.id }, l.who), h('td', `×${group(l.num)}`),
+      h('td.muted.small', [l.box.span ? durText(l.box.span) : null, l.upgrade ? `+${l.upgrade}` : null].filter(Boolean).join(' · ')),
+      h('td', openBox('set', l.box.id))))));
+    // 🏆 Battle Pass
+    put(section('🏆', 'Battle Pass reward', ['Level', 'Cost', 'Count', ''], of('bp').sort((a, b) => a.level - b.level).map(l => h('tr',
+      h('td', `level ${l.level}`), h('td', `${group(l.points)} points`), h('td', `×${group(l.num)}`),
+      h('td', openIn('battlepass', 'Battle Pass', s => { s.view = 'ladder'; }))))));
+    // 🔧 used in
+    put(section('🔧', 'Used in an exchange (players give it)', ['NPC', 'Exchange', 'Takes', 'Gives', ''], of('use').map(l => h('tr' + (l.live === false ? '.muted' : ''),
+      h('td', exNpcs(l)), h('td', `${l.menu.name}, exchange ${l.si + 1}`), h('td', `${group(l.num)} ×`),
+      h('td', l.set.pay.map(p => itemName(ws, p.id)).filter((x, i, a) => a.indexOf(x) === i).slice(0, 4).join(', ') + (l.set.pay.length > 4 ? ', …' : '')),
+      h('td', l.npcs.length ? openNpc(l.npcs[0].npc, 'ex:' + l.menu.name) : null)))));
+    // the item is a box
+    if (r.contains.length) {
+      const set = r.contains[0].kind === 'set';
+      put(section('🎁', set ? 'Opening it gives everything in it' : 'Opening it gives one of', ['Item', set ? 'Count' : 'Chance', set ? '' : 'Count', ''],
+        r.contains.map(c => h('tr', h('td', { 'data-item-id': c.id }, h('a', { href: '#', on: { click: e => { e.preventDefault(); show(ctx, c.id); } } }, c.name)),
+          h('td', set ? `×${group(c.num)}` : pct(c.chance)), h('td', set ? '' : `×${group(c.num)}`),
+          h('td.muted.small', [c.bound ? 'bound' : null, c.minutes ? durText(c.minutes) : null, c.upgrade ? `+${c.upgrade}` : null].filter(Boolean).join(' · ')))),
+        null));
+    }
+    if (!r.lines.length && !r.contains.length) el.appendChild(h('p.muted', 'Nothing in the files the editor reads gives or uses this item. Quests, level-up gifts and other rewards come in part 2.'));
+    else el.appendChild(h('p.muted.small', 'Not listed yet: quest rewards, level-up gifts, rebirth gifts, collecting, couple gifts, Guild Siege prizes (part 2).'));
+  }
+
+  const SHOW = [
+    { v: 'all', label: 'Items with a source or a use', test: (ctx, id) => model(ctx).idx.has(id) },
+    { v: 'none', label: 'Items nothing gives or uses', test: (ctx, id) => !model(ctx).idx.has(id) },
+    { v: 'recent', label: 'Recently viewed', test: (ctx, id) => st.recent.includes(id) },
+  ];
+
+  const mod = {
+    id: 'where', label: 'Where is this item from?', searchPlaceholder: 'Search items (name or II_ name)',
+    help: 'Where is this item from?: every way players get an item (shops, exchanges, monsters, boxes, Battle Pass) and where it is used',
+    st,
+    onLoad() { st.show = 'all'; },          // the item stays: coming back from another task shows it again
+
+    listExtra(ctx) {
+      const ids = [...ctx.ws.items.items.keys()];
+      return h('select.npc-filter', { title: 'Which items to list', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
+        SHOW.map(o => h('option', { value: o.v, selected: o.v === st.show }, `${o.label} (${fmt(ids.filter(id => o.test(ctx, id)).length)})`)));
+    },
+
+    renderList(el, ctx) {
+      const q = ctx.query.toLowerCase(), test = SHOW.find(o => o.v === st.show).test;
+      const hint = !q && st.show === 'all';          // 4,899 items: search first
+      if (hint) {
+        el.appendChild(h('div.pad.muted', 'Type an item name to search, or press + next to an item in the list on the right.'));
+        if (!st.recent.length) return;
+        el.appendChild(h('div.pad.muted.small', 'Recently viewed:'));
+      }
+      const ids = hint || st.show === 'recent' ? st.recent : [...ctx.ws.items.items.keys()];
+      let shown = 0;
+      for (const id of ids) {
+        const it = ctx.ws.itemById(id);
+        if (!it || (!hint && !test(ctx, id))) continue;
+        const name = it.name || it.nameKey || it.define;
+        if (q && !name.toLowerCase().includes(q) && !it.define.toLowerCase().includes(q)) continue;
+        if (++shown > 300) continue;
+        const n = (model(ctx).idx.get(id) || []).length;
+        el.appendChild(h('div.npc.bx-row' + (id === st.id ? '.sel' : ''), { on: { click: () => show(ctx, id) } },
+          FRE.dds.picture(ctx, iconOf(it), { cls: '.bx-icon' }),
+          h('div.bx-text', h('div.n', h('span', { 'data-item-id': id }, name)), h('div.k', `${it.define}${n ? ` · ${n} place${n === 1 ? '' : 's'}` : ' · nothing gives it'}`))));
+      }
+      if (shown > 300) el.appendChild(h('div.pad.muted', `${shown - 300} more: type more to narrow the list.`));
+      if (!shown && !hint) el.appendChild(h('div.pad.muted', 'No items match.'));
+    },
+
+    renderEditor(el, ctx) {
+      if (st.id === null || !ctx.ws.itemById(st.id) && !model(ctx).idx.has(st.id)) {
+        st.id = null;
+        el.appendChild(h('p.empty-state', 'Pick an item: search on the left, or press + next to an item in the list on the right.'));
+        return;
+      }
+      itemPage(el, ctx);
+    },
+
+    addTarget(ctx) {
+      return { ok: true, usesPrice: false, title: 'Show where it comes from', add(info) { show(ctx, info.id); } };
+    },
+
+    locate() { return false; },
+  };
+
+  FRE.ui.where = { show };
+  FRE.ui.modules.push(mod);
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- ui/app.js ----
 // App shell: toolbar (mode switch, load, save, backup, undo), the left list and
 // centre editor of the active module, the shared item database, the problems
@@ -15561,7 +16086,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "52+", "when
     // Client/Model file names (Add New NPC checks a model's .o3d and .ani files); names only, nothing is read
     // Client/Model/Texture names; a model's .o3d is read when it is picked (S.readModel) to check its textures
     let models = null, textures = null, texIndex = null, modelDir = null;
-    if (S.ws && S.ws.available.npc && S.ws.available.npc.ok) {
+    // only NPC Shops needs them (+ NPC, 📍 Change model); other tasks that read the NPC files (where) skip the ~19,000 names
+    if (S.ws && S.ws.available.npc && S.ws.available.npc.ok && S.ws.shown.has('npc')) {
       try {
         modelDir = await FRE.layout.child(dir, 'Model');
         if (modelDir) {

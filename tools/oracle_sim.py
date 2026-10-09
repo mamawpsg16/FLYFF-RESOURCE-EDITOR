@@ -6300,6 +6300,345 @@ def dds_run(folder):
     return out
 
 
+# ---------------------------------------------------------------- task H: where is this item from (independent copy)
+# Every way a player gets an item, with the numbers the server uses, from the same files:
+#   shops      LoadCharacter + ProcessRegenItem (nn_npcs / nn_rule_items), OnBuyItem price (sh_buy at rate 1),
+#              chip shops: dwReferValue1
+#   donation   CProject::LoadDonationShop (ds_catalog), price = dwReferValue1
+#   exchange   CExchange::Load_Script (load_script); chance = P(the line is among the rewards of one press) over
+#              every pick sequence of GetPayItemList (Exchange.cpp:328): nRandom = xRandom( nProb ), the first
+#              line whose running sum is above it, removed, nProb -= its chance, until PAY n are given or nProb <= 0
+#   drops      CMover::DropItem (Mover.cpp:8483-8716), expected drops per kill of a player at the monster's level:
+#              gate xRandom( 100 ) < 100 x item rate, each line GetAt (xRandom( 3e9 ) / piece rate < prob), the
+#              Maxitem stop (ground: nNumber == m_dwMax after every drop, Mover.cpp:8714; flying: >=, :8643)
+#   DropKind   Mover.cpp:8823-8956: window level-5..-2, pick ary[min + xRandom( n )], start xRandom( 11 ), tries
+#              start..0 with expDropLuck x correction; RANK_SUPER stops after the first item on the ground
+#   boxes      CGiftboxMan (bx_gift: running totals, Verify), CPackItem (bx_pack); a set is checked first
+#   battle pass BPReward of the login pass's nType (first row of a level wins)
+# Every roll is xRand() % n (modulo-biased): P(xRandom( n ) < t) = wh_below( n, t ).
+
+WH_NONE_SAMPLE = 50
+
+
+def wh_below(n, t):
+    t = max(0, min(t, n))
+    return ((1 << 32) // n * t + min(t, (1 << 32) % n)) / float(1 << 32)
+
+
+def wh_pass_count(prob, fp):
+    """how many of the rolls 0 .. 3e9-1 pass GetAt: (DWORD)( (float)r / fp ) < prob (monotone in r)"""
+    ok = lambda r: (dr_int(dr_f32(dr_f32(float(r)) / fp)) & 0xFFFFFFFF) < prob
+    if not ok(0):
+        return 0
+    lo, hi = 0, DR_ONE
+    while hi - lo > 1:                       # ok(lo), and every roll from hi on fails (hi = DR_ONE: none fail)
+        mid = (lo + hi) // 2
+        if ok(mid):
+            lo = mid
+        else:
+            hi = mid
+    return hi
+
+
+def wh_drop_env(W, mid):
+    mv = W.mv.get(mid, {'level': 1, 'rank': 1, 'fly': 0, 'corr': 100})
+    fi = dr_f32(1.0)
+    for v in (1.0, 1.0, 1.0, W.rates['item']):
+        fi = dr_f32(fi * dr_f32(v))
+    fp = dr_f32(dr_f32(1.0) * dr_f32(W.rates['piece']))
+    rate = dr_f32(100 * fi)                  # player at the monster's level: 100% in the level-gap table
+    gate = wh_below(100, sum(1 for r in range(100) if dr_f32(float(r)) < rate))
+    return mv, fp, gate
+
+
+def wh_line_chances(W, mid):
+    """per drop line (the monster's lines, then its event lines): expected drops per kill"""
+    lst, kinds, mx = W.drop_list(mid)
+    mv, fp, gate = wh_drop_env(W, mid)
+    fly = bool(mv['fly'])
+    alive = {0: 1.0}                         # nNumber -> P(the list is still going with it)
+    out = []
+    for e in lst:
+        if e[0] != 'item':
+            out.append(None)
+            continue
+        q = wh_below(DR_ONE, wh_pass_count(e[2], fp)) if fp > 0 else 1.0
+        out.append(gate * sum(alive.values()) * q)
+        nxt = {}
+        for nn, p in alive.items():
+            nxt[nn] = nxt.get(nn, 0.0) + p * (1 - q)
+            n2 = nn + (1 if e[4] != DR_NONE else 0)
+            stop = (n2 & 0xFFFFFFFF) >= mx if fly else n2 == mx
+            if not stop:
+                nxt[n2] = nxt.get(n2, 0.0) + p * q
+        alive = nxt
+    return lst, out
+
+
+def wh_kind_chances(W, mid):
+    """DropKind of one monster: item id -> expected drops per kill"""
+    lst, kinds, mx = W.drop_list(mid)
+    mv, fp, gate = wh_drop_env(W, mid)
+    level = mv['level']
+    lo_u, hi_u = max(s16(level - 5), 1), max(s16(level - 2), 1)
+    corr = dr_f32(dr_f32(float(mv['corr'] & 0xFFFFFFFF)) / dr_f32(100.0))
+    sup = mv['rank'] == W.D['RANK_SUPER'] and not mv['fly']      # a flying monster's DropKind item goes to the bag: no stop
+    memo = {}
+
+    def tries(pick):
+        if W.luck is None:
+            return 0.0
+        plv = W.items[pick]['lv']
+        row = 119 if plv > 120 else plv - 1
+        if row < 0:
+            return 0.0
+        if row in memo:
+            return memo[row]
+        q = [wh_below(DR_ONE, dr_int(dr_f32(dr_f32(float(W.luck[row][kk])) * corr)) & 0xFFFFFFFF) for kk in range(11)]
+        got = 0.0
+        for start in range(11):
+            miss = 1.0
+            for kk in range(start, -1, -1):
+                miss *= 1 - q[kk]
+            got += (wh_below(11, start + 1) - wh_below(11, start)) * (1 - miss)
+        memo[row] = got
+        return got
+
+    reach, out = 1.0, {}
+    for ik3 in kinds:
+        a = b = -1
+        for j in range(lo_u, hi_u + 1):
+            a = -1 if j >= 400 else W.mm.get((ik3, j), [-1, -1])[0]
+            if a != -1:
+                break
+        for j in range(hi_u, lo_u - 1, -1):
+            b = -1 if j >= 400 else W.mm.get((ik3, j), [-1, -1])[1]
+            if b != -1:
+                break
+        if a < 0 or b < 0:
+            continue
+        n, anyp = b - a + 1, 0.0
+        for k in range(n):
+            pick = W.ary[ik3][a + k]
+            p = (wh_below(n, k + 1) - wh_below(n, k)) * tries(pick)
+            anyp += p
+            out[pick] = out.get(pick, 0.0) + gate * reach * p
+        if sup:
+            reach *= 1 - anyp
+    return out
+
+
+def wh_pay_chances(pay, paynum):
+    n = len(pay)
+    memo = {}
+
+    def go(rem):                              # rem: the lines still in (file order) -> P(each is given from here)
+        if rem in memo:
+            return memo[rem]
+        nprob = 1000000 - sum(pay[i][2] for i in range(n) if i not in rem)
+        count = n - len(rem)
+        res = [0.0] * n
+        run = 0
+        for j, i in enumerate(rem):
+            lo = run
+            run += pay[i][2]
+            q = wh_below(nprob, min(max(run, 0), nprob)) - wh_below(nprob, min(max(lo, 0), nprob))
+            if q <= 0:
+                continue
+            res[i] += q
+            if count + 1 == paynum or nprob - pay[i][2] <= 0:
+                continue
+            sub = go(rem[:j] + rem[j + 1:])
+            for k in range(n):
+                res[k] += q * sub[k]
+        memo[rem] = res
+        return res
+
+    return go(tuple(range(n)))
+
+
+def wh_r12(x):
+    return float('%.12g' % x)
+
+
+def wh_facts(root, rates=None):
+    A = NNData(root)
+    D, I = A.D, A.I
+    props = I[0]
+    rd = lambda n: open(os.path.join(root, n), 'rb').read() if os.path.exists(os.path.join(root, n)) else None
+    facts = {}
+    add = lambda iid, f: facts.setdefault(iid & 0xFFFFFFFF, []).append(f)
+    # shops
+    texts = {f: nn_text16(A.raw[f]) for f in NN_CHAR_FILES if f in A.raw}
+    npcs = sh_npcs(texts, D, A.S)
+    final = sh_costs(npcs, props)
+    cost_of = lambda iid: final[iid][0] if iid in final else props[iid]['cost']
+    for f, x in npcs:
+        if not x['shop']:
+            continue
+        chip = x['vtype'] in (1, 2)
+        for tab in range(4):
+            ent = []
+            if chip:
+                for s in x['shop']:
+                    if s[0] == 'chip' and s[1] == tab:
+                        p = props.get(U32(s[2]))
+                        if p and p['chip'] >= 1 and len(ent) < 100:
+                            ent.append((p, 'chip'))
+            else:
+                gen = []
+                for s in x['shop']:
+                    if s[0] == 'gen' and s[1] == tab and len(gen) < 100:
+                        for p in nn_rule_items(I, s[2], s[3], s[4], s[5]):
+                            if len(gen) < 100:
+                                gen.append(p)
+                for j in range(len(gen) - 1):
+                    for m in range(j + 1, len(gen)):
+                        if gen[m]['ik1'] < gen[j]['ik1'] or (gen[m]['ik1'] == gen[j]['ik1'] and gen[m]['rare'] < gen[j]['rare']):
+                            gen[j], gen[m] = gen[m], gen[j]
+                ent += [(p, 'rule') for p in gen]
+            full = len(ent) >= 100
+            for s in x['shop']:
+                if s[0] == 'fixed' and s[1] == tab:
+                    p = props.get(U32(s[2]))
+                    if not p:
+                        continue
+                    if full or len(ent) >= 100:
+                        full = True
+                        continue
+                    ent.append((p, 'fixed'))
+            seen = set()
+            for p, how in ent:
+                if p['id'] in seen:
+                    continue
+                seen.add(p['id'])
+                price = p['chip'] if chip else sh_buy(p['id'], cost_of(p['id']), (1, 1, 1), D)
+                add(p['id'], {'kind': 'shop', 'file': f, 'npc': x['key'], 'tab': tab + 1, 'currency': x['vtype'] if chip else 0,
+                              'price': price, 'how': how})
+    # donation shop
+    ds = rd('DonationShop.inc')
+    if ds is not None:
+        for iid, kw in ds_catalog(ds.decode('latin-1'), D).items():
+            add(iid, {'kind': 'donation', 'category': kw, 'price': props[iid]['chip'] if iid in props else 0})
+    # exchanges
+    ex = rd('Exchange_Script.txt')
+    gold = D['II_GOLD_SEED1'] & 0xFFFFFFFF
+    if ex is not None:
+        for mmi, sets in load_script(ex, D).items():
+            if mmi == -1:
+                continue
+            for k, st in enumerate(sets):
+                ch = wh_pay_chances(st['pay'], st['paynum'])
+                for iid in dict.fromkeys(p[0] for p in st['pay']):
+                    first = next(p for p in st['pay'] if p[0] == iid)
+                    add(iid, {'kind': 'exchange', 'menu': mmi & 0xFFFFFFFF, 'set': k + 1, 'num': first[1],
+                              'chance': wh_r12(sum(ch[i] for i, p in enumerate(st['pay']) if p[0] == iid))})
+                for iid in dict.fromkeys(c[0] for c in st['cond']):
+                    if iid == gold:
+                        continue
+                    add(iid, {'kind': 'use', 'menu': mmi & 0xFFFFFFFF, 'set': k + 1, 'num': sum(c[1] for c in st['cond'] if c[0] == iid)})
+    # monster drops, event drops, DropKind
+    W = DrWorld(root)
+    if rates:
+        W.rates.update(rates)
+    for mid in W.mons:
+        lst, ch = wh_line_chances(W, mid)
+        own = len(W.mons[mid]['list'])
+        per, per_ev = {}, {}
+        for i, e in enumerate(lst):
+            if e[0] != 'item':
+                continue
+            tgt = per if i < own else per_ev
+            tgt[e[1]] = tgt.get(e[1], 0.0) + ch[i]
+        for iid, v in per.items():
+            add(iid, {'kind': 'drop', 'monster': mid, 'perKill': wh_r12(v)})
+        if mid in W.mv:
+            for iid, v in per_ev.items():
+                add(iid, {'kind': 'event', 'monster': mid, 'perKill': wh_r12(v)})
+    for mid in sorted(W.mons):
+        for iid, v in sorted(wh_kind_chances(W, mid).items()):
+            if v > 0:
+                add(iid, {'kind': 'kind', 'monster': mid, 'perKill': wh_r12(v)})
+    # boxes
+    g = bx_gift(rd('propGiftbox.inc'), D) if rd('propGiftbox.inc') else {'boxes': {}}
+    pk = bx_pack(rd('propPackItem.inc'), D) if rd('propPackItem.inc') else {'boxes': {}}
+    for bid, b in pk['boxes'].items():
+        for l in b['lines']:
+            add(l[0], {'kind': 'set', 'box': bid, 'num': l[2], 'upgrade': l[1], 'minutes': b['span']})
+    for bid, b in g['boxes'].items():
+        if bid in pk['boxes']:
+            continue
+        ch = bx_chances(b['cum'])
+        for i, l in enumerate(b['lines']):
+            add(l[0], {'kind': 'box', 'box': bid, 'num': l[2], 'chance': wh_r12(ch[i] / BX_TOTAL), 'bound': bool(l[3] & 2),
+                       'minutes': l[4], 'upgrade': l[5]})
+    # battle pass
+    bp = rd('BattlePass.inc')
+    if bp is not None:
+        B = bp_load(bp, D)
+        if B['items']:
+            ptype = B['items'][min(B['items'])][0]
+            for lv, (ty, pts, iid, qty) in B['ladder'].items():
+                if ty == ptype:
+                    add(iid, {'kind': 'bp', 'level': lv, 'points': pts, 'num': qty})
+    return facts, props, D
+
+
+def wh_edit(raw, text):
+    """append text to a file in its own encoding (UTF-16LE with a BOM, else one byte per char)"""
+    return raw + (text.encode('utf-16-le') if raw[:2] == b'\xff\xfe' else text.encode('latin-1'))
+
+
+def wh_cases(root, props, D):
+    """small made-up files for the branches the real files never reach"""
+    import shutil, tempfile
+    rd = lambda n: open(os.path.join(root, n), 'rb').read()
+    pk = bx_pack(rd('propPackItem.inc'), D)
+    set_id = pk['order'][0]
+    table = load_script(rd('Exchange_Script.txt'), D)
+    free_mmi = next(n for n in sorted(D) if n.startswith('MMI_') and D[n] not in table)
+    zero = next(p['define'] for i, p in sorted(props.items()) if i < 60000 and p['chip'] < 1 and p['define'].startswith('II_'))
+    paid = next(p['define'] for i, p in sorted(props.items()) if i < 60000 and p['chip'] >= 1 and p['define'].startswith('II_'))
+    ids = lambda *names: [D[n] & 0xFFFFFFFF for n in names]
+    cases = [
+        {'name': 'a random box with the id of a set (the set is opened)', 'items': ids('II_SYS_SYS_SCR_AWAKE'),
+         'edits': [['propGiftbox.inc', '\r\nGiftBox %d\r\n{\r\n\tII_SYS_SYS_SCR_AWAKE\t100\t1\r\n}\r\n' % set_id]]},
+        {'name': 'a Battle Pass row of another season type', 'items': ids('II_SYS_SYS_SCR_AWAKE', 'II_CHP_RED'),
+         'edits': [['BattlePass.inc', '\nBP4\n{\n\tBPReward\t99\t200\t1000\tII_SYS_SYS_SCR_AWAKE\t3\t""\t""\t""\n'
+                    '\tBPReward\t1\t201\t0\tII_CHP_RED\t0\t""\t""\t""\n}\n']]},
+        {'name': 'Penya and II_GOLD_SEED1 as ingredients, PAY 2 with an item twice', 'items': ids('II_GOLD_SEED1', 'II_SYS_SYS_SCR_AWAKE', 'II_CHP_RED'),
+         'edits': [['Exchange_Script.txt', '\r\n%s\r\n{\r\n\tSET\tTID_X\r\n\t{\r\n\t\tCONDITION\r\n\t\t{\r\n\t\t\tPENYA\t1000\r\n'
+                    '\t\t\tII_GOLD_SEED1\t5\r\n\t\t\tII_SYS_SYS_SCR_AWAKE\t2\r\n\t\t}\r\n\t\tPAY\t2\r\n\t\t{\r\n'
+                    '\t\t\tII_CHP_RED\t1\t500000\r\n\t\t\tII_SYS_SYS_SCR_AWAKE\t1\t300000\r\n\t\t\tII_CHP_RED\t2\t200000\r\n'
+                    '\t\t}\r\n\t}\r\n}\r\n' % free_mmi]]},
+        {'name': 'a chip shop with an item without a chip price and one priced', 'items': ids(zero, paid),
+         'edits': [['character.inc', '\r\nMaFl_WhTest\r\n{\r\n\tSetVenderType( 1 );\r\n\tAddVenderItem2(0, %s);\r\n\tAddVenderItem2(1, %s);\r\n'
+                    '\tAddShopItem( 2, %s );\r\n}\r\n' % (zero, paid, zero)]]},
+        {'name': 'item rate 0.5 and piece rate 0.7', 'items': ids('II_CHP_RED', 'II_WEA_SWO_BOBOKU'), 'edits': [], 'rates': {'item': 0.5, 'piece': 0.7}},
+    ]
+    for c in cases:
+        tmp = tempfile.mkdtemp(prefix='wh_')
+        try:
+            for n in os.listdir(root):
+                os.symlink(os.path.join(os.path.abspath(root), n), os.path.join(tmp, n))
+            for f, text in c['edits']:
+                raw = rd(f)
+                os.remove(os.path.join(tmp, f))
+                open(os.path.join(tmp, f), 'wb').write(wh_edit(raw, text))
+            facts = wh_facts(tmp, c.get('rates'))[0]
+            c['facts'] = {str(i): facts.get(i, []) for i in c['items']}
+        finally:
+            shutil.rmtree(tmp)
+    return cases
+
+
+def wh_run(root):
+    facts, props, D = wh_facts(root)
+    none = [i for i in sorted(props) if i < 60000 and i not in facts][:WH_NONE_SAMPLE]
+    return {'items': {str(i): v for i, v in sorted(facts.items())}, 'none': none, 'cases': wh_cases(root, props, D)}
+
+
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -6333,6 +6672,8 @@ if __name__ == '__main__':
         print(json.dumps(bx_run(root)))
     elif what == 'newbox':
         print(json.dumps(nb_run(root)))
+    elif what == 'where':
+        print(json.dumps(wh_run(root)))
     elif what == 'dds':                         # a folder of .dds icons -> {file: [w, h, sha256 of the RGBA]}
         print(json.dumps(dds_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model

@@ -47,6 +47,7 @@ edit/menu-ops.js
 validate/newnpc.js
 validate/newmenu.js
 loaders/newnpc-sim.js
+loaders/where.js
 core/workspace.js
 core/client-sync.js
 core/after-save.js
@@ -73,4 +74,5 @@ ui/battlepass.js
 ui/drops.js
 ui/boxes.js
 ui/exchange.js
+ui/where.js
 ui/app.js

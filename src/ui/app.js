@@ -296,7 +296,8 @@
     // Client/Model file names (Add New NPC checks a model's .o3d and .ani files); names only, nothing is read
     // Client/Model/Texture names; a model's .o3d is read when it is picked (S.readModel) to check its textures
     let models = null, textures = null, texIndex = null, modelDir = null;
-    if (S.ws && S.ws.available.npc && S.ws.available.npc.ok) {
+    // only NPC Shops needs them (+ NPC, 📍 Change model); other tasks that read the NPC files (where) skip the ~19,000 names
+    if (S.ws && S.ws.available.npc && S.ws.available.npc.ok && S.ws.shown.has('npc')) {
       try {
         modelDir = await FRE.layout.child(dir, 'Model');
         if (modelDir) {

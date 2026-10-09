@@ -269,7 +269,9 @@
         if (!dist[c]) continue;
         next[c] += dist[c] * (1 - p);
         const nc = counts ? c + 1 : c;
-        const stop = mv.flying ? u32(nc) >= max && !o.bagFull : (counts && u32(nc) === max);
+        // ground: nNumber == m_dwMax after EVERY drop, counted or not (Mover.cpp:8714): with no Maxitem line (m_dwMax 0)
+        // the first uncounted drop (amount "=" / -1, every event line) stops the list
+        const stop = mv.flying ? u32(nc) >= max && !o.bagFull : u32(nc) === max;
         if (!stop) next[nc] += dist[c] * p;
       }
       while (next.length > 1 && !next[next.length - 1]) next.pop();

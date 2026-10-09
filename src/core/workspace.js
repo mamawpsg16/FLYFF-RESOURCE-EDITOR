@@ -136,6 +136,16 @@
         return out;
       },
     },
+    {
+      // Where is this item from? (task H, loaders/where.js): every model above parsed read-only, nothing editable.
+      // Last, so its parse sees the other models. maps: towns of the NPCs, and whether they stand in the game.
+      id: 'where', label: 'Where is this item from?',
+      required: [], editable: [], client: [],
+      uses: ['npc', 'donation', 'exchange', 'drops', 'boxes', 'battlepass'],
+      maps: true,
+      parse(ws) { return FRE.where.index(ws); },
+      validate() { return []; },
+    },
   ];
   const ALL_FILES = [...new Set([...CORE, ...MODULES.flatMap(m => [...m.required, ...(m.optional || [])]), ...OPTIONAL])];
 
@@ -257,7 +267,7 @@
       f.dir = 'Client';
       const lower = 'client/' + f.name.toLowerCase();
       this.files.set(lower, f);
-      if (!f.readOnly) this.editable.add(lower);
+      if (!f.readOnly && this.shown.has('npc')) this.editable.add(lower);     // rules texts are edited in NPC Shops only
       return { lower, file: f };
     }
     // -> { lower, file } of NpcBoard_<id>.inc; create: an empty one (no bytes yet) when there is none
@@ -314,7 +324,11 @@
       this.placed = placed;
       const get = rel => worldFiles.get(rel.toLowerCase()) || this.files.get(rel.toLowerCase()) || null;
       this.area = FRE.area.build({ defines: this.defines.defines, get, dyo });
-      for (const m of MODULES) if (m.maps && this.available[m.id].ok) this.reparse(m.required[0].toLowerCase());
+      for (const m of MODULES) {
+        if (!m.maps || !this.available[m.id].ok) continue;
+        if (m.required.length) this.reparse(m.required[0].toLowerCase());
+        else this.models[m.id] = m.parse(this);       // a task without files of its own (where)
+      }
     }
     // The .dyo files as SourceFiles (binary, with handles), so a task may edit them. They are kept
     // in this.files under 'world/<map>/<file>.dyo'; the NPC task may write them.

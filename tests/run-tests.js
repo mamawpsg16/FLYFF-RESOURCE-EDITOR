@@ -2856,5 +2856,85 @@ section('boxes: loader, checks, opening boxes, edits, icons (JS and Python copie
   }
 }
 
+// ---------------------------------------------------------------- where is this item from (task H part 1)
+section('where is this item from: every source, exact chances (JS and Python copies agree)');
+{
+  const files = new Map();
+  for (const [k, e] of loadFolder(FIXTURES)) files.set(k, openSource(e));
+  const w = new FRE.Workspace(files, { only: 'where' });
+  w.now = () => new Date(2026, 9, 8, 12, 0);          // oracle_sim.py DR_FIXED_NOW (Event.lua rates)
+  w.load();
+  const Wh = FRE.where, Dm = w.defines.defines;
+  eq(w.editable.size, 0, 'the where task: nothing is editable');
+  eq(['npc', 'donation', 'exchange', 'drops', 'boxes', 'battlepass', 'where'].every(id => w.available[id].ok && w.models[id]), true, 'the where task: every model is parsed');
+  eq(w.clientFileNames().length, 0, 'the where task: no Client copies to sync');
+
+  // plain cases
+  const facts = d => Wh.factsOf(Wh.sources(w, Dm.get(d)));
+  const awake = facts('II_SYS_SYS_SCR_AWAKE').filter(f => f.kind === 'shop').map(f => `${f.npc} ${f.price} ${f.how}`).join(', ');
+  eq(awake, 'MaEw_Raya 100000 rule, MaFl_Peach 100000 rule', 'Scroll of Awakening: sold by Raya and Peach for 100,000 Penya (AddVendorItem rules)');
+  eq(facts('II_CHP_RED').filter(f => f.kind === 'bp').length, 5, 'Red Chip: 5 Battle Pass levels give it');
+  const cook = Wh.sources(w, Dm.get('II_SYS_SYS_SCR_BXMCOOK01'));
+  eq(cook.checks.some(c => c.code === 'W_PRICE_SET'), true, 'an AddShopItem price that sets the price in every shop is named');
+  eq(cook.contains.length > 0, true, 'a box item: what opening it gives');
+  const none = [...w.items.items.keys()].find(id => !w.models.where.idx.has(id));
+  eq(Wh.sources(w, none).checks.some(c => c.code === 'W_NONE'), true, 'an item nothing gives: "Can\'t be obtained in game"');
+
+  // PAY n: the exact chance of each reward against 200,000 presses through exchange-sim's GetPayItemList
+  const pay = [300000, 250000, 200000, 150000, 100000].map((prob, id) => ({ id, prob, num: 1 }));
+  for (const payNum of [1, 2, 3, 0]) {
+    const set = { pay, payNum }, ch = Wh.payChances(set), r = FRE.xRandom.rng(3), cnt = new Array(5).fill(0), N = 200000;
+    for (let k = 0; k < N; k++) for (const x of FRE.exchangeSim.payList(set, r)) cnt[x.id]++;
+    const worst = Math.max(...ch.map((c, i) => (c > 0 && c < 1 ? Math.abs(cnt[i] - c * N) / Math.sqrt(N * c * (1 - c)) : Math.abs(cnt[i] - c * N))));
+    ok(worst < 5, `PAY ${payNum}: the exact reward chances match 200,000 presses`, `worst z ${worst.toFixed(2)}, ${ch.map(x => x.toFixed(4))}`);
+  }
+  // DropKind per item and the Maxitem stop on uncounted lines, against the kill simulator
+  const sup = Dm.get('RANK_SUPER');
+  const kindMons = [...w.models.drops.monsters.values()].filter(m => m.kinds.length);
+  for (const mon of [kindMons[0], kindMons[Math.floor(kindMons.length / 2)], kindMons.find(m => (w.movers.movers.get(m.id) || {}).rankId === sup)]) {
+    const env = FRE.dropsSim.envFor(w, mon.id), N = 200000, run = FRE.dropsSim.run(env, { kills: N, seed: 7 }), kc = Wh.kindChances(env);
+    let worst = 0, got = 0, exp = 0;
+    for (const [id, x] of kc) { const t = (run.kinds.get(id) || { times: 0 }).times; got += t; exp += x.perKill * N; worst = Math.max(worst, Math.abs(t - x.perKill * N) / Math.sqrt(Math.max(1, x.perKill * N))); }
+    ok(worst < 5 && Math.abs(got - exp) < 5 * Math.sqrt(Math.max(1, exp)), `${mon.define}: DropKind chances per item match ${N} kills`, `worst z ${worst.toFixed(2)}, ${got} vs ${exp.toFixed(1)}`);
+  }
+  {
+    const env = FRE.dropsSim.envFor(w, Dm.get('MI_MINECATCHER')), N = 100000, run = FRE.dropsSim.run(env, { kills: N, seed: 5 }), ex = FRE.dropsSim.exactChances(env);
+    eq(env.maxItems >>> 0, 0, 'MI_MINECATCHER: no Maxitem line');
+    let worst = 0;
+    ex.lines.forEach((l, i) => { if (l.entry.kind !== 'item') return; const t = (run.lines.get(i) || { times: 0 }).times, e = l.perKill * N; if (e >= 20) worst = Math.max(worst, Math.abs(t - e) / Math.sqrt(e)); });
+    ok(worst < 5, 'Maxitem 0: the first uncounted drop stops the list (Mover.cpp:8714), exact chances match 100,000 kills', `worst z ${worst.toFixed(2)}`);
+  }
+
+  // every item with a source or a use (+ 50 with none): the same facts as the independent Python copy
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} where ${FIXTURES}`);
+  const py = JSON.parse(new TextDecoder().decode(out));
+  const canon = list => list.map(f => JSON.stringify(Object.keys(f).sort().reduce((o, k) => (o[k] = f[k], o), {}))).sort();
+  eq(w.models.where.idx.size, Object.keys(py.items).length, `the item list's "with a source or a use" = the items the Python copy finds (${Object.keys(py.items).length}; DropKind items included)`);
+  const ids = [...Object.keys(py.items).map(Number), ...py.none];
+  let agree = 0, shown = 0;
+  const kinds = {};
+  for (const f of Object.values(py.items).flat()) kinds[f.kind] = (kinds[f.kind] || 0) + 1;
+  for (const id of ids) {
+    const js = canon(Wh.factsOf(Wh.sources(w, id))), p = canon(py.items[String(id)] || []);
+    if (JSON.stringify(js) === JSON.stringify(p)) { agree++; continue; }
+    if (shown++ < 3) { const a = new Set(js), b = new Set(p); print(`   item ${id}: JS only ${js.filter(x => !b.has(x)).slice(0, 2)} | Python only ${p.filter(x => !a.has(x)).slice(0, 2)}`); }
+  }
+  eq(agree, ids.length, `every item: the same sources and numbers in both copies (${ids.length} items; ${Object.entries(kinds).map(([k, n]) => `${n} ${k}`).join(', ')})`);
+
+  // the Python copy's made-up files (branches the real files never reach): appended text in each file's own encoding
+  const append = (bytes, text) => B.concatBytes([bytes, bytes[0] === 0xFF && bytes[1] === 0xFE ? B.stringToUtf16le(text) : B.binaryStringToBytes(text)]);
+  for (const c of py.cases) {
+    const fs = new Map();
+    for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e));
+    for (const [f, text] of c.edits) { const sf = fs.get(f.toLowerCase()); fs.set(f.toLowerCase(), new FRE.SourceFile(sf.name, append(sf.bytes, text))); }
+    const cw = new FRE.Workspace(fs, { only: 'where' });
+    cw.now = () => new Date(2026, 9, 8, 12, 0);
+    cw.load();
+    if (c.rates) Object.assign(cw.dropContext.rates, c.rates);
+    const same = c.items.filter(id => JSON.stringify(canon(Wh.factsOf(Wh.sources(cw, id)))) === JSON.stringify(canon(c.facts[String(id)])));
+    eq(same.length, c.items.length, `made-up files: ${c.name}`);
+  }
+}
+
 print(`\n${pass} passed, ${fail} failed`);
 if (fail) System.exit(1);
