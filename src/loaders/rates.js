@@ -134,7 +134,7 @@
       if (name === 'AddEvent') {
         const a = argSpans(text, open, close);
         ev = { name: a[0] ? (a[0].str != null ? a[0].str : a[0].text) : '', idx: res.events.length, start: stmt.start, stmt, nameArg: a[0] || null,
-          times: [], f: {}, weatherTitle: null, last: stmt, on: false };
+          times: [], f: {}, weatherTitle: null, last: stmt, on: false, gifts: [] };
         res.events.push(ev);
         continue;
       }
@@ -145,6 +145,13 @@
       if (name === 'SetTime') {
         ev.times.push({ a: timeNumber(a[0] && a[0].str != null ? a[0].str : ''), b: timeNumber(a[1] && a[1].str != null ? a[1].str : ''),
           aArg: a[0] || null, bArg: a[1] || null, stmt });
+        continue;
+      }
+      if (name === 'SetLevelUpGift') {
+        // SetLevelUpGift( nLevel, strAccount, strItemId, nItemNum, byFlag, nLifeMinutes ) (EventFunc.lua:442; nLifeMinutes "or 0", a021ff44)
+        const n = i => a[i] ? luaNum(a[i].text) : NaN;
+        ev.gifts.push({ event: ev, idx: ev.gifts.length, stmt, args: a, level: n(0), account: a[1] ? (a[1].str != null ? a[1].str : a[1].text) : '',
+          define: a[2] ? (a[2].str != null ? a[2].str : a[2].text) : '', num: n(3), flag: a[4] ? n(4) : 0, minutes: a[5] ? n(5) : 0 });
         continue;
       }
       const kind = FN_KIND[name];
@@ -176,8 +183,24 @@
   }
 
   // ---------------------------------------------------------------- ServerBuff.txt / GuildBuff.txt
+  // Stat slots per row, two layouts each: before / after buff-stats.diff (V19 43d0b76c, not yet tested in game):
+  //   ServerBuff.txt  tier minOnline expPercent [5 × dst adj] "name" "icon"   (SERVERBUFF_MAX_BONUS 5, ServerBuff.cpp)
+  //   GuildBuff.txt   tier minGuildLevel minOnline 5 | 8 × dst adj "name" "desc" "icon"   (GUILDBUFF_MAX_BONUS 8)
+  // The C++ reads a fixed count; the file says which build it was written for: the numbers in front of the first
+  // string of the first row (3 + 2 × slots). A file the editor cannot place gets the old count and shows as shifted.
+  const SLOTS = { server: [0, 5], guild: [5, 8] };
+  function detectSlots(file, kw, guild) {
+    const s = new FRE.lexer.Script(file.text, { file: file.name, defines: new Map(), diags: [] });
+    let t = s.getToken();
+    while (!s.eof && t.text !== kw) t = s.getToken();
+    s.getToken();                                              // {
+    let n = 0;
+    for (t = s.getToken(); !s.eof && t.type !== 'string' && t.text[0] !== '}'; t = s.getToken()) if (t.text !== '-' && t.text !== '+') n++;
+    const [old, neu] = SLOTS[guild ? 'guild' : 'server'];
+    return n - 3 >= 2 * neu ? neu : old;
+  }
   function scanTiers(file, kw, guild) {
-    const res = { file: file.name, tiers: [], open: null, close: null, kw: null, problems: [] };
+    const res = { file: file.name, tiers: [], open: null, close: null, kw: null, problems: [], slots: detectSlots(file, kw, guild) };
     const s = new FRE.lexer.Script(file.text, { file: file.name, defines: new Map(), diags: [] });
     const num = what => {
       const n = s.getNumber(), t = n.tokens[0];
@@ -199,10 +222,13 @@
         if (guild) {
           t.glv = num('guild level'); t.online = num('members online');
           t.bonus = [];
-          for (let i = 0; i < 5; i++) t.bonus.push({ dst: num('stat'), adj: num('amount') });
+          for (let i = 0; i < res.slots; i++) t.bonus.push({ dst: num('stat'), adj: num('amount') });
           t.name = str('name'); t.desc = str('description'); t.icon = str('icon');
         } else {
-          t.online = num('players online'); t.pct = num('EXP %'); t.name = str('name'); t.icon = str('icon');
+          t.online = num('players online'); t.pct = num('EXP %');
+          t.bonus = [];
+          for (let i = 0; i < res.slots; i++) t.bonus.push({ dst: num('stat'), adj: num('amount') });
+          t.name = str('name'); t.icon = str('icon');
         }
         t.start = tier.start; t.end = t.icon.end;
         res.tiers.push(t);
@@ -254,11 +280,18 @@
         const bad = nums.find(n => !n.ok) || [t.name, t.icon, t.desc].filter(Boolean).find(x => !x.ok);
         if (bad) out.push({ module: 'rates', file: b.file, code: 'RT_FIELDS', severity: 'BLOCK', start: bad.start, end: bad.end, key: `RT_FIELDS|${b.file}|${i}`,
           message: `${where}: "${bad.text || '(end of file)'}" stands where the ${bad.what} should be. The server has no field check: this row and every row after it are read shifted.` });
-        if (kind === 'GuildBuff') t.bonus.forEach((x, j) => {
+        t.bonus.forEach((x, j) => {
           if (x.dst.word) out.push({ module: 'rates', file: b.file, code: 'RT_GB_DST_NAME', severity: 'WARN', start: x.dst.start, end: x.dst.end, key: `RT_GB_DST_NAME|${i}|${j}`,
-            message: `${where}, stat ${j + 1}: "${x.dst.text}" is a name. GuildBuff.txt is read with atoi, so it becomes 0 (no stat). Write the number.` });
+            message: `${where}, stat ${j + 1}: "${x.dst.text}" is a name. ${b.file} is read with atoi, so it becomes 0 (no stat). Write the number.` });
           else if (x.dst.value && defs && !dstName(defs, x.dst.value)) out.push({ module: 'rates', file: b.file, code: 'RT_GB_DST_UNKNOWN', severity: 'WARN', start: x.dst.start, end: x.dst.end, key: `RT_GB_DST_UNKNOWN|${i}|${j}`,
             message: `${where}, stat ${j + 1}: ${x.dst.value} is not a DST_ number in defineAttribute.h` });
+        });
+        const used = new Map();
+        t.bonus.forEach((x, j) => {
+          if (!x.dst.value || x.dst.word) return;
+          if (used.has(x.dst.value)) out.push({ module: 'rates', file: b.file, code: 'RT_STAT_DUP', severity: 'WARN', start: x.dst.start, end: x.adj.end, key: `RT_STAT_DUP|${b.file}|${i}|${j}`,
+            message: `${where}: stat ${j + 1} is the same stat as stat ${used.get(x.dst.value) + 1}. Both are applied (SetDestParam adds), so players get the two amounts together.` });
+          else used.set(x.dst.value, j);
         });
         if (seen.has(t.tier.value)) out.push({ module: 'rates', file: b.file, code: 'RT_TIER_ORDER', severity: 'WARN', start: t.tier.start, end: t.tier.end, key: `RT_TIER_DUP|${b.file}|${t.tier.value}`,
           message: `${b.file} has tier ${t.tier.value} twice: the first one is used for the tooltip` });
@@ -272,7 +305,65 @@
             message: `${where}: the ${what} has ${x.text.length} characters; the game keeps only ${max}` });
       });
     }
+    giftChecks(model, opts, out);
+    rebirthChecks(model, opts, out);
     return out;
+  }
+
+  // level-up gifts (part 2): CEventLua::SetLevelUpGift (EventLua.cpp:513-575) skips an item that is not in Spec_Item ("ItemProp is
+  // NULL"); CreateItem stacks at most dwPackMax per slot; the "how often" is gifts-sim's (a character's life, levelPays).
+  function giftChecks(model, opts, out) {
+    const ev = model.events, ws = opts.ws;
+    if (!ws || ev.failed) return;
+    const D = ws.defines.defines, file = ws.files.get('event.lua');
+    let pays = null;
+    try {
+      const env = FRE.giftsSim.envFor(ws);
+      const byLine = new Map();
+      for (const [g, p] of FRE.giftsSim.levelPays(env)) byLine.set(g.line, p);
+      pays = byLine;
+    } catch (e) { pays = null; }
+    for (const e of ev.events) {
+      const seen = new Map();
+      for (const g of e.gifts) {
+        const at = { start: g.stmt.start, end: g.stmt.end }, where = `${e.name}, level ${g.level}`;
+        const id = D.has(g.define) ? D.get(g.define) >>> 0 : null;
+        const it = id === null ? null : ws.items.items.get(id);
+        const push = (code, severity, message, k) => out.push({ module: 'rates', file: ev.file, code, severity, start: at.start, end: at.end, key: `${code}|${e.name}|${k || g.idx}`, message });
+        if (!it) { push('RT_GIFT_ITEM', 'BLOCK', `${where}: "${g.define}" is not an item in Spec_Item.txt. The server logs "ItemProp is NULL" and gives nothing.`, `${g.level}|${g.define}`); continue; }
+        if (!(g.num >= 1)) push('RT_GIFT_COUNT', 'BLOCK', `${where}: the count is ${Number.isNaN(g.num) ? 'not a number' : g.num}. A gift needs a count of at least 1.`, `${g.level}|${g.define}`);
+        else {
+          const pm = FRE.specItem.get(it, 'dwPackMax') >>> 0;
+          if (pm && g.num > pm) push('RT_GIFT_STACK', 'WARN', `${where}: ${g.num} × ${g.define}, but one bag slot holds only ${pm}. CreateItem puts the rest in more slots; a full bag mails the gift.`, `${g.level}|${g.define}`);
+        }
+        const k = `${g.level}|${g.define}`;
+        if (seen.has(k)) push('RT_GIFT_DUP', 'INFO', `${where}: ${g.define} is given twice at this level (both rows pay).`, k + '|dup');
+        seen.set(k, true);
+        if (!e.on || g.account !== 'all' || !pays || !file) continue;
+        const p = pays.get(file.lineOf(g.stmt.start) + 1);
+        if (p && p.first === 0 && p.perRebirth === 0) push('RT_GIFT_NEVER', 'WARN', (g.level === 121 || g.level === 131)
+          ? `${where}: never given. Players reach level ${g.level} through ${g.level === 121 ? 'the automatic Master → Hero change' : 'the Legend promotion'}, which sets the level directly (InitLevel); only a level gained with EXP gives a gift (MoverParam.cpp:1627).`
+          : `${where}: never given. No character gains level ${g.level} with EXP (1-15 Vagrant, 16-60 Expert, 61-120 Pro and Master, 122-130 Hero, 132-150 Legend).`, k + '|never');
+      }
+    }
+  }
+
+  // 1Rebirth.inc (part 2): CProject::LoadRebirthProp (Project.cpp:6058-6131)
+  function rebirthChecks(model, opts, out) {
+    const r = model.rebirth;
+    if (!r) return;
+    const F = '1Rebirth.inc';
+    const push = (code, severity, span, message, k) => out.push({ module: 'rates', file: F, code, severity, start: span ? span.start : 0, end: span ? span.end : 0, key: `${code}|${k}`, message });
+    if (r.rates.length < r.max + 1) push('RT_REB_ROWS', 'WARN', r.ratesOpen, `Rates has ${r.rates.length} rows for tiers 0-${r.max}: tiers ${r.rates.length}-${r.max} get EXP ×1 and 0 bonus points (the RebirthPropEntry defaults, Project.h:82).`, 'few');
+    if (r.extraRates) push('RT_REB_ROWS', 'WARN', r.ratesOpen, `Rates has about ${Math.ceil(r.extraRates / 4)} row(s) past tier ${r.max} (Max): the server logs "Error in Rebirth Config > RateChart" for each number in them and skips them.`, 'many');
+    for (let i = 1; i < r.rates.length; i++) if (r.rates[i].gp < r.rates[i - 1].gp)
+      push('RT_REB_GP_DOWN', 'WARN', r.rates[i].gpSpan, `Rebirth ${i} gives ${r.rates[i].gp} bonus points, fewer than rebirth ${i - 1} (${r.rates[i - 1].gp}). The column is the TOTAL at that tier (3fb37a62): reaching rebirth ${i} would lower the player's points.`, i);
+    for (const row of r.rows) {
+      if (row.why === 'dup') push('RT_REB_GIFT_DUP', 'WARN', row.itemSpan, `Rebirth ${row.tier} has a second gift row (${row.itemText}): only the first row counts (one item per tier, map::insert).`, `${row.tier}|${row.start}`);
+      else if (row.why) push('RT_REB_GIFT_BAD', 'WARN', row.itemSpan, row.why === 'tier above Max'
+        ? `Rebirth ${row.tier} is above Max (${r.max}): the server logs "Error in Rebirth Config > ItemChart" and skips this gift.`
+        : `Rebirth ${row.tier}: "${row.itemText}" is not an item: the server logs "Error in Rebirth Config > ItemChart" and skips this gift.`, `${row.tier}|${row.itemText}`);
+    }
   }
 
   // ---------------------------------------------------------------- the task's model
@@ -306,6 +397,6 @@
     return rows;
   }
 
-  FRE.rates = { KINDS, loadEvents, setState, loadServerBuff, loadGuildBuff, pickServerTier, pickGuildTier, dstName, validate, fromWorkspace,
+  FRE.rates = { SLOTS, detectSlots, KINDS, loadEvents, setState, loadServerBuff, loadGuildBuff, pickServerTier, pickGuildTier, dstName, validate, fromWorkspace,
     loadExpLimits, timeNumber, argSpans, blankLua, NAME_MAX, DESC_MAX, ICON_MAX, GATE_FULL };
 })(globalThis.FRE = globalThis.FRE || {});

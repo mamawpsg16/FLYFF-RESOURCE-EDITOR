@@ -19,16 +19,17 @@
   const trunc = Math.trunc;
 
   // -> { factor, steps: [{ what, text, after }] }
+  const show = v => String(Math.round(v * 10000) / 10000);     // float32 for the maths, 4 decimals for the text
   function expFactor(o) {
     const steps = [];
     let f = f32(1);
     const step = (what, text) => steps.push({ what, text, after: f });
     if (o.scrollPct) { f = f32(f * f32(1 + f32(f32(o.scrollPct) / 100))); step('scroll', `×${1 + o.scrollPct / 100} EXP scrolls (+${o.scrollPct}%)`); }
-    f = f32(f * f32(o.eventExp)); step('event', `×${f32(o.eventExp)} Event.lua EXP`);
+    f = f32(f * f32(o.eventExp)); step('event', `×${show(f32(o.eventExp))} Event.lua EXP`);
     if (o.dstExp > 0) { f = f32(f * f32(1 + f32(f32(o.dstExp) / 100))); step('dst', `×${1 + o.dstExp / 100} EXP stat (+${o.dstExp}%: Guild Buff and gear)`); }
     if (o.serverBuffPct) { f = f32(f + f32(f32(o.serverBuffPct) / 100)); step('serverbuff', `+${o.serverBuffPct / 100} Server Buff (+${o.serverBuffPct}%, added)`); }
-    if (o.rebirth > 0 && o.rebirthRate != null) { f = f32(f * f32(o.rebirthRate)); step('rebirth', `×${f32(o.rebirthRate)} rebirth ${o.rebirth}`); }
-    if (o.weather) { f = f32(f * f32(o.weatherExp)); step('weather', `×${f32(o.weatherExp)} weather (rain / snow)`); }
+    if (o.rebirth > 0 && o.rebirthRate != null) { f = f32(f * f32(o.rebirthRate)); step('rebirth', `×${show(f32(o.rebirthRate))} rebirth ${o.rebirth}`); }
+    if (o.weather) { f = f32(f * f32(o.weatherExp)); step('weather', `×${show(f32(o.weatherExp))} weather (rain / snow)`); }
     return { factor: f, steps };
   }
 
@@ -48,7 +49,7 @@
     let n = trunc(v);
     if (o.halve) { n = trunc(n / 2); steps.push('÷2 Master / Hero'); }
     const exp = trunc(f32(f32(n) * f32(o.factor)));
-    steps.push(`×${f32(o.factor)} the EXP factor`);
+    steps.push(`×${show(f32(o.factor))} the EXP factor`);
     return { exp, steps, capped };
   }
 
@@ -63,11 +64,14 @@
     const dstExpV = ws.defines.defines.get('DST_EXPERIENCE');
     let guildExp = 0;
     if (gb) for (const b of gb.bonus) if (b.dst.value === dstExpV) guildExp += b.adj.value;
+    // a Server Buff EXP stat (buff-stats.diff) is a dest param like the Guild Buff's: the same (1 + DST_EXPERIENCE / 100)
+    let serverExp = 0;
+    if (sb && sb.bonus) for (const b of sb.bonus) if (b.dst.value === dstExpV) serverExp += b.adj.value;
     const rb = model.rebirth && inp.rebirth > 0 ? model.rebirth.rates[inp.rebirth] : null;
-    const ef = expFactor({ scrollPct: inp.scrollPct | 0, eventExp: act.exp, dstExp: guildExp + (inp.gearExp | 0), serverBuffPct: sb ? sb.pct.value : 0,
+    const ef = expFactor({ scrollPct: inp.scrollPct | 0, eventExp: act.exp, dstExp: guildExp + serverExp + (inp.gearExp | 0), serverBuffPct: sb ? sb.pct.value : 0,
       rebirth: inp.rebirth | 0, rebirthRate: rb ? rb.exp : (inp.rebirth > 0 ? 1 : null), weather: !!inp.weather, weatherExp: act.weather });
     const mv = ws.movers.movers.get(inp.monsterId) || null;
-    const res = { factor: ef, serverTier: sb, guildTier: gb, guildExp, mover: mv, rates: act, failed: ev.failed };
+    const res = { factor: ef, serverTier: sb, guildTier: gb, guildExp, serverExp, mover: mv, rates: act, failed: ev.failed };
     if (!mv) return res;
     const lim = model.exp && model.exp[inp.playerLevel] ? model.exp[inp.playerLevel].limit : null;
     res.kill = killExp({ expValue: mv.exp, monsterLevel: mv.level | 0, playerLevel: inp.playerLevel, limit: lim, halve: inp.tier === 'master' || inp.tier === 'hero', factor: ef.factor });

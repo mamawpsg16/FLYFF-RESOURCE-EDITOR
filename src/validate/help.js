@@ -213,6 +213,17 @@
     RT_GB_DST_UNKNOWN: ['The stat number is not one of the DST_ numbers in defineAttribute.h, so it changes no stat players know.', 'Pick a stat from the list.'],
     RT_TIER_ORDER: ['The server does not use the line order: it picks the highest tier number whose needs are met. A tier with a higher number but lower needs hides the tiers between; a tier number used twice shows the first one in the tooltip.', 'Keep tier numbers 1, 2, 3 … with needs that grow with them.'],
     RT_TEXT_LONG: ['The game receives the tier name in 128 bytes, the description in 256 and the icon name in 64 (DPClient.cpp:11578): longer text is cut off.', 'Shorten the text.'],
+    // Level-up gifts (Event.lua SetLevelUpGift) and rebirth tiers (1Rebirth.inc): task I part 2
+    RT_STAT_DUP: ['The same stat is in two slots of one tier. The server applies both (SetDestParam adds them up), so players get the sum.', 'Put the total in one slot and set the other to (none).'],
+    RT_GIFT_ITEM: ['The gift names an item that is not in Spec_Item.txt. When a player reaches the level, the server logs "ItemProp is NULL" and gives nothing (EventLua.cpp:536).', 'Pick an item from the list.'],
+    RT_GIFT_COUNT: ['A gift needs a count of at least 1.', 'Type a count of 1 or more.'],
+    RT_GIFT_STACK: ['The count is larger than one bag slot holds (dwPackMax). The gift takes several slots; if they are not free, it comes by mail.', 'Lower the count, or leave it: players get all of it either way.'],
+    RT_GIFT_DUP: ['The same item is given twice at this level. Both rows pay, so players get both.', 'Remove one row, or raise the count of the other.'],
+    RT_GIFT_NEVER: ['No character gains this level with EXP, so the gift is never given. Levels 121 and 131 are set by the job change (InitLevel), and only a level gained with EXP gives a gift (MoverParam.cpp:1627).', 'Move the gift to another level, e.g. 122 instead of 121.'],
+    RT_REB_ROWS: ['Rates must have one row per tier from 0 to Max. A missing row gives EXP ×1 and 0 bonus points; a row past Max is skipped with "Error in Rebirth Config > RateChart".', 'Add or remove rows so there are Max + 1 of them.'],
+    RT_REB_GP_DOWN: ['The bonus points column is the TOTAL a character has at that tier, not what the tier adds (3fb37a62). A smaller number than the tier before takes points away at that rebirth.', 'Make every tier at least as high as the one before.'],
+    RT_REB_GIFT_DUP: ['The server keeps one gift per rebirth tier (a map: the first row wins). The second row is never given.', 'Remove the second row.'],
+    RT_REB_GIFT_BAD: ['The server skips this gift and logs "Error in Rebirth Config > ItemChart": the tier is above Max or the item does not exist.', 'Fix the tier or pick an item that exists.'],
     // Boxes (loaders/boxes.js: propGiftbox.inc random boxes, propPackItem.inc sets)
     BX_TOO_MANY: ['A random box holds at most 128 lines (MAX_GIFTBOX_ITEM). The server does not check it: line 129 onward writes past the end of the box in memory.', 'Remove lines, or split the items over two boxes.'],
     BX_PACK_TOO_MANY: ['A set holds at most 24 items (MAX_ITEM_PER_PACK). At the 25th the server stops reading propPackItem.inc, so this set and every set after it in the file are lost.', 'Remove items, or split the set over two boxes.'],

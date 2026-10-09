@@ -64,21 +64,25 @@
   function setNumber(span, v, min, max, what) { return T.replaceSpan(span, int(v, min, max, what)); }
   function setString(span, s, what, max) { checkText(s, what, max); return T.replaceSpan(span, `"${s}"`); }
 
-  const serverRow = t => `${t.tier}  ${t.online}   ${t.pct}   "${t.name}" "${t.icon}"`;
-  const guildRow = t => `${t.tier} ${t.glv} ${t.online}  ${t.bonus.map(b => `${b.dst} ${b.adj}`).join('  ')}  "${t.name}" "${t.desc}" "${t.icon}"`;
-  function checkTier(t, guild) {
+  // the row style of the files (buff-stats.diff converted them the same way: the pairs after the numbers, two spaces apart)
+  const pairs = bonus => bonus.map(b => `${b.dst} ${b.adj}`).join('  ');
+  const serverRow = t => (t.bonus && t.bonus.length ? `${t.tier}  ${t.online}   ${t.pct}  ${pairs(t.bonus)}   "${t.name}" "${t.icon}"` : `${t.tier}  ${t.online}   ${t.pct}   "${t.name}" "${t.icon}"`);
+  const guildRow = t => `${t.tier} ${t.glv} ${t.online}  ${pairs(t.bonus)}  "${t.name}" "${t.desc}" "${t.icon}"`;
+  // slots: the file's layout (FRE.rates.detectSlots): Guild Buff 5 / 8, Server Buff 0 / 5
+  function checkTier(t, guild, slots = guild ? 5 : 0) {
     int(t.tier, 1, 2147483647, 'The tier'); int(t.online, 0, 100000, 'Players online');
+    const bonus = t.bonus || [];
+    if (bonus.length !== slots) throw new Error(`A ${guild ? 'guild' : 'server'} tier in this file has ${slots} stat slots`);
+    for (const b of bonus) { int(b.dst, 0, 65535, 'A stat'); int(b.adj, -2147483647, 2147483647, 'A stat amount'); }
     if (guild) {
       int(t.glv, 0, 1000, 'The guild level');
-      if (t.bonus.length !== 5) throw new Error('A guild tier has 5 stat slots');
-      for (const b of t.bonus) { int(b.dst, 0, 65535, 'A stat'); int(b.adj, -2147483647, 2147483647, 'A stat amount'); }
       checkText(t.desc, 'description', R().DESC_MAX);
     } else int(t.pct, 0, 100000, 'The EXP %');
     checkText(t.name, 'name', R().NAME_MAX); checkText(t.icon, 'icon file name', R().ICON_MAX);
     if (!t.icon) throw new Error('Pick an icon');
   }
   function addTier(text, b, t, guild) {
-    checkTier(t, guild);
+    checkTier(t, guild, b ? b.slots : undefined);
     if (!b || !b.open) throw new Error('The file has no tier block');
     const row = guild ? guildRow(t) : serverRow(t);
     const last = b.tiers[b.tiers.length - 1];
@@ -101,5 +105,104 @@
     }).join(', ');
   }
 
-  FRE.ratesOps = { setFactor, setTime, setWeatherTitle, setNumber, setString, addTier, removeTier, setBonus, describe, luaNumber, checkDate, checkTier, serverRow, guildRow, MAX_FACTOR };
+  // ---------------------------------------------------------------- level-up gifts (part 2): SetLevelUpGift rows in Event.lua
+  //   `\tSetLevelUpGift( 60,  "all", "II_…", 3, 2, 0 )`: the style of the "Level Up Rewards" block (a021ff44): the level and its
+  //   comma padded to 5 characters, then "all", the item, count, flag (2 = bound), minutes (always written, 0 = permanent).
+  const MAX_GIFT_LEVEL = 1000, MAX_GIFT_NUM = 32767, MAX_MINUTES = 35791394;     // nLifeMinutes * 60 must stay an int (EventLua.cpp:545)
+  function checkGift(g) {
+    T.checkAmount(g.level, 1, MAX_GIFT_LEVEL, 'The level');
+    T.checkDefine(g.define);
+    T.checkAmount(g.num, 1, MAX_GIFT_NUM, 'The count');
+    if (g.flag !== 0 && g.flag !== 2) throw new Error('A gift is bound (2) or not (0)');
+    T.checkAmount(g.minutes, 0, MAX_MINUTES, 'The time limit (minutes)');
+  }
+  const giftRow = g => `SetLevelUpGift( ${(g.level + ',').padEnd(5)}"all", "${g.define}", ${g.num}, ${g.flag}, ${g.minutes} )`;
+  // the end of a Lua line: only spaces or a -- comment may follow the call
+  const luaRestFree = (text, end) => /^[ \t]*(--.*)?$/.test(text.slice(end, T.lineEnd(text, end)).replace(/\r?\n$|\r$/, ''));
+  function luaLineAfter(text, stmt, row) {
+    const at = T.lineEnd(text, stmt.end);
+    let eol = T.eolAt(text, stmt.end), prefix = '';
+    if (!eol) { eol = T.dominantEol(text); prefix = eol; }
+    return [{ start: at, end: at, insert: prefix + T.indentOf(text, stmt.start) + row + (prefix ? '' : eol) }];
+  }
+  // change one row: each argument in place; a missing flag / minutes is added after the last one
+  function setGift(text, g, v) {
+    const n = { level: g.level, define: g.define, num: g.num, flag: g.flag, minutes: g.minutes, ...v };
+    checkGift(n);
+    const a = g.args, out = [];
+    if (!a[2] || !a[3]) throw new Error('This SetLevelUpGift line has no item or count');
+    if (v.level !== undefined) out.push(...T.replaceSpan(a[0], n.level));
+    if (v.define !== undefined) out.push(...T.replaceSpan(a[2], `"${n.define}"`));
+    if (v.num !== undefined) out.push(...T.replaceSpan(a[3], n.num));
+    let tail = '';
+    if (a[4]) { if (v.flag !== undefined) out.push(...T.replaceSpan(a[4], n.flag)); } else if (v.flag !== undefined || v.minutes !== undefined) tail += `, ${n.flag}`;
+    if (a[5]) { if (v.minutes !== undefined) out.push(...T.replaceSpan(a[5], n.minutes)); } else if (v.minutes !== undefined) tail += `, ${n.minutes}`;
+    if (tail) { const last = a[4] || a[3]; out.push({ start: last.end, end: last.end, insert: tail }); }
+    return out;
+  }
+  function setGiftAll(text, g) {
+    if (!g.args[1]) throw new Error('This SetLevelUpGift line has no account part');
+    return T.replaceSpan(g.args[1], '"all"');
+  }
+  // a new row in level order: after the last row of this event with a level <= the new one, else above the first row,
+  // else under the event's last call
+  function addGift(text, ev, g) {
+    checkGift(g);
+    const row = giftRow(g), rows = ev.gifts;
+    const before = rows.filter(x => x.level <= g.level).pop();
+    if (before) return luaLineAfter(text, before.stmt, row);
+    if (rows.length) {
+      const s = T.lineStart(text, rows[0].stmt.start);
+      return [{ start: s, end: s, insert: T.indentOf(text, rows[0].stmt.start) + row + (T.eolAt(text, rows[0].stmt.start) || T.dominantEol(text)) }];
+    }
+    return luaLineAfter(text, ev.last, row);
+  }
+  function removeGift(text, g) {
+    const s = T.lineStart(text, g.stmt.start);
+    if (text.slice(s, g.stmt.start).trim() || !luaRestFree(text, g.stmt.end)) return [{ start: g.stmt.start, end: g.stmt.end, insert: '' }];
+    return [{ start: s, end: T.lineEnd(text, g.stmt.end), insert: '' }];
+  }
+
+  // ---------------------------------------------------------------- 1Rebirth.inc (part 2)
+  //   Rates rows: `1.00\t1.0\t\t1.0\t\t10\t//1`; EXP × written with 2 decimals (the file's own style), bonus points as a whole number.
+  //   Gifts rows: `20\tII_…\t\t1\t//comment` (3fb37a62), kept in tier order.
+  const MAX_REB_EXP = 100, MAX_GP = 1000000;
+  function rebExp(v) {
+    if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0 || v > MAX_REB_EXP) throw new Error(`EXP × must be above 0 and at most ${MAX_REB_EXP}`);
+    if (Math.abs(Math.round(v * 100) - v * 100) > 1e-6) throw new Error('EXP × takes at most 2 decimals (e.g. 1.25)');
+    return (Math.round(v * 100) / 100).toFixed(2);
+  }
+  function setRebirthExp(row, v) { return T.replaceSpan(row.expSpan, rebExp(v)); }
+  function setRebirthGp(row, n) { T.checkAmount(n, 0, MAX_GP, 'The bonus points'); return T.replaceSpan(row.gpSpan, n); }
+  function checkRebGift(rb, g) {
+    T.checkAmount(g.tier, 1, rb.max, 'The rebirth');
+    T.checkDefine(g.define);
+    T.checkAmount(g.num, 1, 65535, 'The count');
+  }
+  const rebGiftRow = g => `${g.tier}\t${g.define}\t\t${g.num}`;
+  function setRebirthGift(rb, row, v) {
+    const n = { tier: row.tier, define: row.itemText, num: row.num, ...v };
+    checkRebGift(rb, n);
+    const out = [];
+    if (v.define !== undefined) out.push(...T.replaceSpan(row.itemSpan, n.define));
+    if (v.num !== undefined) out.push(...T.replaceSpan(row.numSpan, n.num));
+    return out;
+  }
+  function addRebirthGift(text, rb, g) {
+    checkRebGift(rb, g);
+    if (!rb.giftsOpen) throw new Error('1Rebirth.inc has no Gifts { } block');
+    if (rb.rows.some(r => r.tier === g.tier)) throw new Error(`Rebirth ${g.tier} has a gift already (one item per tier)`);
+    const row = rebGiftRow(g);
+    const before = rb.rows.filter(r => r.tier < g.tier).pop();
+    if (before) return T.insertRowAfter(text, before, row);
+    if (rb.rows.length) {
+      const f = rb.rows[0], s = T.lineStart(text, f.start);
+      return [{ start: s, end: s, insert: T.indentOf(text, f.start) + row + (T.eolAt(text, f.start) || T.dominantEol(text)) }];
+    }
+    return T.insertRowBelowLine(text, rb.giftsOpen.start, row);
+  }
+  function removeRebirthGift(text, row) { return T.removeRow(text, row); }
+
+  FRE.ratesOps = { setGift, setGiftAll, addGift, removeGift, giftRow, checkGift, setRebirthExp, setRebirthGp, setRebirthGift, addRebirthGift,
+    removeRebirthGift, rebExp, rebGiftRow, MAX_GIFT_NUM, MAX_MINUTES, setFactor, setTime, setWeatherTitle, setNumber, setString, addTier, removeTier, setBonus, describe, luaNumber, checkDate, checkTier, serverRow, guildRow, MAX_FACTOR };
 })(globalThis.FRE = globalThis.FRE || {});

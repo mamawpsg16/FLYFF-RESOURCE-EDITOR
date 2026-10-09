@@ -1,0 +1,562 @@
+diff -ru a/Client/GuildBuff.txt b/Client/GuildBuff.txt
+--- a/Client/GuildBuff.txt	2026-10-05 14:12:34.411163729 +0800
++++ b/Client/GuildBuff.txt	2026-10-09 15:14:49.672996941 +0800
+@@ -1,8 +1,8 @@
+ GuildBuffTiers
+ {
+-	1 10 5  10003 10  66 3   52 3   67 10  0 0  "Guild Buff Lv.1" "All Stat +10, Atk +3%, HP +3%, EXP +10%" "Itm_SysSysScrChaCla1.dds"
+-	2 20 10  10003 15  66 6   52 6   67 20  0 0  "Guild Buff Lv.2" "All Stat +15, Atk +6%, HP +6%, EXP +20%" "Itm_SysSysScrChaCla1.dds"
+-	3 30 15  10003 20  66 9   52 9   67 30  0 0  "Guild Buff Lv.3" "All Stat +20, Atk +9%, HP +9%, EXP +30%" "Itm_SysSysScrChaCla1.dds"
+-	4 40 20  10003 25  66 12  52 12  67 40  0 0  "Guild Buff Lv.4" "All Stat +25, Atk +12%, HP +12%, EXP +40%" "Itm_SysSysScrChaCla1.dds"
+-	5 50 30  10003 30  66 15  52 15  67 50  79 5  "Guild Buff Lv.5" "All Stat +30, Atk +15%, HP +15%, EXP +50%, PvE Dmg +5%" "Itm_SysSysScrChaCla1.dds"
++	1 10 5  10003 10  66 3   52 3   67 10  0 0  0 0  0 0  0 0  "Guild Buff Lv.1" "All Stat +10, Atk +3%, HP +3%, EXP +10%" "Itm_SysSysScrChaCla1.dds"
++	2 20 10  10003 15  66 6   52 6   67 20  0 0  0 0  0 0  0 0  "Guild Buff Lv.2" "All Stat +15, Atk +6%, HP +6%, EXP +20%" "Itm_SysSysScrChaCla1.dds"
++	3 30 15  10003 20  66 9   52 9   67 30  0 0  0 0  0 0  0 0  "Guild Buff Lv.3" "All Stat +20, Atk +9%, HP +9%, EXP +30%" "Itm_SysSysScrChaCla1.dds"
++	4 40 20  10003 25  66 12  52 12  67 40  0 0  0 0  0 0  0 0  "Guild Buff Lv.4" "All Stat +25, Atk +12%, HP +12%, EXP +40%" "Itm_SysSysScrChaCla1.dds"
++	5 50 30  10003 30  66 15  52 15  67 50  79 5  0 0  0 0  0 0  "Guild Buff Lv.5" "All Stat +30, Atk +15%, HP +15%, EXP +50%, PvE Dmg +5%" "Itm_SysSysScrChaCla1.dds"
+ }
+diff -ru a/Server/Resource/GuildBuff.txt b/Server/Resource/GuildBuff.txt
+--- a/Server/Resource/GuildBuff.txt	2026-10-05 14:12:55.867942683 +0800
++++ b/Server/Resource/GuildBuff.txt	2026-10-09 15:14:49.672996941 +0800
+@@ -1,8 +1,8 @@
+ GuildBuffTiers
+ {
+-	1 10 5  10003 10  66 3   52 3   67 10  0 0  "Guild Buff Lv.1" "All Stat +10, Atk +3%, HP +3%, EXP +10%" "Itm_SysSysScrChaCla1.dds"
+-	2 20 10  10003 15  66 6   52 6   67 20  0 0  "Guild Buff Lv.2" "All Stat +15, Atk +6%, HP +6%, EXP +20%" "Itm_SysSysScrChaCla1.dds"
+-	3 30 15  10003 20  66 9   52 9   67 30  0 0  "Guild Buff Lv.3" "All Stat +20, Atk +9%, HP +9%, EXP +30%" "Itm_SysSysScrChaCla1.dds"
+-	4 40 20  10003 25  66 12  52 12  67 40  0 0  "Guild Buff Lv.4" "All Stat +25, Atk +12%, HP +12%, EXP +40%" "Itm_SysSysScrChaCla1.dds"
+-	5 50 30  10003 30  66 15  52 15  67 50  79 5  "Guild Buff Lv.5" "All Stat +30, Atk +15%, HP +15%, EXP +50%, PvE Dmg +5%" "Itm_SysSysScrChaCla1.dds"
++	1 10 5  10003 10  66 3   52 3   67 10  0 0  0 0  0 0  0 0  "Guild Buff Lv.1" "All Stat +10, Atk +3%, HP +3%, EXP +10%" "Itm_SysSysScrChaCla1.dds"
++	2 20 10  10003 15  66 6   52 6   67 20  0 0  0 0  0 0  0 0  "Guild Buff Lv.2" "All Stat +15, Atk +6%, HP +6%, EXP +20%" "Itm_SysSysScrChaCla1.dds"
++	3 30 15  10003 20  66 9   52 9   67 30  0 0  0 0  0 0  0 0  "Guild Buff Lv.3" "All Stat +20, Atk +9%, HP +9%, EXP +30%" "Itm_SysSysScrChaCla1.dds"
++	4 40 20  10003 25  66 12  52 12  67 40  0 0  0 0  0 0  0 0  "Guild Buff Lv.4" "All Stat +25, Atk +12%, HP +12%, EXP +40%" "Itm_SysSysScrChaCla1.dds"
++	5 50 30  10003 30  66 15  52 15  67 50  79 5  0 0  0 0  0 0  "Guild Buff Lv.5" "All Stat +30, Atk +15%, HP +15%, EXP +50%, PvE Dmg +5%" "Itm_SysSysScrChaCla1.dds"
+ }
+diff -ru a/Server/Resource/ServerBuff.txt b/Server/Resource/ServerBuff.txt
+--- a/Server/Resource/ServerBuff.txt	2026-10-09 15:04:10.469745305 +0800
++++ b/Server/Resource/ServerBuff.txt	2026-10-09 15:14:49.672996941 +0800
+@@ -2,10 +2,13 @@
+ // are online on this world server. The HIGHEST tier whose minimum is reached is the
+ // one that applies (tiers do not stack). Applies to monster-kill EXP.
+ //
+-// tier   minOnline   expPercent   "name"   "icon"
++// tier   minOnline   expPercent   5 x (stat amount)   "name"   "icon"
+ //
+ // - tier must be ascending: 1, 2, 3 ...
+ // - expPercent is added to the EXP factor the same way Anarchy / Boss's Boost is
++// - then exactly 5 stat slots: a DST_ number and its amount (0 0 = empty slot), the same
++//   numbers as GuildBuff.txt; every online player gets them while the tier is active
++//   (buff-stats.diff: SERVERBUFF_MAX_BONUS). Every row needs all 5 pairs.
+ // - name and icon are shown on the buff-bar tooltip; the icon is any file in Client\Icon
+ // - the tooltip shows the current bonus and the next tier ("Next Required N Online"),
+ //   so the ladder explains itself whatever numbers are used here
+@@ -13,30 +16,30 @@
+ //
+ // LIVE LADDER: +5% EXP per 10 players online, max +100% at 200 players.
+ // (To test with 1-4 characters instead, comment the live tiers out and un-comment these:)
+-//	1  1    50  "Server Buff" "ServerBuff.png"
+-//	2  2    60  "Server Buff" "ServerBuff.png"
+-//	3  3    80  "Server Buff" "ServerBuff.png"
+-//	4  4    100 "Server Buff" "ServerBuff.png"
++//	1  1    50  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++//	2  2    60  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++//	3  3    80  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++//	4  4    100  0 0  0 0  0 0  0 0  0 0 "Server Buff" "ServerBuff.png"
+ ServerBuffTiers
+ {
+-	1  10   5   "Server Buff" "ServerBuff.png"
+-	2  20   10  "Server Buff" "ServerBuff.png"
+-	3  30   15  "Server Buff" "ServerBuff.png"
+-	4  40   20  "Server Buff" "ServerBuff.png"
+-	5  50   25  "Server Buff" "ServerBuff.png"
+-	6  60   30  "Server Buff" "ServerBuff.png"
+-	7  70   35  "Server Buff" "ServerBuff.png"
+-	8  80   40  "Server Buff" "ServerBuff.png"
+-	9  90   45  "Server Buff" "ServerBuff.png"
+-	10 100  50  "Server Buff" "ServerBuff.png"
+-	11 110  55  "Server Buff" "ServerBuff.png"
+-	12 120  60  "Server Buff" "ServerBuff.png"
+-	13 130  65  "Server Buff" "ServerBuff.png"
+-	14 140  70  "Server Buff" "ServerBuff.png"
+-	15 150  75  "Server Buff" "ServerBuff.png"
+-	16 160  80  "Server Buff" "ServerBuff.png"
+-	17 170  85  "Server Buff" "ServerBuff.png"
+-	18 180  90  "Server Buff" "ServerBuff.png"
+-	19 190  95  "Server Buff" "ServerBuff.png"
+-	20 200  100 "Server Buff" "ServerBuff.png"
++	1  10   5  0 0  0 0  0 0  0 0  0 0   "Server Buff" "ServerBuff.png"
++	2  20   10  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	3  30   15  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	4  40   20  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	5  50   25  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	6  60   30  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	7  70   35  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	8  80   40  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	9  90   45  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	10 100  50  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	11 110  55  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	12 120  60  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	13 130  65  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	14 140  70  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	15 150  75  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	16 160  80  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	17 170  85  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	18 180  90  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	19 190  95  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	20 200  100  0 0  0 0  0 0  0 0  0 0 "Server Buff" "ServerBuff.png"
+ }
+diff -ru a/Source/Resource/GuildBuff.txt b/Source/Resource/GuildBuff.txt
+--- a/Source/Resource/GuildBuff.txt	2026-10-05 14:13:06.720336662 +0800
++++ b/Source/Resource/GuildBuff.txt	2026-10-09 15:14:49.672996941 +0800
+@@ -1,8 +1,8 @@
+ GuildBuffTiers
+ {
+-	1 10 5  10003 10  66 3   52 3   67 10  0 0  "Guild Buff Lv.1" "All Stat +10, Atk +3%, HP +3%, EXP +10%" "Itm_SysSysScrChaCla1.dds"
+-	2 20 10  10003 15  66 6   52 6   67 20  0 0  "Guild Buff Lv.2" "All Stat +15, Atk +6%, HP +6%, EXP +20%" "Itm_SysSysScrChaCla1.dds"
+-	3 30 15  10003 20  66 9   52 9   67 30  0 0  "Guild Buff Lv.3" "All Stat +20, Atk +9%, HP +9%, EXP +30%" "Itm_SysSysScrChaCla1.dds"
+-	4 40 20  10003 25  66 12  52 12  67 40  0 0  "Guild Buff Lv.4" "All Stat +25, Atk +12%, HP +12%, EXP +40%" "Itm_SysSysScrChaCla1.dds"
+-	5 50 30  10003 30  66 15  52 15  67 50  79 5  "Guild Buff Lv.5" "All Stat +30, Atk +15%, HP +15%, EXP +50%, PvE Dmg +5%" "Itm_SysSysScrChaCla1.dds"
++	1 10 5  10003 10  66 3   52 3   67 10  0 0  0 0  0 0  0 0  "Guild Buff Lv.1" "All Stat +10, Atk +3%, HP +3%, EXP +10%" "Itm_SysSysScrChaCla1.dds"
++	2 20 10  10003 15  66 6   52 6   67 20  0 0  0 0  0 0  0 0  "Guild Buff Lv.2" "All Stat +15, Atk +6%, HP +6%, EXP +20%" "Itm_SysSysScrChaCla1.dds"
++	3 30 15  10003 20  66 9   52 9   67 30  0 0  0 0  0 0  0 0  "Guild Buff Lv.3" "All Stat +20, Atk +9%, HP +9%, EXP +30%" "Itm_SysSysScrChaCla1.dds"
++	4 40 20  10003 25  66 12  52 12  67 40  0 0  0 0  0 0  0 0  "Guild Buff Lv.4" "All Stat +25, Atk +12%, HP +12%, EXP +40%" "Itm_SysSysScrChaCla1.dds"
++	5 50 30  10003 30  66 15  52 15  67 50  79 5  0 0  0 0  0 0  "Guild Buff Lv.5" "All Stat +30, Atk +15%, HP +15%, EXP +50%, PvE Dmg +5%" "Itm_SysSysScrChaCla1.dds"
+ }
+diff -ru a/Source/Resource/ServerBuff.txt b/Source/Resource/ServerBuff.txt
+--- a/Source/Resource/ServerBuff.txt	2026-10-09 15:04:10.473745448 +0800
++++ b/Source/Resource/ServerBuff.txt	2026-10-09 15:14:49.672996941 +0800
+@@ -2,10 +2,13 @@
+ // are online on this world server. The HIGHEST tier whose minimum is reached is the
+ // one that applies (tiers do not stack). Applies to monster-kill EXP.
+ //
+-// tier   minOnline   expPercent   "name"   "icon"
++// tier   minOnline   expPercent   5 x (stat amount)   "name"   "icon"
+ //
+ // - tier must be ascending: 1, 2, 3 ...
+ // - expPercent is added to the EXP factor the same way Anarchy / Boss's Boost is
++// - then exactly 5 stat slots: a DST_ number and its amount (0 0 = empty slot), the same
++//   numbers as GuildBuff.txt; every online player gets them while the tier is active
++//   (buff-stats.diff: SERVERBUFF_MAX_BONUS). Every row needs all 5 pairs.
+ // - name and icon are shown on the buff-bar tooltip; the icon is any file in Client\Icon
+ // - the tooltip shows the current bonus and the next tier ("Next Required N Online"),
+ //   so the ladder explains itself whatever numbers are used here
+@@ -13,30 +16,30 @@
+ //
+ // LIVE LADDER: +5% EXP per 10 players online, max +100% at 200 players.
+ // (To test with 1-4 characters instead, comment the live tiers out and un-comment these:)
+-//	1  1    50  "Server Buff" "ServerBuff.png"
+-//	2  2    60  "Server Buff" "ServerBuff.png"
+-//	3  3    80  "Server Buff" "ServerBuff.png"
+-//	4  4    100 "Server Buff" "ServerBuff.png"
++//	1  1    50  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++//	2  2    60  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++//	3  3    80  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++//	4  4    100  0 0  0 0  0 0  0 0  0 0 "Server Buff" "ServerBuff.png"
+ ServerBuffTiers
+ {
+-	1  10   5   "Server Buff" "ServerBuff.png"
+-	2  20   10  "Server Buff" "ServerBuff.png"
+-	3  30   15  "Server Buff" "ServerBuff.png"
+-	4  40   20  "Server Buff" "ServerBuff.png"
+-	5  50   25  "Server Buff" "ServerBuff.png"
+-	6  60   30  "Server Buff" "ServerBuff.png"
+-	7  70   35  "Server Buff" "ServerBuff.png"
+-	8  80   40  "Server Buff" "ServerBuff.png"
+-	9  90   45  "Server Buff" "ServerBuff.png"
+-	10 100  50  "Server Buff" "ServerBuff.png"
+-	11 110  55  "Server Buff" "ServerBuff.png"
+-	12 120  60  "Server Buff" "ServerBuff.png"
+-	13 130  65  "Server Buff" "ServerBuff.png"
+-	14 140  70  "Server Buff" "ServerBuff.png"
+-	15 150  75  "Server Buff" "ServerBuff.png"
+-	16 160  80  "Server Buff" "ServerBuff.png"
+-	17 170  85  "Server Buff" "ServerBuff.png"
+-	18 180  90  "Server Buff" "ServerBuff.png"
+-	19 190  95  "Server Buff" "ServerBuff.png"
+-	20 200  100 "Server Buff" "ServerBuff.png"
++	1  10   5  0 0  0 0  0 0  0 0  0 0   "Server Buff" "ServerBuff.png"
++	2  20   10  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	3  30   15  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	4  40   20  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	5  50   25  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	6  60   30  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	7  70   35  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	8  80   40  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	9  90   45  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	10 100  50  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	11 110  55  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	12 120  60  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	13 130  65  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	14 140  70  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	15 150  75  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	16 160  80  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	17 170  85  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	18 180  90  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	19 190  95  0 0  0 0  0 0  0 0  0 0  "Server Buff" "ServerBuff.png"
++	20 200  100  0 0  0 0  0 0  0 0  0 0 "Server Buff" "ServerBuff.png"
+ }
+diff -ru a/Source/Source/_Common/GuildBuff.cpp b/Source/Source/_Common/GuildBuff.cpp
+--- a/Source/Source/_Common/GuildBuff.cpp	2026-10-05 14:13:08.360396202 +0800
++++ b/Source/Source/_Common/GuildBuff.cpp	2026-10-09 15:13:34.910336559 +0800
+@@ -30,16 +30,11 @@
+ 				t.nTier = nTier;
+ 				t.nMinGuildLevel = s.GetNumber();
+ 				t.nMinOnline = s.GetNumber();
+-				t.bonus[0].dst = (unsigned short)s.GetNumber();
+-				t.bonus[0].adj = s.GetNumber();
+-				t.bonus[1].dst = (unsigned short)s.GetNumber();
+-				t.bonus[1].adj = s.GetNumber();
+-				t.bonus[2].dst = (unsigned short)s.GetNumber();
+-				t.bonus[2].adj = s.GetNumber();
+-				t.bonus[3].dst = (unsigned short)s.GetNumber();
+-				t.bonus[3].adj = s.GetNumber();
+-				t.bonus[4].dst = (unsigned short)s.GetNumber();
+-				t.bonus[4].adj = s.GetNumber();
++				for( int i = 0; i < GUILDBUFF_MAX_BONUS; ++i )
++				{
++					t.bonus[i].dst = (unsigned short)s.GetNumber();
++					t.bonus[i].adj = s.GetNumber();
++				}
+ 				s.GetToken();
+ 				t.name = s.Token;
+ 				s.GetToken();
+@@ -116,12 +111,12 @@
+ 		const GuildBuffTier* pOldTier = nAppliedTierId ? findTierById( nAppliedTierId ) : NULL;
+ 
+ 		if( pOldTier )
+-			for( int i = 0; i < 5; ++i )
++			for( int i = 0; i < GUILDBUFF_MAX_BONUS; ++i )
+ 				if( pOldTier->bonus[i].dst != 0 )
+ 					pUser->ResetDestParam( pOldTier->bonus[i].dst, pOldTier->bonus[i].adj, TRUE );
+ 
+ 		if( pNewTier )
+-			for( int i = 0; i < 5; ++i )
++			for( int i = 0; i < GUILDBUFF_MAX_BONUS; ++i )
+ 				if( pNewTier->bonus[i].dst != 0 )
+ 					pUser->SetDestParam( pNewTier->bonus[i].dst, pNewTier->bonus[i].adj, NULL_CHGPARAM, TRUE );
+ 
+@@ -148,7 +143,7 @@
+ 
+ 	const GuildBuffTier* pTier = findTierById( found->second );
+ 	if( pTier )
+-		for( int i = 0; i < 5; ++i )
++		for( int i = 0; i < GUILDBUFF_MAX_BONUS; ++i )
+ 			if( pTier->bonus[i].dst != 0 )
+ 				pUser->ResetDestParam( pTier->bonus[i].dst, pTier->bonus[i].adj, TRUE );
+ 
+diff -ru a/Source/Source/_Common/GuildBuff.h b/Source/Source/_Common/GuildBuff.h
+--- a/Source/Source/_Common/GuildBuff.h	2026-10-05 14:13:08.360396202 +0800
++++ b/Source/Source/_Common/GuildBuff.h	2026-10-09 15:13:34.910336559 +0800
+@@ -10,12 +10,16 @@
+ #include <map>
+ #include "Anarchy.h"	// reuse AnarchySkillBonus{dst,adj} rather than duplicating it
+ 
++// stat slots per tier: GuildBuff.txt has exactly this many "dst adj" pairs on every
++// row (CScanner has no row ends, so a row with fewer shifts every row after it)
++#define GUILDBUFF_MAX_BONUS	8
++
+ struct GuildBuffTier
+ {
+ 	int nTier;					// 1-based, ascending
+ 	int nMinGuildLevel;
+ 	int nMinOnline;
+-	AnarchySkillBonus bonus[5];	// 0 dst == unused slot
++	AnarchySkillBonus bonus[GUILDBUFF_MAX_BONUS];	// 0 dst == unused slot
+ 	std::string name;
+ 	std::string description;
+ 	std::string icon;
+diff -ru a/Source/Source/_Common/ServerBuff.cpp b/Source/Source/_Common/ServerBuff.cpp
+--- a/Source/Source/_Common/ServerBuff.cpp	2026-10-05 14:13:08.432398816 +0800
++++ b/Source/Source/_Common/ServerBuff.cpp	2026-10-09 15:13:59.131198773 +0800
+@@ -13,6 +13,7 @@
+ DWORD ServerBuffManage::m_dwLastAnnounce = 0;
+ int ServerBuffManage::m_nLastPushedOnline = -1;
+ DWORD ServerBuffManage::m_dwLastPush = 0;
++std::map<u_long, int> ServerBuffManage::m_mapAppliedTier;
+ 
+ // a count hovering around a threshold must not spam chat: the tier itself (and
+ // so the EXP) follows the live count every second, but players are only *told*
+@@ -45,6 +46,11 @@
+ 				t.nTier = nTier;
+ 				t.nMinOnline = s.GetNumber();
+ 				t.nExpPercent = s.GetNumber();
++				for( int i = 0; i < SERVERBUFF_MAX_BONUS; ++i )
++				{
++					t.bonus[i].dst = (unsigned short)s.GetNumber();
++					t.bonus[i].adj = s.GetNumber();
++				}
+ 				s.GetToken();
+ 				t.name = s.Token;
+ 				s.GetToken();
+@@ -110,7 +116,7 @@
+ 
+ 	if( tiers.empty() )
+ 	{
+-		pUser->sendServerBuffState( 0, 0, 0, 0, 0, NULL, NULL );
++		pUser->sendServerBuffState( 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL );
+ 		return;
+ 	}
+ 
+@@ -120,7 +126,46 @@
+ 	const ServerBuffTier* pShow = pCur ? pCur : &tiers[0];
+ 
+ 	pUser->sendServerBuffState( m_nCurrentTier, pCur ? pCur->nExpPercent : 0, nOnline,
+-		pNext ? pNext->nMinOnline : 0, pNext ? pNext->nExpPercent : 0, pShow->name.c_str(), pShow->icon.c_str() );
++		pNext ? pNext->nMinOnline : 0, pNext ? pNext->nExpPercent : 0, pShow->name.c_str(), pShow->icon.c_str(),
++		pCur ? pCur->bonus : NULL, pNext ? pNext->bonus : NULL );
++}
++
++// same way as GuildBuffManage::RecalcGuildBuff: the old tier's stats off, the new tier's on,
++// skipped when this player already has the current tier
++void ServerBuffManage::ApplyStatsTo( CUser* pUser )
++{
++	if( !IsValidObj( pUser ) )
++		return;
++
++	int& nApplied = m_mapAppliedTier[ pUser->m_idPlayer ];
++	if( nApplied == m_nCurrentTier )
++		return;
++
++	const ServerBuffTier* pOld = nApplied ? findTierById( nApplied ) : NULL;
++	const ServerBuffTier* pNew = m_nCurrentTier ? findTierById( m_nCurrentTier ) : NULL;
++
++	if( pOld )
++		for( int i = 0; i < SERVERBUFF_MAX_BONUS; ++i )
++			if( pOld->bonus[i].dst != 0 )
++				pUser->ResetDestParam( pOld->bonus[i].dst, pOld->bonus[i].adj, TRUE );
++
++	if( pNew )
++		for( int i = 0; i < SERVERBUFF_MAX_BONUS; ++i )
++			if( pNew->bonus[i].dst != 0 )
++				pUser->SetDestParam( pNew->bonus[i].dst, pNew->bonus[i].adj, NULL_CHGPARAM, TRUE );
++
++	nApplied = m_nCurrentTier;
++}
++
++// a stale entry from the player's last session must not make ApplyStatsTo skip
++// the fresh CUser (GuildBuffManage::ClearAppliedTierCache does this on logout)
++void ServerBuffManage::OnLogin( CUser* pUser )
++{
++	if( !IsValidObj( pUser ) )
++		return;
++	m_mapAppliedTier[ pUser->m_idPlayer ] = 0;
++	ApplyStatsTo( pUser );
++	SendStateTo( pUser );
+ }
+ 
+ void ServerBuffManage::PushToAll()
+@@ -146,6 +191,9 @@
+ 	{
+ 		m_nCurrentTier = nNewTier;
+ 		m_nExpPercent = pTier ? pTier->nExpPercent : 0;
++
++		for( std::map<DWORD, CUser*>::iterator uit = g_UserMng.GetUserMap().begin(); uit != g_UserMng.GetUserMap().end(); ++uit )
++			ApplyStatsTo( uit->second );
+ 	}
+ 
+ 	if( bTierChanged || ( nOnline != m_nLastPushedOnline && ( m_dwLastPush == 0 || g_tmCurrent - m_dwLastPush >= SERVERBUFF_PUSH_GAP_MS ) ) )
+@@ -190,8 +238,14 @@
+ // stored-state-then-polled-on-draw pattern as Guild Buff (GuildBuff.cpp)
+ static ServerBuffClientState s_serverBuffState;
+ 
+-void SetServerBuffState( int nTier, int nExpPercent, int nOnline, int nNextMin, int nNextPercent, const char* pszName, const char* pszIcon )
++void SetServerBuffState( int nTier, int nExpPercent, int nOnline, int nNextMin, int nNextPercent, const char* pszName, const char* pszIcon,
++	const AnarchySkillBonus* pBonus, const AnarchySkillBonus* pNextBonus )
+ {
++	for( int i = 0; i < SERVERBUFF_MAX_BONUS; ++i )
++	{
++		s_serverBuffState.bonus[i] = pBonus ? pBonus[i] : AnarchySkillBonus();
++		s_serverBuffState.nextBonus[i] = pNextBonus ? pNextBonus[i] : AnarchySkillBonus();
++	}
+ 	s_serverBuffState.nTier = nTier;
+ 	s_serverBuffState.nExpPercent = nExpPercent;
+ 	s_serverBuffState.nOnline = nOnline;
+diff -ru a/Source/Source/_Common/ServerBuff.h b/Source/Source/_Common/ServerBuff.h
+--- a/Source/Source/_Common/ServerBuff.h	2026-10-05 14:13:08.432398816 +0800
++++ b/Source/Source/_Common/ServerBuff.h	2026-10-09 15:13:59.131198773 +0800
+@@ -18,12 +18,19 @@
+ 
+ #include <vector>
+ #include <string>
++#include <map>
++#include "Anarchy.h"	// AnarchySkillBonus{dst,adj}, the same stat pair Guild Buff uses
++
++// stat slots per tier, after the EXP percent: ServerBuff.txt has exactly this many
++// "dst adj" pairs on every row (dst 0 == unused slot)
++#define SERVERBUFF_MAX_BONUS	5
+ 
+ struct ServerBuffTier
+ {
+ 	int nTier;					// 1-based, ascending
+ 	int nMinOnline;				// players online needed to reach this tier
+ 	int nExpPercent;			// EXP bonus in percent while this is the active tier
++	AnarchySkillBonus bonus[SERVERBUFF_MAX_BONUS];	// stats every online player gets on this tier (SetDestParam)
+ 	std::string name;
+ 	std::string icon;
+ 
+@@ -41,6 +48,10 @@
+ 	static DWORD m_dwLastAnnounce;	// g_tmCurrent of the last chat announcement (0 == never)
+ 	static int m_nLastPushedOnline;	// player count the clients were last sent
+ 	static DWORD m_dwLastPush;		// g_tmCurrent of the last push to all clients (0 == never)
++	// idPlayer -> tier whose stats are on that player now (0 == none), per player like
++	// GuildBuffManage::m_mapAppliedTier: SetDestParam adds, so a stat must be reset with
++	// the exact tier it was set with
++	static std::map<u_long, int> m_mapAppliedTier;
+ 
+ 	// the tier right after nCurrentTier (0 == none yet), NULL when already at the top
+ 	static const ServerBuffTier* findNextTier( int nCurrentTier );
+@@ -59,6 +70,10 @@
+ 	static int GetExpPercent() { return m_nExpPercent; }
+ 	// current state to one player (called on login; Process() uses it for everyone on a change)
+ 	static void SendStateTo( class CUser* pUser );
++	// puts the current tier's stats on the player (and takes the old tier's off)
++	static void ApplyStatsTo( class CUser* pUser );
++	// on login: the new CUser has no stats on it yet, whatever the cache says
++	static void OnLogin( class CUser* pUser );
+ #endif
+ };
+ 
+@@ -73,12 +88,15 @@
+ 	int nOnline;		// players online when the server last pushed
+ 	int nNextMin;		// players needed for the next tier, 0 == already at the top
+ 	int nNextPercent;	// EXP bonus of the next tier
++	AnarchySkillBonus bonus[SERVERBUFF_MAX_BONUS];		// stats of the current tier
++	AnarchySkillBonus nextBonus[SERVERBUFF_MAX_BONUS];	// stats of the next tier
+ 	std::string name;
+ 	std::string icon;
+ 
+ 	ServerBuffClientState() : nTier( 0 ), nExpPercent( 0 ), nOnline( 0 ), nNextMin( 0 ), nNextPercent( 0 ) { }
+ };
+ 
+-void SetServerBuffState( int nTier, int nExpPercent, int nOnline, int nNextMin, int nNextPercent, const char* pszName, const char* pszIcon );
++void SetServerBuffState( int nTier, int nExpPercent, int nOnline, int nNextMin, int nNextPercent, const char* pszName, const char* pszIcon,
++	const AnarchySkillBonus* pBonus, const AnarchySkillBonus* pNextBonus );
+ const ServerBuffClientState* GetServerBuffState();
+ #endif	// __CLIENT
+diff -ru a/Source/Source/_Interface/WndWorld.cpp b/Source/Source/_Interface/WndWorld.cpp
+--- a/Source/Source/_Interface/WndWorld.cpp	2026-10-08 13:33:42.669318782 +0800
++++ b/Source/Source/_Interface/WndWorld.cpp	2026-10-09 15:14:36.564530572 +0800
+@@ -16,6 +16,25 @@
+ #include "GuildBuff.h"
+ #include "ServerBuff.h"
+ #include "FreePKTime.h"
++// the item tooltip's stat words (WndManager.cpp), for the Server Buff tooltip
++extern BOOL IsDst_Rate( int nDstParam );
++extern char* FindDstString( int nDstParam );
++extern CString FormatDstRateValue( int nDst, int nAdj );
++// one tooltip line per Server Buff stat ("STR +5", "Attack +3%"), the way PutDestParam writes item stats
++static void AddServerBuffStats( CEditString& strEdit, const AnarchySkillBonus* pBonus, DWORD dwColor )
++{
++	for( int i = 0; i < SERVERBUFF_MAX_BONUS; ++i )
++	{
++		if( pBonus[i].dst == 0 )
++			continue;
++		CString strLine;
++		if( IsDst_Rate( pBonus[i].dst ) )
++			strLine.Format( "\n%s%s%%", FindDstString( pBonus[i].dst ), (LPCTSTR)FormatDstRateValue( pBonus[i].dst, (int)pBonus[i].adj ) );
++		else
++			strLine.Format( "\n%s%s%d", FindDstString( pBonus[i].dst ), pBonus[i].adj < 0 ? "" : "+", (int)pBonus[i].adj );
++		strEdit.AddString( strLine, dwColor );
++	}
++}
+ #include "MsgHdr.h"
+ #include "WndMessenger.h"
+ #include "WndIndirectTalk.h"
+@@ -11932,6 +11951,7 @@
+ 					strEdit.AddString( "\nGives you following stats:", 0xFFFFFFFF );
+ 					sprintf( tmpLine, "\nEXP +%d%%", pServerBuff->nExpPercent );
+ 					strEdit.AddString( tmpLine, D3DCOLOR_XRGB( 120, 255, 120 ) );
++					AddServerBuffStats( strEdit, pServerBuff->bonus, D3DCOLOR_XRGB( 120, 255, 120 ) );
+ 				}
+ 				else
+ 				{
+@@ -11944,6 +11964,7 @@
+ 					strEdit.AddString( "\nGives you following stats:", 0xFFFFFFFF );
+ 					sprintf( tmpLine, "\nEXP +%d%%", pServerBuff->nNextPercent );
+ 					strEdit.AddString( tmpLine, D3DCOLOR_XRGB( 120, 200, 255 ) );
++					AddServerBuffStats( strEdit, pServerBuff->nextBonus, D3DCOLOR_XRGB( 120, 200, 255 ) );
+ 				}
+ 				else
+ 				{
+diff -ru a/Source/Source/Neuz/DPClient.cpp b/Source/Source/Neuz/DPClient.cpp
+--- a/Source/Source/Neuz/DPClient.cpp	2026-10-05 14:13:08.004383278 +0800
++++ b/Source/Source/Neuz/DPClient.cpp	2026-10-09 15:14:21.808005566 +0800
+@@ -11590,7 +11590,19 @@
+ 	ar >> nTier >> nExpPercent >> nOnline >> nNextMin >> nNextPercent;
+ 	ar.ReadString( szName, sizeof( szName ) );
+ 	ar.ReadString( szIcon, sizeof( szIcon ) );
+-	SetServerBuffState( nTier, nExpPercent, nOnline, nNextMin, nNextPercent, szName, szIcon );
++	AnarchySkillBonus bonus[SERVERBUFF_MAX_BONUS], nextBonus[SERVERBUFF_MAX_BONUS];
++	int nDst, nAdj;
++	for( int i = 0; i < SERVERBUFF_MAX_BONUS; ++i )
++	{
++		ar >> nDst >> nAdj;
++		bonus[i] = AnarchySkillBonus( (unsigned short)nDst, nAdj );
++	}
++	for( int i = 0; i < SERVERBUFF_MAX_BONUS; ++i )
++	{
++		ar >> nDst >> nAdj;
++		nextBonus[i] = AnarchySkillBonus( (unsigned short)nDst, nAdj );
++	}
++	SetServerBuffState( nTier, nExpPercent, nOnline, nNextMin, nNextPercent, szName, szIcon, bonus, nextBonus );
+ }
+ 
+ #ifdef __FREE_PK_TIME
+diff -ru a/Source/Source/WORLDSERVER/DPDatabaseClient.cpp b/Source/Source/WORLDSERVER/DPDatabaseClient.cpp
+--- a/Source/Source/WORLDSERVER/DPDatabaseClient.cpp	2026-10-05 14:13:08.300394023 +0800
++++ b/Source/Source/WORLDSERVER/DPDatabaseClient.cpp	2026-10-09 15:14:21.804005423 +0800
+@@ -1344,7 +1344,7 @@
+ #endif // __AUTO_JOB_CHANGE
+ 
+ 		pUser->sendAnarchySkills();
+-		ServerBuffManage::SendStateTo( pUser );
++		ServerBuffManage::OnLogin( pUser );		// the tier's stats on, then the state to the buff bar
+ #ifdef __FREE_PK_TIME
+ 		FreePKTime::SendStateTo( pUser );
+ #endif // __FREE_PK_TIME
+diff -ru a/Source/Source/WORLDSERVER/User.cpp b/Source/Source/WORLDSERVER/User.cpp
+--- a/Source/Source/WORLDSERVER/User.cpp	2026-10-05 14:13:08.312394459 +0800
++++ b/Source/Source/WORLDSERVER/User.cpp	2026-10-09 15:14:36.564530572 +0800
+@@ -1,6 +1,7 @@
+ #include "stdafx.h"
+ #include "defineText.h"
+ #include "Anarchy.h"
++#include "ServerBuff.h"
+ #include "User.h"
+ #include "DPDatabaseClient.h"
+ #include "dpcoreclient.h"
+@@ -10242,7 +10243,9 @@
+ 
+ // nTier==0 with a name means "first tier not reached yet" (icon still shown, tooltip says so);
+ // an empty name hides the icon. nNextMin/nNextPercent describe the next tier (nNextMin 0 == already at the top)
+-void CUser::sendServerBuffState( int nTier, int nExpPercent, int nOnline, int nNextMin, int nNextPercent, const char* pszName, const char* pszIcon )
++// pBonus / pNextBonus: the SERVERBUFF_MAX_BONUS stats of the current / next tier (NULL == none), for the tooltip
++void CUser::sendServerBuffState( int nTier, int nExpPercent, int nOnline, int nNextMin, int nNextPercent, const char* pszName, const char* pszIcon,
++	const AnarchySkillBonus* pBonus, const AnarchySkillBonus* pNextBonus )
+ {
+ 	if( IsDelete() ) return;
+ 
+@@ -10250,6 +10253,10 @@
+ 	m_Snapshot.ar << GetId() << SNAPSHOTTYPE_ServerBuffState << nTier << nExpPercent << nOnline << nNextMin << nNextPercent;
+ 	m_Snapshot.ar.WriteString( pszName ? pszName : "" );
+ 	m_Snapshot.ar.WriteString( pszIcon ? pszIcon : "" );
++	for( int i = 0; i < SERVERBUFF_MAX_BONUS; ++i )
++		m_Snapshot.ar << (int)( pBonus ? pBonus[i].dst : 0 ) << (int)( pBonus ? pBonus[i].adj : 0 );
++	for( int i = 0; i < SERVERBUFF_MAX_BONUS; ++i )
++		m_Snapshot.ar << (int)( pNextBonus ? pNextBonus[i].dst : 0 ) << (int)( pNextBonus ? pNextBonus[i].adj : 0 );
+ }
+ 
+ #ifdef __FREE_PK_TIME
+diff -ru a/Source/Source/WORLDSERVER/User.h b/Source/Source/WORLDSERVER/User.h
+--- a/Source/Source/WORLDSERVER/User.h	2026-10-05 14:13:08.312394459 +0800
++++ b/Source/Source/WORLDSERVER/User.h	2026-10-09 15:14:21.800005281 +0800
+@@ -612,7 +612,8 @@
+ 	void	sendAnarchySkills();
+ 	void	sendAnarchyPersonalBonus( BOOL bAnnounce = FALSE );
+ 	void	sendGuildBuffState( int nTier, const char* pszName, const char* pszDesc, const char* pszIcon );
+-	void	sendServerBuffState( int nTier, int nExpPercent, int nOnline, int nNextMin, int nNextPercent, const char* pszName, const char* pszIcon );
++	void	sendServerBuffState( int nTier, int nExpPercent, int nOnline, int nNextMin, int nNextPercent, const char* pszName, const char* pszIcon,
++				const struct AnarchySkillBonus* pBonus, const struct AnarchySkillBonus* pNextBonus );
+ #ifdef __FREE_PK_TIME
+ 	void	sendFreePKState( BOOL bOpen, int nRemainSec, float fExpRate );
+ #endif // __FREE_PK_TIME

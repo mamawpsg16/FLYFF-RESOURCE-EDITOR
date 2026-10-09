@@ -4131,6 +4131,7 @@ AS_CITES = [
     ('_Common/Project.cpp', 891, 'GuildBuffManage::loadGuildBuffFile()'),
     ('_Common/Project.cpp', 893, 'ServerBuffManage::loadServerBuffFile()'),
     ('_Common/Project.cpp', 892, '#ifdef __WORLDSERVER'),
+    ('_Common/Project.cpp', 928, 'LoadRebirthProp()'),
 ]
 
 
@@ -4151,6 +4152,8 @@ def as_who(key):
     if key in ('event.lua', 'serverbuff.txt'):    # Project.cpp:982 (__WORLDSERVER) / :892-893 (#ifdef __WORLDSERVER)
         return True, None
     if key == 'guildbuff.txt':            # Project.cpp:891, outside the #ifdef: the game loads it too
+        return True, 'start'
+    if key == '1rebirth.inc':             # Project.cpp:928, outside any __WORLDSERVER #ifdef: the game parses its own copy
         return True, 'start'
     return True, 'start'          # unknown file: both, at startup
 
@@ -4198,7 +4201,7 @@ def as_run(root):
     rnd = random.Random(1019)
     keys = AS_SHARED + [AS_TREE, 'client/npcboard_282.inc', 'client/npcboard_300.inc', 'world/wdmadrigal/wdmadrigal.dyo',
                         'world/wdvolcane/wdvolcane.dyo', 'propmoverex.inc', 'propgiftbox.inc', 'propskill.txt',
-                        'event.lua', 'serverbuff.txt', 'guildbuff.txt']
+                        'event.lua', 'serverbuff.txt', 'guildbuff.txt', '1rebirth.inc']
     states = ['written', 'created', 'datares', 'different', 'none']
     pstates = ['in-source', 'missing', 'unknown', 'built']
     codesets = [[], ['DT_PATCH'], ['DT_ORDER'], ['NN_RULES_PATCH']]
@@ -7437,7 +7440,7 @@ def rt_events(t, now):
         stmt = (m.start(), m.end())
         if name == 'AddEvent':
             a = rt_args(t, o, cl)
-            evs.append({'name': (a[0]['str'] if a[0]['str'] is not None else a[0]['text']), 'times': [], 'f': {}, 'last': stmt, 'wt': None, 'start': m.start()})
+            evs.append({'name': (a[0]['str'] if a[0]['str'] is not None else a[0]['text']), 'times': [], 'f': {}, 'last': stmt, 'wt': None, 'start': m.start(), 'gifts': []})
             continue
         if not name.startswith('Set'):
             continue
@@ -7449,6 +7452,12 @@ def rt_events(t, now):
         if name == 'SetTime':
             e['times'].append({'a': rt_timenum(a[0]['str'] if a[0]['str'] is not None else ''),
                                'b': rt_timenum(a[1]['str'] if len(a) > 1 and a[1]['str'] is not None else ''), 'args': a})
+        elif name == 'SetLevelUpGift':
+            # EventFunc.lua:442 SetLevelUpGift( nLevel, strAccount, strItemId, nItemNum, byFlag, nLifeMinutes ); nLifeMinutes "or 0"
+            av = lambda k: (a[k]['str'] if a[k]['str'] is not None else a[k]['text']) if k < len(a) else None
+            e['gifts'].append({'args': a, 'stmt': stmt, 'level': rt_num(a[0]['text']) if a else None, 'account': av(1), 'item': av(2),
+                               'num': rt_num(a[3]['text']) if len(a) > 3 else None, 'flag': rt_num(a[4]['text']) if len(a) > 4 else 0,
+                               'minutes': rt_num(a[5]['text']) if len(a) > 5 else 0})
         elif name in RT_FN and a and a[0]['text']:
             e['f'][RT_FN[name]] = {'v': rt_num(a[0]['text']), 'arg': a[0]}
             if name == 'SetWeatherEvent':
@@ -7506,8 +7515,27 @@ def rt_scan(t):
         out.append(('n' if c.isdigit() else 'w', t[i:j], i, j)); i = j
 
 
+RT_SLOTS = {False: (0, 5), True: (5, 8)}   # stat pairs per row: before / after buff-stats.diff (SERVERBUFF_MAX_BONUS, GUILDBUFF_MAX_BONUS)
+
+
+def rt_slots(tk, kw, guild):
+    """the layout a buff file was written for: numbers in front of the first string = 3 + 2 x slots"""
+    i = 0
+    while i < len(tk) and tk[i][1] != kw:
+        i += 1
+    i += 2
+    n = 0
+    while i < len(tk) and tk[i][0] != 's' and tk[i][1][:1] != '}':
+        if tk[i][1] not in ('-', '+'):
+            n += 1
+        i += 1
+    old, new = RT_SLOTS[guild]
+    return new if n - 3 >= 2 * new else old
+
+
 def rt_buff(t, kw, guild):
     tk = rt_scan(t)
+    slots = rt_slots(tk, kw, guild)
     k = [0]
     def tok():
         x = tk[k[0]] if k[0] < len(tk) else ('e', '', len(t), len(t))
@@ -7531,7 +7559,7 @@ def rt_buff(t, kw, guild):
     def string():
         x = tok(); cur[0] = x
         return {'v': x[1], 'ok': x[0] == 's', 'start': x[2], 'end': x[3]}
-    res = {'tiers': [], 'codes': [], 'open': None}
+    res = {'tiers': [], 'codes': [], 'open': None, 'slots': slots}
     x = tok()
     if x[1] != kw:
         res['codes'].append('FIELDS')
@@ -7547,10 +7575,12 @@ def rt_buff(t, kw, guild):
         r = {'tier': tier}
         if guild:
             r['glv'] = number(1); r['online'] = number(2)
-            r['bonus'] = [(number(3), number(4)) for _ in range(5)]
+            r['bonus'] = [(number(3), number(4)) for _ in range(slots)]
             r['name'] = string(); r['desc'] = string(); r['icon'] = string()
         else:
-            r['online'] = number(1); r['pct'] = number(2); r['name'] = string(); r['icon'] = string()
+            r['online'] = number(1); r['pct'] = number(2)
+            r['bonus'] = [(number(3), number(4)) for _ in range(slots)]
+            r['name'] = string(); r['icon'] = string()
         r['start'], r['end'] = tier['start'], r['icon']['end']
         res['tiers'].append(r)
         tier = number('tier')
@@ -7558,10 +7588,9 @@ def rt_buff(t, kw, guild):
         nums = [r['tier'], r['glv'], r['online']] if guild else [r['tier'], r['online'], r['pct']]
         if not all(z['ok'] for z in nums) or not all(r[z]['ok'] for z in (['name', 'desc', 'icon'] if guild else ['name', 'icon'])):
             res['codes'].append('FIELDS')
-        if guild:
-            for d, _ in r['bonus']:
-                if d['word']:   # a name: atoi gives 0
-                    res['codes'].append('DST_NAME')
+        for d, _ in r['bonus']:
+            if d['word']:   # a name: atoi gives 0
+                res['codes'].append('DST_NAME')
     return res
 
 
@@ -7684,8 +7713,13 @@ def rt_edit(texts, op, now):
     B = rt_buff(t, 'GuildBuffTiers' if guild else 'ServerBuffTiers', guild)
     if kind == 'addtier':
         r = op[2]
-        row = ('%d %d %d  %s  "%s" "%s" "%s"' % (r['tier'], r['glv'], r['online'], '  '.join('%d %d' % (d, a) for d, a in r['bonus']), r['name'], r['desc'], r['icon'])) if guild \
-            else '%d  %d   %d   "%s" "%s"' % (r['tier'], r['online'], r['pct'], r['name'], r['icon'])
+        pr = '  '.join('%d %d' % (d, a) for d, a in r.get('bonus', []))
+        if guild:
+            row = '%d %d %d  %s  "%s" "%s" "%s"' % (r['tier'], r['glv'], r['online'], pr, r['name'], r['desc'], r['icon'])
+        elif pr:
+            row = '%d  %d   %d  %s   "%s" "%s"' % (r['tier'], r['online'], r['pct'], pr, r['name'], r['icon'])
+        else:
+            row = '%d  %d   %d   "%s" "%s"' % (r['tier'], r['online'], r['pct'], r['name'], r['icon'])
         last = B['tiers'][-1]
         at, eol = rt_line_end(t, last['end'])
         t = t[:at] + rt_indent(t, last['start']) + row + eol + t[at:]
@@ -7703,6 +7737,179 @@ def rt_edit(texts, op, now):
     texts[f] = t
 
 
+# ---- 1Rebirth.inc (CProject::LoadRebirthProp, Project.cpp:6058-6131), with the offsets the edits need
+#   Max N; Rates { exp drop penya gp } x (Max + 1) (rows past Max: "RateChart" error, skipped); Gifts { tier item count }:
+#   tier = (USHORT)atoi, item = GetNumber (a define), count = (USHORT)GetNumber; kept when tier <= Max and the item exists,
+#   first row per tier wins (map::insert).
+def rt_rebirth(t, D, props):
+    tk = rt_scan(t)
+    R = {'max': 0, 'rates': [], 'extra': 0, 'rows': [], 'gifts_open': None, 'max_span': None}
+    def val(x):
+        if x[1] in D:
+            return D[x[1]]
+        return atoi(x[1])
+    k = 0
+    while k < len(tk):
+        w = tk[k][1]
+        if w == 'Max':
+            R['max'] = val(tk[k + 1]) & 0xFFFF
+            R['max_span'] = tk[k + 1][2:4]
+            k += 2
+            continue
+        if w == 'Rates':
+            k += 2
+            while k < len(tk) and tk[k][1][:1] != '}':
+                if len(R['rates']) <= R['max']:
+                    e, g = tk[k], tk[k + 3]
+                    R['rates'].append({'exp': float(re.match(r'[-+]?\d*\.?\d*', e[1]).group(0) or 0), 'gp': val(g), 'exp_span': e[2:4], 'gp_span': g[2:4],
+                                       'drop': tk[k + 1][1], 'penya': tk[k + 2][1]})
+                    k += 4
+                else:
+                    R['extra'] += 1
+                    k += 1
+            k += 1
+            continue
+        if w == 'Gifts':
+            R['gifts_open'] = tk[k + 1][2:4]
+            k += 2
+            seen = set()
+            while k < len(tk) and tk[k][1][:1] != '}':
+                tier, item, cnt = tk[k], tk[k + 1], tk[k + 2]
+                tv, iv = atoi(tier[1]) & 0xFFFF, val(item) & 0xFFFFFFFF
+                used = tv <= R['max'] and iv in props and tv not in seen
+                why = None if used else ('dup' if tv <= R['max'] and iv in props else ('above' if tv > R['max'] else 'item'))
+                if used:
+                    seen.add(tv)
+                R['rows'].append({'tier': tv, 'item': item[1], 'id': iv, 'num': val(cnt) & 0xFFFF, 'used': used, 'why': why,
+                                  'start': tier[2], 'end': cnt[3], 'item_span': item[2:4], 'num_span': cnt[2:4]})
+                k += 3
+            k += 1
+            continue
+        k += 1
+    return R
+
+
+def rt_line_start(t, i):
+    while i > 0 and t[i - 1] not in '\r\n':
+        i -= 1
+    return i
+
+
+def rt_eol_or(t, i):
+    """the line ending of the line holding i; on the last line, the file's usual one"""
+    _, eol = rt_line_end(t, i)
+    if eol:
+        return eol
+    crlf = t.count('\r\n')
+    return '\r\n' if crlf >= t.count('\n') - crlf else '\n'
+
+
+def rt_put(t, start, end, ins):
+    return t[:start] + ins + t[end:]
+
+
+def rt_gift_edit(texts, op, now, D, props):
+    """level-up gift rows in Event.lua and the rebirth rows of 1Rebirth.inc, written the way the files are written by hand"""
+    kind = op[0]
+    if kind in ('gift', 'addgift', 'rmgift', 'giftall'):
+        t = texts['Event.lua']
+        E = rt_events(t, now)['events'][op[1]]
+        if kind == 'addgift':
+            r = op[2]
+            row = 'SetLevelUpGift( %s"all", "%s", %d, %d, %d )' % ((str(r['level']) + ',').ljust(5), r['item'], r['num'], r['flag'], r['minutes'])
+            G = E['gifts']
+            lower = [g for g in G if g['level'] <= r['level']]
+            if lower:
+                at, eol = rt_line_end(t, lower[-1]['stmt'][1])
+                ind = rt_indent(t, lower[-1]['stmt'][0])
+                t = rt_put(t, at, at, ind + row + eol if eol else rt_eol_or(t, 0) + ind + row)
+            elif G:
+                s0 = rt_line_start(t, G[0]['stmt'][0])
+                t = rt_put(t, s0, s0, rt_indent(t, G[0]['stmt'][0]) + row + rt_eol_or(t, G[0]['stmt'][0]))
+            else:
+                at, eol = rt_line_end(t, E['last'][1])
+                ind = rt_indent(t, E['last'][0])
+                t = rt_put(t, at, at, ind + row + eol if eol else rt_eol_or(t, 0) + ind + row)
+        else:
+            g = E['gifts'][op[2]]
+            a = g['args']
+            if kind == 'rmgift':
+                s0 = rt_line_start(t, g['stmt'][0])
+                at, _ = rt_line_end(t, g['stmt'][1])
+                rest = t[g['stmt'][1]:at].rstrip('\r\n')
+                if t[s0:g['stmt'][0]].strip() == '' and re.fullmatch(r'[ \t]*(--.*)?', rest):
+                    t = rt_put(t, s0, at, '')
+                else:
+                    t = rt_put(t, g['stmt'][0], g['stmt'][1], '')
+            elif kind == 'giftall':
+                t = rt_put(t, a[1]['start'], a[1]['end'], '"all"')
+            else:
+                c = op[3]
+                reps = []
+                for k, i, f in (('level', 0, str), ('item', 2, lambda v: '"%s"' % v), ('num', 3, str), ('flag', 4, str), ('minutes', 5, str)):
+                    if k in c and i < len(a):
+                        reps.append((a[i]['start'], a[i]['end'], f(c[k])))
+                tail = ''
+                if len(a) < 5 and ('flag' in c or 'minutes' in c):
+                    tail += ', %d' % c.get('flag', 0)
+                if len(a) < 6 and 'minutes' in c:
+                    tail += ', %d' % c['minutes']
+                if tail:
+                    p = a[min(len(a), 5) - 1]['end']
+                    reps.append((p, p, tail))
+                for x, y, ins in sorted(reps, reverse=True):
+                    t = rt_put(t, x, y, ins)
+        texts['Event.lua'] = t
+        return
+    t = texts['1Rebirth.inc']
+    R = rt_rebirth(t, D, props)
+    if kind == 'rbexp':
+        sp = R['rates'][op[1]]['exp_span']
+        t = rt_put(t, sp[0], sp[1], '%.2f' % op[2])
+    elif kind == 'rbgp':
+        sp = R['rates'][op[1]]['gp_span']
+        t = rt_put(t, sp[0], sp[1], str(op[2]))
+    elif kind == 'rbgift':
+        row = [r for r in R['rows'] if r['tier'] == op[1] and r['used']][0]
+        c = op[2]
+        if 'num' in c:
+            t = rt_put(t, row['num_span'][0], row['num_span'][1], str(c['num']))
+        if 'item' in c:
+            t = rt_put(t, row['item_span'][0], row['item_span'][1], c['item'])
+    elif kind == 'addrbgift':
+        g = op[1]
+        line = '%d\t%s\t\t%d' % (g['tier'], g['item'], g['num'])
+        lower = [r for r in R['rows'] if r['tier'] < g['tier']]
+        if lower:
+            # after that row's line (a // comment may follow it on its line)
+            at, eol = rt_line_end(t, lower[-1]['end'])
+            ind = rt_indent(t, lower[-1]['start'])
+            t = rt_put(t, at, at, ind + line + eol if eol else rt_eol_or(t, 0) + ind + line)
+        elif R['rows']:
+            s0 = rt_line_start(t, R['rows'][0]['start'])
+            t = rt_put(t, s0, s0, rt_indent(t, R['rows'][0]['start']) + line + rt_eol_or(t, R['rows'][0]['start']))
+        else:
+            at, eol = rt_line_end(t, R['gifts_open'][0])
+            t = rt_put(t, at, at, rt_indent(t, R['gifts_open'][0]) + '\t' + line + (eol or rt_eol_or(t, 0)))
+    elif kind == 'rmrbgift':
+        row = [r for r in R['rows'] if r['tier'] == op[1]][0]
+        s0 = rt_line_start(t, row['start'])
+        at, _ = rt_line_end(t, row['end'])
+        rest = t[row['end']:at].rstrip('\r\n')
+        if t[s0:row['start']].strip() == '' and re.fullmatch(r'[ \t]*(//.*)?', rest):
+            t = rt_put(t, s0, at, '')
+        else:
+            t = rt_put(t, row['start'], row['end'], '')
+    texts['1Rebirth.inc'] = t
+
+
+RT_RB_FILES = {
+    'few': 'Max 4\n\nRates\n{\n\t1.00\t1.0\t1.0\t0\n\t1.10\t1.0\t1.0\t10\n}\n\nGifts\n{\n}\n',
+    'many': 'Max 1\nRates\n{\n\t1.00 1.0 1.0 0\n\t1.25 1.0 1.0 5\n\t9.00 1.0 1.0 99\n}\nGifts\n{\n\t1 II_CHP_RED 3\n\t1 II_SYS_SYS_SCR_AWAKE 1 // second: ignored\n\t2 II_CHP_RED 1\n\t1 II_NOT_AN_ITEM 1\n}\n',
+    'gpdown': 'Max 3\r\nRates\r\n{\r\n\t1.00\t1.0\t1.0\t0\r\n\t1.00\t1.0\t1.0\t20\r\n\t1.00\t1.0\t1.0\t15\r\n\t1.00\t1.0\t1.0\t30\r\n}\r\nGifts\r\n{\r\n\t3\tII_CHP_RED\t\t5\t//three\r\n}',
+}
+
+
 RT_EV_FILES = {
     'overlap': ('AddEvent( "A" )\r\n\tSetTime( "2026-10-01 00:00", "2026-10-31 00:00" )\r\n\tSetExpFactor( 2 )\r\n\tSetGoldDropFactor( 3 )\r\n'
                 'AddEvent( "B" )\r\n\tSetTime( "2026-1-1 0:00", "2026-12-31 00:00" )\r\n\tSetExpFactor( 1.5 )\r\n\tSetExpFactor( 4 )\r\n\tSetPieceItemDropRate( 2 )\r\n'
@@ -7716,6 +7923,13 @@ RT_EV_FILES = {
     'open_string': 'AddEvent( "A )\r\n\tSetTime( "2026-10-01 00:00", "2026-10-31 00:00" )\r\n',
     'comments': '--[[ AddEvent( "X" )\r\nSetExpFactor( 9 ) ]]\r\nAddEvent( "A" ) -- SetExpFactor( 8 )\r\n\tSetTime( "2026-10-01 00:00", "2026-10-31 00:00" )\r\n\tSetWeatherEvent( 2.5, "rain! (x2.5)" )\r\n\tSetCouponEvent( MIN(120) )\r\n',
 }
+RT_GIFT_EV = ('AddEvent( "G" )\r\n\tSetTime( "2026-01-01 00:00", "2027-01-01 00:00" )\r\n'
+              '\tSetLevelUpGift( 10, "all", "II_CHP_RED", 1, 2, 0 )\r\n'
+              '\tSetLevelUpGift( 20, "__bu", "II_CHP_RED", 2, 0 ) -- no minutes\r\n'
+              '\tSetLevelUpGift( 30, "all", "II_CHP_RED", 3 )\r\n'
+              '\tSetLevelUpGift( 40, "all", "II_NOT_AN_ITEM", 1, 0, 0 )\r\n'
+              '\tSetExpFactor( 2 ) SetLevelUpGift( 50, "all", "II_CHP_RED", 5, 0, 0 )\r\n'
+              'AddEvent( "H" )\r\n\tSetTime( "2001-01-01 00:00", "2002-01-01 00:00" )\r\n\tSetLevelUpGift( 10, "all", "II_CHP_RED", 1, 2, 0 )')
 RT_SB_FILES = {
     'ok': '// x\nServerBuffTiers\n{\n\t1  10   5   "Server Buff" "a.png"\n\t3  5   30  "Big" "b.png"\n\t2  20   10  "Server Buff" "a.png"\n}\n',
     'no_close': 'ServerBuffTiers\n{\n\t1 10 5 "a" "b"\n',
@@ -7724,11 +7938,15 @@ RT_SB_FILES = {
     'negative': 'ServerBuffTiers\n{\n\t1 - 5 5 "a" "b"\n\t= 0 7 "c" "d"\n}\n',
     'dup': 'ServerBuffTiers\n{\n\t1 10 5 "a" "b"\n\t2 20 10 "first 2" "b"\n\t2 15 99 "second 2" "b"\n}\n',
     'spaces': 'ServerBuffTiers\n{\n    1  10  5  "a" "b"\n    2  20  10  "c" "d"\n}\n',
+    'stats': 'ServerBuffTiers\n{\n\t1  10   5  10003 5  0 0  0 0  0 0  0 0   "a" "b"\n\t2  20   10  10003 10  67 15  79 -2  0 0  0 0   "c" "d"\n}\n',
+    'stats_short': 'ServerBuffTiers\n{\n\t1  10   5  10003 5  0 0  0 0  0 0  0 0   "a" "b"\n\t2  20   10  10003 10   "c" "d"\n\t3 30 15  0 0  0 0  0 0  0 0  0 0  "e" "f"\n}\n',
+    'stats_name': 'ServerBuffTiers\n{\n\t1  10   5  DST_STR 5  0 0  0 0  0 0  0 0   "a" "b"\n}\n',
 }
 RT_GB_FILES = {
     'ok': 'GuildBuffTiers\n{\n\t1 10 5  10003 10  66 3   52 3   67 10  0 0  "L1" "d1" "i.dds"\n\t2 1 1  DST_STR 5  67 -5  0 0  0 0  0 0  "L2" "d2" "i.dds"\n}\n',
     'brace': 'GuildBuffTiers\n{\n\t1 10 5\n}\n',
     'short': 'GuildBuffTiers\n{\n\t1 10 5  10003 10  66 3   52 3   67 10  "L1" "d1" "i.dds"\n\t2 20 10  0 0  0 0  0 0  0 0  0 0  "L2" "d2" "i.dds"\n}\n',
+    'eight': 'GuildBuffTiers\n{\n\t1 10 5  10003 10  66 3   52 3   67 10  0 0  79 4  0 0  1 7  "L1" "d1" "i.dds"\n\t2 20 10  0 0  0 0  0 0  0 0  0 0  0 0  0 0  0 0  "L2" "d2" "i.dds"\n}\n',
 }
 
 
@@ -7750,9 +7968,9 @@ def rt_run(root):
         B = rt_buff(t, 'GuildBuffTiers' if guild else 'ServerBuffTiers', guild)
         rows = []
         for r in B['tiers']:
-            row = [r['tier']['v'], r['online']['v']] + ([r['glv']['v'], [[d['v'], a['v']] for d, a in r['bonus']], r['desc']['v']] if guild else [r['pct']['v']]) + [r['name']['v'], r['icon']['v']]
+            row = [r['tier']['v'], r['online']['v']] + ([r['glv']['v'], [[d['v'], a['v']] for d, a in r['bonus']], r['desc']['v']] if guild else [r['pct']['v'], [[d['v'], a['v']] for d, a in r['bonus']]]) + [r['name']['v'], r['icon']['v']]
             rows.append(row)
-        out['buffs'].append({'name': name, 'guild': guild, 'tiers': rows, 'codes': sorted(set(B['codes']))})
+        out['buffs'].append({'name': name, 'guild': guild, 'tiers': rows, 'codes': sorted(set(B['codes'])), 'slots': B['slots']})
         return B
     SB = buff_out('ServerBuff.txt', rd('ServerBuff.txt'), False)
     GB = buff_out('GuildBuff.txt', rd('GuildBuff.txt'), True)
@@ -7796,6 +8014,7 @@ def rt_run(root):
             sbt = rt_pick(SB['tiers'], inp['online'])
             gbt = rt_pick(GB['tiers'], inp['guildLevel'], inp['guildOnline'])
             gexp = sum(a['v'] for d, a in gbt['bonus'] if d['v'] == dstexp) if gbt else 0
+            gexp += sum(a['v'] for d, a in sbt['bonus'] if d['v'] == dstexp) if sbt else 0   # a Server Buff EXP stat: the same dest param
             rr = (reb[inp['rebirth']] if inp['rebirth'] < len(reb) else 1.0) if inp['rebirth'] > 0 else None
             f = rt_factor(inp['scrollPct'], act['exp'], gexp + inp['gearExp'], sbt['pct']['v'] if sbt else 0, rr, inp['weather'], act['weather'])
             inp['factor'] = f
@@ -7815,7 +8034,7 @@ def rt_run(root):
             for f in (1.0, 54.15, 0.5, 3.3):
                 out['exps'].append([expv, mlv, plv, limit, halve, f, rt_exp(expv, mlv, plv, limit, halve, rt_f32(f))])
     # edit scripts: the files after each script, byte for byte
-    G6 = {'tier': 6, 'glv': 60, 'online': 35, 'bonus': [(10003, 35), (66, 18), (52, 18), (67, 60), (79, 6)], 'name': 'Guild Buff Lv.6', 'desc': 'All Stat +35', 'icon': 'Itm_SysSysScrChaCla1.dds'}
+    G6 = {'tier': 6, 'glv': 60, 'online': 35, 'bonus': [(10003, 35), (66, 18), (52, 18), (67, 60), (79, 6), (0, 0), (0, 0), (0, 0)], 'name': 'Guild Buff Lv.6', 'desc': 'All Stat +35', 'icon': 'Itm_SysSysScrChaCla1.dds'}
     scripts = [
         [['factor', 0, 'exp', 40]],
         [['factor', 0, 'piece', 2]],
@@ -7823,7 +8042,7 @@ def rt_run(root):
         [['factor', 0, 'weather', 2], ['factor', 1, 'gold', 0.5]],
         [['factor', 1, 'exp', 12.25], ['factor', 1, 'weather', 1.25]],
         [['time', 0, 0, 'end', '2030-01-01 00:00'], ['time', 1, 0, 'start', '2026-10-09 18:00']],
-        [['addtier', 'ServerBuff.txt', {'tier': 21, 'online': 210, 'pct': 105, 'name': 'Server Buff', 'icon': 'Badge_EventPackage.png'}]],
+        [['addtier', 'ServerBuff.txt', {'tier': 21, 'online': 210, 'pct': 105, 'bonus': [(0, 0)] * 5, 'name': 'Server Buff', 'icon': 'ServerBuff.png'}]],
         [['remove', 'ServerBuff.txt', 0], ['remove', 'ServerBuff.txt', 18], ['num', 'ServerBuff.txt', 3, 'pct', 33]],
         [['str', 'ServerBuff.txt', 2, 'name', 'Online Bonus'], ['str', 'ServerBuff.txt', 2, 'icon', 'x.dds']],
         [['addtier', 'GuildBuff.txt', G6]],
@@ -7831,6 +8050,11 @@ def rt_run(root):
         [['remove', 'GuildBuff.txt', 4], ['num', 'GuildBuff.txt', 1, 'glv', 25], ['num', 'GuildBuff.txt', 2, 'adj1', -3]],
         [['remove', 'GuildBuff.txt', 0], ['addtier', 'GuildBuff.txt', G6], ['factor', 1, 'piece', 4]],
     ]
+    scripts.append({'base': 'stats', 'ops': [['num', 'ServerBuff.txt', 0, 'dst1', 66], ['num', 'ServerBuff.txt', 0, 'adj1', 4], ['num', 'ServerBuff.txt', 1, 'dst2', 0], ['num', 'ServerBuff.txt', 1, 'adj2', 0],
+                                          ['addtier', 'ServerBuff.txt', {'tier': 3, 'online': 30, 'pct': 15, 'bonus': [(10003, 15), (0, 0), (0, 0), (67, 5), (0, 0)], 'name': 'e', 'icon': 'f'}]]})
+    scripts.append([['num', 'ServerBuff.txt', 4, 'dst0', 52], ['num', 'ServerBuff.txt', 4, 'adj0', 3], ['num', 'GuildBuff.txt', 2, 'dst7', 79], ['num', 'GuildBuff.txt', 2, 'adj7', 2],
+                    ['addtier', 'ServerBuff.txt', {'tier': 21, 'online': 210, 'pct': 105, 'bonus': [(0, 0)] * 5, 'name': 'Server Buff', 'icon': 'ServerBuff.png'}],
+                    ['addtier', 'GuildBuff.txt', dict(G6, tier=7, bonus=G6['bonus'][:5] + [(0, 0), (0, 0), (1, 9)])]])
     scripts.append({'base': 'spaces', 'ops': [['addtier', 'ServerBuff.txt', {'tier': 3, 'online': 30, 'pct': 15, 'name': 'e', 'icon': 'f'}], ['remove', 'ServerBuff.txt', 0]]})
     for sc in scripts:
         base = sc['base'] if isinstance(sc, dict) else None
@@ -7839,6 +8063,49 @@ def rt_run(root):
         for op in sc:
             rt_edit(texts, op, RT_FIXED_NOW)
         out['edits'].append({'ops': sc, 'base': base, 'files': texts})
+    # part 2: the gift rows and the rebirth file as read, then edit scripts on Event.lua / 1Rebirth.inc
+    props = set(spec_props(root, D))
+    out['giftFacts'] = []
+    for name, t in [('Event.lua', real)] + [(k, v) for k, v in RT_EV_FILES.items()] + [('gf', RT_GIFT_EV)]:
+        Ev = rt_events(t, RT_FIXED_NOW)
+        out['giftFacts'].append({'name': name, 'events': [[e['name'], e['on'], [[g['level'], g['account'], g['item'], g['num'], g['flag'], g['minutes']] for g in e['gifts']]] for e in Ev['events']]})
+    out['rbFacts'] = []
+    for name, t in [('1Rebirth.inc', rd('1Rebirth.inc'))] + list(RT_RB_FILES.items()):
+        R = rt_rebirth(t, D, props)
+        out['rbFacts'].append({'name': name, 'max': R['max'], 'rates': [[r['exp'], r['gp']] for r in R['rates']], 'extra': R['extra'],
+                               'rows': [[r['tier'], r['item'], r['num'], r['used'], r['why']] for r in R['rows']]})
+    gscripts = [
+        [['gift', 1, 0, {'num': 2}]],
+        [['gift', 1, 3, {'item': 'II_CHP_RED', 'num': 50, 'flag': 0, 'minutes': 1440}]],
+        [['gift', 1, 9, {'level': 122}]],
+        [['addgift', 1, {'level': 50, 'item': 'II_GEN_MAT_MOONSTONE', 'num': 2, 'flag': 2, 'minutes': 1440}]],
+        [['addgift', 1, {'level': 5, 'item': 'II_CHP_RED', 'num': 1, 'flag': 0, 'minutes': 0}], ['addgift', 1, {'level': 200, 'item': 'II_CHP_RED', 'num': 9, 'flag': 2, 'minutes': 60}]],
+        [['addgift', 1, {'level': 60, 'item': 'II_CHP_RED', 'num': 3, 'flag': 2, 'minutes': 0}], ['rmgift', 1, 0]],
+        [['rmgift', 1, 9], ['rmgift', 1, 4], ['addgift', 0, {'level': 30, 'item': 'II_CHP_RED', 'num': 7, 'flag': 2, 'minutes': 0}]],
+        {'ev': 'gf', 'ops': [['giftall', 0, 1], ['gift', 0, 1, {'minutes': 30}], ['gift', 1, 0, {'num': 4}]]},
+        [['rbexp', 10, 1.1], ['rbgp', 5, 45], ['rbexp', 20, 0.75]],
+        [['addrbgift', {'tier': 10, 'item': 'II_CHP_RED', 'num': 50}], ['addrbgift', {'tier': 1, 'item': 'II_SYS_SYS_SCR_AWAKE', 'num': 1}]],
+        [['rbgift', 20, {'num': 2}], ['rbgift', 20, {'item': 'II_CHP_RED'}]],
+        [['addrbgift', {'tier': 20 - 1, 'item': 'II_CHP_RED', 'num': 5}], ['rmrbgift', 20], ['addrbgift', {'tier': 20, 'item': 'II_CHP_RED', 'num': 9}]],
+        {'rb': 'few', 'ops': [['addrbgift', {'tier': 3, 'item': 'II_CHP_RED', 'num': 4}], ['rbexp', 1, 2.5], ['rbgp', 1, 15]]},
+        {'rb': 'gpdown', 'ops': [['addrbgift', {'tier': 1, 'item': 'II_CHP_RED', 'num': 1}], ['addrbgift', {'tier': 2, 'item': 'II_CHP_RED', 'num': 2}], ['rmrbgift', 3], ['rbgp', 2, 25]]},
+        {'ev': 'gf', 'ops': [['gift', 0, 2, {'minutes': 15}], ['gift', 0, 2, {'flag': 2}], ['rmgift', 0, 4], ['addgift', 0, {'level': 11, 'item': 'II_CHP_RED', 'num': 1, 'flag': 0, 'minutes': 0}]]},
+        [['factor', 0, 'exp', 40], ['addgift', 1, {'level': 90, 'item': 'II_CHP_RED', 'num': 1, 'flag': 0, 'minutes': 0}], ['rbgp', 1, 11]],
+    ]
+    out['giftEdits'] = []
+    for sc in gscripts:
+        rb = sc.get('rb') if isinstance(sc, dict) else None
+        evb = sc.get('ev') if isinstance(sc, dict) else None
+        ops = sc['ops'] if isinstance(sc, dict) else sc
+        texts = {'Event.lua': RT_GIFT_EV if evb else real, '1Rebirth.inc': RT_RB_FILES[rb] if rb else rd('1Rebirth.inc')}
+        for op in ops:
+            if op[0] == 'factor':
+                rt_edit(texts, op, RT_FIXED_NOW)
+            else:
+                rt_gift_edit(texts, op, RT_FIXED_NOW, D, props)
+        out['giftEdits'].append({'ops': ops, 'rb': rb, 'ev': evb, 'files': texts})
+    out['rbFiles'] = RT_RB_FILES
+    out['giftEv'] = RT_GIFT_EV
     out['now'] = RT_FIXED_NOW
     out['evFiles'] = RT_EV_FILES
     out['sbFiles'] = RT_SB_FILES

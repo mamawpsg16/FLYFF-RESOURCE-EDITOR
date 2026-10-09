@@ -1355,14 +1355,21 @@
       click($('btn-undo'));
       ok(S.ws.models.rates.events.active.item === 10, 'Undo puts the gate back to ×10');
       sec('server');
-      ok(/Server Buff/.test(ed().textContent) && ed().querySelectorAll('table.rt tr').length === 21, 'Server Buff: 20 tiers');
+      ok(/Server Buff/.test(ed().textContent) && ed().querySelectorAll('input[data-key$="|tier"]').length === 20 && ed().querySelectorAll('input[data-key^="rt|sb|0|adj"]').length === 5, 'Server Buff: 20 tiers, 5 stat slots each (buff-stats.diff layout)');
+      {
+        const pick = ed().querySelector('input[data-key="rt|sb|0|adj0"]').closest('tr').querySelector('.combo input');
+        pick.dispatchEvent(new Event('focus')); pick.value = 'DST_STR'; pick.dispatchEvent(new Event('input'));
+        [...ed().querySelectorAll('.combo-opt')].find(o => /— DST_STR$/.test(o.textContent)).dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        ok(/\t1  10   5  \d+ 1  0 0/.test(S.ws.files.get('serverbuff.txt').text) && S.ws.models.rates.server.tiers[0].bonus[0].dst.value > 0, 'Server Buff tier 1: pick STR in slot 1 -> written as a number, amount 1');
+        click($('btn-undo'));
+      }
       click(btnByText(ed(), '+ Add tier'));
       await waitFor(() => lastModalAny() && /Add a tier/.test(lastModalAny().textContent), 'add tier form');
       ok(/\+\s*21\s+210\s+105/.test(lastModalAny().querySelector('pre.preview').textContent), 'the form proposes tier 21 at 210 players, +105%');
       click(lastModalAny().querySelector('#rt-add-btn'));
       ok(S.ws.models.rates.server.tiers.length === 21, 'Add: tier 21 written');
       sec('guild');
-      ok(/Tier 5/.test(ed().textContent) && !/does not match the stats/.test(ed().textContent), 'Guild Buff: 5 tiers, descriptions match their stats');
+      ok(/Tier 5/.test(ed().textContent) && !/does not match the stats/.test(ed().textContent) && ed().querySelectorAll('input[data-key^="rt|gb|0|adj"]').length === 8, 'Guild Buff: 5 tiers with 8 stat slots, descriptions match their stats');
       const adj = ed().querySelector('input[data-key="rt|gb|0|adj0"]');
       adj.value = '12'; adj.dispatchEvent(new Event('change'));
       ok(/does not match the stats/.test(ed().textContent), 'All Stat 10 -> 12: ⚠ the description no longer matches');
@@ -1375,6 +1382,66 @@
       ok(/EXP factor/.test(ed().textContent) && /EXP per kill/.test(ed().textContent) && /×40 Event\.lua EXP/.test(ed().textContent) && /Penya per kill/.test(ed().textContent),
         'calculator: the factor steps (×40 from the edit), EXP and Penya per kill');
       if (STOP === 'ratescalc') { $('toasts').textContent = ''; return; }
+      // part 2: level-up gifts
+      sec('levelup');
+      ok(/Level-up gifts/.test(ed().textContent) && /Level Up Rewards/.test(ed().textContent) && ed().querySelectorAll('.rt-card table.rt tr').length === 11, 'Level-up gifts: the running event with its 10 gifts');
+      ok(/⚠ never/.test(ed().textContent) && /2 times, \+1 per rebirth/.test(ed().textContent), 'level 121: ⚠ never; level 75: "2 times, +1 per rebirth"');
+      click(btnByText(ed(), '+ Add a gift'));
+      await waitFor(() => lastModalAny() && /Add a level-up gift/.test(lastModalAny().querySelector('header').textContent), 'gift form');
+      {
+        const fm = lastModalAny(), add = () => fm.querySelector('#rt-gift-btn');
+        ok(add().disabled && /Still needs: the level/.test(fm.textContent) && /Still needs: the time limit/.test(fm.textContent), 'Add greyed: level, item and time limit needed');
+        const lv = fm.querySelector('input[data-key="rt|gift|lv"]'); lv.value = '50'; lv.dispatchEvent(new Event('input')); lv.dispatchEvent(new Event('change'));
+        const ci = fm.querySelector('.combo input');
+        ci.dispatchEvent(new Event('focus')); ci.value = 'II_GEN_MAT_MOONSTONE'; ci.dispatchEvent(new Event('input'));
+        [...fm.querySelectorAll('.combo-opt')].find(o => /II_GEN_MAT_MOONSTONE\)/.test(o.textContent)).dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        const n = fm.querySelector('input[data-key="rt|gift|n"]'); n.value = '2'; n.dispatchEvent(new Event('input')); n.dispatchEvent(new Event('change'));
+        const d = fm.querySelector('input[data-key="rt|gift|m"]'); d.value = '1'; d.dispatchEvent(new Event('change'));
+        await waitFor(() => !add().disabled, 'gift form ready');
+        ok(/SetLevelUpGift\( 50,  "all", "II_GEN_MAT_MOONSTONE", 2, 2, 1440 \)/.test(fm.querySelector('pre.preview').textContent), 'preview: the Lua line (bound, 1 day = 1440 minutes)');
+        click(add());
+      }
+      const lt = S.ws.files.get('event.lua').text;
+      ok(/HOLD", 3, 2, 0 \)\r\n(?:.*\r\n)\tSetLevelUpGift\( 50,  "all", "II_GEN_MAT_MOONSTONE", 2, 2, 1440 \)\r\n\tSetLevelUpGift\( 60,/.test(lt), 'Add: the line goes in level order (after 45, before 60), CRLF kept');
+      const pen = [...ed().querySelectorAll('tr')].find(r => /II_PET_DOG1/.test(r.textContent) && /^15/.test(r.textContent.trim()));
+      click(pen.querySelector('button.icon:not(.danger)'));
+      await waitFor(() => lastModalAny() && /Edit level-up gift: Level 15/.test(lastModalAny().querySelector('header').textContent), 'edit gift dialog');
+      {
+        const fm = lastModalAny();
+        ok(fm.querySelector('#rt-gift-btn').disabled && /Nothing changed yet/.test(fm.textContent), 'Edit: Apply greyed until something changes');
+        click(btnByText(fm, 'Permanent'));
+        await waitFor(() => !fm.querySelector('#rt-gift-btn').disabled, 'edit ready');
+        click(fm.querySelector('#rt-gift-btn'));
+      }
+      ok(/SetLevelUpGift\( 15,  "all", "II_PET_DOG1", 1, 2, 0 \)/.test(S.ws.files.get('event.lua').text), 'Edit level 15: Permanent writes 0 minutes');
+      if (STOP === 'levelgifts') { $('toasts').textContent = ''; return; }
+      // part 2: rebirth
+      sec('rebirth');
+      ok(/Rebirth/.test(ed().textContent) && /not used by the server/.test(ed().textContent) && ed().querySelectorAll('table.rt tr').length === 22, 'Rebirth: tiers 0-20, Drop / Penya greyed "not used by the server"');
+      const gp5 = ed().querySelector('input[data-key="rt|rb|5|gp"]'); gp5.value = '35'; gp5.dispatchEvent(new Event('change'));
+      ok(S.ws.diags.some(d => d.code === 'RT_REB_GP_DOWN'), 'tier 5: 50 -> 35 bonus points: ⚠ fewer than tier 4');
+      click($('btn-undo'));
+      const ex10 = ed().querySelector('input[data-key="rt|rb|10|exp"]'); ex10.value = '1.1'; ex10.dispatchEvent(new Event('change'));
+      ok(S.ws.models.rates.rebirth.rates[10].exp === 1.1 && /\t1\.10\t/.test(S.ws.files.get('1rebirth.inc').text), 'rebirth 10: EXP ×1.1 written as 1.10');
+      const row10 = [...ed().querySelectorAll('tr')].find(r => /^rebirth 10/.test(r.textContent.trim()));
+      click(btnByText(row10, '+ Gift'));
+      await waitFor(() => lastModalAny() && /Add a gift: Rebirth 10/.test(lastModalAny().querySelector('header').textContent), 'rebirth gift form');
+      {
+        const fm = lastModalAny();
+        const ci = fm.querySelector('.combo input');
+        ci.dispatchEvent(new Event('focus')); ci.value = 'II_CHP_RED'; ci.dispatchEvent(new Event('input'));
+        [...fm.querySelectorAll('.combo-opt')].find(o => /\(II_CHP_RED\)/.test(o.textContent)).dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        const n = fm.querySelector('input[data-key="rt|rbg|n"]'); n.value = '50'; n.dispatchEvent(new Event('input')); n.dispatchEvent(new Event('change'));
+        await waitFor(() => !fm.querySelector('#rt-rbg-btn').disabled, 'rebirth gift ready');
+        click(fm.querySelector('#rt-rbg-btn'));
+      }
+      ok(S.ws.models.rates.rebirth.gifts.get(10) && S.ws.models.rates.rebirth.gifts.get(10).num === 50 && /\t10\tII_CHP_RED\t\t50\r?\n\t20\t/.test(S.ws.files.get('1rebirth.inc').text), 'rebirth 10 gift: Red Chips ×50, above the tier 20 row');
+      sec('calc');
+      const rbSel = [...ed().querySelectorAll('select')].find(x => [...x.options].some(o => o.textContent === 'rebirth 10'));
+      rbSel.value = '10'; rbSel.dispatchEvent(new Event('change'));
+      ok(/×1\.1\d* rebirth 10/.test(ed().textContent), 'calculator at rebirth 10 shows ×1.1');
+      ok(S.ws.dirtyFiles().some(f => /1rebirth/i.test(f.name)) , '1Rebirth.inc is to be saved');
+      if (STOP === 'rebirth') { $('toasts').textContent = ''; return; }
       while (S.ws.history.length) click($('btn-undo'));
       ok(!S.ws.dirtyFiles().length, 'Undo all: nothing left to save');
     }

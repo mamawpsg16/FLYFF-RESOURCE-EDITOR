@@ -3049,7 +3049,7 @@ section('rates & buffs: Event.lua rates, Server / Guild Buff, EXP per kill, edit
   };
   const ws = fresh(), m = ws.models.rates, R = FRE.rates;
   eq(J(m.events.active), J({ exp: 30, item: 10, piece: 1, gold: 10, weather: 1.5 }), 'Event.lua now: EXP ×30, gate ×10, items ×1, Penya ×10, weather ×1.5');
-  eq(ws.diags.filter(d => d.module === 'rates').length, 0, 'the real files: no problems');
+  eq(J(ws.diags.filter(d => d.module === 'rates').map(d => d.code)), J(['RT_GIFT_NEVER']), 'the real files: no problems but the level 121 gift (never given, as Item Sources & Uses says)');
   eq(FRE.ratesOps.describe(m.guild.tiers[4].bonus.map(b => ({ dst: b.dst.value, adj: b.adj.value })), FRE.itemTooltip.dstWords(ws)), m.guild.tiers[4].desc.text,
     'Write description from stats gives Guild Buff Lv.5\'s own text (ca02d0cb)');
   if (py) {
@@ -3072,12 +3072,12 @@ section('rates & buffs: Event.lua rates, Server / Guild Buff, EXP per kill, edit
     for (const [k, t] of Object.entries(py.gbFiles)) bText['gb:' + k] = t;
     for (const b of py.buffs) {
       const B = b.guild ? R.loadGuildBuff({ name: 'GuildBuff.txt', text: bText[b.name] }) : R.loadServerBuff({ name: 'ServerBuff.txt', text: bText[b.name] });
-      const rows = B.tiers.map(t => [t.tier.value, t.online.value].concat(b.guild ? [t.glv.value, t.bonus.map(x => [x.dst.value, x.adj.value]), t.desc.text] : [t.pct.value], [t.name.text, t.icon.text]));
+      const rows = B.tiers.map(t => [t.tier.value, t.online.value].concat(b.guild ? [t.glv.value, t.bonus.map(x => [x.dst.value, x.adj.value]), t.desc.text] : [t.pct.value, t.bonus.map(x => [x.dst.value, x.adj.value])], [t.name.text, t.icon.text]));
       const ds = R.validate({ events: { errors: [], active: { item: 1 }, events: [], file: 'Event.lua' }, server: b.guild ? null : B, guild: b.guild ? B : null }, {});
       const codes = [...new Set(ds.filter(d => ['RT_FIELDS', 'RT_NO_CLOSE', 'RT_GB_DST_NAME'].includes(d.code)).map(d => ({ RT_FIELDS: 'FIELDS', RT_NO_CLOSE: 'NO_CLOSE', RT_GB_DST_NAME: 'DST_NAME' })[d.code]))].sort();
-      if (J(rows) === J(b.tiers) && J(codes) === J(b.codes)) same++; else print(`  ${b.name}: JS ${J(rows)} ${J(codes)}\n  PY ${J(b.tiers)} ${J(b.codes)}`);
+      if (J(rows) === J(b.tiers) && J(codes) === J(b.codes) && B.slots === b.slots) same++; else print(`  ${b.name}: JS ${B.slots} ${J(rows)} ${J(codes)}\n  PY ${b.slots} ${J(b.tiers)} ${J(b.codes)}`);
     }
-    eq(same, py.buffs.length, `ServerBuff / GuildBuff: ${py.buffs.length} files (real, shifted fields, no closing }, a stat name, no keyword, negatives): the same tiers and problems`);
+    eq(same, py.buffs.length, `ServerBuff / GuildBuff: ${py.buffs.length} files (real, both layouts: 0 / 5 Server Buff stats, 5 / 8 Guild Buff stats; shifted fields, no closing }, a stat name, no keyword, negatives): the same layout, tiers and problems`);
     // tier picks
     same = 0;
     const sbF = { ok: R.loadServerBuff({ name: 'ServerBuff.txt', text: py.sbFiles.ok }), dup: R.loadServerBuff({ name: 'ServerBuff.txt', text: py.sbFiles.dup }), real: m.server };
@@ -3135,6 +3135,87 @@ section('rates & buffs: Event.lua rates, Server / Guild Buff, EXP per kill, edit
       } catch (e) { print(`  edit ${J(sc.ops)}: ${e.message}`); }
     }
     eq(same, py.edits.length, `${py.edits.length} edit scripts (rates changed and added, dates, tiers added / removed / changed): byte-identical files`);
+
+    // part 2: level-up gift rows and 1Rebirth.inc as read
+    same = 0;
+    const gText = Object.assign({ 'Event.lua': ws.files.get('event.lua').text, gf: py.giftEv }, py.evFiles);
+    const nn = v => (Number.isNaN(v) ? null : v);
+    for (const gfx of py.giftFacts) {
+      const E = R.loadEvents({ name: 'Event.lua', text: gText[gfx.name] }, NOW);
+      const js = E.events.map(e => [e.name, e.on, e.gifts.map(g => [nn(g.level), g.account, g.define, nn(g.num), nn(g.flag), nn(g.minutes)])]);
+      if (J(js) === J(gfx.events)) same++; else print(`  gifts ${gfx.name}: JS ${J(js)}\n  PY ${J(gfx.events)}`);
+    }
+    eq(same, py.giftFacts.length, `SetLevelUpGift rows: ${py.giftFacts.length} files (the real one, made-up ones: no minutes, no flag, an account filter, two calls on a line, an event not running): the same rows`);
+    same = 0;
+    const WHY = { dup: 'dup', 'tier above Max': 'above', 'not an item': 'item' };
+    const rbText = Object.assign({ '1Rebirth.inc': ws.files.get('1rebirth.inc').text }, py.rbFiles);
+    for (const f of py.rbFacts) {
+      const B = FRE.gifts.rebirth({ name: '1Rebirth.inc', text: rbText[f.name] }, ws.defines.defines, ws.items.items);
+      const js = { max: B.max, rates: B.rates.map(r => [r.exp, r.gp]), extra: B.extraRates, rows: B.rows.map(r => [r.tier, r.itemText, r.num, r.used, r.why ? WHY[r.why] : null]) };
+      const pyx = { max: f.max, rates: f.rates, extra: f.extra, rows: f.rows };
+      if (J(js) === J(pyx)) same++; else print(`  ${f.name}: JS ${J(js)}\n  PY ${J(pyx)}`);
+    }
+    eq(same, py.rbFacts.length, `1Rebirth.inc: ${py.rbFacts.length} files (real, missing rows, rows past Max, a second gift for a tier, a tier above Max, an unknown item, CRLF without a last line end): the same tiers and gifts`);
+    // part 2 edits: the same bytes
+    same = 0;
+    for (const sc of py.giftEdits) {
+      const w = fresh();
+      const base = (k, t) => { w.files.get(k).applySplices([{ start: 0, end: w.files.get(k).text.length, insert: t }], 'base'); w.reparse(k); };
+      if (sc.ev) base('event.lua', py.giftEv);
+      if (sc.rb) base('1rebirth.inc', py.rbFiles[sc.rb]);
+      try {
+        for (const op of sc.ops) {
+          const mm = w.models.rates, O = FRE.ratesOps, evt = () => w.files.get('event.lua').text, rbt = () => w.files.get('1rebirth.inc').text;
+          const ch = c => { const o = {}; for (const [k, v] of Object.entries(c)) o[k === 'item' ? 'define' : k] = v; return o; };
+          const rb = mm.rebirth;
+          if (op[0] === 'factor') w.apply('event.lua', O.setFactor(evt(), mm.events.events[op[1]], op[2], op[3]), 'x');
+          else if (op[0] === 'gift') w.apply('event.lua', O.setGift(evt(), mm.events.events[op[1]].gifts[op[2]], ch(op[3])), 'x');
+          else if (op[0] === 'addgift') w.apply('event.lua', O.addGift(evt(), mm.events.events[op[1]], ch(op[2])), 'x');
+          else if (op[0] === 'rmgift') w.apply('event.lua', O.removeGift(evt(), mm.events.events[op[1]].gifts[op[2]]), 'x');
+          else if (op[0] === 'giftall') w.apply('event.lua', O.setGiftAll(evt(), mm.events.events[op[1]].gifts[op[2]]), 'x');
+          else if (op[0] === 'rbexp') w.apply('1rebirth.inc', O.setRebirthExp(rb.rates[op[1]], op[2]), 'x');
+          else if (op[0] === 'rbgp') w.apply('1rebirth.inc', O.setRebirthGp(rb.rates[op[1]], op[2]), 'x');
+          else if (op[0] === 'rbgift') w.apply('1rebirth.inc', O.setRebirthGift(rb, rb.rows.find(r => r.tier === op[1] && r.used), ch(op[2])), 'x');
+          else if (op[0] === 'addrbgift') w.apply('1rebirth.inc', O.addRebirthGift(rbt(), rb, ch(op[1])), 'x');
+          else if (op[0] === 'rmrbgift') w.apply('1rebirth.inc', O.removeRebirthGift(rbt(), rb.rows.find(r => r.tier === op[1])), 'x');
+          else throw new Error(`unknown op ${op[0]}`);
+        }
+        const files = { 'Event.lua': w.files.get('event.lua').text, '1Rebirth.inc': w.files.get('1rebirth.inc').text };
+        if (J(files) === J(sc.files)) same++;
+        else for (const k of Object.keys(files)) if (files[k] !== sc.files[k]) {
+          let i = 0; while (files[k][i] === sc.files[k][i]) i++;
+          print(`  edit ${J(sc.ops)}: ${k} differs at ${i}: JS ${J(files[k].slice(i - 20, i + 60))}\n    PY ${J(sc.files[k].slice(i - 20, i + 60))}`);
+        }
+      } catch (e) { print(`  edit ${J(sc.ops)}: ${e.message}`); }
+    }
+    eq(same, py.giftEdits.length, `${py.giftEdits.length} gift / rebirth edit scripts (gifts changed, added in level order, removed, given to everyone, missing flag / minutes; rebirth EXP ×, bonus points, gifts added / changed / removed, CRLF and LF files): byte-identical files`);
+  }
+  // part 2 checks on the real files and made-up ones
+  {
+    const W = fresh();
+    const lu = W.models.rates.events.events.find(e => e.name === 'Level Up Rewards');
+    const g121 = lu.gifts.find(g => g.level === 121);
+    // the real file: the level 121 Pet Dog is never given
+    const rs = FRE.rates.validate(W.models.rates, { defines: W.defines, ws: W });
+    ok(rs.some(d => d.code === 'RT_GIFT_NEVER' && d.start === g121.stmt.start), 'the level 121 gift is flagged: never given (RT_GIFT_NEVER)');
+    eq(rs.filter(d => d.code === 'RT_GIFT_NEVER').length, 1, 'only that one');
+    W.apply('event.lua', FRE.ratesOps.setGift(W.files.get('event.lua').text, lu.gifts[0], { define: 'II_NOT_AN_ITEM' }), 'x');
+    ok(W.diags.some(d => d.code === 'RT_GIFT_ITEM' && d.severity === 'BLOCK'), 'an unknown gift item is a new BLOCK (RT_GIFT_ITEM)');
+    ok(W.newBlocking().length > 0, '… and blocks saving');
+    W.undo();
+    const rbd = (t) => { const X = fresh(); X.files.get('1rebirth.inc').applySplices([{ start: 0, end: X.files.get('1rebirth.inc').text.length, insert: t }], 'b'); X.reparse('1rebirth.inc'); return X.diags.filter(d => d.module === 'rates').map(d => d.code); };
+    if (py) {
+      ok(rbd(py.rbFiles.few).includes('RT_REB_ROWS'), 'missing Rates rows: RT_REB_ROWS');
+      const many = rbd(py.rbFiles.many);
+      ok(many.includes('RT_REB_ROWS') && many.includes('RT_REB_GIFT_DUP') && many.filter(c => c === 'RT_REB_GIFT_BAD').length === 2, 'rows past Max, a second gift, a tier above Max, an unknown item: RT_REB_ROWS, RT_REB_GIFT_DUP, 2 × RT_REB_GIFT_BAD');
+      ok(rbd(py.rbFiles.gpdown).includes('RT_REB_GP_DOWN'), 'fewer bonus points than the tier before: RT_REB_GP_DOWN');
+    }
+    throws(() => FRE.ratesOps.addGift('', lu, { level: 10, define: 'II_CHP_RED', num: 0, flag: 0, minutes: 0 }), 'a gift count of 0 is refused');
+    throws(() => FRE.ratesOps.addRebirthGift(W.files.get('1rebirth.inc').text, W.models.rates.rebirth, { tier: 20, define: 'II_CHP_RED', num: 1 }), 'a second gift for a rebirth tier is refused');
+    throws(() => FRE.ratesOps.setRebirthExp(W.models.rates.rebirth.rates[3], 1.125), 'EXP × with 3 decimals is refused');
+    const life = FRE.giftsSim.life(FRE.giftsSim.envFor(W), { rebirths: 2 });
+    eq(J([life.end.reb, life.end.tierGp, life.end.level]), J([2, 20, 150]), 'two rebirths: rebirth 2, 20 bonus points (the tier\'s total), levelled back up to 150');
+    for (const c of ['RT_GIFT_ITEM', 'RT_GIFT_COUNT', 'RT_GIFT_STACK', 'RT_GIFT_DUP', 'RT_GIFT_NEVER', 'RT_REB_ROWS', 'RT_REB_GP_DOWN', 'RT_REB_GIFT_DUP', 'RT_REB_GIFT_BAD', 'RT_STAT_DUP']) ok(FRE.diagHelp[c], `help text for ${c}`);
   }
   // the checks
   const bad = R.loadEvents({ name: 'Event.lua', text: 'AddEvent( "A" )\r\n\tSetTime( "2026-10-01 00:00", "2026-10-31 00:00" )\r\n\tSetItemDropRate( 20 )\r\n' }, NOW);

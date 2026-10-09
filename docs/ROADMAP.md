@@ -1,6 +1,19 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-09 (I. Rates & Buffs part 1 built, waiting for the user's Brave test; handoff on top)._
+_Last updated 2026-10-09 (I. Rates & Buffs part 2 + buff stat slots committed; next: part 3; handoff on top)._
+
+> **Handoff (2026-10-09) — I. Rates & Buffs part 2 (Level-up gifts, Rebirth) + buff stat slots: user-tested in Brave and committed + pushed. START HERE next session: I part 3 (couple buff), plan first.** Also after the test: `RT_STAT_DUP` (same stat twice in a tier), calculator text rounded to 4 decimals, per-tier icons in V19 (Server Buff `c345114c`, Guild Buff 1-5 `c24a2340`, not yet tested in game). Not warned yet: a stat with amount 0. Plan: `/home/kevin/.claude/plans/ead-the-claude-md-files-witty-magpie.md`. User decisions: rebirth tiers 0-Max only (Max not edited), gifts of running events only, new gifts for everyone ("all").
+> - **Level-up gifts** (Event.lua SetLevelUpGift, `ratesOps.addGift / setGift / removeGift / setGiftAll`): ladder per running event (item, count, bound, time limit, who, "pays one character" from gifts-sim), + Add a gift (level order), ✎ Edit level-up gift, ✕, "Give to everyone"; events not running greyed. Checks `RT_GIFT_ITEM` (BLOCK), `RT_GIFT_COUNT`, `RT_GIFT_STACK`, `RT_GIFT_DUP`, `RT_GIFT_NEVER` (the real level 121 gift).
+> - **Rebirth** (1Rebirth.inc, Server + Client copy): tiers 0-Max, stones (compiled, read-only), EXP × (2 decimals), bonus points (the TOTAL, 3fb37a62), Drop / Penya greyed "not used by the server", one gift per tier (+ Gift / ✎ / ✕). Checks `RT_REB_ROWS`, `RT_REB_GP_DOWN`, `RT_REB_GIFT_DUP`, `RT_REB_GIFT_BAD`. After saving: 1Rebirth.inc = Stop / Start Server.bat (Project.cpp:928). `refresh-fixtures.sh` now copies Client/1Rebirth.inc.
+> - **Buff stat slots** (the user, 2026-10-09: "server buff is still just exp", "guild buff can't add stats"): `docs/patches/buff-stats.diff`, applied + committed + pushed in V19 by Claude at the user's request (`43d0b76c`, NOT YET TESTED IN GAME, needs WorldServer + Neuz rebuilt): ServerBuff.txt rows get 5 `dst adj` pairs after the EXP % (every online player gets them: ServerBuffManage::ApplyStatsTo / OnLogin, the GuildBuff way; tooltip lists current + next tier's stats), GuildBuff.txt 5 → 8 pairs. The editor reads both layouts (`FRE.rates.detectSlots`: numbers before the first string of row 1), stat pickers per slot in both (pick = add, "(none)" = remove), + Add tier with stats; the calculator counts a Server Buff EXP stat. Also new: V19 icon `Client/Icon/ServerBuff.png` (`c345114c`).
+> - Python copy `oracle_sim.py rates`: + gift rows, 1Rebirth.inc as read (4 files), 16 gift / rebirth edit scripts, both buff layouts (+4 files), 3 stat-slot edit scripts: every case agrees. Core 1284 passed.
+>
+> **User's test:** `tools/refresh-fixtures.sh test-data`, `python3 build.py`, reload, Rates & Buffs.
+> 1. Server Buff: each tier shows 5 stat slots. Tier 1, slot 1: pick STR, amount 5 → toast; pick "(none)" → removed. + Add tier: the form has 5 stats.
+> 2. Guild Buff: 8 slots per tier; add a 6th stat on tier 1; ✎ Write description from stats includes it.
+> 3. 🧮 calculator: give tier 1 an EXP stat 10 → the factor counts it.
+> 4. Save: ServerBuff.txt, GuildBuff.txt (+ Client copy).
+> In game later: build WorldServer + Neuz, Stop / Start Server.bat; the buff bar tooltip lists the stats; the character window shows them.
 
 > **Handoff (2026-10-09) — I. Rates & Buffs part 1: user-tested in Brave (all steps + Save) and committed + pushed. START HERE next session: I part 2 (level-up gifts + rebirth tiers), plan first.**
 > - **Open question for the user:** more Server Buff stats (PvE, Attack… — today ServerBuff.cpp reads only EXP %) and more than 5 Guild Buff stats (`bonus[5]` compiled) both need C++. A = a patch in docs/patches, B = TODOS later. Not answered yet.

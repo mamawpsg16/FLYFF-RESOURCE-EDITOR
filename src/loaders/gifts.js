@@ -99,37 +99,48 @@
   const giftsFor = (lu, level, account) => lu.gifts.filter(g => g.event.on && (g.account === 'all' || String(account).includes(g.account)) && g.level === level);
 
   // ---------------------------------------------------------------- 1Rebirth.inc
-  // -> { max, rates: [{ exp, drop, penya, gp }], gifts: Map tier -> { id, num, define }, rejected: [{ tier, define, why }], dup: [...] }
+  // -> { max, rates: [{ exp, drop, penya, gp }], gifts: Map tier -> { id, num, define }, rejected: [{ tier, define, why }], dup: [...],
+  //      extraRates (rows past Max: "RateChart" error), rows: every Gifts row in file order, maxSpan, ratesOpen, giftsOpen, giftsClose }
+  // Spans ({ start, end } in the text) are for the edits (edit/rates-ops.js); the readers above them do not need them.
   function rebirth(file, defines, items) {
-    const res = { max: 0, rates: [], gifts: new Map(), rejected: [], dup: [] };
+    const res = { max: 0, rates: [], gifts: new Map(), rejected: [], dup: [], extraRates: 0, rows: [], maxSpan: null, ratesOpen: null, giftsOpen: null, giftsClose: null };
     if (!file) return null;
     const s = new FRE.lexer.Script(file.text, { file: file.name, defines, diags: [] });
     s.getToken();
     while (!s.eof) {
       const t = s.token.text;
-      if (t === 'Max') res.max = u16(s.getNumber().value);
+      if (t === 'Max') { const n = s.getNumber(); res.max = u16(n.value); res.maxSpan = { start: n.start, end: n.end }; }
       else if (t === 'Rates') {
-        s.getToken(); s.getToken();
+        s.getToken(); res.ratesOpen = { start: s.token.start, end: s.token.end };
+        s.getToken();
         while (s.token.text[0] !== '}' && !s.eof) {
           if (res.rates.length <= res.max) {
-            const r = { exp: FRE.lexer.atof(s.token.text) };
-            r.drop = s.getFloat().value; r.penya = s.getFloat().value; r.gp = s.getNumber().value;
+            const r = { exp: FRE.lexer.atof(s.token.text), expSpan: { start: s.token.start, end: s.token.end }, start: s.token.start };
+            r.drop = s.getFloat().value; r.penya = s.getFloat().value;
+            const g = s.getNumber();
+            r.gp = g.value; r.gpSpan = { start: g.start, end: g.end }; r.end = g.end;
             res.rates.push(r);
-          }
+          } else res.extraRates++;       // one "RateChart" error per token past Max (Project.cpp:6100)
           s.getToken();
         }
       } else if (t === 'Gifts') {
-        s.getToken(); s.getToken();
+        s.getToken(); res.giftsOpen = { start: s.token.start, end: s.token.end };
+        s.getToken();
         while (s.token.text[0] !== '}' && !s.eof) {
+          const tierTok = s.token;
           const tier = u16(FRE.lexer.atoi(s.token.text).value);
-          const n = s.getNumber(), id = n.value >>> 0, num = u16(s.getNumber().value);
+          const n = s.getNumber(), id = n.value >>> 0, c = s.getNumber(), num = u16(c.value);
           const define = n.define || String(id);
+          const row = { tier, id, num, define, start: tierTok.start, end: c.end, tierSpan: { start: tierTok.start, end: tierTok.end },
+            itemText: file.text.slice(n.start, n.end), itemSpan: { start: n.start, end: n.end }, numSpan: { start: c.start, end: c.end }, used: false };
+          res.rows.push(row);
           if (tier <= res.max && items.has(id)) {
-            if (res.gifts.has(tier)) res.dup.push({ tier, define, id, num });
-            else res.gifts.set(tier, { id, num, define });
-          } else res.rejected.push({ tier, define, why: tier > res.max ? 'tier above Max' : 'not an item' });
+            if (res.gifts.has(tier)) { res.dup.push({ tier, define, id, num }); row.why = 'dup'; }
+            else { res.gifts.set(tier, { id, num, define }); row.used = true; }
+          } else { row.why = tier > res.max ? 'tier above Max' : 'not an item'; res.rejected.push({ tier, define, why: row.why }); }
           s.getToken();
         }
+        if (s.token.text[0] === '}') res.giftsClose = { start: s.token.start, end: s.token.end };
       }
       s.getToken();
     }

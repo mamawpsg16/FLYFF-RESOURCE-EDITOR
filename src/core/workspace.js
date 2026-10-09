@@ -142,11 +142,11 @@
       // uses drops: the calculator's Penya and item chances (loaders/drops-sim.js); propMover.txt for the monster EXP.
       id: 'rates', label: 'Rates & Buffs',
       required: ['Event.lua'], optional: ['ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc', 'expTable.inc'],
-      editable: ['Event.lua', 'ServerBuff.txt', 'GuildBuff.txt'], client: ['GuildBuff.txt'],
-      deps: ['ServerBuff.txt', 'GuildBuff.txt'],
+      editable: ['Event.lua', 'ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc'], client: ['GuildBuff.txt', '1Rebirth.inc'],
+      deps: ['ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc'],
       uses: ['drops'],
       parse(ws) { return FRE.rates.fromWorkspace(ws); },
-      validate(ws, model) { return FRE.rates.validate(model, { defines: ws.defines }); },
+      validate(ws, model) { return FRE.rates.validate(model, { defines: ws.defines, ws }); },
     },
     {
       // Where is this item from? (task H, loaders/where.js): every model above parsed read-only, nothing editable.

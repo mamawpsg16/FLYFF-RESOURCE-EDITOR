@@ -117,7 +117,10 @@
       if (left > 0 && rebirth()) { left--; continue; }
       break;
     }
-    return { got, steps, end: { tier: p.tier, level: p.level, reb: p.reb } };
+    // the tier's bonus points: InitLevel recomputes GP from the level, then `m_nRemainGP += nTierGP` (User.cpp:4911-4936, 3fb37a62);
+    // a restat adds the same number back (Mover.cpp:2438). A missing Rates row = the RebirthPropEntry default 0 (Project.h:82).
+    const rr = g.rebirth && p.reb > 0 ? g.rebirth.rates[p.reb] : null;
+    return { got, steps, end: { tier: p.tier, level: p.level, reb: p.reb, tierGp: rr ? rr.gp : 0, expRate: rr ? rr.exp : 1 } };
   }
 
   // How many times each level-up gift row pays one character: in the first life (level 1 -> 150) and per rebirth after it.

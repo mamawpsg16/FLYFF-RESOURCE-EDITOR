@@ -54,6 +54,8 @@
     'event.lua': { server: STARTUP, client: null, cite: 'Project.cpp:983 m_EventLua.LoadScript (+ databaseserver/Project.cpp:192)' },
     'serverbuff.txt': { server: STARTUP, client: null, cite: 'Project.cpp:893 loadServerBuffFile (#ifdef __WORLDSERVER)' },
     'guildbuff.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:891 loadGuildBuffFile' },
+    // rebirth tiers: both load it (Project.cpp:928, #ifdef __REBIRTH_SYSTEM only); the game discards the numbers but reads the file
+    '1rebirth.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:928 LoadRebirthProp' },
     'client/donationshoptree.inc': { server: null, client: WINDOW, cite: 'WndDonationShop.cpp:346 (409 with donation-tree.diff) LoadTreeScript' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };
