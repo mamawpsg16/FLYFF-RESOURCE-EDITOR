@@ -1442,6 +1442,40 @@
       ok(/×1\.1\d* rebirth 10/.test(ed().textContent), 'calculator at rebirth 10 shows ×1.1');
       ok(S.ws.dirtyFiles().some(f => /1rebirth/i.test(f.name)) , '1Rebirth.inc is to be saved');
       if (STOP === 'rebirth') { $('toasts').textContent = ''; return; }
+      // part 3: couple
+      sec('couple');
+      ok(/Time per level/.test(ed().textContent) && /row 22 \(end of 21\)/.test(ed().textContent), 'Couple: Time per level, row 22 shown as the end of level 21');
+      const p2 = ed().querySelector('input[data-key="rt|cp|exp|1"]'); p2.value = '1440'; p2.dispatchEvent(new Event('change'));
+      ok(S.ws.models.rates.couple.exp[1].value === 1440 && /\t1440 \t\/\/ 2\r\n/.test(S.ws.files.get('couple.inc').text), 'level 2: 2,880 -> 1,440 points, the comment and CRLF kept');
+      click(ed().querySelector('button[data-ctab="buffs"]'));
+      const t8 = ed().querySelector('select[data-key="rt|cp|tier|8|0"]'); t8.value = '2'; t8.dispatchEvent(new Event('change'));
+      ok(S.ws.models.rates.couple.perLevel.own[8] && /\t6\t1\t0\t0\r\n\t8\t2\t0\t0\r\n\t11\t/.test(S.ws.files.get('couple.inc').text), 'level 8 (greyed, from level 6): Power tier 2 -> its own row, in level order');
+      ok(/Attack \+5%/.test([...ed().querySelectorAll('tr')].find(r => /^level 9/.test(r.textContent.trim())).textContent), 'level 9 now copies level 8: Attack +5%');
+      click(ed().querySelector('button[data-ctab="gifts"]'));
+      click(btnByText(ed(), '+ Add a couple gift'));
+      await waitFor(() => lastModalAny() && /Add a couple gift/.test(lastModalAny().querySelector('header').textContent), 'couple gift form');
+      {
+        const fm = lastModalAny();
+        const lv = fm.querySelector('input[data-key="rt|cpg|lv"]'); lv.value = '3'; lv.dispatchEvent(new Event('input')); lv.dispatchEvent(new Event('change'));
+        const ci = fm.querySelector('.combo input');
+        ci.dispatchEvent(new Event('focus')); ci.value = 'II_CHP_RED'; ci.dispatchEvent(new Event('input'));
+        [...fm.querySelectorAll('.combo-opt')].find(o => /\(II_CHP_RED\)/.test(o.textContent)).dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        const sx = fm.querySelector('select[data-key="rt|cpg|sex"]'); sx.value = '1'; sx.dispatchEvent(new Event('change'));
+        const n = fm.querySelector('input[data-key="rt|cpg|n"]'); n.value = '5'; n.dispatchEvent(new Event('input')); n.dispatchEvent(new Event('change'));
+        click(btnByText(fm, 'Permanent'));
+        await waitFor(() => !fm.querySelector('#rt-cpg-btn').disabled, 'couple gift ready');
+        ok(/the female partner gets/.test(fm.textContent), 'preview: the female partner gets it by mail');
+        click(fm.querySelector('#rt-cpg-btn'));
+      }
+      ok(/II_SYS_SYS_EVE_WINGS\tSEX_SEXLESS\t2\t0\t10\r\n\t\tII_CHP_RED\tSEX_FEMALE\t2\t0\t5\r\n/.test(S.ws.files.get('couple.inc').text), 'couple level 3: Red Chips ×5 for the female partner, under the Wings row');
+      click(ed().querySelector('button[data-ctab="tiers"]'));
+      ok(ed().querySelectorAll('.rt-card').length === 8 && /6 slots/.test(ed().textContent), 'Buff tiers: 8 cards (4 Power, 3 Blessing, 1 Miracle), 6 stat slots each');
+      click(btnByText(ed().querySelector('.rt-card'), ' Write description from stats'));
+      await waitFor(() => lastModalAny() && /Edit description: Power of Love tier 1/.test(lastModalAny().querySelector('header').textContent), 'description dialog');
+      click(btnByText(lastModalAny(), 'Apply changes'));
+      ok(S.ws.diags.filter(d => d.code === 'CP_DESC').length === 7 && /Attack \+3% while your partner is online\./.test(S.ws.files.get('propitem.txt.txt').text), 'Power of Love tier 1: description written from the stats; 7 tiers left');
+      ok(['couple.inc', 'propItem.txt.txt'].every(n => S.ws.dirtyFiles().some(f => f.name === n)), 'couple.inc and propItem.txt.txt are to be saved');
+      if (STOP === 'couple') { $('toasts').textContent = ''; return; }
       while (S.ws.history.length) click($('btn-undo'));
       ok(!S.ws.dirtyFiles().length, 'Undo all: nothing left to save');
     }

@@ -487,7 +487,7 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when": "Fri 9 Oct 2026, 16:13", "rev": "541f742", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "62+", "when": "Fri 9 Oct 2026, 16:58", "rev": "92e9655", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -6220,6 +6220,21 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when
     RT_REB_GP_DOWN: ['The bonus points column is the TOTAL a character has at that tier, not what the tier adds (3fb37a62). A smaller number than the tier before takes points away at that rebirth.', 'Make every tier at least as high as the one before.'],
     RT_REB_GIFT_DUP: ['The server keeps one gift per rebirth tier (a map: the first row wins). The second row is never given.', 'Remove the second row.'],
     RT_REB_GIFT_BAD: ['The server skips this gift and logs "Error in Rebirth Config > ItemChart": the tier is above Max or the item does not exist.', 'Fix the tier or pick an item that exists.'],
+    // Couple (loaders/couple.js: couple.inc, the couple buff items)
+    CP_EXP_FIRST: ['Level 1 must need 0 points. A new couple has 0 points, so GetLevel (couple.cpp:342) gives level 0, and the buff and gift lookups read before their tables.', 'Set level 1 to 0.'],
+    CP_EXP_ROWS: ['Level needs at least 22 rows: rows 1-21 are the levels, row 22 is where level 21 ends. Past the last row GetLevel returns 1, so the couple falls back to level 1.', 'Add rows until there are 22, each above the one before.'],
+    CP_EXP_ORDER: ['Each Level row must need more points than the row above. An equal row is skipped (its gifts are never mailed); a lower one makes the level jump; a row 22 not above row 21 sends a level 21 couple back to level 1.', 'Make every total higher than the one above it.'],
+    CP_ROWS_UNUSED: ['Couples stop at level 21 (CCouple::eMaxLevel is compiled in), so these rows are never read for anything.', 'Nothing to do.'],
+    CP_KIND_ITEM: ['A SkillKind entry must be the first item of a couple buff (IK3_COUPLE_BUFF in Spec_Item.txt). This one is not, so no buff of this kind works.', 'Fix the item name in SkillKind.'],
+    CP_SKILL_LEVEL: ['A SkillLevel row names a couple level that has no Level row (the server writes outside its table) or is above 21 (never used).', 'Use a level from 1 to 21.'],
+    CP_SKILL_DUP: ['A couple level has two SkillLevel rows. Both are read (push_back), so the couple gets the buffs of both rows.', 'Keep one row per level.'],
+    CP_TIER_BAD: ['The tier is higher than the buff has items. The buff item is the first item + tier - 1, so this gives another buff or no item at all.', 'Pick a tier from the list (0 = none).'],
+    CP_GIFT_LEVEL: ['A gift for a level without a Level row is written outside the table at startup; a gift for level 1 or above 21 is never mailed (gifts come with a level change).', 'Move the gift to a level from 2 to 21.'],
+    CP_GIFT_ITEM: ['The gift names an item that is not in Spec_Item.txt: the mail would carry an unknown item.', 'Pick an item from the list.'],
+    CP_GIFT_SEX: ['Who gets the gift must be 0 (male), 1 (female) or 2 (both): any other number matches nobody (PostItem, couplehelper.cpp:224).', 'Pick who gets it.'],
+    CP_GIFT_COUNT: ['A gift needs a count of at least 1.', 'Type a count of 1 or more.'],
+    CP_GIFT_STACK: ['The count is more than one bag slot holds (dwPackMax), but the mail carries it as one item.', 'Lower the count to the stack size, or add a second row.'],
+    CP_DESC: ['The buff item\'s description (propItem.txt.txt) does not say what its stats give. Players read the description on the buff bar.', 'Use "Write description from stats" on the Buff tiers tab.'],
     // Boxes (loaders/boxes.js: propGiftbox.inc random boxes, propPackItem.inc sets)
     BX_TOO_MANY: ['A random box holds at most 128 lines (MAX_GIFTBOX_ITEM). The server does not check it: line 129 onward writes past the end of the box in memory.', 'Remove lines, or split the items over two boxes.'],
     BX_PACK_TOO_MANY: ['A set holds at most 24 items (MAX_ITEM_PER_PACK). At the 25th the server stops reading propPackItem.inc, so this set and every set after it in the file are lost.', 'Remove items, or split the set over two boxes.'],
@@ -8945,6 +8960,161 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when
     removeRebirthGift, rebExp, rebGiftRow, MAX_GIFT_NUM, MAX_MINUTES, setFactor, setTime, setWeatherTitle, setNumber, setString, addTier, removeTier, setBonus, describe, luaNumber, checkDate, checkTier, serverRow, guildRow, MAX_FACTOR };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- edit/couple-ops.js ----
+// Couple edits (task I part 3) as minimal splices.
+//   couple.inc (CP949, CRLF; ASCII inserts only): a Level total is one token; a gift is a row `ITEM\tSEX_…\tflag\tminutes\tcount`
+//   inside its level block (`\tN\r\n\t{\r\n\t\t<row>\r\n\t}`, the file's own style), blocks kept in level order; a buff tier is
+//   one token of a SkillLevel row (`\tlevel\tA\tB\tC`); a level without a row gets one, which then also counts for the levels
+//   after it until the next row (LoadSkillLevel copies the row above, couple.cpp:335-339).
+//   Spec_Item.txt (the buff items): dwDestParamN / nAdjParamValN as in 62fb3b3e (stat names, "=" for an empty slot), szIcon.
+//   propItem.txt.txt: the name / description lines of the buff items (UTF-16LE: any text, one line).
+(function (FRE) {
+  'use strict';
+  const T = FRE.textOps;
+  const C = () => FRE.couple;
+  const SEX_NAME = ['SEX_MALE', 'SEX_FEMALE', 'SEX_SEXLESS'];
+  const MAX_NUM = 32767, MAX_MINUTES = 35791394;     // m_nItemNum is a short; nLife * 60 must stay an int (couplehelper.cpp:254)
+
+  // ---------------------------------------------------------------- Level
+  function setPoints(c, level, total) {
+    const row = c.exp[level - 1];
+    if (!row) throw new Error(`couple.inc has no Level row for level ${level}`);
+    T.checkAmount(total, 0, 2147483647, 'The points');
+    if (level === 1 && total !== 0) throw new Error('Level 1 must stay at 0 points: a new couple starts at 0');
+    return T.replaceSpan(row, total);
+  }
+
+  // ---------------------------------------------------------------- Item (gifts)
+  function checkGift(c, g) {
+    T.checkAmount(g.level, 2, Math.min(C().MAX_LEVEL, c.exp.length), 'The couple level');
+    T.checkDefine(g.define);
+    if (![0, 1, 2].includes(g.sex)) throw new Error('Who gets it: male (0), female (1) or both (2)');
+    if (g.flag !== 0 && g.flag !== 2) throw new Error('A gift is bound (2) or not (0)');
+    T.checkAmount(g.minutes, 0, MAX_MINUTES, 'The time limit (minutes)');
+    T.checkAmount(g.num, 1, MAX_NUM, 'The count');
+  }
+  const giftRow = g => `${g.define}\t${SEX_NAME[g.sex]}\t${g.flag}\t${g.minutes}\t${g.num}`;
+  function setGift(c, row, v) {
+    const n = { level: 2, define: row.define, sex: row.sex, flag: row.flag, minutes: row.minutes, num: row.num, ...v };
+    checkGift(c, { ...n, level: Math.max(2, Math.min(n.level, c.exp.length)) });
+    const out = [];
+    if (v.define !== undefined) out.push(...T.replaceSpan(row.spans.item, n.define));
+    if (v.sex !== undefined) out.push(...T.replaceSpan(row.spans.sex, SEX_NAME[n.sex]));
+    if (v.flag !== undefined) out.push(...T.replaceSpan(row.spans.flag, n.flag));
+    if (v.minutes !== undefined) out.push(...T.replaceSpan(row.spans.minutes, n.minutes));
+    if (v.num !== undefined) out.push(...T.replaceSpan(row.spans.num, n.num));
+    return out;
+  }
+  // a level block in the file's style: `\tN`, `\t{`, `\t\t<row>`, `\t}`
+  const blockLines = (level, row, eol) => `\t${level}${eol}\t{${eol}\t\t${row}${eol}\t}${eol}`;
+  function addGift(text, c, g) {
+    checkGift(c, g);
+    if (!c.items || !c.items.close) throw new Error('couple.inc has no Item { } block');
+    const row = giftRow(g);
+    const same = c.blocks.find(b => b.level === g.level && b.close);
+    if (same) {
+      const last = same.rows[same.rows.length - 1];
+      if (last) return T.insertRowAfter(text, last, row);
+      return T.insertRowBelowLine(text, same.open.start, '\t' + row);
+    }
+    // after the last block of a lower level (a blank line between), else above the first block, else in the empty Item block
+    const before = c.blocks.filter(b => b.level < g.level && b.close).pop();
+    if (before) {
+      const at = T.lineEnd(text, before.close.end), e0 = T.eolAt(text, before.close.end);
+      const eol = e0 || T.dominantEol(text);
+      return [{ start: at, end: at, insert: (e0 ? '' : eol) + eol + blockLines(g.level, row, eol) }];
+    }
+    const first = c.blocks[0];
+    if (first) {
+      const at = T.lineStart(text, first.levelSpan.start), eol = T.eolAt(text, first.levelSpan.start) || T.dominantEol(text);
+      return [{ start: at, end: at, insert: blockLines(g.level, row, eol) + eol }];
+    }
+    const at = T.lineEnd(text, c.items.open.start), eol = T.eolAt(text, c.items.open.start) || T.dominantEol(text);
+    return [{ start: at, end: at, insert: blockLines(g.level, row, eol) }];
+  }
+  // the row; its block too when it is the block's only row (with the blank line above it)
+  function removeGift(text, c, row) {
+    const block = c.blocks.find(b => b.rows.includes(row));
+    if (!block || block.rows.length > 1 || !block.close) return T.removeRow(text, row);
+    let s = T.lineStart(text, block.levelSpan.start);
+    const e = T.lineEnd(text, block.close.end);
+    // the blank line between this block and the one above
+    const prev = text.slice(0, s);
+    const m = /(\r\n|\n|\r)[ \t]*(\r\n|\n|\r)$/.exec(prev);
+    if (m) s -= m[0].length - m[1].length;
+    return [{ start: s, end: e, insert: '' }];
+  }
+
+  // ---------------------------------------------------------------- SkillLevel
+  function checkTier(c, kind, tier, kindTiers) {
+    if (!c.kinds[kind]) throw new Error('couple.inc has no such buff kind');
+    const max = kindTiers ? kindTiers[kind].length : 1000;
+    T.checkAmount(tier, 0, max, `The tier (0 = none, 1-${max})`);
+  }
+  // tiers: the whole row for `level` ([A, B, C]); the level's own row changes in place, else a new row in level order
+  function setTiers(text, c, level, tiers, kindTiers) {
+    T.checkAmount(level, 1, Math.min(C().MAX_LEVEL, c.exp.length), 'The couple level');
+    if (tiers.length !== c.kinds.length) throw new Error(`A SkillLevel row has ${c.kinds.length} tiers`);
+    tiers.forEach((t, k) => checkTier(c, k, t, kindTiers));
+    if (!c.skill || !c.skill.close) throw new Error('couple.inc has no SkillLevel { } block');
+    const own = c.skillRows.find(r => r.level === level);
+    if (own) {
+      const out = [];
+      own.tiers.forEach((sp, k) => { if (sp.value !== tiers[k]) out.push(...T.replaceSpan(sp, tiers[k])); });
+      return out;
+    }
+    const row = `${level}\t${tiers.join('\t')}`;
+    const before = c.skillRows.filter(r => r.level < level).pop();
+    if (before) return T.insertRowAfter(text, before, row);
+    const first = c.skillRows[0];
+    if (first) { const at = T.lineStart(text, first.start); return [{ start: at, end: at, insert: T.indentOf(text, first.start) + row + (T.eolAt(text, first.start) || T.dominantEol(text)) }]; }
+    return T.insertRowBelowLine(text, c.skill.open.start, row);
+  }
+  // a level's own row out: the level then copies the row above (level 1 keeps its row: without it level 1 has no buff)
+  function removeTierRow(text, c, level) {
+    const own = c.skillRows.find(r => r.level === level);
+    if (!own) throw new Error(`Level ${level} has no row of its own`);
+    if (level === 1) throw new Error('Level 1 keeps its row (set its tiers to 0 for no buff)');
+    return T.removeRow(text, own);
+  }
+
+  // ---------------------------------------------------------------- the buff items (Spec_Item.txt, propItem.txt.txt)
+  // one stat slot: DST_ name (the 62fb3b3e style), "=" for an empty slot
+  function setStat(text, item, slot, dst, adj, defines, dstName) {
+    if (slot < 1 || slot > 6) throw new Error('A buff item has 6 stat slots');
+    if (dst) { T.checkAmount(dst, 1, 65535, 'The stat'); if (!Number.isInteger(adj) || adj < -2147483647 || adj > 2147483647) throw new Error('The amount must be a whole number'); }
+    const d = FRE.itemOps.fieldSpan(text, item, 'dwDestParam' + slot, defines), a = FRE.itemOps.fieldSpan(text, item, 'nAdjParamVal' + slot, defines);
+    return [{ start: d.start, end: d.end, insert: dst ? (dstName(dst) || String(dst)) : '=' }, { start: a.start, end: a.end, insert: dst ? String(adj) : '=' }];
+  }
+  function setIcon(text, item, name, defines) {
+    if (!/^[\x21-\x7e]+$/.test(name || '') || /"/.test(name)) throw new Error('An icon file name is plain ASCII, no spaces or quotes');
+    const sp = FRE.itemOps.fieldSpan(text, item, 'szIcon', defines);
+    return [{ start: sp.start, end: sp.end, insert: `"${name}"` }];
+  }
+  // a propItem.txt.txt line's text (strings meta: the value span of the key)
+  function setText(meta, text, max = 255) {
+    const v = String(text).replace(/[\t\r\n]+/g, ' ').trim();
+    if (!v) throw new Error('The text cannot be empty');
+    if (v.length > max) throw new Error(`At most ${max} characters`);
+    if (!meta) throw new Error('This text key is not in propItem.txt.txt');
+    return [{ start: meta.start, end: meta.end, insert: v }];
+  }
+  // "Attack +3%, Max HP +5% while your partner is online." (the house style the ROADMAP asks for: "Attack +10%, Max HP +10%")
+  const WORD = { DST_ATKPOWER_RATE: 'Attack', DST_HP_MAX_RATE: 'Max HP', DST_SPEED: 'Speed', DST_STAT_ALLUP: 'All Stats', DST_ADJDEF: 'Defense',
+    DST_ATKPOWER: 'Attack', DST_HP_MAX: 'Max HP', DST_MP_MAX_RATE: 'Max MP', DST_FP_MAX_RATE: 'Max FP', DST_MONSTER_DMG: 'PvE Damage', DST_EXPERIENCE: 'EXP' };
+  function describe(stats, words) {
+    const list = stats.filter(s => s.dst).map(s => {
+      const w = words.get(s.dst) || { word: '', define: '' };
+      const name = WORD[w.define] || (w.word || '').replace(/[:\s]+$/, '').replace(/^Increased\s+/i, '') || w.define || `stat ${s.dst}`;
+      return `${name} ${s.adj >= 0 ? '+' : ''}${s.adj}${w.rate ? '%' : ''}`;
+    });
+    return list.length ? `${list.join(', ')} while your partner is online.` : '';
+  }
+
+  FRE.coupleOps = { setPoints, checkGift, giftRow, setGift, addGift, removeGift, setTiers, removeTierRow, setStat, setIcon, setText, describe,
+    SEX_NAME, MAX_NUM, MAX_MINUTES };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- validate/newnpc.js ----
 // Rules for a new NPC (docs/HANDOFF-ADD-NPC.md §6). They judge only the new NPC against the
 // loaded data; old quirks in the files never block it. BLOCK = the form cannot be saved.
@@ -10778,6 +10948,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when
     }
     giftChecks(model, opts, out);
     rebirthChecks(model, opts, out);
+    if (FRE.coupleChecks) FRE.coupleChecks(model, opts, out);
     return out;
   }
 
@@ -10846,6 +11017,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when
       guild: loadGuildBuff(f('guildbuff.txt')),
       rebirth: FRE.gifts && f('1rebirth.inc') ? FRE.gifts.rebirth(f('1rebirth.inc'), ws.defines.defines, ws.items.items) : null,
       exp: loadExpLimits(f('exptable.inc')),
+      couple: FRE.couple && f('couple.inc') ? FRE.couple.load(f('couple.inc'), ws.defines.defines) : null,
     };
   }
 
@@ -10962,6 +11134,284 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when
   }
 
   FRE.ratesSim = { expFactor, killExp, calc };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/couple.js ----
+// couple.inc with the offsets the edits need (task I part 3). The reader follows CCoupleProperty::Initialize
+// (_Common/couple.cpp:234-340) token for token; loaded by the WorldServer, the DatabaseServer and the game
+// (couplehelper.cpp in each). __MAINSERVER is defined (VersionCommon.h), so the Level numbers are not divided by 100.
+//   Level       one total per level: m_vExp[i] = the points a couple needs for level i + 1 (LoadLevel :255)
+//   Item        level { item sex flag minutes count … } (LoadItem :271), mailed by CCoupleHelper::PostItem
+//               (databaseserver/couplehelper.cpp:213-258)
+//   SkillKind   the first buff item of each kind (LoadSkillKind :306)
+//   SkillLevel  level tier tier tier: item = kind + tier - 1, 0 = none; a level without a row copies the row above
+//               (LoadSkillLevel :317-339)
+//   GetLevel    the first i with points < m_vExp[i]; past the last row: 1 (:342)
+// In game (WORLDSERVER/User.cpp): ProcessCouple runs every 16 frames (m_nCount & 15, :452), a frame is 67 ms
+// (ThreadMng.cpp:329), and every 61st call (:3997) the partner with the higher player id sends +1 point while both
+// are online. So 1 point = 61 * 16 * 67 ms = about 65.4 s together. The buffs are removed on every point
+// (WORLDSERVER/couplehelper.cpp:277, 286) and put back at the current level by ActiveCoupleBuff (:4025).
+(function (FRE) {
+  'use strict';
+  const MAX_LEVEL = 21;                         // CCouple::eMaxLevel, couple.h:17
+  const POINT_MS = 61 * 16 * 67;                // 65,392 ms
+  const SEX = { 0: 'male', 1: 'female', 2: 'both' };   // SEX_MALE / SEX_FEMALE / SEX_SEXLESS (couple.inc's own header)
+
+  const span = r => ({ start: r.start, end: r.end, value: r.value, define: r.define || null });
+
+  function load(file, defines) {
+    if (!file) return null;
+    const res = { file: file.name, exp: [], level: null, items: null, blocks: [], kinds: [], kindBlock: null, skill: null, skillRows: [], bad: [] };
+    const s = new FRE.lexer.Script(file.text, { file: file.name, defines, diags: [] });
+    const close = () => (s.token.text[0] === '}' ? { start: s.token.start, end: s.token.end } : null);
+    s.getToken();
+    while (!s.eof) {
+      const t = s.token.text;
+      if (t === 'Level') {
+        const open = s.getToken();
+        let n = s.getNumber();
+        while (s.token.text[0] !== '}' && !s.eof) { res.exp.push(span(n)); n = s.getNumber(); }
+        res.level = { open: { start: open.start, end: open.end }, close: close() };
+      } else if (t === 'Item') {
+        const open = s.getToken();
+        let lv = s.getNumber();
+        while (s.token.text[0] !== '}' && !s.eof) {
+          const bo = s.getToken();
+          const block = { level: lv.value, levelSpan: span(lv), open: { start: bo.start, end: bo.end }, close: null, rows: [] };
+          let it = s.getNumber();
+          while (s.token.text[0] !== '}' && !s.eof) {
+            const sx = s.getNumber(), fl = s.getNumber(), mi = s.getNumber(), nu = s.getNumber();
+            block.rows.push({ id: it.value >>> 0, define: it.define || String(it.value >>> 0), sex: sx.value, flag: fl.value, minutes: mi.value, num: nu.value,
+              start: it.start, end: nu.end, spans: { item: span(it), sex: span(sx), flag: span(fl), minutes: span(mi), num: span(nu) } });
+            it = s.getNumber();
+          }
+          block.close = close();
+          // GetItems( nLevel ) = m_vItems[nLevel - 1] (ASSERT only): outside the Level rows the server writes out of bounds
+          if (lv.value < 1 || lv.value > res.exp.length) res.bad.push(block);
+          res.blocks.push(block);
+          lv = s.getNumber();
+        }
+        res.items = { open: { start: open.start, end: open.end }, close: close() };
+      } else if (t === 'SkillKind') {
+        const open = s.getToken();
+        let n = s.getNumber();
+        while (s.token.text[0] !== '}' && !s.eof) { res.kinds.push(span(n)); n = s.getNumber(); }
+        res.kindBlock = { open: { start: open.start, end: open.end }, close: close() };
+      } else if (t === 'SkillLevel') {
+        const open = s.getToken();
+        let lv = s.getNumber();
+        while (s.token.text[0] !== '}' && !s.eof) {
+          const tiers = [];
+          for (let i = 0; i < res.kinds.length; i++) tiers.push(span(s.getNumber()));
+          res.skillRows.push({ level: lv.value, levelSpan: span(lv), tiers, start: lv.start, end: tiers.length ? tiers[tiers.length - 1].end : lv.end });
+          lv = s.getNumber();
+        }
+        res.skill = { open: { start: open.start, end: open.end }, close: close() };
+      }
+      s.getToken();
+    }
+    res.perLevel = buffsPerLevel(res);
+    return res;
+  }
+
+  // m_vSkills per level (1-based index): the tier of each kind; a level without a row copies the one above.
+  // A row for a level outside the Level rows writes out of bounds in the server: skipped here, CP_SKILL_LEVEL says so.
+  function buffsPerLevel(c) {
+    const n = c.exp.length, out = Array.from({ length: n + 1 }, () => null), own = Array.from({ length: n + 1 }, () => null);
+    for (const r of c.skillRows) {
+      if (r.level < 1 || r.level > n) continue;
+      if (!own[r.level]) own[r.level] = [];
+      own[r.level].push(...r.tiers.map(t => t.value));      // push_back: a second row for a level adds more buffs
+    }
+    for (let l = 1; l <= n; l++) out[l] = own[l] ? own[l] : (l > 1 && out[l - 1] ? out[l - 1].slice() : []);
+    return { tiers: out, own: own.map(Boolean) };
+  }
+  // the buff items at a level: kind + tier - 1 (LoadSkillLevel :329-330)
+  function buffItems(c, level) {
+    const t = c.perLevel.tiers[level] || [];
+    return t.map((tier, i) => (tier > 0 && c.kinds[i % c.kinds.length] ? (c.kinds[i % c.kinds.length].value >>> 0) + tier - 1 : 0));
+  }
+  // CCoupleProperty::GetLevel (:342)
+  function levelOf(c, points) {
+    for (let i = 0; i < c.exp.length; i++) if (points < c.exp[i].value) return i;
+    return 1;
+  }
+  // the tiers a kind has: kind, kind + 1, … while the item exists and is a couple buff (IK3_COUPLE_BUFF), up to the next kind
+  function kindTiers(c, items, ik3) {
+    const firsts = c.kinds.map(k => k.value >>> 0);
+    return c.kinds.map((k, i) => {
+      const out = [];
+      for (let id = k.value >>> 0; ; id++) {
+        if (id !== (k.value >>> 0) && firsts.includes(id)) break;
+        const it = items.get(id);
+        if (!it || FRE.specItem.get(it, 'dwItemKind3') !== ik3) break;
+        out.push(it);
+        if (out.length > 50) break;
+      }
+      return out;
+    });
+  }
+
+  FRE.couple = { load, buffsPerLevel, buffItems, levelOf, kindTiers, MAX_LEVEL, POINT_MS, SEX };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/couple-sim.js ----
+// A couple in game (task I part 3): the points, levels, buffs and mailed gifts, as the C++ does it.
+//   tick     CUser::ProcessCouple (WORLDSERVER/User.cpp:3994): both partners online, the couple below eMaxLevel -> +1 point
+//            (SendQueryAddCoupleExperience). The DatabaseServer adds it: CCouple::AddExperience (couple.cpp:96: nothing at
+//            level 21; level = GetLevel( TRUE )) and on a level change CCoupleHelper::PostItem (databaseserver/couplehelper.cpp:213):
+//            each gift of the NEW level to the partner whose sex matches (SEX_SEXLESS = both), m_dwKeepTime = minutes * 60,
+//            m_byFlag = flag, by mail.
+//   buffs    ActiveCoupleBuff (User.cpp:4025): every item of GetSkill( level ) that exists (prj.GetItemProp), applied with
+//            DoApplySkill; the buffs are removed on every point (WORLDSERVER/couplehelper.cpp:277, 286), so the new level's
+//            buffs are on within a second. Only while the partner is online (User.cpp:4014-4017).
+//   restore  CCoupleController::Restore (databaseserver/couplehelper.cpp:33-41): at server start the saved points are added
+//            in one AddExperience: the level comes back, no gift is mailed.
+// Not modelled: a partner offline (no points, no buff), the propose / marriage steps, the honorable title (SetHonorAdd).
+(function (FRE) {
+  'use strict';
+  const C = () => FRE.couple;
+
+  // -> { levels: [{ level, points, ms }], posts: [{ level, to: 'first'|'second', id, num, flag, minutes }], end: { points, level } }
+  // sex: [first partner's sex, second's] (0 male, 1 female); limit: stop after this many points
+  function run(c, sex = [0, 1], limit) {
+    const MAX = C().MAX_LEVEL;
+    const max = limit || Math.max(0, ...c.exp.map(e => e.value)) + 2;
+    let pts = 0, level = 1;                                        // CCouple(): m_nLevel( 1 ), couple.cpp:92
+    const levels = [{ level, points: 0, ms: 0 }], posts = [];
+    for (let n = 0; n < max; n++) {
+      if (level === MAX) break;                                     // ProcessCouple: no tick at eMaxLevel; AddExperience: FALSE
+      pts += 1;
+      const now = C().levelOf(c, pts);
+      if (now !== level) {
+        level = now;
+        levels.push({ level, points: pts, ms: pts * C().POINT_MS });
+        for (const g of giftsAt(c, level)) {
+          if (g.sex === 2 || g.sex === sex[0]) posts.push({ level, to: 'first', id: g.id, num: g.num, flag: g.flag & 0xFF, minutes: g.minutes });
+          if (g.sex === 2 || g.sex === sex[1]) posts.push({ level, to: 'second', id: g.id, num: g.num, flag: g.flag & 0xFF, minutes: g.minutes });
+        }
+      }
+    }
+    return { levels, posts, end: { points: pts, level } };
+  }
+  // m_vItems[level - 1]: the blocks of that level, in file order (a level written twice adds both)
+  function giftsAt(c, level) {
+    if (level < 1 || level > c.exp.length) return [];
+    return c.blocks.filter(b => b.level === level).flatMap(b => b.rows);
+  }
+  // restore: AddExperience( saved ) from a fresh couple
+  function restore(c, points) { return C().levelOf(c, points); }   // m_nLevel starts at 1 (< 21), so the points are always added
+  // the buffs at a level: the items that exist, and their stats added up (DoApplySkill -> SetDestParam per slot)
+  function buffsAt(c, items, level) {
+    if (level < 1 || level > c.exp.length) return { items: [], stats: [] };
+    const ids = C().buffItems(c, level).filter(id => id && items.has(id));
+    const sum = new Map();
+    for (const id of ids) for (const s of FRE.coupleChecks.statsOf(items.get(id))) if (s.dst) sum.set(s.dst, (sum.get(s.dst) || 0) + s.adj);
+    return { items: ids, stats: [...sum].map(([dst, adj]) => ({ dst, adj })) };
+  }
+  // every level 1-21 at a glance: reached after how long, its buffs, its gifts
+  function ladder(c, items, sex = [0, 1]) {
+    const r = run(c, sex);
+    return Array.from({ length: C().MAX_LEVEL }, (_, i) => {
+      const level = i + 1, at = r.levels.find(x => x.level === level);
+      return { level, points: level === 1 ? 0 : at ? at.points : null, ms: level === 1 ? 0 : at ? at.ms : null, buffs: buffsAt(c, items, level),
+        posts: r.posts.filter(p => p.level === level) };
+    });
+  }
+
+  FRE.coupleSim = { run, giftsAt, restore, buffsAt, ladder };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- validate/couple.js ----
+// couple.inc checks (task I part 3). Each one cites the C++ it comes from (loaders/couple.js has the reader).
+(function (FRE) {
+  'use strict';
+  const F = 'couple.inc';
+
+  function coupleChecks(model, opts, out) {
+    const c = model.couple, ws = opts.ws;
+    if (!c || !ws) return;
+    const C = FRE.couple, MAX = C.MAX_LEVEL;
+    const push = (code, severity, sp, message, k) => out.push({ module: 'rates', file: F, code, severity, start: sp ? sp.start : 0, end: sp ? sp.end : 0, key: `${code}|${k}`, message });
+    const D = ws.defines.defines, items = ws.items.items;
+    // ---- Level: GetLevel (couple.cpp:342) needs rows 1-22 rising: a couple at level 21 sits at row 21's total, below row 22
+    const e = c.exp;
+    if (!e.length) push('CP_EXP_ROWS', 'BLOCK', c.level && c.level.open, 'couple.inc has no Level rows: every couple is level 1 and the server reads out of bounds.', 'none');
+    else {
+      if (e[0].value !== 0) push('CP_EXP_FIRST', 'BLOCK', e[0], `Level 1 needs ${e[0].value} points: a new couple has 0, so GetLevel gives level 0 and the buff lookup reads before the table (crash risk). Write 0.`, 'first');
+      if (e.length < MAX + 1) push('CP_EXP_ROWS', 'BLOCK', c.level.open, `Level has ${e.length} rows. Level ${MAX} needs a row ${MAX + 1} above row ${MAX}: past the last row GetLevel returns 1, so a couple ${e.length <= MAX ? `that passes row ${e.length}` : `at level ${MAX}`} falls back to level 1.`, 'few');
+      for (let i = 1; i < Math.min(e.length, MAX + 1); i++) if (e[i].value <= e[i - 1].value)
+        push('CP_EXP_ORDER', 'BLOCK', e[i], i === MAX
+          ? `Row ${MAX + 1} (${e[i].value}) must be above row ${MAX} (${e[i - 1].value}): it is where level ${MAX} ends. Otherwise a couple that reaches level ${MAX} falls back to level 1 (GetLevel returns 1 past the rows).`
+          : `Level ${i + 1} needs ${e[i].value} points, not more than level ${i} (${e[i - 1].value}): GetLevel ${e[i].value === e[i - 1].value ? `skips level ${i}, and its gifts are never mailed` : 'jumps back and forth between levels'}.`, i);
+      if (e.length > MAX + 1) push('CP_ROWS_UNUSED', 'INFO', e[MAX + 1], `Rows ${MAX + 2}-${e.length} are never used: couples stop at level ${MAX} (CCouple::eMaxLevel, compiled).`, 'unused');
+    }
+    // ---- SkillKind / SkillLevel (couple.cpp:306-339; ActiveCoupleBuff User.cpp:4025)
+    const ik3 = D.get('IK3_COUPLE_BUFF');
+    const tiers = C.kindTiers(c, items, ik3);
+    c.kinds.forEach((k, i) => { if (!tiers[i].length) push('CP_KIND_ITEM', 'BLOCK', k, `Buff kind ${i + 1} (${k.define || k.value}) is not a couple buff item in Spec_Item.txt (IK3_COUPLE_BUFF): no buff of this kind works.`, i); });
+    const seen = new Map();
+    for (const r of c.skillRows) {
+      if (r.level < 1 || r.level > e.length) { push('CP_SKILL_LEVEL', 'BLOCK', r.levelSpan, `SkillLevel row for level ${r.level}: there is no such Level row, so the server writes outside its table.`, `${r.level}|${r.start}`); continue; }
+      if (r.level > MAX) push('CP_SKILL_LEVEL', 'INFO', r.levelSpan, `SkillLevel row for level ${r.level}: couples stop at level ${MAX}, so it is never used.`, `${r.level}|max`);
+      if (seen.has(r.level)) push('CP_SKILL_DUP', 'WARN', r.levelSpan, `Level ${r.level} has two SkillLevel rows: both are applied (push_back), so the couple gets the buffs of both.`, r.level);
+      seen.set(r.level, true);
+      r.tiers.forEach((t, k) => {
+        if (t.value < 0 || (tiers[k] && t.value > tiers[k].length)) push('CP_TIER_BAD', 'BLOCK', t,
+          `Level ${r.level}: tier ${t.value} of ${kindName(ws, c, k)}, but it has ${tiers[k] ? tiers[k].length : 0} tier(s). Item ${c.kinds[k].define || c.kinds[k].value} + ${t.value - 1} is ${tierItemText(ws, c.kinds[k].value + t.value - 1)}.`, `${r.level}|${k}`);
+      });
+    }
+    // ---- Item (couple.cpp:271; PostItem databaseserver/couplehelper.cpp:213-258)
+    for (const b of c.blocks) {
+      if (b.level < 1 || b.level > e.length) { push('CP_GIFT_LEVEL', 'BLOCK', b.levelSpan, `Gifts for couple level ${b.level}: there is no such Level row, so the server writes outside its table at startup.`, `${b.level}|${b.levelSpan.start}`); continue; }
+      if (b.level === 1) push('CP_GIFT_LEVEL', 'WARN', b.levelSpan, 'Gifts for couple level 1 are never mailed: a couple starts at level 1, and gifts come with a level change.', '1');
+      else if (b.level > MAX) push('CP_GIFT_LEVEL', 'WARN', b.levelSpan, `Gifts for couple level ${b.level} are never mailed: couples stop at level ${MAX}.`, `${b.level}|max`);
+      for (const r of b.rows) {
+        const it = items.get(r.id), k = `${b.level}|${r.define}|${r.start}`;
+        if (!it) { push('CP_GIFT_ITEM', 'BLOCK', r.spans.item, `Couple level ${b.level}: "${r.define}" is not an item in Spec_Item.txt; the mail would carry an unknown item.`, k); continue; }
+        if (![0, 1, 2].includes(r.sex)) push('CP_GIFT_SEX', 'WARN', r.spans.sex, `Couple level ${b.level}, ${r.define}: "who" is ${r.sex}; only 0 (male), 1 (female) or 2 (both) gets it to anyone.`, k);
+        if (!(r.num >= 1)) push('CP_GIFT_COUNT', 'BLOCK', r.spans.num, `Couple level ${b.level}, ${r.define}: the count is ${r.num}. A gift needs at least 1.`, k);
+        const pm = FRE.specItem.get(it, 'dwPackMax') >>> 0;
+        if (pm && r.num > pm) push('CP_GIFT_STACK', 'WARN', r.spans.num, `Couple level ${b.level}: ${r.num} × ${r.define} in one mail, but one bag slot holds only ${pm}.`, k);
+      }
+    }
+    // ---- the buff items: description vs stats
+    const words = FRE.itemTooltip.dstWords(ws);
+    tiers.forEach((list, k) => list.forEach((it, t) => {
+      const auto = FRE.coupleOps.describe(statsOf(it), words);
+      const desc = descOf(ws, it);
+      if (auto && desc !== null && desc !== auto) push('CP_DESC', 'WARN', null, `${kindName(ws, c, k)} tier ${t + 1} (${it.define}): the description says "${desc}", but the stats give "${auto}".`, it.define);
+    }));
+  }
+  function statsOf(it) {
+    const out = [];
+    for (let i = 1; i <= 6; i++) {
+      const d = FRE.specItem.get(it, 'dwDestParam' + i), a = FRE.specItem.get(it, 'nAdjParamVal' + i);
+      const dst = d === -1 || d === 0xFFFFFFFF || !d ? 0 : d >>> 0;
+      out.push({ dst, adj: dst ? (a | 0) : 0 });
+    }
+    return out;
+  }
+  // the texts as the game shows them (the lexer already put the propItem.txt.txt line in place of the IDS key)
+  const descOf = (ws, it) => { const v = FRE.specItem.get(it, 'szCommand'); return v === undefined || v === null ? null : String(v).trim(); };
+  const nameOf = (ws, it) => it.name || it.define;
+  // the IDS key a field holds (Spec_Item.txt's own token) and that key's line in propItem.txt.txt
+  function keyOf(ws, it, field) {
+    const f = ws.files.get('spec_item.txt');
+    if (field === 'szName') return it.nameKey;
+    const sp = FRE.itemOps.fieldSpan(f.text, it, field, ws.defines.defines);
+    return f.text.slice(sp.start, sp.end);
+  }
+  const textLine = (ws, key) => (ws.strings.meta.get(key) || null);
+  function kindName(ws, c, k) { const it = ws.items.items.get(c.kinds[k].value >>> 0); return it ? nameOf(ws, it) : `kind ${k + 1}`; }
+  function tierItemText(ws, id) { const it = ws.items.items.get(id >>> 0); return it ? `${it.define} (${nameOf(ws, it)}), not a buff of this kind` : 'not an item'; }
+
+  FRE.coupleChecks = coupleChecks;
+  FRE.coupleChecks.statsOf = statsOf;
+  FRE.coupleChecks.descOf = descOf;
+  FRE.coupleChecks.nameOf = nameOf;
+  FRE.coupleChecks.keyOf = keyOf;
+  FRE.coupleChecks.textLine = textLine;
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- core/workspace.js ----
@@ -11107,10 +11557,13 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when
       // Rates & Buffs (task I, loaders/rates.js): Event.lua's rates (WorldServer + DatabaseServer), ServerBuff.txt (WorldServer only),
       // GuildBuff.txt (both; the game only shows what the server sends, but every commit keeps the Client copy in sync: cd03ca46, ca02d0cb).
       // uses drops: the calculator's Penya and item chances (loaders/drops-sim.js); propMover.txt for the monster EXP.
-      id: 'rates', label: 'Rates & Buffs',
-      required: ['Event.lua'], optional: ['ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc', 'expTable.inc'],
-      editable: ['Event.lua', 'ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc'], client: ['GuildBuff.txt', '1Rebirth.inc'],
-      deps: ['ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc'],
+      // part 3 (loaders/couple.js): couple.inc (WorldServer, DatabaseServer and the game; no loose Client copy yet: Save offers to
+      // create one so the couple window's level bar matches) and the couple buff items (Spec_Item.txt + their propItem.txt.txt texts).
+      id: 'rates', label: 'Rates & Buffs', editsSpec: true,
+      required: ['Event.lua'], optional: ['ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc', 'expTable.inc', 'couple.inc', 'propItem.txt.txt'],
+      editable: ['Event.lua', 'ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc', 'couple.inc', 'propItem.txt.txt'],
+      client: ['GuildBuff.txt', '1Rebirth.inc', 'couple.inc', 'propItem.txt.txt'],
+      deps: ['ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc', 'couple.inc'],
       uses: ['drops'],
       parse(ws) { return FRE.rates.fromWorkspace(ws); },
       validate(ws, model) { return FRE.rates.validate(model, { defines: ws.defines, ws }); },
@@ -11194,7 +11647,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when
     reparse(lowerName) {
       if (lowerName === 'spec_item.txt') { this.loadItems(); lowerName = undefined; }   // every module reads items
       // a string table (character.txt.txt: a new NPC's name): every module reads names through it
-      if (lowerName && /\.txt\.txt$/.test(lowerName)) { this.strings = FRE.loadStrings(this.files); lowerName = undefined; }
+      if (lowerName && /\.txt\.txt$/.test(lowerName)) {
+        this.strings = FRE.loadStrings(this.files);
+        // item names and descriptions are put in place of their IDS keys when Spec_Item.txt is read (couple buff texts)
+        if (lowerName === 'propitem.txt.txt') this.loadItems();
+        lowerName = undefined;
+      }
       for (const m of MODULES) {
         if (!this.available[m.id].ok) continue;
         if (lowerName && ![...m.required, ...(m.deps || [])].some(n => n.toLowerCase() === lowerName)) continue;
@@ -11629,6 +12087,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when
     'guildbuff.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:891 loadGuildBuffFile' },
     // rebirth tiers: both load it (Project.cpp:928, #ifdef __REBIRTH_SYSTEM only); the game discards the numbers but reads the file
     '1rebirth.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:928 LoadRebirthProp' },
+    // couple: the WorldServer, the DatabaseServer and the game each load it (couplehelper.cpp Initialize); the game's couple window
+    // draws its level bar from its own copy (WndField.cpp:26910 GetExperienceRate)
+    'couple.inc': { server: STARTUP, client: STARTUP, cite: 'WORLDSERVER/couplehelper.cpp:44, databaseserver/couplehelper.cpp:158, Neuz/couplehelper.cpp:33 CCoupleProperty::Initialize' },
     'client/donationshoptree.inc': { server: null, client: WINDOW, cite: 'WndDonationShop.cpp:346 (409 with donation-tree.diff) LoadTreeScript' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };
@@ -17259,8 +17720,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when
   'use strict';
   const { h, fmt, modal, numInput, toast, keepFocus, liveCommit } = FRE.dom;
   const { diagTags, fieldLabel, formFooter, diagRow, pencil } = FRE.ui;
-  const EV = 'event.lua', SB = 'serverbuff.txt', GB = 'guildbuff.txt', RB = '1rebirth.inc';
-  const st = { sel: 'rates', calc: null };
+  const EV = 'event.lua', SB = 'serverbuff.txt', GB = 'guildbuff.txt', RB = '1rebirth.inc', CP = 'couple.inc', SPEC = 'spec_item.txt', PT = 'propitem.txt.txt';
+  const st = { sel: 'rates', calc: null, ctab: 'time' };
   const R = () => FRE.rates, O = () => FRE.ratesOps, Sim = () => FRE.ratesSim;
   const model = ctx => ctx.ws.models.rates;
   const can = (ctx, f) => ctx.ws.isEditable(f);
@@ -17276,9 +17737,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when
     { id: 'guild', label: 'Guild Buff', sub: ctx => model(ctx).guild ? `${model(ctx).guild.tiers.length} tiers (guild level + members online → stats)` : 'GuildBuff.txt not found' },
     { id: 'levelup', label: 'Level-up gifts', sub: ctx => { const n = model(ctx).events.events.filter(e => e.on).reduce((a, e) => a + e.gifts.length, 0); return `${n} gift${n === 1 ? '' : 's'} in running events`; } },
     { id: 'rebirth', label: 'Rebirth', sub: ctx => { const r = model(ctx).rebirth; return r ? `${r.max} tiers: bonus points, EXP ×, ${r.gifts.size} gift${r.gifts.size === 1 ? '' : 's'}` : '1Rebirth.inc not found'; } },
+    { id: 'couple', label: '💞 Couple', sub: ctx => { const c = model(ctx).couple; return c ? `levels 1-21: time, buffs, ${c.blocks.reduce((a, b) => a + b.rows.length, 0)} gifts` : 'couple.inc not found'; } },
     { id: 'calc', label: '🧮 Rate calculator', sub: () => 'What one kill gives a player' },
   ];
-  const fileOfSection = { rates: EV, server: SB, guild: GB, levelup: EV, rebirth: RB };
+  const fileOfSection = { rates: EV, server: SB, guild: GB, levelup: EV, rebirth: RB, couple: CP };
   const isGiftCode = d => /^RT_GIFT_/.test(d.code);
   // the problems a section shows: Event.lua's are split between Server rates and Level-up gifts
   const sectionDiags = (ctx, id) => {
@@ -17321,17 +17783,17 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when
 
   // an icon of Client/Icon (.dds or a picture file)
   const iconCache = new Map();
-  function iconPic(ctx, name, scale = 1) {
+  function iconPic(ctx, name, scale = 1, dir = 'Icon') {
     const box = h('span.dds-pic.rt-icon');
     if (!name || !ctx.clientFile) return box;
-    const k = name.toLowerCase();
-    if (!iconCache.has(k)) iconCache.set(k, ctx.clientFile('Icon/' + name).then(b => {
+    const k = dir + '/' + name.toLowerCase();
+    if (!iconCache.has(k)) iconCache.set(k, (dir === 'Item' && ctx.clientItemFile ? ctx.clientItemFile(name) : ctx.clientFile(dir + '/' + name)).then(b => {
       if (!b) return null;
       if (/\.dds$/i.test(name)) return { dds: FRE.dds.decode(b) };
       return { url: URL.createObjectURL(new Blob([b])) };
     }).catch(() => null));
     iconCache.get(k).then(img => {
-      if (!img) { box.appendChild(h('span.tag.warn', { title: `The game looks for this picture in Client/Icon/${name} and did not find it there: the buff bar would show no picture. (Or no Client folder was picked.)` }, '⚠ picture not found')); return; }
+      if (!img) { box.appendChild(h('span.tag.warn', { title: `The game looks for this picture in Client/${dir}/${name} and did not find it there: the buff bar would show no picture. (Or no Client folder was picked.)` }, '⚠ picture not found')); return; }
       if (img.url) { const i = h('img', { src: img.url, title: name }); i.style.height = 32 * scale + 'px'; box.appendChild(i); return; }
       const d = img.dds, c = h('canvas', { width: d.w, height: d.h, title: name });
       c.style.width = d.w * scale + 'px'; c.style.height = d.h * scale + 'px';
@@ -17341,13 +17803,13 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when
     return box;
   }
   // icon field: a searchable list of Client/Icon when the Client folder is there, else a text box
-  function iconField(ctx, { value, key, disabled, onCommit }) {
-    const wrap = h('span.rt-iconfield', iconPic(ctx, value));
+  function iconField(ctx, { value, key, disabled, onCommit, dir = 'Icon' }) {
+    const wrap = h('span.rt-iconfield', iconPic(ctx, value, 1, dir));
     const fallback = () => wrap.appendChild(textInput({ value, key, disabled, max: R().ICON_MAX, onCommit }));
     if (!ctx.clientNames || disabled) { fallback(); return wrap; }
-    ctx.clientNames('Icon').then(names => {
+    ctx.clientNames(dir).then(names => {
       if (!names) { fallback(); return; }
-      wrap.appendChild(FRE.ui.combo({ options: names.map(n => ({ v: n, label: n, find: n })), value, placeholder: 'Pick an icon (Client/Icon)', onPick: v => onCommit(v) }));
+      wrap.appendChild(FRE.ui.combo({ options: names.map(n => ({ v: n, label: n, find: n })), value, placeholder: `Pick an icon (Client/${dir})`, onPick: v => onCommit(v) }));
     });
     return wrap;
   }
@@ -17356,7 +17818,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when
     id: 'rates', label: 'Rates & Buffs', searchPlaceholder: 'Search sections', noItems: true,
     help: 'Rates & Buffs: the server rates (Event.lua), the Server Buff and the Guild Buff, and what one kill gives',
     st,
-    onLoad() { st.sel = 'rates'; st.calc = null; },
+    onLoad() { st.sel = 'rates'; st.calc = null; st.ctab = 'time'; },
 
     renderList(el, ctx) {
       const q = ctx.query.toLowerCase();
@@ -17369,7 +17831,6 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when
             b ? h('span.tag.bad', '⛔' + b) : w ? h('span.tag.warn', '⚠' + w) : null)),
           h('div.k', s.sub(ctx))));
       }
-      el.appendChild(h('div.pad.muted.small', 'Later in this task: the couple buff.'));
     },
 
     renderEditor(el, ctx) {
@@ -17379,6 +17840,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when
         else if (st.sel === 'calc') calcView(el, ctx);
         else if (st.sel === 'levelup') levelupView(el, ctx);
         else if (st.sel === 'rebirth') rebirthView(el, ctx);
+        else if (st.sel === 'couple') coupleView(el, ctx);
         else ratesView(el, ctx);
       });
     },
@@ -17388,7 +17850,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when
     locate(d) {
       if (d.module !== 'rates') return false;
       const f = String(d.file).toLowerCase();
-      st.sel = f === SB ? 'server' : f === GB ? 'guild' : f === RB ? 'rebirth' : isGiftCode(d) ? 'levelup' : 'rates';
+      st.sel = f === SB ? 'server' : f === GB ? 'guild' : f === RB ? 'rebirth' : f === CP ? 'couple' : isGiftCode(d) ? 'levelup' : 'rates';
       return true;
     },
   };
@@ -17905,8 +18367,204 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when
     refresh();
   }
 
+  // ------------------------------------------------------------- 💞 Couple (part 3: couple.inc + the couple buff items)
+  const CO = () => FRE.coupleOps, CS = () => FRE.coupleSim, CV = () => FRE.coupleChecks;
+  const SEX_TEXT = ['the male partner', 'the female partner', 'both partners'];
+  // points -> "2 days 4 h" (1 point = 61 × 16 frames × 67 ms together, loaders/couple.js)
+  function togetherText(points) {
+    const hrs = points * FRE.couple.POINT_MS / 3600000;
+    if (hrs < 1) return `${Math.round(hrs * 60)} min`;
+    if (hrs < 48) return `${Math.round(hrs * 10) / 10} h`;
+    const d = Math.floor(hrs / 24), r = Math.round(hrs - d * 24);
+    return `${d} day${d === 1 ? '' : 's'}${r ? ` ${r} h` : ''}`;
+  }
+  const kindTiersOf = (ctx, c) => FRE.couple.kindTiers(c, ctx.ws.items.items, ctx.ws.defines.defines.get('IK3_COUPLE_BUFF'));
+  const kindLabel = (ctx, c, k) => { const it = ctx.ws.items.items.get(c.kinds[k].value >>> 0); return it ? CV().nameOf(ctx.ws, it) : `Buff ${k + 1}`; };
+
+  function coupleView(el, ctx) {
+    const c = model(ctx).couple, edit_ = can(ctx, CP);
+    el.appendChild(h('div.npc-title', h('h2', '💞 Couple'), h('span.def', 'couple.inc'), edit_ ? null : h('span.tag.bad', 'read-only')));
+    if (!c) { el.appendChild(h('p.empty-state', 'couple.inc is not in Server/Resource.')); return; }
+    el.appendChild(h('p.muted.small', 'A married couple gets 1 point about every 65 seconds while BOTH partners are online (User.cpp:3997). ',
+      'Each couple level gives its buffs to both partners (only while the other one is online) and mails its gifts once. Couples stop at level 21 (compiled). ',
+      'After saving: Stop / Start Server.bat and restart the game (the couple window\'s level bar reads its own copy, Client/couple.inc).'));
+    const tabs = [['time', 'Time per level'], ['buffs', 'Buffs per level'], ['tiers', 'Buff tiers'], ['gifts', 'Gifts']];
+    el.appendChild(h('div.dr-line', tabs.map(([id, label]) => h('button' + (st.ctab === id ? '.primary' : ''), { 'data-ctab': id, on: { click: () => { st.ctab = id; ctx.renderAll(false); } } }, label))));
+    if (st.ctab === 'buffs') coupleBuffs(el, ctx, c, edit_);
+    else if (st.ctab === 'tiers') coupleTiers(el, ctx, c);
+    else if (st.ctab === 'gifts') coupleGifts(el, ctx, c, edit_);
+    else coupleTime(el, ctx, c, edit_);
+    problems(el, ctx, CP, 'couple');
+  }
+
+  // Level: the TOTAL points per level (row 22 = where level 21 ends)
+  function coupleTime(el, ctx, c, edit_) {
+    const f = ctx.ws.files.get(CP);
+    el.appendChild(h('p.small', 'Each level needs a TOTAL number of points (not what it adds). The time is how long both partners must be online together from the wedding. ',
+      'Row 22 is not a level: it only has to stay above row 21, or a couple that reaches level 21 falls back to level 1 (GetLevel, couple.cpp:342).'));
+    const tb = h('table.items.rt', h('tr', h('th', 'Level'), h('th', 'Points (total)'), h('th', 'Together (total)'), h('th', 'This level takes'), h('th', '')));
+    const rows = Math.min(c.exp.length, FRE.couple.MAX_LEVEL + 1);
+    for (let i = 0; i < rows; i++) {
+      const e = c.exp[i], level = i + 1, prev = i ? c.exp[i - 1] : null, key = keyOf('couple', `exp|${i}`);
+      const box = level === 1 ? h('span.muted', '0 (always)') : numInput({ value: e.value, min: 0, max: 2147483647, disabled: !edit_, key: `rt|cp|exp|${i}`,
+        onCommit: v => { if (v === null) return; typed(ctx, CP, `cp|exp|${i}`, () => CO().setPoints(c, level, v), `Couple ${level > 21 ? 'row 22' : `level ${level}`}: ${fmt(v)} points (was ${fmt(e.value)})`, key); } });
+      tb.appendChild(h('tr', h('td', h('b', level > FRE.couple.MAX_LEVEL ? 'row 22 (end of 21)' : `level ${level}`)), h('td', box),
+        h('td', togetherText(e.value)), h('td', prev ? `${togetherText(Math.max(0, e.value - prev.value))} (${fmt(e.value - prev.value)} points)` : '—'),
+        h('td', diagTags(spanDiags(ctx, CP, e.start, e.end)), h('span.line', `L${f.lineOf(e.start) + 1}`))));
+    }
+    el.appendChild(tb);
+    if (c.exp.length > rows) el.appendChild(h('p.muted.small', `Rows ${rows + 1}-${c.exp.length} of the file are never used (not shown).`));
+  }
+
+  // SkillLevel: per level the tier of each buff kind; a level without a row of its own uses the row above
+  function coupleBuffs(el, ctx, c, edit_) {
+    const tiers = kindTiersOf(ctx, c), ws = ctx.ws, { words } = dstOptions(ctx);
+    el.appendChild(h('p.small', 'From a level with its own row, the same buffs count for the levels below it in this table until the next row. ',
+      'Pick 0 for no buff of that kind. Changing a greyed level gives it a row of its own.'));
+    const tb = h('table.items.rt', h('tr', h('th', 'Level'), c.kinds.map((k, i) => h('th', kindLabel(ctx, c, i))), h('th', 'Both partners get'), h('th', '')));
+    for (let level = 1; level <= Math.min(FRE.couple.MAX_LEVEL, c.exp.length); level++) {
+      const cur = c.perLevel.tiers[level] || [], own = c.perLevel.own[level], ownRow = c.skillRows.find(r => r.level === level), key = keyOf('couple', `buff|${level}`);
+      const base = c.kinds.map((_, k) => cur[k] || 0);
+      const cells = c.kinds.map((_, k) => {
+        const sel = h('select', { disabled: !edit_, 'data-key': `rt|cp|tier|${level}|${k}`, on: { change: x => {
+          const next = base.slice(); next[k] = Number(x.target.value);
+          ctx.edit(CP, txt => CO().setTiers(txt, c, level, next, tiers), `Couple level ${level}: ${kindLabel(ctx, c, k)} ${next[k] ? `tier ${next[k]}` : 'none'} (was ${base[k] ? `tier ${base[k]}` : 'none'})`, key);
+        } } }, Array.from({ length: (tiers[k] ? tiers[k].length : 0) + 1 }, (_, t) => h('option', { value: t, selected: t === base[k] }, t ? `tier ${t}` : 'none')));
+        if (base[k] > (tiers[k] ? tiers[k].length : 0)) sel.appendChild(h('option', { value: base[k], selected: true }, `tier ${base[k]} ⛔`));
+        return h('td' + (own ? '' : '.muted'), sel);
+      });
+      const b = CS().buffsAt(c, ws.items.items, level);
+      tb.appendChild(h('tr', h('td', h('b', `level ${level}`), own ? null : h('span.muted.small', ' (row above)')), cells,
+        h('td.small', b.stats.length ? CO().describe(b.stats, words).replace(/ while your partner is online\.$/, '') : h('span.muted', 'nothing')),
+        h('td', ownRow ? diagTags(spanDiags(ctx, CP, ownRow.start, ownRow.end)) : null,
+          own && level > 1 && edit_ ? h('button.icon.danger', { title: 'Remove this row: the level then uses the row above', on: { click: () => ctx.edit(CP, txt => CO().removeTierRow(txt, c, level), `Couple level ${level}: removed its buff row (uses the row above)`, key) } }, '✕') : null)));
+    }
+    el.appendChild(tb);
+  }
+
+  // the buff items: stats (Spec_Item.txt), name / description (propItem.txt.txt), icon (Client/Item), like the Guild Buff tiers
+  function coupleTiers(el, ctx, c) {
+    const ws = ctx.ws, tiers = kindTiersOf(ctx, c), { opts, words } = dstOptions(ctx);
+    const editSpec = can(ctx, SPEC), editText = can(ctx, PT) && ws.files.has(PT);
+    el.appendChild(h('p.small', 'Each buff tier is an item in Spec_Item.txt (6 stat slots). Players read the name and the description on the buff bar, so keep the description in step with the stats ("✎ Write description from stats"). ',
+      'New tiers are not added here (a tier is the next item id after the first one).'));
+    tiers.forEach((list, k) => list.forEach((it, t) => {
+      const what = `${kindLabel(ctx, c, k)} tier ${t + 1}`, key = keyOf('couple', `tier|${it.define}`);
+      const stats = CV().statsOf(it), icon = String(FRE.specItem.get(it, 'szIcon') || '').replace(/"/g, '').trim();
+      const descKey = CV().keyOf(ws, it, 'szCommand'), nameKey = CV().keyOf(ws, it, 'szName');
+      const desc = CV().descOf(ws, it) || '', auto = CO().describe(stats, words);
+      const levels = []; for (let l = 1; l <= FRE.couple.MAX_LEVEL && l <= c.exp.length; l++) if (FRE.couple.buffItems(c, l).includes(it.id)) levels.push(l);
+      const card = h('div.rt-card', h('div.dr-line', h('h3', { style: 'margin:0' }, what), iconPic(ctx, icon, 1, 'Item'), h('span.def', it.define),
+        h('span.muted.small', levels.length ? `couple level ${levels[0]}${levels.length > 1 ? `-${levels[levels.length - 1]}` : ''}` : 'no couple level uses it'),
+        diagTags(rDiags(ctx).filter(d => d.code === 'CP_DESC' && d.key === `CP_DESC|${it.define}`))));
+      const tb = h('table.items.rt', h('tr', h('th', 'Stat (6 slots)'), h('th', 'Amount'), h('th', '')));
+      stats.forEach((s, j) => {
+        const slot = j + 1;
+        tb.appendChild(h('tr', h('td', editSpec ? FRE.ui.combo({ options: opts, value: s.dst, placeholder: 'Pick a stat', wordStart: true,
+          onPick: v => ctx.edit(SPEC, txt => CO().setStat(txt, it, slot, v, v ? (s.adj || 1) : 0, ws.defines.defines, d => R().dstName(ws.defines, d)),
+            v ? `${what}: stat ${slot} ${dstLabel(words, v)} (was ${dstLabel(words, s.dst)})` : `${what}: removed stat ${slot} (${dstLabel(words, s.dst)})`, key) }) : dstLabel(words, s.dst)),
+          h('td', numInput({ value: s.dst ? s.adj : null, min: -2147483647, max: 2147483647, disabled: !editSpec || !s.dst, key: `rt|cp|${it.define}|adj${slot}`,
+            onCommit: v => { if (v === null) return; typed(ctx, SPEC, `cp|${it.define}|adj${slot}`, txt => CO().setStat(txt, it, slot, s.dst, v, ws.defines.defines, d => R().dstName(ws.defines, d)), `${what}: ${dstLabel(words, s.dst)} ${v} (was ${s.adj})`, key); } }),
+            words.get(s.dst) && words.get(s.dst).rate ? ' %' : ''), h('td')));
+      });
+      card.appendChild(tb);
+      const nameMeta = CV().textLine(ws, nameKey), descMeta = CV().textLine(ws, descKey);
+      card.appendChild(h('div.dr-line', h('span', 'Name'), textInput({ value: it.name, key: `rt|cp|${it.define}|name`, disabled: !editText || !nameMeta, max: 63,
+        onCommit: v => typed(ctx, PT, `cp|${it.define}|name`, () => CO().setText(CV().textLine(ws, nameKey), v, 63), `${what}: name "${v}"`, key) }),
+        h('span', 'Icon'), iconField(ctx, { value: icon, key: `rt|cp|${it.define}|icon`, disabled: !editSpec, dir: 'Item',
+          onCommit: v => ctx.edit(SPEC, txt => CO().setIcon(txt, it, v, ws.defines.defines), `${what}: icon ${v}`, key) })));
+      card.appendChild(h('div.dr-line', h('span', 'Description'), textInput({ value: desc, key: `rt|cp|${it.define}|desc`, disabled: !editText || !descMeta, max: 255, width: '28em',
+        onCommit: v => typed(ctx, PT, `cp|${it.define}|desc`, () => CO().setText(CV().textLine(ws, descKey), v), `${what}: description`, key) }),
+        h('button', { disabled: !editText || !descMeta || !auto || auto === desc, title: auto === desc ? 'The description already says this' : `Write: ${auto}`,
+          on: { click: () => modal({ title: `Edit description: ${what}`, body: h('div', h('p', 'Now:'), h('pre.preview', desc), h('p', 'From the stats:'), h('pre.preview', auto),
+            h('p.muted.small', 'propItem.txt.txt (+ the Client copy). One undo step. Players see it after Stop / Start Server.bat and a game restart.')),
+          buttons: [{ label: 'Cancel' }, { label: 'Apply changes', cls: 'primary', onClick: () => ctx.edit(PT, () => CO().setText(CV().textLine(ws, descKey), auto), `${what}: description written from the stats`, key) }] }) } }, pencil(), ' Write description from stats')));
+      if (auto && auto !== desc) card.appendChild(h('p.small.warn-text', `⚠ The description does not match the stats: they give "${auto}".`));
+      el.appendChild(card);
+    }));
+  }
+
+  // Item: the gifts mailed on reaching a level
+  function coupleGifts(el, ctx, c, edit_) {
+    const ws = ctx.ws, f = ws.files.get(CP);
+    el.appendChild(h('p.small', 'Gifts come by mail to both partners (or only the male / female one) the moment the couple reaches the level, once. Level 1 gifts are never sent (a couple starts at level 1).'));
+    el.appendChild(h('div.dr-line', h('button.primary', { disabled: !edit_ || !c.items, on: { click: () => coupleGiftForm(ctx, null) } }, '+ Add a couple gift')));
+    const tb = h('table.items.rt', h('tr', h('th', 'Level'), h('th', 'Item'), h('th', 'Count'), h('th', 'Who'), h('th', 'Bound'), h('th', 'Time limit'), h('th', '')));
+    const blocks = c.blocks.slice().sort((a, b) => a.level - b.level);
+    for (const b of blocks) for (const r of b.rows) {
+      const it = ws.items.items.get(r.id), key = keyOf('couple', `gift|${b.level}`);
+      tb.appendChild(h('tr', h('td', h('b', `level ${b.level}`)), h('td', FRE.ui.itemCell(it ? ws.itemInfo(it) : null, r.define)), h('td', `×${fmt(r.num)}`),
+        h('td', SEX_TEXT[r.sex] || `? (${r.sex})`), h('td', r.flag === 2 ? 'bound' : r.flag ? `flag ${r.flag}` : 'no'), h('td', durText(Math.max(0, r.minutes))),
+        h('td', diagTags(spanDiags(ctx, CP, r.start, r.end)), h('span.line', `L${f.lineOf(r.start) + 1}`),
+          edit_ ? h('button.icon', { title: 'Edit this gift', on: { click: () => coupleGiftForm(ctx, r, b.level) } }, pencil()) : null,
+          edit_ ? h('button.icon.danger', { title: 'Remove this gift', on: { click: () => ctx.edit(CP, txt => CO().removeGift(txt, c, r), `Couple level ${b.level}: removed the gift ${nameOfDefine(ws, r.define)}`, key) } }, '✕') : null)));
+    }
+    el.appendChild(tb);
+  }
+
+  // + Add a couple gift / ✎ Edit couple gift
+  function coupleGiftForm(ctx, r, level0) {
+    const ws = ctx.ws, c = model(ctx).couple;
+    const s = r ? { level: level0, define: r.define, num: r.num, sex: r.sex, bound: r.flag === 2, minutes: Math.max(0, r.minutes) }
+      : { level: null, define: null, num: 1, sex: 2, bound: true, minutes: null };
+    const body = h('div.nn-form'), checks = h('div'), preview = h('div'), tip = h('div');
+    let btn = null;
+    const changes = () => {
+      const x = {};
+      if (s.define !== r.define) x.define = s.define;
+      if (s.num !== r.num) x.num = s.num;
+      if (s.sex !== r.sex) x.sex = s.sex;
+      if (s.bound !== (r.flag === 2)) x.flag = s.bound ? 2 : 0;
+      if (s.minutes !== Math.max(0, r.minutes)) x.minutes = s.minutes;
+      return x;
+    };
+    const plan = () => r ? CO().setGift(c, r, changes()) : CO().addGift(ws.files.get(CP).text, c, { level: s.level, define: s.define, num: s.num, sex: s.sex, flag: s.bound ? 2 : 0, minutes: s.minutes });
+    function refresh() {
+      checks.textContent = ''; preview.textContent = ''; tip.textContent = '';
+      const probs = [], it = itemOfDefine(ws, s.define);
+      if (it) tip.appendChild(tipBox(ws, it));
+      if (!s.level) probs.push(['BLOCK', 'Still needs: the couple level (2-21)']);
+      if (!s.define) probs.push(['BLOCK', 'Still needs: the item']);
+      else if (!it) probs.push(['BLOCK', `${s.define} is not an item in Spec_Item.txt`]);
+      if (!(s.num >= 1)) probs.push(['BLOCK', 'Still needs: the count (1 or more)']);
+      if (s.minutes === null) probs.push(['BLOCK', 'Still needs: the time limit (Permanent or 0 = it never expires)']);
+      const pm = it ? FRE.specItem.get(it, 'dwPackMax') >>> 0 : 0;
+      if (it && pm && s.num > pm) probs.push(['WARN', `One bag slot holds ${fmt(pm)}, and the mail carries all ${fmt(s.num)} as one item`]);
+      if (!r && s.level && s.define && c.blocks.some(b => b.level === s.level && b.rows.some(x => x.define === s.define))) probs.push(['WARN', `Level ${s.level} gives ${nameOfDefine(ws, s.define)} already: both rows are mailed`]);
+      if (r && !Object.keys(changes()).length) probs.push(['BLOCK', 'Nothing changed yet']);
+      for (const [sev, msg] of probs) checks.appendChild(diagRow({ severity: sev, code: '', message: msg }));
+      if (!probs.length) checks.appendChild(h('p.muted.small', 'No problems.'));
+      const ok = !probs.some(x => x[0] === 'BLOCK');
+      if (btn) btn.disabled = !ok;
+      if (!ok) { preview.appendChild(h('p.muted', r ? 'Change something first.' : 'Fill in the level, the item, the count and the time limit.')); return; }
+      try {
+        const sp = plan(), f = ws.files.get(CP);
+        const line = r ? applyPreview(f.text, sp, r) : sp[0].insert.replace(/\r/g, '').replace(/^\n+|\n+$/g, '');
+        preview.appendChild(h('pre.preview', `couple.inc (+ Client/couple.inc), Item, line ${f.lineOf(sp[0].start) + 1}:\n${r ? '' : '+'}${line}`));
+        preview.appendChild(h('p', `On reaching couple level ${s.level}, ${SEX_TEXT[s.sex]} get${s.sex === 2 ? '' : 's'} ${nameOfDefine(ws, s.define)} ×${fmt(s.num)} by mail`,
+          s.bound ? ', bound' : '', `, ${durText(s.minutes)}. Once per couple. Reached after ${togetherText(c.exp[s.level - 1] ? c.exp[s.level - 1].value : 0)} online together.`));
+      } catch (err) { preview.appendChild(h('p.bad', err.message)); if (btn) btn.disabled = true; }
+    }
+    const row = (label, req, ...x) => h('div.nn-row', fieldLabel(label, req), ...x);
+    body.appendChild(row('Couple level', true, r ? h('b', `level ${s.level}`) : numInput({ value: s.level, min: 2, max: 21, key: 'rt|cpg|lv', live: true, onCommit: v => { s.level = v; refresh(); } }),
+      r ? null : h('span.muted.small', '2-21')));
+    body.appendChild(row('Item', true, h('div', { style: 'flex:1' }, FRE.ui.combo({ options: itemOptsOf(ws), value: s.define, placeholder: 'Type an item name…', onPick: v => { s.define = v; refresh(); } }))));
+    body.appendChild(tip);
+    body.appendChild(row('Count (how many they get)', true, numInput({ value: s.num, min: 1, max: CO().MAX_NUM, key: 'rt|cpg|n', live: true, onCommit: v => { s.num = v; refresh(); } })));
+    body.appendChild(row('Who gets it', true, h('select', { 'data-key': 'rt|cpg|sex', on: { change: x => { s.sex = Number(x.target.value); refresh(); } } },
+      [2, 0, 1].map(v => h('option', { value: v, selected: v === s.sex }, SEX_TEXT[v])))));
+    body.appendChild(row('Bound', false, h('label', h('input', { type: 'checkbox', checked: s.bound, on: { change: x => { s.bound = x.target.checked; refresh(); } } }), ' the item cannot be traded')));
+    body.appendChild(row('Time limit', true, FRE.dom.durationInput({ minutes: s.minutes, key: 'rt|cpg|m', permanent: true, max: CO().MAX_MINUTES, onCommit: v => { s.minutes = v; refresh(); } })));
+    formFooter({ checks, action: r ? 'Apply changes' : 'Add', previewTitle: 'What will be written / what players get', preview }).forEach(x => body.appendChild(x));
+    const label = () => r ? `Couple level ${s.level} gift ${nameOfDefine(ws, r.define)}: changed` : `Couple gifts: added level ${s.level} ${nameOfDefine(ws, s.define)} ×${s.num}`;
+    const m = modal({ title: r ? `Edit couple gift: Level ${s.level}` : 'Add a couple gift', body, wide: true, buttons: [{ label: 'Cancel' },
+      { label: r ? 'Apply changes' : 'Add', cls: 'primary', id: 'rt-cpg-btn', onClick: () => ctx.edit(CP, () => plan(), label(), keyOf('couple', `gift|${s.level}`)) }] });
+    btn = m.el.querySelector('#rt-cpg-btn');
+    refresh();
+  }
+
   FRE.ui.modules.push(mod);
-  FRE.ui.rates = { tierForm, giftForm, rebGiftForm };
+  FRE.ui.rates = { tierForm, giftForm, rebGiftForm, coupleGiftForm };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/app.js ----

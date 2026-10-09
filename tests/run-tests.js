@@ -3049,7 +3049,7 @@ section('rates & buffs: Event.lua rates, Server / Guild Buff, EXP per kill, edit
   };
   const ws = fresh(), m = ws.models.rates, R = FRE.rates;
   eq(J(m.events.active), J({ exp: 30, item: 10, piece: 1, gold: 10, weather: 1.5 }), 'Event.lua now: EXP ×30, gate ×10, items ×1, Penya ×10, weather ×1.5');
-  eq(J(ws.diags.filter(d => d.module === 'rates').map(d => d.code)), J(['RT_GIFT_NEVER']), 'the real files: no problems but the level 121 gift (never given, as Item Sources & Uses says)');
+  eq(J(ws.diags.filter(d => d.module === 'rates' && d.file !== 'couple.inc').map(d => d.code)), J(['RT_GIFT_NEVER']), 'the real files: no problems but the level 121 gift (never given, as Item Sources & Uses says)');
   eq(FRE.ratesOps.describe(m.guild.tiers[4].bonus.map(b => ({ dst: b.dst.value, adj: b.adj.value })), FRE.itemTooltip.dstWords(ws)), m.guild.tiers[4].desc.text,
     'Write description from stats gives Guild Buff Lv.5\'s own text (ca02d0cb)');
   if (py) {
@@ -3224,6 +3224,90 @@ section('rates & buffs: Event.lua rates, Server / Guild Buff, EXP per kill, edit
   throws(() => FRE.ratesOps.setTime('', m.events.events[0].times[0], 'end', '2001-01-01 00:00'), 'an end before the start is refused');
   throws(() => FRE.ratesOps.setString(m.server.tiers[0].name, 'a"b', 'name'), 'a " in a name is refused');
   for (const c of ['RT_LUA_ERROR', 'RT_GATE_NO_EFFECT', 'RT_NO_CLOSE', 'RT_FIELDS', 'RT_GB_DST_NAME', 'RT_GB_DST_UNKNOWN', 'RT_TIER_ORDER', 'RT_TEXT_LONG']) ok(FRE.diagHelp[c], `help text for ${c}`);
+}
+
+section('couple (I part 3): couple.inc levels, buffs, gifts, edits (JS and Python copies agree)');
+{
+  const J = JSON.stringify;
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} couple ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py couple) gave no readable result', e.message); }
+  const fresh = () => { const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e)); const w = new FRE.Workspace(fs, { only: 'rates' }); w.now = () => new Date(2026, 9, 8, 12, 0); return w.load(); };
+  const ws = fresh(), D = ws.defines.defines, items = ws.items.items;
+  const bytesOf = t => Uint8Array.from(t, ch => ch.charCodeAt(0));
+  const loadText = t => FRE.couple.load(new FRE.SourceFile('couple.inc', bytesOf(t)), D);
+  if (py) {
+    for (const f of py.facts) {
+      const c = loadText(py.files[f.name]);
+      eq(J(c.exp.map(e => e.value)), J(f.exp), `${f.name}: the Level rows`);
+      eq(J(c.kinds.map(k => k.value >>> 0)), J(f.kinds), `${f.name}: SkillKind`);
+      eq(J(c.blocks.map(b => [b.level, b.rows.map(r => [r.id, r.sex, r.flag, r.minutes, r.num])])), J(f.blocks), `${f.name}: the gift blocks`);
+      eq(J(Array.from({ length: Math.min(21, c.exp.length) }, (_, i) => FRE.couple.buffItems(c, i + 1))), J(f.skills.slice(0, Math.min(21, c.exp.length))), `${f.name}: buff items per level (rows carried forward)`);
+      const sexes = [[0, 1], [1, 0], [0, 0], [1, 1]];
+      sexes.forEach((sx, i) => {
+        const r = FRE.coupleSim.run(c, sx);
+        eq(J({ levels: r.levels.map(x => [x.level, x.points]), posts: r.posts.map(p => [p.level, p.to, p.id, p.num, p.flag, p.minutes]), end: [r.end.points, r.end.level] }), J(f.runs[i]), `${f.name}: a couple ${J(sx)} from the wedding`);
+      });
+      eq(J(Array.from({ length: 21 }, (_, i) => { const b = FRE.coupleSim.buffsAt(c, items, i + 1); return [b.items, b.stats.map(s => [s.dst, s.adj]).sort((a, z) => a[0] - z[0])]; })), J(f.buffs), `${f.name}: the buffs and their stats at levels 1-21`);
+      eq(J(f.restore.map(([p]) => [p, FRE.coupleSim.restore(c, p)])), J(f.restore), `${f.name}: the level after a server restart`);
+    }
+    for (const e of py.edits) {
+      let t = py.files[e.base];
+      for (const op of e.ops) {
+        const sf = new FRE.SourceFile('couple.inc', bytesOf(t)), c = FRE.couple.load(sf, D);
+        const blk = lv => c.blocks.find(b => b.level === lv);
+        const map = { item: 'define', min: 'minutes' };
+        let sp;
+        if (op[0] === 'pts') sp = FRE.coupleOps.setPoints(c, op[1], op[2]);
+        else if (op[0] === 'tiers') sp = FRE.coupleOps.setTiers(sf.text, c, op[1], op[2], null);
+        else if (op[0] === 'rmtiers') sp = FRE.coupleOps.removeTierRow(sf.text, c, op[1]);
+        else if (op[0] === 'addgift') { const g = op[1]; sp = FRE.coupleOps.addGift(sf.text, c, { level: g.level, define: g.item, sex: g.sex, flag: g.flag, minutes: g.minutes, num: g.num }); }
+        else if (op[0] === 'gift') { const v = {}; for (const [k, x] of Object.entries(op[3])) v[map[k] || k] = x; sp = FRE.coupleOps.setGift(c, blk(op[1]).rows[op[2]], v); }
+        else if (op[0] === 'rmgift') sp = FRE.coupleOps.removeGift(sf.text, c, blk(op[1]).rows[op[2]]);
+        sf.applySplices(sp, 'x');
+        t = sf.text;
+      }
+      eq(t, e.text, `edit script on ${e.base}: ${J(e.ops).slice(0, 90)}: byte-identical file`);
+    }
+  }
+  // the real file: no problem but the unused rows and the 8 wrong descriptions
+  const codes = ws.diags.filter(d => d.file === 'couple.inc').map(d => d.code);
+  eq(J([...new Set(codes)].sort()), J(['CP_DESC', 'CP_ROWS_UNUSED']), 'the real couple.inc: rows 23-50 unused (INFO) and the buff descriptions do not match the stats (62fb3b3e)');
+  eq(codes.filter(x => x === 'CP_DESC').length, 8, 'all 8 buff tiers say something else than their stats');
+  const real = ws.models.rates.couple;
+  eq(FRE.coupleSim.ladder(real, items)[20].points, 129600, 'level 21 after 129,600 points');
+  eq(Math.round(FRE.couple.POINT_MS * 129600 / 3600000), 2354, '… about 2,354 hours online together (1 point = 61 × 16 × 67 ms)');
+  // checks on made-up files
+  const cd = t => { const X = fresh(); const f = X.files.get('couple.inc'); f.applySplices([{ start: 0, end: f.text.length, insert: t }], 'b'); X.reparse('couple.inc'); return X.diags.filter(d => d.file === 'couple.inc').map(d => d.code); };
+  if (py) {
+    ok(cd(py.files.short).includes('CP_EXP_ROWS'), '3 Level rows: CP_EXP_ROWS');
+    ok(cd(py.files.flat22).includes('CP_EXP_ORDER'), 'row 22 not above row 21: CP_EXP_ORDER (a level 21 couple falls back to level 1)');
+    const m = cd(py.files.messy);
+    for (const c of ['CP_EXP_ORDER', 'CP_GIFT_LEVEL', 'CP_GIFT_SEX']) ok(m.includes(c), `messy file: ${c}`);
+    ok(cd(py.files.flat22).includes('CP_SKILL_DUP') && cd(py.files.flat22).includes('CP_TIER_BAD'), 'two rows for level 5 and tier 9 of a 4-tier buff: CP_SKILL_DUP, CP_TIER_BAD');
+  }
+  // Spec_Item / propItem.txt.txt edits through the workspace
+  const W = fresh(), c = W.models.rates.couple, pw = W.items.items.get(c.kinds[0].value >>> 0);
+  W.apply('spec_item.txt', FRE.coupleOps.setStat(W.files.get('spec_item.txt').text, pw, 2, D.get('DST_ATKPOWER_RATE'), 4, D, v => FRE.rates.dstName(W.defines, v)), 'x');
+  const pw2 = W.items.items.get(c.kinds[0].value >>> 0);
+  eq(J(FRE.coupleChecks.statsOf(pw2).filter(s => s.dst)), J([{ dst: D.get('DST_ATKPOWER_RATE'), adj: 4 }]), 'Power of Love tier 1: Attack +3% -> +4% (Spec_Item read back)');
+  ok(/\tDST_ATKPOWER_RATE\t/.test(W.files.get('spec_item.txt').text.slice(pw2.start, pw2.end)), '… written as the stat name (the 62fb3b3e style)');
+  W.apply('spec_item.txt', FRE.coupleOps.setStat(W.files.get('spec_item.txt').text, pw2, 2, 0, 0, D, v => FRE.rates.dstName(W.defines, v)), 'x');
+  eq(FRE.coupleChecks.statsOf(W.items.items.get(c.kinds[0].value >>> 0)).filter(s => s.dst).length, 0, 'a removed stat becomes "=" (no stat)');
+  W.undo(); W.undo();
+  const words = FRE.itemTooltip.dstWords(W);
+  const auto = FRE.coupleOps.describe(FRE.coupleChecks.statsOf(pw), words);
+  eq(auto, 'Attack +3% while your partner is online.', 'the description from the stats');
+  const key = FRE.coupleChecks.keyOf(W, pw, 'szCommand');
+  W.apply('propitem.txt.txt', FRE.coupleOps.setText(FRE.coupleChecks.textLine(W, key), auto), 'x');
+  eq(FRE.coupleChecks.descOf(W, W.items.items.get(pw.id)), auto, '… written into propItem.txt.txt and read back by Spec_Item');
+  eq(W.diags.filter(d => d.code === 'CP_DESC').length, 7, '… so 7 tiers still differ');
+  ok(W.clientFileNames().includes('couple.inc') && W.clientFileNames().includes('propItem.txt.txt'), 'couple.inc and propItem.txt.txt go to Client/ too (couple.inc created when missing)');
+  throws(() => FRE.coupleOps.setPoints(c, 1, 5), 'level 1 stays at 0 points');
+  throws(() => FRE.coupleOps.addGift(W.files.get('couple.inc').text, c, { level: 1, define: 'II_CHP_RED', sex: 2, flag: 2, minutes: 0, num: 1 }), 'a level 1 gift is refused (never mailed)');
+  throws(() => FRE.coupleOps.setTiers(W.files.get('couple.inc').text, c, 6, [9, 0, 0], FRE.couple.kindTiers(c, items, D.get('IK3_COUPLE_BUFF'))), 'tier 9 of Power of Love (4 tiers) is refused');
+  eq(FRE.afterSave.readerOf('couple.inc').cite.includes('couplehelper.cpp'), true, 'After saving knows couple.inc (WorldServer, DatabaseServer and the game)');
+  for (const k of ['CP_EXP_FIRST', 'CP_EXP_ROWS', 'CP_EXP_ORDER', 'CP_ROWS_UNUSED', 'CP_KIND_ITEM', 'CP_SKILL_LEVEL', 'CP_SKILL_DUP', 'CP_TIER_BAD', 'CP_GIFT_LEVEL', 'CP_GIFT_ITEM', 'CP_GIFT_SEX', 'CP_GIFT_COUNT', 'CP_GIFT_STACK', 'CP_DESC']) ok(FRE.diagHelp[k], `help text for ${k}`);
 }
 
 print(`\n${pass} passed, ${fail} failed`);

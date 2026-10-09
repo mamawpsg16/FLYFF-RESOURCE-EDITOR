@@ -307,6 +307,7 @@
     }
     giftChecks(model, opts, out);
     rebirthChecks(model, opts, out);
+    if (FRE.coupleChecks) FRE.coupleChecks(model, opts, out);
     return out;
   }
 
@@ -375,6 +376,7 @@
       guild: loadGuildBuff(f('guildbuff.txt')),
       rebirth: FRE.gifts && f('1rebirth.inc') ? FRE.gifts.rebirth(f('1rebirth.inc'), ws.defines.defines, ws.items.items) : null,
       exp: loadExpLimits(f('exptable.inc')),
+      couple: FRE.couple && f('couple.inc') ? FRE.couple.load(f('couple.inc'), ws.defines.defines) : null,
     };
   }
 

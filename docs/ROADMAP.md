@@ -1,6 +1,21 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-09 (I. Rates & Buffs part 2 + buff stat slots committed; next: part 3; handoff on top)._
+_Last updated 2026-10-09 (I part 3, Couple: user-tested and committed; next: K, plan first)._
+
+> **Handoff (2026-10-09) — I. Rates & Buffs part 3 (💞 Couple): user-tested in Brave (all 21 steps) and committed + pushed. START HERE next session: K. Upgrade rates, plan first.** Plan: `/home/kevin/.claude/plans/cheeky-weaving-lake.md`. User decisions: edit all four parts; create a loose `Client/couple.inc`; existing buff tiers only; the buff tiers edited like the Guild / Server Buff (stats, name, icon, description).
+> - **New section 💞 Couple** (4 tabs): Time per level (TOTAL points with the time online together, row 22 = end of level 21), Buffs per level (tier per kind, carried rows greyed, ✕ removes a level's own row), Buff tiers (8 cards: 6 stat slots in Spec_Item, name + description in propItem.txt.txt, icon from Client/Item, ✎ Write description from stats), Gifts (+ Add a couple gift / ✎ Edit couple gift / ✕: item, count, male / female / both, bound, time limit).
+> - **Found (INVESTIGATION §1.23):** 1 point ≈ 65.4 s both online; row 22 must stay above row 21 or a level 21 couple falls back to level 1 (`CP_EXP_ORDER`); the buffs follow a level-up within a second; all 8 descriptions are wrong (`CP_DESC`).
+> - Code: `loaders/couple.js`, `loaders/couple-sim.js`, `edit/couple-ops.js`, `validate/couple.js`, `tools/couple-sim.js`; `rates` module now `editsSpec` + couple.inc / propItem.txt.txt (Server + Client); `Workspace.reparse` re-reads Spec_Item after a propItem.txt.txt edit; After saving knows couple.inc.
+> - Python copy `oracle_sim.py couple`: every case agrees; 13 of 16 planted bugs caught (3 cannot change a result). Core 1384 passed; UI harness stage `couple`.
+>
+> **User's test:** `python3 build.py`, reload, pick `test-data` (+ its Client folder), Rates & Buffs → 💞 Couple.
+> 1. Time per level: level 2 2,880 → 1,440: "26.2 h" shows. Row 22 → 129,600 (same as row 21): ⛔ CP_EXP_ORDER; Undo.
+> 2. Buffs per level: level 8 Power of Love → tier 2: level 8 gets its own row; level 9 says Attack +5%.
+> 3. Gifts: + Add a couple gift: level 3, Red Chip ×5, the female partner, Permanent → Add; ✎ it, ✕ it, Undo.
+> 4. Buff tiers: Power of Love tier 1, Attack 3 → 4; ✎ Write description from stats → "Attack +4% while your partner is online."; the icon picture shows (Client/Item).
+> 5. Save: couple.inc (+ creates Client/couple.inc), Spec_Item.txt ×2, propItem.txt.txt ×2; After saving = Stop / Start Server.bat.
+> 6. By hand: `gjs -m tools/couple-sim.js first=male second=female points=129600`.
+> Then commit + push; next: K. Upgrade rates, plan first.
 
 > **Handoff (2026-10-09) — I. Rates & Buffs part 2 (Level-up gifts, Rebirth) + buff stat slots: user-tested in Brave and committed + pushed. START HERE next session: I part 3 (couple buff), plan first.** Also after the test: `RT_STAT_DUP` (same stat twice in a tier), calculator text rounded to 4 decimals, per-tier icons in V19 (Server Buff `c345114c`, Guild Buff 1-5 `c24a2340`, not yet tested in game). Not warned yet: a stat with amount 0. Plan: `/home/kevin/.claude/plans/ead-the-claude-md-files-witty-magpie.md`. User decisions: rebirth tiers 0-Max only (Max not edited), gifts of running events only, new gifts for everyone ("all").
 > - **Level-up gifts** (Event.lua SetLevelUpGift, `ratesOps.addGift / setGift / removeGift / setGiftAll`): ladder per running event (item, count, bound, time limit, who, "pays one character" from gifts-sim), + Add a gift (level order), ✎ Edit level-up gift, ✕, "Give to everyone"; events not running greyed. Checks `RT_GIFT_ITEM` (BLOCK), `RT_GIFT_COUNT`, `RT_GIFT_STACK`, `RT_GIFT_DUP`, `RT_GIFT_NEVER` (the real level 121 gift).

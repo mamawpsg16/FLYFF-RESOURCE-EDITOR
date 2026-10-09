@@ -7,8 +7,8 @@
   'use strict';
   const { h, fmt, modal, numInput, toast, keepFocus, liveCommit } = FRE.dom;
   const { diagTags, fieldLabel, formFooter, diagRow, pencil } = FRE.ui;
-  const EV = 'event.lua', SB = 'serverbuff.txt', GB = 'guildbuff.txt', RB = '1rebirth.inc';
-  const st = { sel: 'rates', calc: null };
+  const EV = 'event.lua', SB = 'serverbuff.txt', GB = 'guildbuff.txt', RB = '1rebirth.inc', CP = 'couple.inc', SPEC = 'spec_item.txt', PT = 'propitem.txt.txt';
+  const st = { sel: 'rates', calc: null, ctab: 'time' };
   const R = () => FRE.rates, O = () => FRE.ratesOps, Sim = () => FRE.ratesSim;
   const model = ctx => ctx.ws.models.rates;
   const can = (ctx, f) => ctx.ws.isEditable(f);
@@ -24,9 +24,10 @@
     { id: 'guild', label: 'Guild Buff', sub: ctx => model(ctx).guild ? `${model(ctx).guild.tiers.length} tiers (guild level + members online → stats)` : 'GuildBuff.txt not found' },
     { id: 'levelup', label: 'Level-up gifts', sub: ctx => { const n = model(ctx).events.events.filter(e => e.on).reduce((a, e) => a + e.gifts.length, 0); return `${n} gift${n === 1 ? '' : 's'} in running events`; } },
     { id: 'rebirth', label: 'Rebirth', sub: ctx => { const r = model(ctx).rebirth; return r ? `${r.max} tiers: bonus points, EXP ×, ${r.gifts.size} gift${r.gifts.size === 1 ? '' : 's'}` : '1Rebirth.inc not found'; } },
+    { id: 'couple', label: '💞 Couple', sub: ctx => { const c = model(ctx).couple; return c ? `levels 1-21: time, buffs, ${c.blocks.reduce((a, b) => a + b.rows.length, 0)} gifts` : 'couple.inc not found'; } },
     { id: 'calc', label: '🧮 Rate calculator', sub: () => 'What one kill gives a player' },
   ];
-  const fileOfSection = { rates: EV, server: SB, guild: GB, levelup: EV, rebirth: RB };
+  const fileOfSection = { rates: EV, server: SB, guild: GB, levelup: EV, rebirth: RB, couple: CP };
   const isGiftCode = d => /^RT_GIFT_/.test(d.code);
   // the problems a section shows: Event.lua's are split between Server rates and Level-up gifts
   const sectionDiags = (ctx, id) => {
@@ -69,17 +70,17 @@
 
   // an icon of Client/Icon (.dds or a picture file)
   const iconCache = new Map();
-  function iconPic(ctx, name, scale = 1) {
+  function iconPic(ctx, name, scale = 1, dir = 'Icon') {
     const box = h('span.dds-pic.rt-icon');
     if (!name || !ctx.clientFile) return box;
-    const k = name.toLowerCase();
-    if (!iconCache.has(k)) iconCache.set(k, ctx.clientFile('Icon/' + name).then(b => {
+    const k = dir + '/' + name.toLowerCase();
+    if (!iconCache.has(k)) iconCache.set(k, (dir === 'Item' && ctx.clientItemFile ? ctx.clientItemFile(name) : ctx.clientFile(dir + '/' + name)).then(b => {
       if (!b) return null;
       if (/\.dds$/i.test(name)) return { dds: FRE.dds.decode(b) };
       return { url: URL.createObjectURL(new Blob([b])) };
     }).catch(() => null));
     iconCache.get(k).then(img => {
-      if (!img) { box.appendChild(h('span.tag.warn', { title: `The game looks for this picture in Client/Icon/${name} and did not find it there: the buff bar would show no picture. (Or no Client folder was picked.)` }, '⚠ picture not found')); return; }
+      if (!img) { box.appendChild(h('span.tag.warn', { title: `The game looks for this picture in Client/${dir}/${name} and did not find it there: the buff bar would show no picture. (Or no Client folder was picked.)` }, '⚠ picture not found')); return; }
       if (img.url) { const i = h('img', { src: img.url, title: name }); i.style.height = 32 * scale + 'px'; box.appendChild(i); return; }
       const d = img.dds, c = h('canvas', { width: d.w, height: d.h, title: name });
       c.style.width = d.w * scale + 'px'; c.style.height = d.h * scale + 'px';
@@ -89,13 +90,13 @@
     return box;
   }
   // icon field: a searchable list of Client/Icon when the Client folder is there, else a text box
-  function iconField(ctx, { value, key, disabled, onCommit }) {
-    const wrap = h('span.rt-iconfield', iconPic(ctx, value));
+  function iconField(ctx, { value, key, disabled, onCommit, dir = 'Icon' }) {
+    const wrap = h('span.rt-iconfield', iconPic(ctx, value, 1, dir));
     const fallback = () => wrap.appendChild(textInput({ value, key, disabled, max: R().ICON_MAX, onCommit }));
     if (!ctx.clientNames || disabled) { fallback(); return wrap; }
-    ctx.clientNames('Icon').then(names => {
+    ctx.clientNames(dir).then(names => {
       if (!names) { fallback(); return; }
-      wrap.appendChild(FRE.ui.combo({ options: names.map(n => ({ v: n, label: n, find: n })), value, placeholder: 'Pick an icon (Client/Icon)', onPick: v => onCommit(v) }));
+      wrap.appendChild(FRE.ui.combo({ options: names.map(n => ({ v: n, label: n, find: n })), value, placeholder: `Pick an icon (Client/${dir})`, onPick: v => onCommit(v) }));
     });
     return wrap;
   }
@@ -104,7 +105,7 @@
     id: 'rates', label: 'Rates & Buffs', searchPlaceholder: 'Search sections', noItems: true,
     help: 'Rates & Buffs: the server rates (Event.lua), the Server Buff and the Guild Buff, and what one kill gives',
     st,
-    onLoad() { st.sel = 'rates'; st.calc = null; },
+    onLoad() { st.sel = 'rates'; st.calc = null; st.ctab = 'time'; },
 
     renderList(el, ctx) {
       const q = ctx.query.toLowerCase();
@@ -117,7 +118,6 @@
             b ? h('span.tag.bad', '⛔' + b) : w ? h('span.tag.warn', '⚠' + w) : null)),
           h('div.k', s.sub(ctx))));
       }
-      el.appendChild(h('div.pad.muted.small', 'Later in this task: the couple buff.'));
     },
 
     renderEditor(el, ctx) {
@@ -127,6 +127,7 @@
         else if (st.sel === 'calc') calcView(el, ctx);
         else if (st.sel === 'levelup') levelupView(el, ctx);
         else if (st.sel === 'rebirth') rebirthView(el, ctx);
+        else if (st.sel === 'couple') coupleView(el, ctx);
         else ratesView(el, ctx);
       });
     },
@@ -136,7 +137,7 @@
     locate(d) {
       if (d.module !== 'rates') return false;
       const f = String(d.file).toLowerCase();
-      st.sel = f === SB ? 'server' : f === GB ? 'guild' : f === RB ? 'rebirth' : isGiftCode(d) ? 'levelup' : 'rates';
+      st.sel = f === SB ? 'server' : f === GB ? 'guild' : f === RB ? 'rebirth' : f === CP ? 'couple' : isGiftCode(d) ? 'levelup' : 'rates';
       return true;
     },
   };
@@ -653,6 +654,202 @@
     refresh();
   }
 
+  // ------------------------------------------------------------- 💞 Couple (part 3: couple.inc + the couple buff items)
+  const CO = () => FRE.coupleOps, CS = () => FRE.coupleSim, CV = () => FRE.coupleChecks;
+  const SEX_TEXT = ['the male partner', 'the female partner', 'both partners'];
+  // points -> "2 days 4 h" (1 point = 61 × 16 frames × 67 ms together, loaders/couple.js)
+  function togetherText(points) {
+    const hrs = points * FRE.couple.POINT_MS / 3600000;
+    if (hrs < 1) return `${Math.round(hrs * 60)} min`;
+    if (hrs < 48) return `${Math.round(hrs * 10) / 10} h`;
+    const d = Math.floor(hrs / 24), r = Math.round(hrs - d * 24);
+    return `${d} day${d === 1 ? '' : 's'}${r ? ` ${r} h` : ''}`;
+  }
+  const kindTiersOf = (ctx, c) => FRE.couple.kindTiers(c, ctx.ws.items.items, ctx.ws.defines.defines.get('IK3_COUPLE_BUFF'));
+  const kindLabel = (ctx, c, k) => { const it = ctx.ws.items.items.get(c.kinds[k].value >>> 0); return it ? CV().nameOf(ctx.ws, it) : `Buff ${k + 1}`; };
+
+  function coupleView(el, ctx) {
+    const c = model(ctx).couple, edit_ = can(ctx, CP);
+    el.appendChild(h('div.npc-title', h('h2', '💞 Couple'), h('span.def', 'couple.inc'), edit_ ? null : h('span.tag.bad', 'read-only')));
+    if (!c) { el.appendChild(h('p.empty-state', 'couple.inc is not in Server/Resource.')); return; }
+    el.appendChild(h('p.muted.small', 'A married couple gets 1 point about every 65 seconds while BOTH partners are online (User.cpp:3997). ',
+      'Each couple level gives its buffs to both partners (only while the other one is online) and mails its gifts once. Couples stop at level 21 (compiled). ',
+      'After saving: Stop / Start Server.bat and restart the game (the couple window\'s level bar reads its own copy, Client/couple.inc).'));
+    const tabs = [['time', 'Time per level'], ['buffs', 'Buffs per level'], ['tiers', 'Buff tiers'], ['gifts', 'Gifts']];
+    el.appendChild(h('div.dr-line', tabs.map(([id, label]) => h('button' + (st.ctab === id ? '.primary' : ''), { 'data-ctab': id, on: { click: () => { st.ctab = id; ctx.renderAll(false); } } }, label))));
+    if (st.ctab === 'buffs') coupleBuffs(el, ctx, c, edit_);
+    else if (st.ctab === 'tiers') coupleTiers(el, ctx, c);
+    else if (st.ctab === 'gifts') coupleGifts(el, ctx, c, edit_);
+    else coupleTime(el, ctx, c, edit_);
+    problems(el, ctx, CP, 'couple');
+  }
+
+  // Level: the TOTAL points per level (row 22 = where level 21 ends)
+  function coupleTime(el, ctx, c, edit_) {
+    const f = ctx.ws.files.get(CP);
+    el.appendChild(h('p.small', 'Each level needs a TOTAL number of points (not what it adds). The time is how long both partners must be online together from the wedding. ',
+      'Row 22 is not a level: it only has to stay above row 21, or a couple that reaches level 21 falls back to level 1 (GetLevel, couple.cpp:342).'));
+    const tb = h('table.items.rt', h('tr', h('th', 'Level'), h('th', 'Points (total)'), h('th', 'Together (total)'), h('th', 'This level takes'), h('th', '')));
+    const rows = Math.min(c.exp.length, FRE.couple.MAX_LEVEL + 1);
+    for (let i = 0; i < rows; i++) {
+      const e = c.exp[i], level = i + 1, prev = i ? c.exp[i - 1] : null, key = keyOf('couple', `exp|${i}`);
+      const box = level === 1 ? h('span.muted', '0 (always)') : numInput({ value: e.value, min: 0, max: 2147483647, disabled: !edit_, key: `rt|cp|exp|${i}`,
+        onCommit: v => { if (v === null) return; typed(ctx, CP, `cp|exp|${i}`, () => CO().setPoints(c, level, v), `Couple ${level > 21 ? 'row 22' : `level ${level}`}: ${fmt(v)} points (was ${fmt(e.value)})`, key); } });
+      tb.appendChild(h('tr', h('td', h('b', level > FRE.couple.MAX_LEVEL ? 'row 22 (end of 21)' : `level ${level}`)), h('td', box),
+        h('td', togetherText(e.value)), h('td', prev ? `${togetherText(Math.max(0, e.value - prev.value))} (${fmt(e.value - prev.value)} points)` : '—'),
+        h('td', diagTags(spanDiags(ctx, CP, e.start, e.end)), h('span.line', `L${f.lineOf(e.start) + 1}`))));
+    }
+    el.appendChild(tb);
+    if (c.exp.length > rows) el.appendChild(h('p.muted.small', `Rows ${rows + 1}-${c.exp.length} of the file are never used (not shown).`));
+  }
+
+  // SkillLevel: per level the tier of each buff kind; a level without a row of its own uses the row above
+  function coupleBuffs(el, ctx, c, edit_) {
+    const tiers = kindTiersOf(ctx, c), ws = ctx.ws, { words } = dstOptions(ctx);
+    el.appendChild(h('p.small', 'From a level with its own row, the same buffs count for the levels below it in this table until the next row. ',
+      'Pick 0 for no buff of that kind. Changing a greyed level gives it a row of its own.'));
+    const tb = h('table.items.rt', h('tr', h('th', 'Level'), c.kinds.map((k, i) => h('th', kindLabel(ctx, c, i))), h('th', 'Both partners get'), h('th', '')));
+    for (let level = 1; level <= Math.min(FRE.couple.MAX_LEVEL, c.exp.length); level++) {
+      const cur = c.perLevel.tiers[level] || [], own = c.perLevel.own[level], ownRow = c.skillRows.find(r => r.level === level), key = keyOf('couple', `buff|${level}`);
+      const base = c.kinds.map((_, k) => cur[k] || 0);
+      const cells = c.kinds.map((_, k) => {
+        const sel = h('select', { disabled: !edit_, 'data-key': `rt|cp|tier|${level}|${k}`, on: { change: x => {
+          const next = base.slice(); next[k] = Number(x.target.value);
+          ctx.edit(CP, txt => CO().setTiers(txt, c, level, next, tiers), `Couple level ${level}: ${kindLabel(ctx, c, k)} ${next[k] ? `tier ${next[k]}` : 'none'} (was ${base[k] ? `tier ${base[k]}` : 'none'})`, key);
+        } } }, Array.from({ length: (tiers[k] ? tiers[k].length : 0) + 1 }, (_, t) => h('option', { value: t, selected: t === base[k] }, t ? `tier ${t}` : 'none')));
+        if (base[k] > (tiers[k] ? tiers[k].length : 0)) sel.appendChild(h('option', { value: base[k], selected: true }, `tier ${base[k]} ⛔`));
+        return h('td' + (own ? '' : '.muted'), sel);
+      });
+      const b = CS().buffsAt(c, ws.items.items, level);
+      tb.appendChild(h('tr', h('td', h('b', `level ${level}`), own ? null : h('span.muted.small', ' (row above)')), cells,
+        h('td.small', b.stats.length ? CO().describe(b.stats, words).replace(/ while your partner is online\.$/, '') : h('span.muted', 'nothing')),
+        h('td', ownRow ? diagTags(spanDiags(ctx, CP, ownRow.start, ownRow.end)) : null,
+          own && level > 1 && edit_ ? h('button.icon.danger', { title: 'Remove this row: the level then uses the row above', on: { click: () => ctx.edit(CP, txt => CO().removeTierRow(txt, c, level), `Couple level ${level}: removed its buff row (uses the row above)`, key) } }, '✕') : null)));
+    }
+    el.appendChild(tb);
+  }
+
+  // the buff items: stats (Spec_Item.txt), name / description (propItem.txt.txt), icon (Client/Item), like the Guild Buff tiers
+  function coupleTiers(el, ctx, c) {
+    const ws = ctx.ws, tiers = kindTiersOf(ctx, c), { opts, words } = dstOptions(ctx);
+    const editSpec = can(ctx, SPEC), editText = can(ctx, PT) && ws.files.has(PT);
+    el.appendChild(h('p.small', 'Each buff tier is an item in Spec_Item.txt (6 stat slots). Players read the name and the description on the buff bar, so keep the description in step with the stats ("✎ Write description from stats"). ',
+      'New tiers are not added here (a tier is the next item id after the first one).'));
+    tiers.forEach((list, k) => list.forEach((it, t) => {
+      const what = `${kindLabel(ctx, c, k)} tier ${t + 1}`, key = keyOf('couple', `tier|${it.define}`);
+      const stats = CV().statsOf(it), icon = String(FRE.specItem.get(it, 'szIcon') || '').replace(/"/g, '').trim();
+      const descKey = CV().keyOf(ws, it, 'szCommand'), nameKey = CV().keyOf(ws, it, 'szName');
+      const desc = CV().descOf(ws, it) || '', auto = CO().describe(stats, words);
+      const levels = []; for (let l = 1; l <= FRE.couple.MAX_LEVEL && l <= c.exp.length; l++) if (FRE.couple.buffItems(c, l).includes(it.id)) levels.push(l);
+      const card = h('div.rt-card', h('div.dr-line', h('h3', { style: 'margin:0' }, what), iconPic(ctx, icon, 1, 'Item'), h('span.def', it.define),
+        h('span.muted.small', levels.length ? `couple level ${levels[0]}${levels.length > 1 ? `-${levels[levels.length - 1]}` : ''}` : 'no couple level uses it'),
+        diagTags(rDiags(ctx).filter(d => d.code === 'CP_DESC' && d.key === `CP_DESC|${it.define}`))));
+      const tb = h('table.items.rt', h('tr', h('th', 'Stat (6 slots)'), h('th', 'Amount'), h('th', '')));
+      stats.forEach((s, j) => {
+        const slot = j + 1;
+        tb.appendChild(h('tr', h('td', editSpec ? FRE.ui.combo({ options: opts, value: s.dst, placeholder: 'Pick a stat', wordStart: true,
+          onPick: v => ctx.edit(SPEC, txt => CO().setStat(txt, it, slot, v, v ? (s.adj || 1) : 0, ws.defines.defines, d => R().dstName(ws.defines, d)),
+            v ? `${what}: stat ${slot} ${dstLabel(words, v)} (was ${dstLabel(words, s.dst)})` : `${what}: removed stat ${slot} (${dstLabel(words, s.dst)})`, key) }) : dstLabel(words, s.dst)),
+          h('td', numInput({ value: s.dst ? s.adj : null, min: -2147483647, max: 2147483647, disabled: !editSpec || !s.dst, key: `rt|cp|${it.define}|adj${slot}`,
+            onCommit: v => { if (v === null) return; typed(ctx, SPEC, `cp|${it.define}|adj${slot}`, txt => CO().setStat(txt, it, slot, s.dst, v, ws.defines.defines, d => R().dstName(ws.defines, d)), `${what}: ${dstLabel(words, s.dst)} ${v} (was ${s.adj})`, key); } }),
+            words.get(s.dst) && words.get(s.dst).rate ? ' %' : ''), h('td')));
+      });
+      card.appendChild(tb);
+      const nameMeta = CV().textLine(ws, nameKey), descMeta = CV().textLine(ws, descKey);
+      card.appendChild(h('div.dr-line', h('span', 'Name'), textInput({ value: it.name, key: `rt|cp|${it.define}|name`, disabled: !editText || !nameMeta, max: 63,
+        onCommit: v => typed(ctx, PT, `cp|${it.define}|name`, () => CO().setText(CV().textLine(ws, nameKey), v, 63), `${what}: name "${v}"`, key) }),
+        h('span', 'Icon'), iconField(ctx, { value: icon, key: `rt|cp|${it.define}|icon`, disabled: !editSpec, dir: 'Item',
+          onCommit: v => ctx.edit(SPEC, txt => CO().setIcon(txt, it, v, ws.defines.defines), `${what}: icon ${v}`, key) })));
+      card.appendChild(h('div.dr-line', h('span', 'Description'), textInput({ value: desc, key: `rt|cp|${it.define}|desc`, disabled: !editText || !descMeta, max: 255, width: '28em',
+        onCommit: v => typed(ctx, PT, `cp|${it.define}|desc`, () => CO().setText(CV().textLine(ws, descKey), v), `${what}: description`, key) }),
+        h('button', { disabled: !editText || !descMeta || !auto || auto === desc, title: auto === desc ? 'The description already says this' : `Write: ${auto}`,
+          on: { click: () => modal({ title: `Edit description: ${what}`, body: h('div', h('p', 'Now:'), h('pre.preview', desc), h('p', 'From the stats:'), h('pre.preview', auto),
+            h('p.muted.small', 'propItem.txt.txt (+ the Client copy). One undo step. Players see it after Stop / Start Server.bat and a game restart.')),
+          buttons: [{ label: 'Cancel' }, { label: 'Apply changes', cls: 'primary', onClick: () => ctx.edit(PT, () => CO().setText(CV().textLine(ws, descKey), auto), `${what}: description written from the stats`, key) }] }) } }, pencil(), ' Write description from stats')));
+      if (auto && auto !== desc) card.appendChild(h('p.small.warn-text', `⚠ The description does not match the stats: they give "${auto}".`));
+      el.appendChild(card);
+    }));
+  }
+
+  // Item: the gifts mailed on reaching a level
+  function coupleGifts(el, ctx, c, edit_) {
+    const ws = ctx.ws, f = ws.files.get(CP);
+    el.appendChild(h('p.small', 'Gifts come by mail to both partners (or only the male / female one) the moment the couple reaches the level, once. Level 1 gifts are never sent (a couple starts at level 1).'));
+    el.appendChild(h('div.dr-line', h('button.primary', { disabled: !edit_ || !c.items, on: { click: () => coupleGiftForm(ctx, null) } }, '+ Add a couple gift')));
+    const tb = h('table.items.rt', h('tr', h('th', 'Level'), h('th', 'Item'), h('th', 'Count'), h('th', 'Who'), h('th', 'Bound'), h('th', 'Time limit'), h('th', '')));
+    const blocks = c.blocks.slice().sort((a, b) => a.level - b.level);
+    for (const b of blocks) for (const r of b.rows) {
+      const it = ws.items.items.get(r.id), key = keyOf('couple', `gift|${b.level}`);
+      tb.appendChild(h('tr', h('td', h('b', `level ${b.level}`)), h('td', FRE.ui.itemCell(it ? ws.itemInfo(it) : null, r.define)), h('td', `×${fmt(r.num)}`),
+        h('td', SEX_TEXT[r.sex] || `? (${r.sex})`), h('td', r.flag === 2 ? 'bound' : r.flag ? `flag ${r.flag}` : 'no'), h('td', durText(Math.max(0, r.minutes))),
+        h('td', diagTags(spanDiags(ctx, CP, r.start, r.end)), h('span.line', `L${f.lineOf(r.start) + 1}`),
+          edit_ ? h('button.icon', { title: 'Edit this gift', on: { click: () => coupleGiftForm(ctx, r, b.level) } }, pencil()) : null,
+          edit_ ? h('button.icon.danger', { title: 'Remove this gift', on: { click: () => ctx.edit(CP, txt => CO().removeGift(txt, c, r), `Couple level ${b.level}: removed the gift ${nameOfDefine(ws, r.define)}`, key) } }, '✕') : null)));
+    }
+    el.appendChild(tb);
+  }
+
+  // + Add a couple gift / ✎ Edit couple gift
+  function coupleGiftForm(ctx, r, level0) {
+    const ws = ctx.ws, c = model(ctx).couple;
+    const s = r ? { level: level0, define: r.define, num: r.num, sex: r.sex, bound: r.flag === 2, minutes: Math.max(0, r.minutes) }
+      : { level: null, define: null, num: 1, sex: 2, bound: true, minutes: null };
+    const body = h('div.nn-form'), checks = h('div'), preview = h('div'), tip = h('div');
+    let btn = null;
+    const changes = () => {
+      const x = {};
+      if (s.define !== r.define) x.define = s.define;
+      if (s.num !== r.num) x.num = s.num;
+      if (s.sex !== r.sex) x.sex = s.sex;
+      if (s.bound !== (r.flag === 2)) x.flag = s.bound ? 2 : 0;
+      if (s.minutes !== Math.max(0, r.minutes)) x.minutes = s.minutes;
+      return x;
+    };
+    const plan = () => r ? CO().setGift(c, r, changes()) : CO().addGift(ws.files.get(CP).text, c, { level: s.level, define: s.define, num: s.num, sex: s.sex, flag: s.bound ? 2 : 0, minutes: s.minutes });
+    function refresh() {
+      checks.textContent = ''; preview.textContent = ''; tip.textContent = '';
+      const probs = [], it = itemOfDefine(ws, s.define);
+      if (it) tip.appendChild(tipBox(ws, it));
+      if (!s.level) probs.push(['BLOCK', 'Still needs: the couple level (2-21)']);
+      if (!s.define) probs.push(['BLOCK', 'Still needs: the item']);
+      else if (!it) probs.push(['BLOCK', `${s.define} is not an item in Spec_Item.txt`]);
+      if (!(s.num >= 1)) probs.push(['BLOCK', 'Still needs: the count (1 or more)']);
+      if (s.minutes === null) probs.push(['BLOCK', 'Still needs: the time limit (Permanent or 0 = it never expires)']);
+      const pm = it ? FRE.specItem.get(it, 'dwPackMax') >>> 0 : 0;
+      if (it && pm && s.num > pm) probs.push(['WARN', `One bag slot holds ${fmt(pm)}, and the mail carries all ${fmt(s.num)} as one item`]);
+      if (!r && s.level && s.define && c.blocks.some(b => b.level === s.level && b.rows.some(x => x.define === s.define))) probs.push(['WARN', `Level ${s.level} gives ${nameOfDefine(ws, s.define)} already: both rows are mailed`]);
+      if (r && !Object.keys(changes()).length) probs.push(['BLOCK', 'Nothing changed yet']);
+      for (const [sev, msg] of probs) checks.appendChild(diagRow({ severity: sev, code: '', message: msg }));
+      if (!probs.length) checks.appendChild(h('p.muted.small', 'No problems.'));
+      const ok = !probs.some(x => x[0] === 'BLOCK');
+      if (btn) btn.disabled = !ok;
+      if (!ok) { preview.appendChild(h('p.muted', r ? 'Change something first.' : 'Fill in the level, the item, the count and the time limit.')); return; }
+      try {
+        const sp = plan(), f = ws.files.get(CP);
+        const line = r ? applyPreview(f.text, sp, r) : sp[0].insert.replace(/\r/g, '').replace(/^\n+|\n+$/g, '');
+        preview.appendChild(h('pre.preview', `couple.inc (+ Client/couple.inc), Item, line ${f.lineOf(sp[0].start) + 1}:\n${r ? '' : '+'}${line}`));
+        preview.appendChild(h('p', `On reaching couple level ${s.level}, ${SEX_TEXT[s.sex]} get${s.sex === 2 ? '' : 's'} ${nameOfDefine(ws, s.define)} ×${fmt(s.num)} by mail`,
+          s.bound ? ', bound' : '', `, ${durText(s.minutes)}. Once per couple. Reached after ${togetherText(c.exp[s.level - 1] ? c.exp[s.level - 1].value : 0)} online together.`));
+      } catch (err) { preview.appendChild(h('p.bad', err.message)); if (btn) btn.disabled = true; }
+    }
+    const row = (label, req, ...x) => h('div.nn-row', fieldLabel(label, req), ...x);
+    body.appendChild(row('Couple level', true, r ? h('b', `level ${s.level}`) : numInput({ value: s.level, min: 2, max: 21, key: 'rt|cpg|lv', live: true, onCommit: v => { s.level = v; refresh(); } }),
+      r ? null : h('span.muted.small', '2-21')));
+    body.appendChild(row('Item', true, h('div', { style: 'flex:1' }, FRE.ui.combo({ options: itemOptsOf(ws), value: s.define, placeholder: 'Type an item name…', onPick: v => { s.define = v; refresh(); } }))));
+    body.appendChild(tip);
+    body.appendChild(row('Count (how many they get)', true, numInput({ value: s.num, min: 1, max: CO().MAX_NUM, key: 'rt|cpg|n', live: true, onCommit: v => { s.num = v; refresh(); } })));
+    body.appendChild(row('Who gets it', true, h('select', { 'data-key': 'rt|cpg|sex', on: { change: x => { s.sex = Number(x.target.value); refresh(); } } },
+      [2, 0, 1].map(v => h('option', { value: v, selected: v === s.sex }, SEX_TEXT[v])))));
+    body.appendChild(row('Bound', false, h('label', h('input', { type: 'checkbox', checked: s.bound, on: { change: x => { s.bound = x.target.checked; refresh(); } } }), ' the item cannot be traded')));
+    body.appendChild(row('Time limit', true, FRE.dom.durationInput({ minutes: s.minutes, key: 'rt|cpg|m', permanent: true, max: CO().MAX_MINUTES, onCommit: v => { s.minutes = v; refresh(); } })));
+    formFooter({ checks, action: r ? 'Apply changes' : 'Add', previewTitle: 'What will be written / what players get', preview }).forEach(x => body.appendChild(x));
+    const label = () => r ? `Couple level ${s.level} gift ${nameOfDefine(ws, r.define)}: changed` : `Couple gifts: added level ${s.level} ${nameOfDefine(ws, s.define)} ×${s.num}`;
+    const m = modal({ title: r ? `Edit couple gift: Level ${s.level}` : 'Add a couple gift', body, wide: true, buttons: [{ label: 'Cancel' },
+      { label: r ? 'Apply changes' : 'Add', cls: 'primary', id: 'rt-cpg-btn', onClick: () => ctx.edit(CP, () => plan(), label(), keyOf('couple', `gift|${s.level}`)) }] });
+    btn = m.el.querySelector('#rt-cpg-btn');
+    refresh();
+  }
+
   FRE.ui.modules.push(mod);
-  FRE.ui.rates = { tierForm, giftForm, rebGiftForm };
+  FRE.ui.rates = { tierForm, giftForm, rebGiftForm, coupleGiftForm };
 })(globalThis.FRE = globalThis.FRE || {});

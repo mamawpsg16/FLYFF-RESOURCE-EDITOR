@@ -4155,6 +4155,8 @@ def as_who(key):
         return True, 'start'
     if key == '1rebirth.inc':             # Project.cpp:928, outside any __WORLDSERVER #ifdef: the game parses its own copy
         return True, 'start'
+    if key == 'couple.inc':               # CCoupleProperty::Initialize in WORLDSERVER / databaseserver / Neuz couplehelper.cpp
+        return True, 'start'
     return True, 'start'          # unknown file: both, at startup
 
 
@@ -4201,7 +4203,7 @@ def as_run(root):
     rnd = random.Random(1019)
     keys = AS_SHARED + [AS_TREE, 'client/npcboard_282.inc', 'client/npcboard_300.inc', 'world/wdmadrigal/wdmadrigal.dyo',
                         'world/wdvolcane/wdvolcane.dyo', 'propmoverex.inc', 'propgiftbox.inc', 'propskill.txt',
-                        'event.lua', 'serverbuff.txt', 'guildbuff.txt', '1rebirth.inc']
+                        'event.lua', 'serverbuff.txt', 'guildbuff.txt', '1rebirth.inc', 'couple.inc']
     states = ['written', 'created', 'datares', 'different', 'none']
     pstates = ['in-source', 'missing', 'unknown', 'built']
     codesets = [[], ['DT_PATCH'], ['DT_ORDER'], ['NN_RULES_PATCH']]
@@ -8113,6 +8115,297 @@ def rt_run(root):
     return out
 
 
+
+# ================================================================ couple (task I part 3), straight from the C++
+# couple.inc: CCoupleProperty::Initialize / LoadLevel / LoadItem / LoadSkillKind / LoadSkillLevel (couple.cpp:234-340), __MAINSERVER
+# (no / 100). GetLevel (:342): first i with points < m_vExp[i], past the rows 1. CCouple starts at m_nLevel 1 (:92); AddExperience
+# (:96) does nothing at eMaxLevel 21, else adds and recomputes; a change mails PostItem (databaseserver/couplehelper.cpp:213-258) to
+# the partner(s) whose sex matches (2 = both). Buffs: GetSkill( level ) items that exist (ActiveCoupleBuff, User.cpp:4025).
+# One point = 61 ProcessCouple calls (User.cpp:3997) x 16 frames (m_nCount & 15, :452) x 67 ms (ThreadMng.cpp:329).
+CP_MAX = 21
+CP_POINT_MS = 61 * 16 * 67
+CP_SEX = {'SEX_MALE': 0, 'SEX_FEMALE': 1, 'SEX_SEXLESS': 2}
+
+
+def cp_load(t, D):
+    tk = rt_scan(t)
+    val = lambda x: (D[x[1]] if x[1] in D else (-1 if x[1] == '=' else atoi(x[1])))
+    C = {'exp': [], 'blocks': [], 'kinds': [], 'skill': [], 'item_open': None, 'item_close': None, 'skill_open': None, 'skill_close': None}
+    k = 0
+    def num():
+        nonlocal k
+        x = tk[k] if k < len(tk) else ('e', '}', len(t), len(t))
+        k += 1
+        if x[1] in ('-', '+') and k < len(tk):
+            y = tk[k]; k += 1
+            v = atoi(y[1]); return (s32(-v) if x[1] == '-' else v), x[2], y[3], x[1] + y[1]
+        return val(x), x[2], x[3], x[1]
+    def cur():
+        return tk[k][1][:1] if k < len(tk) else '}'
+    while k < len(tk):
+        w = tk[k][1]; k += 1
+        if w == 'Level':
+            k += 1
+            v = num()
+            while k <= len(tk) and v[3][:1] != '}':
+                C['exp'].append({'v': v[0], 's': v[1], 'e': v[2]})
+                v = num()
+        elif w == 'Item':
+            C['item_open'] = tk[k][2]; k += 1
+            lv = num()
+            while lv[3][:1] != '}' and k <= len(tk):
+                bo = tk[k]; k += 1
+                B = {'level': lv[0], 'lv_s': lv[1], 'open': bo[2], 'close': None, 'rows': []}
+                it = num()
+                while it[3][:1] != '}' and k <= len(tk):
+                    sx, fl, mi, nu = num(), num(), num(), num()
+                    B['rows'].append({'id': it[0] & 0xFFFFFFFF, 'item': it[3], 'sex': sx[0], 'flag': fl[0], 'min': mi[0], 'num': nu[0],
+                                      'sp': {'item': it[1:3], 'sex': sx[1:3], 'flag': fl[1:3], 'min': mi[1:3], 'num': nu[1:3]}, 's': it[1], 'e': nu[2]})
+                    it = num()
+                B['close'] = it[1]
+                C['blocks'].append(B)
+                lv = num()
+            C['item_close'] = lv[1]
+        elif w == 'SkillKind':
+            k += 1
+            v = num()
+            while v[3][:1] != '}' and k <= len(tk):
+                C['kinds'].append(v[0] & 0xFFFFFFFF)
+                v = num()
+        elif w == 'SkillLevel':
+            C['skill_open'] = tk[k][2]; k += 1
+            lv = num()
+            while lv[3][:1] != '}' and k <= len(tk):
+                ts = [num() for _ in C['kinds']]
+                C['skill'].append({'level': lv[0], 's': lv[1], 'e': ts[-1][2] if ts else lv[2], 'tiers': [x[0] for x in ts], 'sp': [x[1:3] for x in ts]})
+                lv = num()
+            C['skill_close'] = lv[1]
+    n = len(C['exp'])
+    sk = [None] * n                                   # m_vSkills, resized to the Level rows
+    for r in C['skill']:
+        if 1 <= r['level'] <= n:
+            if sk[r['level'] - 1] is None:
+                sk[r['level'] - 1] = []
+            for i, tv in enumerate(r['tiers']):
+                sk[r['level'] - 1].append(C['kinds'][i] + tv - 1 if tv > 0 else 0)
+    for i in range(1, n):
+        if sk[i] is None or not sk[i]:
+            sk[i] = list(sk[i - 1] or [])
+    C['skills'] = [x or [] for x in sk]
+    return C
+
+
+def cp_level(C, pts):
+    for i, e in enumerate(C['exp']):
+        if pts < e['v']:
+            return i
+    return 1
+
+
+def cp_run(C, sex):
+    lv, pts, levels, posts = 1, 0, [[1, 0]], []
+    cap = max([e['v'] for e in C['exp']] + [0]) + 2
+    for _ in range(cap):
+        if lv == CP_MAX:
+            break
+        pts += 1
+        nl = cp_level(C, pts)
+        if nl != lv:
+            lv = nl
+            levels.append([lv, pts])
+            if 1 <= lv <= len(C['exp']):
+                for B in C['blocks']:
+                    if B['level'] != lv:
+                        continue
+                    for r in B['rows']:
+                        for who, s in (('first', sex[0]), ('second', sex[1])):
+                            if r['sex'] == 2 or r['sex'] == s:
+                                posts.append([lv, who, r['id'], r['num'], r['flag'] & 0xFF, r['min']])
+    return {'levels': levels, 'posts': posts, 'end': [pts, lv]}
+
+
+def cp_spec_stats(root, D):
+    """dwDestParam1-6 / nAdjParamVal1-6 per item id (Spec_Item.txt by its header names), for the buff items"""
+    lines = open(os.path.join(root, 'Spec_Item.txt'), 'rb').read().decode('latin-1').splitlines()
+    head = [h.strip().lstrip('/') for h in lines[1].split('\t')]
+    col = {h: i for i, h in enumerate(head)}
+    v = lambda x: (-1 if x.strip() == '=' else (D.get(x.strip()) if not re.match(r'\s*[-\d]', x) else atoi(x)))
+    out = {}
+    for l in lines:
+        c = l.split('\t')
+        if len(c) < len(head) - 2 or l.lstrip().startswith('//'):
+            continue
+        iid = D.get(c[col['dwID']].strip())
+        if iid is None:
+            continue
+        st = []
+        for i in range(1, 7):
+            d, a = v(c[col['dwDestParam%d' % i]]), v(c[col['nAdjParamVal%d' % i]])
+            if d is not None and d not in (-1, 0):
+                st.append((d, a if a not in (None, -1) else 0))
+        out[iid & 0xFFFFFFFF] = st
+    return out
+
+
+def cp_buffs(C, stats, level):
+    if not 1 <= level <= len(C['exp']):
+        return [[], []]
+    ids = [i for i in C['skills'][level - 1] if i and i in stats]
+    tot = {}
+    for i in ids:
+        for d, a in stats[i]:
+            tot[d] = tot.get(d, 0) + a
+    return [ids, sorted([d, a] for d, a in tot.items())]
+
+
+# ---- edits, written the way the file is written by hand (couple.inc's own style)
+def cp_eol(t, i):
+    return rt_eol_or(t, i)
+
+
+def cp_edit(t, op, D):
+    C = cp_load(t, D)
+    k = op[0]
+    if k == 'pts':
+        e = C['exp'][op[1] - 1]
+        return rt_put(t, e['s'], e['e'], str(op[2]))
+    if k == 'tiers':
+        lv, new = op[1], op[2]
+        own = [r for r in C['skill'] if r['level'] == lv]
+        if own:
+            r = own[0]
+            for i in reversed(range(len(new))):
+                if r['tiers'][i] != new[i]:
+                    s, e = r['sp'][i]
+                    t = rt_put(t, s, e, str(new[i]))
+            return t
+        row = '\t'.join([str(lv)] + [str(x) for x in new])
+        lower = [r for r in C['skill'] if r['level'] < lv]
+        if lower:
+            a = lower[-1]
+            end, eol = rt_line_end(t, a['e'])
+            if not eol:
+                eol = cp_eol(t, a['e'])
+                return rt_put(t, end, end, eol + rt_indent(t, a['s']) + row)
+            return rt_put(t, end, end, rt_indent(t, a['s']) + row + eol)
+        if C['skill']:
+            f = C['skill'][0]
+            s = rt_line_start(t, f['s'])
+            return rt_put(t, s, s, rt_indent(t, f['s']) + row + cp_eol(t, f['s']))
+        end, eol = rt_line_end(t, C['skill_open'])
+        return rt_put(t, end, end, rt_indent(t, C['skill_open']) + '\t' + row + (eol or cp_eol(t, C['skill_open'])))
+    if k == 'rmtiers':
+        r = [x for x in C['skill'] if x['level'] == op[1]][0]
+        return cp_rm_line(t, r['s'], r['e'])
+    if k == 'addgift':
+        g = op[1]
+        row = '%s\t%s\t%d\t%d\t%d' % (g['item'], ['SEX_MALE', 'SEX_FEMALE', 'SEX_SEXLESS'][g['sex']], g['flag'], g['minutes'], g['num'])
+        same = [B for B in C['blocks'] if B['level'] == g['level'] and B['close'] is not None]
+        if same:
+            B = same[0]
+            if B['rows']:
+                a = B['rows'][-1]
+                end, eol = rt_line_end(t, a['e'])
+                return rt_put(t, end, end, rt_indent(t, a['s']) + row + (eol or cp_eol(t, a['e'])))
+            end, eol = rt_line_end(t, B['open'])
+            return rt_put(t, end, end, rt_indent(t, B['open']) + '\t\t' + row + (eol or cp_eol(t, B['open'])))
+        def block(eol):
+            return '\t%d%s\t{%s\t\t%s%s\t}%s' % (g['level'], eol, eol, row, eol, eol)
+        lower = [B for B in C['blocks'] if B['level'] < g['level'] and B['close'] is not None]
+        if lower:
+            B = lower[-1]
+            end, eol = rt_line_end(t, B['close'])
+            e2 = eol or cp_eol(t, B['close'])
+            return rt_put(t, end, end, ('' if eol else e2) + e2 + block(e2))
+        if C['blocks']:
+            B = C['blocks'][0]
+            s = rt_line_start(t, B['lv_s'])
+            e2 = cp_eol(t, B['lv_s'])
+            return rt_put(t, s, s, block(e2) + e2)
+        end, eol = rt_line_end(t, C['item_open'])
+        return rt_put(t, end, end, block(eol or cp_eol(t, C['item_open'])))
+    if k in ('gift', 'rmgift'):
+        B = [b for b in C['blocks'] if b['level'] == op[1]][0]
+        r = B['rows'][op[2]]
+        if k == 'gift':
+            ch = op[3]
+            for f in sorted(ch, key=lambda f: -r['sp'][f][0]):
+                v = ch[f]
+                if f == 'sex':
+                    v = ['SEX_MALE', 'SEX_FEMALE', 'SEX_SEXLESS'][v]
+                s, e = r['sp'][f]
+                t = rt_put(t, s, e, str(v))
+            return t
+        if len(B['rows']) > 1:
+            return cp_rm_line(t, r['s'], r['e'])
+        s = rt_line_start(t, B['lv_s'])
+        e, _ = rt_line_end(t, B['close'])
+        m = re.search(r'(\r\n|\n|\r)[ \t]*(\r\n|\n|\r)$', t[:s])
+        if m:
+            s -= len(m.group(0)) - len(m.group(1))
+        return t[:s] + t[e:]
+    raise ValueError(k)
+
+
+def cp_rm_line(t, s, e):
+    ls = rt_line_start(t, s)
+    end, _ = rt_line_end(t, e)
+    if t[ls:s].strip() == '' and t[e:end].strip() == '':
+        return t[:ls] + t[end:]
+    while s > 0 and t[s - 1] in ' \t' and t[ls:s - 1].strip():
+        s -= 1
+        break
+    return t[:s] + t[e:]
+
+
+CP_FILES = {
+    'short': 'Level\r\n{\r\n\t0\r\n\t10\r\n\t20\r\n}\r\nItem\r\n{\r\n\t2\r\n\t{\r\n\t\tII_CHP_RED\tSEX_SEXLESS\t2\t0\t5\r\n\t\tII_CHP_RED\tSEX_MALE\t258\t0\t1\r\n\t}\r\n\t3\r\n\t{\r\n\t\tII_CHP_RED\tSEX_MALE\t2\t0\t1\r\n\t}\r\n}\r\n'
+             'SkillKind\r\n{\r\n\tII_COUPLE_BUFF_POWER_01\r\n\tII_COUPLE_BUFF_BLESS_01\r\n}\r\nSkillLevel\r\n{\r\n\t1\t0\t0\r\n\t2\t1\t0\r\n}\r\n',
+    'flat22': 'Level\r\n{\r\n' + ''.join('\t%d\r\n' % (i * 3) for i in range(21)) + '\t60\r\n}\r\nItem\r\n{\r\n\t21\r\n\t{\r\n\t\tII_CHP_RED\tSEX_MALE\t0\t60\t1\r\n\t}\r\n}\r\n'
+              'SkillKind\r\n{\r\n\tII_COUPLE_BUFF_POWER_01\r\n}\r\nSkillLevel\r\n{\r\n\t1\t0\r\n\t5\t2\r\n\t5\t1\r\n\t21\t9\r\n}\r\n',
+    'messy': 'Level\n{\n\t0\n\t4\n\t4\n\t9\n\t7\n' + ''.join('\t%d\n' % (20 + i) for i in range(18)) + '}\nItem\n{\n\t1\n\t{\n\t\tII_CHP_RED\tSEX_SEXLESS\t2\t0\t1\n\t}\n\n\t3\n\t{\n\t\tII_CHP_RED\tSEX_FEMALE\t0\t0\t2\n\t\tII_CHP_RED\t5\t2\t0\t2\n\t}\n\n\t30\n\t{\n\t\tII_CHP_RED\tSEX_SEXLESS\t2\t0\t3\n\t}\n}\n'
+             'SkillKind\n{\n\tII_COUPLE_BUFF_POWER_01\n\tII_COUPLE_BUFF_BLESS_01\n\tII_COUPLE_BUFF_MIRACLE_01\n}\nSkillLevel\n{\n\t3\t1\t1\t1\n\t9\t4\t3\t1\n}',
+    'empty': 'Level\r\n{\r\n' + ''.join('\t%d\r\n' % (i * i) for i in range(23)) + '}\r\nItem\r\n{\r\n}\r\nSkillKind\r\n{\r\n\tII_COUPLE_BUFF_POWER_01\r\n}\r\nSkillLevel\r\n{\r\n}\r\n',
+}
+
+
+def cp_run_all(root):
+    D = defines(root)
+    stats = cp_spec_stats(root, D)
+    real = open(os.path.join(root, 'couple.inc'), 'rb').read().decode('latin-1')
+    files = dict([('real', real)] + list(CP_FILES.items()))
+    out = {'files': files, 'facts': [], 'edits': []}
+    for name, t in files.items():
+        C = cp_load(t, D)
+        f = {'name': name, 'exp': [e['v'] for e in C['exp']], 'kinds': C['kinds'],
+             'blocks': [[B['level'], [[r['id'], r['sex'], r['flag'], r['min'], r['num']] for r in B['rows']]] for B in C['blocks']],
+             'skills': C['skills'][:CP_MAX], 'runs': [], 'buffs': [cp_buffs(C, stats, lv) for lv in range(1, CP_MAX + 1)],
+             'restore': [[p, cp_level(C, p)] for p in (0, 1, 2879, 2880, 5000, 129599, 129600, 142650, 142651, 10 ** 6)]}
+        for sex in ([0, 1], [1, 0], [0, 0], [1, 1]):
+            f['runs'].append(cp_run(C, sex))
+        out['facts'].append(f)
+    scripts = [
+        ('real', [['pts', 2, 1440]]),
+        ('real', [['pts', 21, 130000], ['pts', 22, 150000]]),
+        ('real', [['tiers', 6, [2, 0, 0]], ['tiers', 8, [2, 1, 0]]]),
+        ('real', [['tiers', 3, [1, 0, 0]], ['tiers', 1, [0, 0, 1]], ['rmtiers', 11]]),
+        ('real', [['addgift', {'level': 3, 'item': 'II_CHP_RED', 'sex': 1, 'flag': 2, 'minutes': 0, 'num': 5}]]),
+        ('real', [['addgift', {'level': 21, 'item': 'II_CHP_RED', 'sex': 2, 'flag': 0, 'minutes': 1440, 'num': 1}], ['rmgift', 20, 0]]),
+        ('real', [['gift', 4, 0, {'num': 7, 'sex': 0}], ['gift', 21, 1, {'flag': 0, 'min': 60, 'item': 'II_CHP_RED'}]]),
+        ('real', [['rmgift', 2, 0], ['addgift', {'level': 2, 'item': 'II_CHP_RED', 'sex': 2, 'flag': 2, 'minutes': 0, 'num': 1}]]),
+        ('short', [['addgift', {'level': 3, 'item': 'II_CHP_RED', 'sex': 0, 'flag': 0, 'minutes': 0, 'num': 1}], ['tiers', 3, [1, 1]], ['pts', 3, 30]]),
+        ('flat22', [['tiers', 2, [1]], ['rmtiers', 5], ['addgift', {'level': 2, 'item': 'II_CHP_RED', 'sex': 2, 'flag': 2, 'minutes': 0, 'num': 2}]]),
+        ('messy', [['addgift', {'level': 2, 'item': 'II_CHP_RED', 'sex': 2, 'flag': 2, 'minutes': 0, 'num': 2}], ['tiers', 10, [1, 1, 0]], ['tiers', 1, [0, 1, 0]], ['rmgift', 30, 0]]),
+        ('empty', [['addgift', {'level': 5, 'item': 'II_CHP_RED', 'sex': 2, 'flag': 2, 'minutes': 0, 'num': 1}], ['addgift', {'level': 2, 'item': 'II_CHP_RED', 'sex': 1, 'flag': 0, 'minutes': 0, 'num': 1}],
+                   ['tiers', 4, [1]], ['tiers', 2, [1]], ['addgift', {'level': 9, 'item': 'II_CHP_RED', 'sex': 0, 'flag': 2, 'minutes': 5, 'num': 1}]]),
+    ]
+    for base, ops in scripts:
+        t = files[base]
+        for op in ops:
+            t = cp_edit(t, op, D)
+        out['edits'].append({'base': base, 'ops': ops, 'text': t})
+    return out
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -8152,6 +8445,8 @@ if __name__ == '__main__':
         print(json.dumps(gf_run(root)))
     elif what == 'rates':
         print(json.dumps(rt_run(root)))
+    elif what == 'couple':
+        print(json.dumps(cp_run_all(root)))
     elif what == 'dds':                         # a folder of .dds icons -> {file: [w, h, sha256 of the RGBA]}
         print(json.dumps(dds_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model

@@ -140,10 +140,13 @@
       // Rates & Buffs (task I, loaders/rates.js): Event.lua's rates (WorldServer + DatabaseServer), ServerBuff.txt (WorldServer only),
       // GuildBuff.txt (both; the game only shows what the server sends, but every commit keeps the Client copy in sync: cd03ca46, ca02d0cb).
       // uses drops: the calculator's Penya and item chances (loaders/drops-sim.js); propMover.txt for the monster EXP.
-      id: 'rates', label: 'Rates & Buffs',
-      required: ['Event.lua'], optional: ['ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc', 'expTable.inc'],
-      editable: ['Event.lua', 'ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc'], client: ['GuildBuff.txt', '1Rebirth.inc'],
-      deps: ['ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc'],
+      // part 3 (loaders/couple.js): couple.inc (WorldServer, DatabaseServer and the game; no loose Client copy yet: Save offers to
+      // create one so the couple window's level bar matches) and the couple buff items (Spec_Item.txt + their propItem.txt.txt texts).
+      id: 'rates', label: 'Rates & Buffs', editsSpec: true,
+      required: ['Event.lua'], optional: ['ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc', 'expTable.inc', 'couple.inc', 'propItem.txt.txt'],
+      editable: ['Event.lua', 'ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc', 'couple.inc', 'propItem.txt.txt'],
+      client: ['GuildBuff.txt', '1Rebirth.inc', 'couple.inc', 'propItem.txt.txt'],
+      deps: ['ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc', 'couple.inc'],
       uses: ['drops'],
       parse(ws) { return FRE.rates.fromWorkspace(ws); },
       validate(ws, model) { return FRE.rates.validate(model, { defines: ws.defines, ws }); },
@@ -227,7 +230,12 @@
     reparse(lowerName) {
       if (lowerName === 'spec_item.txt') { this.loadItems(); lowerName = undefined; }   // every module reads items
       // a string table (character.txt.txt: a new NPC's name): every module reads names through it
-      if (lowerName && /\.txt\.txt$/.test(lowerName)) { this.strings = FRE.loadStrings(this.files); lowerName = undefined; }
+      if (lowerName && /\.txt\.txt$/.test(lowerName)) {
+        this.strings = FRE.loadStrings(this.files);
+        // item names and descriptions are put in place of their IDS keys when Spec_Item.txt is read (couple buff texts)
+        if (lowerName === 'propitem.txt.txt') this.loadItems();
+        lowerName = undefined;
+      }
       for (const m of MODULES) {
         if (!this.available[m.id].ok) continue;
         if (lowerName && ![...m.required, ...(m.deps || [])].some(n => n.toLowerCase() === lowerName)) continue;

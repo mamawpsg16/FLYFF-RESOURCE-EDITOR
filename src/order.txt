@@ -45,6 +45,7 @@ edit/npc-ops.js
 edit/npcedit-ops.js
 edit/menu-ops.js
 edit/rates-ops.js
+edit/couple-ops.js
 validate/newnpc.js
 validate/newmenu.js
 loaders/newnpc-sim.js
@@ -53,6 +54,9 @@ loaders/gifts-sim.js
 loaders/where.js
 loaders/rates.js
 loaders/rates-sim.js
+loaders/couple.js
+loaders/couple-sim.js
+validate/couple.js
 core/workspace.js
 core/client-sync.js
 core/after-save.js
