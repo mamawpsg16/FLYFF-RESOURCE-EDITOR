@@ -1,6 +1,10 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-09 (V. Save History started: step 0 = paste /position + Face toward, step 0b = loading window; built, waiting for the user's Brave test; handoff on top)._
+_Last updated 2026-10-09 (V. Save History skipped by the user after steps 0 + 0b; next: H; handoff on top)._
+
+> **Handoff (2026-10-09) — V. Save History is SKIPPED (the user's decision). Next: H. "Where is this item from?" (plan first).**
+> - Why: every Save already writes a verified backup (`<backups>/<stamp>_<task>/`), the real files are in the FLYFF-V19-SOURCE git repo (each tested change is committed and pushed, so `git diff` / `git revert <hash>` give history and per-save undo), and Ctrl+Z covers unsaved work. The History screen + 3-way undo would have been the largest task so far for a rare case.
+> - What stays from V: step 0 (paste /position + Face toward, key from region + name) and step 0b (loading window), both committed (`85012df`). The part 1 plan (`/home/kevin/.claude/plans/read-claude-md-in-flyff-resource-editor-quiet-tulip.md`) is kept only as a reference; no code was written for it.
 
 > **Handoff (2026-10-09, V step 0 + 0b) — user-tested in Brave and committed + pushed (`85012df`). Next: V part 1 (History screen, read-only).** Plan: `/home/kevin/.claude/plans/cozy-tinkering-hearth.md` (V. Save History: step 0, 0b, then part 1 History screen read-only, then part 2 Undo this save / Go back; user decisions: 2 parts, 🕘 History button in each task, undo = one pending edit + the normal Save, full plain words for old saves).
 > - **In-game news (user, 2026-10-08):** the new NPC stands in game; Trade, Exchange and Rules text menus work (TODOS Done). Its spot / facing were hard to get right.
@@ -422,7 +426,7 @@ _Last updated 2026-10-09 (V. Save History started: step 0 = paste /position + Fa
 **Order (agreed 2026-10-06; tasks S, V, D-sim, C and H–M added that day):**
 1. Add New NPC step 1: committed (`7cbb9c9`), **not tested in game yet**. Do the in-game test (handoff §8) before calling it done; fix what it finds before starting S.
 2. **S. Shops: everything editable** (asked 2026-10-06: "the idea is we're able to edit everything in a shop").
-3. **V. Save History** (asked 2026-10-06: undo saved work per task without git).
+3. ~~V. Save History~~ **skipped (the user, 2026-10-09)**: backups + git cover it. Steps 0 / 0b (paste /position, loading window) were built and kept (`85012df`).
 4. **H. "Where is this item from / used?"** (every way to get an item: shops, exchanges, monster drops, boxes, rewards, quests).
 5. **D-sim. Donation Shop simulator** (the only finished editor without a "what happens in game" test).
 6. **C. GM Commands list** (every GM command, searchable, by category, with plain-English descriptions).
@@ -528,7 +532,7 @@ Also built in part 1: the item list's own categories (Pets › Raised / Pickup /
 
 **Simulator:** `vendor-sim.js` already ports ProcessRegenItem. Add the buy price the player pays (find where the shop price is computed for a normal Penya shop) and the sell-back price, so the preview shows "players pay / get back". Python copy in `tools/oracle.py`.
 
-### V. Save History (asked 2026-10-06)
+### V. Save History (asked 2026-10-06; SKIPPED 2026-10-09, kept here only as a reference)
 **In plain words (how the user described it, keep the UI this simple):**
 - Every Save is a save point. A **History** screen lists them, newest first, per task, so saved work can be undone without git.
 - Each row says what was done, in game words, never file names or line numbers:
