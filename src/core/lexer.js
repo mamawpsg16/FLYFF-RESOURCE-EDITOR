@@ -241,6 +241,22 @@
       return r;
     }
 
+    // CScanner::GetInt64 (scanner.cpp:912): _atoi64, no clamp; hex gives 0. Values here stay below 2^53.
+    getInt64() {
+      this.def = 1;
+      const t = this.getToken();
+      const r = { value: 0, start: t.start, end: t.end, eof: t.type === 'eof' };
+      const a64 = s => { const m = /^\s*[-+]?\d+/.exec(s); return m ? Number(m[0]) : 0; };
+      if (t.type !== 'hex' && t.text !== '') {
+        const ch = t.text[0];
+        if (ch === '=') r.value = -1;
+        else if (ch === '-' || ch === '+') { const n = this.getToken(); r.end = n.end; r.value = ch === '-' ? -a64(n.text) : a64(n.text); }
+        else r.value = a64(t.text);
+      }
+      this.def = 0;
+      return r;
+    }
+
     // CScanner::GetFloat
     getFloat() {
       this.def = 1;

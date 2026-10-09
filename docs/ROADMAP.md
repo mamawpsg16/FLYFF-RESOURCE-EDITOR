@@ -1,6 +1,24 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-09 (Boxes filter by what's inside done; next: I. Rates & Buffs, plan first; handoff on top)._
+_Last updated 2026-10-09 (I. Rates & Buffs part 1 built, waiting for the user's Brave test; handoff on top)._
+
+> **Handoff (2026-10-09) — I. Rates & Buffs part 1: user-tested in Brave (all steps + Save) and committed + pushed. START HERE next session: I part 2 (level-up gifts + rebirth tiers), plan first.**
+> - **Open question for the user:** more Server Buff stats (PvE, Attack… — today ServerBuff.cpp reads only EXP %) and more than 5 Guild Buff stats (`bonus[5]` compiled) both need C++. A = a patch in docs/patches, B = TODOS later. Not answered yet.
+> - After the test: tasks that never add items hide the item list (`noItems: true` on the UI module; only Rates & Buffs today); `refresh-fixtures.sh` copies Client/Icon; a missing icon says "⚠ picture not found". A new Server Buff icon is being drawn by the user (Infinity gold / crystal emblem + arrow + 3 players): later, copy the 32×32 PNG into Client/Icon and pick it. Plan: `/home/kevin/.claude/plans/enchanted-noodling-candy.md` (3 parts; both drop numbers in plain words; rebirth Drop / Penya greyed in part 2).
+> - **New task card "Rates & Buffs"** (`MODULES` id `rates`, uses `drops`): left = Server rates · Server Buff · Guild Buff · 🧮 Rate calculator. Event.lua: every event with its dates and its 5 rates (EXP ×, Penya ×, Drop roll gate ×, Item chance ×, Weather bonus ×); a rate that is not set yet is added as a new `Set…( n )` line. Server Buff: table + "+ Add tier". Guild Buff: a card per tier, 5 stats picked by name (written as numbers), "✎ Write description from stats" (gives the file's own texts back exactly), "+ Add tier". Calculator: monster, player level, job (Master / Hero ÷2), rebirth, Server / Guild Buff tier (or from online counts), scrolls, gear EXP, weather → every step of the EXP factor, EXP / Penya per kill, each item's chance.
+> - **Found (INVESTIGATION §1.22):** an unknown function or a `Set…` before `AddEvent` makes Event.lua fail = every rate ×1 and no level-up gifts (`RT_LUA_ERROR`); a buff file that ends before `}` hangs the WorldServer (`RT_NO_CLOSE`); the buff names reach the game cut at 127 / 255 / 63 characters; Event.lua can be reloaded live from the DatabaseServer menu "Apply now". Monster EXP and the EXP cap are 64-bit (`Script.getInt64`, `propmover.exp`).
+> - Also: the "Where is this item from?" card is now **Item Sources & Uses** (the user, 2026-10-09). The UI harness shows its result box whenever a stage fails.
+> - Python copy `oracle_sim.py rates`: every case agrees (see CLAUDE.md table). Tool: `gjs -m tools/rates-sim.js MI_AIBATT1 level=3 online=40 glv=20 gon=10 weather`, `… tiers`.
+>
+> **User's test:** run `tools/refresh-fixtures.sh test-data` (new: ServerBuff.txt, GuildBuff.txt + its Client copy) and `python3 build.py`, reload, pick `test-data`, card **Rates & Buffs**.
+> 1. Server rates: EXP ×30, Penya ×10, gate ×10, item chance ×1 (empty box), weather ×1.5; the two drop numbers are explained.
+> 2. Server Rates event: EXP 30 → 40 (the list says ×40). Item chance: type 2 → a `SetPieceItemDropRate( 2 )` line. Gate 20 → ⚠ "changes nothing"; Undo.
+> 3. 🧮 Rate calculator, Small Aibatt: EXP factor ×40, the steps, EXP per kill 80, Penya 120 - 130, Twinkle Stone 27.94% (was 13.97% at ×1).
+> 4. Server Buff: + Add tier → tier 21, 210 players, +105% → Add. Change a name; pick an icon (the list of Client/Icon).
+> 5. Guild Buff tier 1: All Stat 10 → 12 → ⚠ the description does not match → ✎ Write description from stats → Apply changes.
+> 6. Save once: the backup holds Event.lua, ServerBuff.txt, GuildBuff.txt (+ Client copy); After saving says Stop / Start Server.bat.
+> 7. Start screen: the card says "Item Sources & Uses".
+> Then commit + push; next: part 2 (level-up gifts + rebirth).
 
 > **Handoff (2026-10-09) — Boxes: filter by what's inside: user-tested in Brave and committed + pushed. Next: I. Rates & Buffs, plan first.** Plan: `/home/kevin/.claude/plans/enchanted-noodling-candy.md`.
 > - A second, searchable filter under "All boxes": "Holds Fashion (610)", its parts (Hats, Masks, …), every group of `loaders/item-category.js`. A box matches when at least one item inside is in that group; a box given by a box counts as "Boxes & sets". Counts follow the first filter. `FRE.itemCategory.holds` / `ofId`. UI only: no file written, no simulator.

@@ -23,6 +23,13 @@ cp -p $SRC/Server/Resource/propDropEvent.inc $SRC/Server/Resource/except.txt $SR
 cp -p $SRC/Server/Resource/propGiftbox.inc $SRC/Server/Resource/propPackItem.inc "$DST/Resource/"
 # Where is this item from? part 2: rebirth gifts, couple gifts, the Guild Siege config (+ Event.lua, expTable.inc above)
 cp -p $SRC/Server/Resource/1Rebirth.inc $SRC/Server/Resource/couple.inc $SRC/Server/Resource/GuildCombat.txt "$DST/Resource/"
+# Rates & Buffs: the Server Buff and the Guild Buff (+ the game's copy of GuildBuff.txt below; Event.lua above)
+cp -p $SRC/Server/Resource/ServerBuff.txt $SRC/Server/Resource/GuildBuff.txt "$DST/Resource/"
+cp -p $SRC/Client/GuildBuff.txt "$DST/Client/"
+# the buff icons (Client/Icon): all of them in a manual test copy, the two the buff files use for the tests
+mkdir -p "$DST/Client/Icon"
+if [ "$DST" = "test-data/fixtures" ]; then cp -p "$SRC/Client/Icon/Badge_EventPackage.png" "$SRC/Client/Icon/Itm_SysSysScrChaCla1.dds" "$DST/Client/Icon/"
+else cp -p "$SRC"/Client/Icon/* "$DST/Client/Icon/"; fi
 for d in $SRC/Server/Resource/World/*/; do
   n=$(basename "$d")
   # NPC placement (.dyo), area names (.rgn + the map's .txt.txt), continents (WdMadrigal.wld.cnt)

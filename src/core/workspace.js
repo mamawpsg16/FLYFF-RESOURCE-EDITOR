@@ -137,9 +137,21 @@
       },
     },
     {
+      // Rates & Buffs (task I, loaders/rates.js): Event.lua's rates (WorldServer + DatabaseServer), ServerBuff.txt (WorldServer only),
+      // GuildBuff.txt (both; the game only shows what the server sends, but every commit keeps the Client copy in sync: cd03ca46, ca02d0cb).
+      // uses drops: the calculator's Penya and item chances (loaders/drops-sim.js); propMover.txt for the monster EXP.
+      id: 'rates', label: 'Rates & Buffs',
+      required: ['Event.lua'], optional: ['ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc', 'expTable.inc'],
+      editable: ['Event.lua', 'ServerBuff.txt', 'GuildBuff.txt'], client: ['GuildBuff.txt'],
+      deps: ['ServerBuff.txt', 'GuildBuff.txt'],
+      uses: ['drops'],
+      parse(ws) { return FRE.rates.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.rates.validate(model, { defines: ws.defines }); },
+    },
+    {
       // Where is this item from? (task H, loaders/where.js): every model above parsed read-only, nothing editable.
       // Last, so its parse sees the other models. maps: towns of the NPCs, and whether they stand in the game.
-      id: 'where', label: 'Where is this item from?',
+      id: 'where', label: 'Item Sources & Uses',
       required: [], editable: [], client: [],
       // part 2 (loaders/gifts.js): level-up gifts (Event.lua), rebirth gifts, couple gifts, the max level (expTable.inc),
       // the Guild Siege config; the prize amounts compiled into the C++ come in as opts.cpp (io/source-read.js)

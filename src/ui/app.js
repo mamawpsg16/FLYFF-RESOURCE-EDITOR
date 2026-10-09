@@ -58,6 +58,20 @@
       const fh = (await S.itemIndex.map).get(String(name).toLowerCase());
       return fh ? (await FRE.fsa.readHandle(fh)).bytes : null;
     },
+    // file names in a Client sub-folder ('Icon'), listed once per Client folder; null without a Client folder or that folder
+    async clientNames(sub) {
+      if (!S.client) return null;
+      if (!S.dirNames || S.dirNames.client !== S.client) S.dirNames = { client: S.client, map: new Map() };
+      const key = sub.toLowerCase();
+      if (!S.dirNames.map.has(key)) S.dirNames.map.set(key, (async () => {
+        const dir = await FRE.fsa.dirAt(S.client.dir, sub);
+        if (!dir) return null;
+        const out = [];
+        for await (const [n, fh] of dir.entries()) if (fh.kind === 'file') out.push(n);
+        return out.sort((a, b) => a.localeCompare(b));
+      })());
+      return S.dirNames.map.get(key);
+    },
     // Apply an edit op: make(text) -> splices. `key` marks what was edited (list badges).
     // Repeated edits of the same field within 2 s (typing) are folded into one undo step.
     edit(lowerFile, make, label, key) {
@@ -366,6 +380,9 @@
 
   function renderAll(withItems = true) {
     document.body.classList.toggle('start', !S.task);
+    // a task that never adds items (Rates & Buffs) has no item list on the right
+    const um = S.task ? modules().find(x => x.id === S.task) : null;
+    document.body.classList.toggle('no-items', !!(um && um.noItems));
     renderToolbar(); renderBanners(); renderModes();
     if (!S.task) { renderStart(); return; }
     renderList(); renderEditor();

@@ -48,6 +48,12 @@
     'defineitem.h': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1376 LoadDefines' },
     'propitem.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1261 LoadStrings' },
     'mdldyna.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:768 m_modelMng.LoadScript (the "model" line of Masquerade.prj)' },
+    // Rates & Buffs: Event.lua (the WorldServer and the DatabaseServer, Project.cpp:983 / databaseserver/Project.cpp:192; the
+    // DatabaseServer menu "Apply now", DatabaseServer.cpp:488, reloads it live), ServerBuff.txt (WorldServer only, Project.cpp:893),
+    // GuildBuff.txt (both, Project.cpp:891; the game shows only what the server sends)
+    'event.lua': { server: STARTUP, client: null, cite: 'Project.cpp:983 m_EventLua.LoadScript (+ databaseserver/Project.cpp:192)' },
+    'serverbuff.txt': { server: STARTUP, client: null, cite: 'Project.cpp:893 loadServerBuffFile (#ifdef __WORLDSERVER)' },
+    'guildbuff.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:891 loadGuildBuffFile' },
     'client/donationshoptree.inc': { server: null, client: WINDOW, cite: 'WndDonationShop.cpp:346 (409 with donation-tree.diff) LoadTreeScript' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };

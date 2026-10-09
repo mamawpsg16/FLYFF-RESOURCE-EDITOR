@@ -238,6 +238,8 @@ td.nowrap { white-space: nowrap; }
 
 /* Start screen: one folder, then one task */
 body.start #left, body.start #right, body.start .task-only { display: none; }
+body.no-items #right { display: none; }
+body.no-items #layout { grid-template-columns: 270px 1fr; }
 body.start #layout { grid-template-columns: 1fr; }
 .start-wrap { max-width: 880px; margin: 0 auto; padding: 28px 20px 40px; }
 .start-wrap h2 { margin: 0 0 4px; }

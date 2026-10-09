@@ -3033,5 +3033,117 @@ section('gifts and Guild Siege prizes: level-up / rebirth / couple gifts, siege 
   eq(J(red && red.table[1]), J([3, 189, 54, 27]), 'Red Chips: 3 guilds applied -> 189 / 54 / 27 chips each (eveschool.cpp:1702)');
 }
 
+section('rates & buffs: Event.lua rates, Server / Guild Buff, EXP per kill, edits (JS and Python copies agree)');
+{
+  const J = JSON.stringify;
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} rates ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py rates) gave no readable result', e.message); }
+  const NOW = new Date(2026, 9, 8, 12, 0);           // RT_FIXED_NOW
+  const fresh = () => {
+    const fs = new Map();
+    for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e));
+    const w = new FRE.Workspace(fs, { only: 'rates' });
+    w.now = () => NOW;
+    return w.load();
+  };
+  const ws = fresh(), m = ws.models.rates, R = FRE.rates;
+  eq(J(m.events.active), J({ exp: 30, item: 10, piece: 1, gold: 10, weather: 1.5 }), 'Event.lua now: EXP ×30, gate ×10, items ×1, Penya ×10, weather ×1.5');
+  eq(ws.diags.filter(d => d.module === 'rates').length, 0, 'the real files: no problems');
+  eq(FRE.ratesOps.describe(m.guild.tiers[4].bonus.map(b => ({ dst: b.dst.value, adj: b.adj.value })), FRE.itemTooltip.dstWords(ws)), m.guild.tiers[4].desc.text,
+    'Write description from stats gives Guild Buff Lv.5\'s own text (ca02d0cb)');
+  if (py) {
+    // events, on the real file and made-up ones
+    const evText = { 'Event.lua': ws.files.get('event.lua').text, ...py.evFiles };
+    let same = 0;
+    for (const e of py.events) {
+      const E = R.loadEvents({ name: 'Event.lua', text: evText[e.name] }, NOW);
+      const js = { failed: E.failed, active: E.active, errs: E.errors.map(() => 'err').sort(),
+        events: E.events.map(x => [x.name, x.on, x.times.map(t => [Number.isNaN(t.a) ? null : t.a, Number.isNaN(t.b) ? null : t.b]),
+          Object.fromEntries(Object.keys(x.f).sort().map(k => [k, Number.isNaN(x.f[k].value) ? null : x.f[k].value]))]) };
+      const pyx = { failed: e.failed, active: e.active, errs: e.errs, events: e.events };
+      if (J(js) === J(pyx)) same++; else print(`  events ${e.name}: JS ${J(js)}\n  PY ${J(pyx)}`);
+    }
+    eq(same, py.events.length, `Event.lua: ${py.events.length} files (the real one, overlapping events, a Lua error, Set before AddEvent, an unknown function, an open string, comments): the same events, states and rates`);
+    // buff files
+    same = 0;
+    const bText = { 'ServerBuff.txt': ws.files.get('serverbuff.txt').text, 'GuildBuff.txt': ws.files.get('guildbuff.txt').text };
+    for (const [k, t] of Object.entries(py.sbFiles)) bText['sb:' + k] = t;
+    for (const [k, t] of Object.entries(py.gbFiles)) bText['gb:' + k] = t;
+    for (const b of py.buffs) {
+      const B = b.guild ? R.loadGuildBuff({ name: 'GuildBuff.txt', text: bText[b.name] }) : R.loadServerBuff({ name: 'ServerBuff.txt', text: bText[b.name] });
+      const rows = B.tiers.map(t => [t.tier.value, t.online.value].concat(b.guild ? [t.glv.value, t.bonus.map(x => [x.dst.value, x.adj.value]), t.desc.text] : [t.pct.value], [t.name.text, t.icon.text]));
+      const ds = R.validate({ events: { errors: [], active: { item: 1 }, events: [], file: 'Event.lua' }, server: b.guild ? null : B, guild: b.guild ? B : null }, {});
+      const codes = [...new Set(ds.filter(d => ['RT_FIELDS', 'RT_NO_CLOSE', 'RT_GB_DST_NAME'].includes(d.code)).map(d => ({ RT_FIELDS: 'FIELDS', RT_NO_CLOSE: 'NO_CLOSE', RT_GB_DST_NAME: 'DST_NAME' })[d.code]))].sort();
+      if (J(rows) === J(b.tiers) && J(codes) === J(b.codes)) same++; else print(`  ${b.name}: JS ${J(rows)} ${J(codes)}\n  PY ${J(b.tiers)} ${J(b.codes)}`);
+    }
+    eq(same, py.buffs.length, `ServerBuff / GuildBuff: ${py.buffs.length} files (real, shifted fields, no closing }, a stat name, no keyword, negatives): the same tiers and problems`);
+    // tier picks
+    same = 0;
+    const sbF = { ok: R.loadServerBuff({ name: 'ServerBuff.txt', text: py.sbFiles.ok }), dup: R.loadServerBuff({ name: 'ServerBuff.txt', text: py.sbFiles.dup }), real: m.server };
+    for (const p of py.picks) {
+      const t = p[0] === 'sb' ? R.pickServerTier(sbF[p[1]], p[2]) : R.pickGuildTier(m.guild, p[2], p[3]);
+      if ((t ? t.tier.value : 0) === p[p.length - 2] && (p[0] === 'gb' || (t ? t.pct.value : 0) === p[p.length - 1])) same++;
+    }
+    eq(same, py.picks.length, `${py.picks.length} tier picks (players online, guild level + members): the same tier`);
+    // EXP per kill
+    same = 0;
+    let shown = 0;
+    for (const k of py.kills) {
+      const r = FRE.ratesSim.calc(ws, m, { monsterId: k.monster, playerLevel: k.playerLevel, tier: k.tier, scrollPct: k.scrollPct, gearExp: k.gearExp,
+        serverTier: null, online: k.online, guildTier: null, guildLevel: k.guildLevel, guildOnline: k.guildOnline, weather: k.weather, rebirth: k.rebirth }, { expOnly: true });
+      if (r.kill && r.factor.factor === k.factor && r.kill.exp === k.exp) same++;
+      else if (shown++ < 3) print(`  kill ${J(k)} -> JS factor ${r.factor.factor} exp ${r.kill && r.kill.exp}`);
+    }
+    eq(same, py.kills.length, `${py.kills.length} kills (every monster with EXP × 6 players: level gaps, Master / Hero, scrolls, gear, Server / Guild Buff, weather, rebirth): the same factor and EXP`);
+    // the EXP factor and one kill, around every edge
+    same = 0;
+    for (const [scroll, ev, dst, sb, reb, weather, wexp, want] of py.factors) {
+      const f = FRE.ratesSim.expFactor({ scrollPct: scroll, eventExp: Math.fround(ev), dstExp: dst, serverBuffPct: sb, rebirth: reb == null ? 0 : 1, rebirthRate: reb, weather, weatherExp: Math.fround(wexp) }).factor;
+      if (f === want) same++;
+    }
+    eq(same, py.factors.length, `${py.factors.length} EXP factors (scrolls, Event.lua, EXP stat, Server Buff, rebirth rates, weather): the same float32`);
+    same = 0;
+    for (const [expValue, monsterLevel, playerLevel, limit, halve, f, want] of py.exps)
+      if (FRE.ratesSim.killExp({ expValue, monsterLevel, playerLevel, limit, halve, factor: Math.fround(f) }).exp === want) same++;
+    eq(same, py.exps.length, `${py.exps.length} kills around the edges (the cap exactly, level gaps 1-2 / 3-4 / 5+, ÷2, 64-bit EXP): the same EXP`);
+    // edits: the same bytes
+    same = 0;
+    for (const sc of py.edits) {
+      const w = fresh();
+      if (sc.base) w.files.get('serverbuff.txt').applySplices([{ start: 0, end: w.files.get('serverbuff.txt').text.length, insert: py.sbFiles[sc.base] }], 'base'), w.reparse('serverbuff.txt');
+      try {
+        for (const op of sc.ops) {
+          const mm = w.models.rates, O = FRE.ratesOps;
+          if (op[0] === 'factor') w.apply('event.lua', O.setFactor(w.files.get('event.lua').text, mm.events.events[op[1]], op[2], op[3]), 'x');
+          else if (op[0] === 'time') w.apply('event.lua', O.setTime(null, mm.events.events[op[1]].times[op[2]], op[3], op[4]), 'x');
+          else {
+            const key = op[1].toLowerCase(), guild = key === 'guildbuff.txt', b = guild ? mm.guild : mm.server, txt = w.files.get(key).text;
+            let sp;
+            if (op[0] === 'addtier') sp = O.addTier(txt, b, Object.assign({}, op[2], op[2].bonus ? { bonus: op[2].bonus.map(([dst, adj]) => ({ dst, adj })) } : {}), guild);
+            else if (op[0] === 'remove') sp = O.removeTier(txt, b.tiers[op[2]]);
+            else {
+              const t = b.tiers[op[2]], f = op[3];
+              const span = /^(dst|adj)\d$/.test(f) ? t.bonus[Number(f[3])][f.slice(0, 3)] : t[f];
+              sp = op[0] === 'num' ? O.setNumber(span, op[4], -2147483647, 2147483647, f) : O.setString(span, op[4], f);
+            }
+            w.apply(key, sp, 'x');
+          }
+        }
+        const files = { 'Event.lua': w.files.get('event.lua').text, 'ServerBuff.txt': w.files.get('serverbuff.txt').text, 'GuildBuff.txt': w.files.get('guildbuff.txt').text };
+        if (J(files) === J(sc.files)) same++; else print(`  edit ${J(sc.ops)}: the files differ`);
+      } catch (e) { print(`  edit ${J(sc.ops)}: ${e.message}`); }
+    }
+    eq(same, py.edits.length, `${py.edits.length} edit scripts (rates changed and added, dates, tiers added / removed / changed): byte-identical files`);
+  }
+  // the checks
+  const bad = R.loadEvents({ name: 'Event.lua', text: 'AddEvent( "A" )\r\n\tSetTime( "2026-10-01 00:00", "2026-10-31 00:00" )\r\n\tSetItemDropRate( 20 )\r\n' }, NOW);
+  ok(R.validate({ events: bad, server: null, guild: null }, {}).some(d => d.code === 'RT_GATE_NO_EFFECT'), 'a gate above ×10 is flagged (RT_GATE_NO_EFFECT)');
+  throws(() => FRE.ratesOps.setFactor('', m.events.events[0], 'exp', 0), 'a rate of 0 is refused');
+  throws(() => FRE.ratesOps.setTime('', m.events.events[0].times[0], 'end', '2001-01-01 00:00'), 'an end before the start is refused');
+  throws(() => FRE.ratesOps.setString(m.server.tiers[0].name, 'a"b', 'name'), 'a " in a name is refused');
+  for (const c of ['RT_LUA_ERROR', 'RT_GATE_NO_EFFECT', 'RT_NO_CLOSE', 'RT_FIELDS', 'RT_GB_DST_NAME', 'RT_GB_DST_UNKNOWN', 'RT_TIER_ORDER', 'RT_TEXT_LONG']) ok(FRE.diagHelp[c], `help text for ${c}`);
+}
+
 print(`\n${pass} passed, ${fail} failed`);
 if (fail) System.exit(1);

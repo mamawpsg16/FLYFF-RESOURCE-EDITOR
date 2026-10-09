@@ -217,5 +217,5 @@
     return h('span.dur-wrap', el, ' ', sel, ' ', perm, hint);
   }
 
-  FRE.dom = { h, $, fmt, toast, toasts: () => toastCount, modal, progress, numInput, pctInput, pctText, keepFocus, LIVE_MS, flushLive, durationInput, durationText };
+  FRE.dom = { h, $, fmt, toast, liveCommit, toasts: () => toastCount, modal, progress, numInput, pctInput, pctText, keepFocus, LIVE_MS, flushLive, durationInput, durationText };
 })(globalThis.FRE = globalThis.FRE || {});

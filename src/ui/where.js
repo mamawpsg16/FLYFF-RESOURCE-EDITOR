@@ -166,8 +166,8 @@
   ];
 
   const mod = {
-    id: 'where', label: 'Where is this item from?', searchPlaceholder: 'Search items (name or II_ name)',
-    help: 'Where is this item from?: every way players get an item (shops, exchanges, monsters, boxes, Battle Pass, level-up / rebirth / couple gifts, Guild Siege prizes) and where it is used',
+    id: 'where', label: 'Item Sources & Uses', searchPlaceholder: 'Search items (name or II_ name)',
+    help: 'Item Sources & Uses: every way players get an item (shops, exchanges, monsters, boxes, Battle Pass, level-up / rebirth / couple gifts, Guild Siege prizes) and where it is used',
     st,
     onLoad() { st.show = 'all'; },          // the item stays: coming back from another task shows it again
 

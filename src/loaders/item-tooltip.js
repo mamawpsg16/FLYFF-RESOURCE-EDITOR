@@ -244,5 +244,14 @@
     return parts.join(' ') || '0 s';
   }
 
-  FRE.itemTooltip = { build, cfmt, duration };
+  // The game's words for a stat (FindDstString) and whether it shows with a % (IsDst_Rate): ws -> v -> { word, rate }
+  function dstWords(ws) {
+    const D = ws.defines.defines, out = new Map();
+    for (const [dst, tid] of DST_TEXT) { const v = D.get(dst); if (v !== undefined && !out.has(v)) out.set(v, { word: ws.texts.get(tid) || '', define: dst }); }
+    for (const [dst, txt] of Object.entries(DST_FIXED)) { const v = D.get(dst); if (v !== undefined) out.set(v, { word: txt, define: dst }); }
+    for (const dst of DST_RATE) { const v = D.get(dst); if (out.has(v)) out.get(v).rate = true; }
+    return out;
+  }
+
+  FRE.itemTooltip = { build, cfmt, duration, dstWords };
 })(globalThis.FRE = globalThis.FRE || {});

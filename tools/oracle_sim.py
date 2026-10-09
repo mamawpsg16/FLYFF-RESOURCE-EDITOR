@@ -4126,6 +4126,11 @@ AS_CITES = [
     ('Neuz/Neuz.cpp', 1573, 'prj.OpenProject( "Masquerade.prj" )'),
     ('Neuz/Neuz.cpp', 1593, 'prj.LoadPreFiles()'),
     ('_Common/file.cpp', 273, 'CResFile::Open'),
+    ('_Common/Project.cpp', 983, 'prj.m_EventLua.LoadScript()'),
+    ('_Common/Project.cpp', 982, 'defined(__WORLDSERVER)'),
+    ('_Common/Project.cpp', 891, 'GuildBuffManage::loadGuildBuffFile()'),
+    ('_Common/Project.cpp', 893, 'ServerBuffManage::loadServerBuffFile()'),
+    ('_Common/Project.cpp', 892, '#ifdef __WORLDSERVER'),
 ]
 
 
@@ -4143,6 +4148,10 @@ def as_who(key):
         return True, None
     if key == 'propgiftbox.inc':          # LoadGiftbox sits in #ifdef __WORLDSERVER (Project.cpp:836-847)
         return True, None
+    if key in ('event.lua', 'serverbuff.txt'):    # Project.cpp:982 (__WORLDSERVER) / :892-893 (#ifdef __WORLDSERVER)
+        return True, None
+    if key == 'guildbuff.txt':            # Project.cpp:891, outside the #ifdef: the game loads it too
+        return True, 'start'
     return True, 'start'          # unknown file: both, at startup
 
 
@@ -4188,7 +4197,8 @@ def as_run(root):
     import random
     rnd = random.Random(1019)
     keys = AS_SHARED + [AS_TREE, 'client/npcboard_282.inc', 'client/npcboard_300.inc', 'world/wdmadrigal/wdmadrigal.dyo',
-                        'world/wdvolcane/wdvolcane.dyo', 'propmoverex.inc', 'propgiftbox.inc', 'propskill.txt']
+                        'world/wdvolcane/wdvolcane.dyo', 'propmoverex.inc', 'propgiftbox.inc', 'propskill.txt',
+                        'event.lua', 'serverbuff.txt', 'guildbuff.txt']
     states = ['written', 'created', 'datares', 'different', 'none']
     pstates = ['in-source', 'missing', 'unknown', 'built']
     codesets = [[], ['DT_PATCH'], ['DT_ORDER'], ['NN_RULES_PATCH']]
@@ -7304,6 +7314,538 @@ def gf_run(root):
     return {'variants': files}
 
 
+# ===================================================================================================
+# rates: Rates & Buffs (task I part 1). Straight from the C++ and LuaFunc/EventFunc.lua, not from the JS copy:
+#   Event.lua: AddEvent (EventFunc.lua:235, factors start at 1), SetTime (:262, GetTimeToNumber :222), SetExpFactor :322,
+#     SetItemDropRate :339, SetPieceItemDropRate :356, SetGoldDropFactor :373, SetWeatherEvent :582; GetEventState :62;
+#     Get*Factor = product over the events that are on (:327-388, :588); a script that fails -> IsPossible false -> 1 (EventLua.cpp:176-198)
+#   ServerBuff.cpp:27-63 / GuildBuff.cpp:12-60 (bare CScanner, GetNumber = atoi), findHighestEligibleTier (ServerBuff.cpp:65, GuildBuff.cpp:62)
+#   a kill: SubExperience (Mover.cpp:6866-6871), AddExperienceKillMember (:7001 (float) cast), AddExperienceSolo (:7034-7116 level gap,
+#     nLimitExp cap, (EXPINTEGER)), AddExperience (MoverParam.cpp:1149-1162: /2 for Master/Hero, (EXPINTEGER)( nExp * GetExpFactor() ) in float),
+#     GetExpFactor (MoverParam.cpp:4465-4660, float32 throughout)
+RT_FIXED_NOW = 202610081200
+RT_KNOWN = set(('SEC MIN Notice AddMessage IsNoticeTime SetNextNoticeTime GetNoticeMessage GetEventState SetState GetEventList '
+                'GetAllEventList GetEventInfo GetDesc GetTimeToNumber AddEvent SetTime SetItem GetItem SetExpFactor GetExpFactor SetItemDropRate '
+                'GetItemDropRate SetPieceItemDropRate GetPieceItemDropRate SetGoldDropFactor GetGoldDropFactor SetAttackPower GetAttackPower '
+                'SetDefensePower GetDefensePower SetCouponEvent GetCouponEvent SetLevelUpGift GetLevelUpGift SetCheerExpFactor GetCheerExpFactor '
+                'SetSpawn GetSpawn SetKeepConnectEvent GetKeepConnectTime GetKeepConnectItem SetRainEvent GetRainEventExpFactor GetRainEventTitle '
+                'SetWeatherEvent GetWeatherEventExpFactor GetWeatherEventTitle SetSnowEvent GetSnowEventExpFactor GetSnowEventTitle '
+                'TRACE ERROR dofile print tonumber tostring pairs ipairs type').split())
+RT_KW = set('and break do else elseif end false for function goto if in local nil not or repeat return then true until while'.split())
+RT_FN = {'SetExpFactor': 'exp', 'SetGoldDropFactor': 'gold', 'SetItemDropRate': 'item', 'SetPieceItemDropRate': 'piece', 'SetWeatherEvent': 'weather'}
+
+
+def rt_f32(x):
+    return struct.unpack('<f', struct.pack('<f', x))[0]
+
+
+def rt_blank(t):
+    """comments and the inside of strings -> spaces (same length); problems: unterminated string / long comment"""
+    out, bad, i, n = [], [], 0, len(t)
+    while i < n:
+        c = t[i]
+        if c in '"\'':
+            j = i + 1
+            while j < n and t[j] != c and t[j] != '\n':
+                j += 2 if t[j] == '\\' else 1
+            closed = j < n and t[j] == c
+            if not closed:
+                bad.append(i)
+            out.append(c + re.sub(r'[^\n]', ' ', t[i + 1:j]) + (c if closed else ''))
+            i = j + (1 if closed else 0)
+            continue
+        if t.startswith('--', i):
+            if t.startswith('--[[', i):
+                j = t.find(']]', i + 4)
+                if j < 0:
+                    bad.append(i); j = n
+                else:
+                    j += 2
+            else:
+                j = t.find('\n', i)
+                j = n if j < 0 else j
+            out.append(re.sub(r'[^\n]', ' ', t[i:j])); i = j
+            continue
+        out.append(c); i += 1
+    return ''.join(out), bad
+
+
+def rt_args(t, a, b):
+    """argument spans between a and b (commas outside quotes and parentheses)"""
+    res, s, q, d, i = [], a, None, 0, a
+    def push(e):
+        x, y = s, e
+        while x < y and t[x].isspace():
+            x += 1
+        while y > x and t[y - 1].isspace():
+            y -= 1
+        txt = t[x:y]
+        res.append({'text': txt, 'start': x, 'end': y, 'str': txt[1:-1] if len(txt) >= 2 and txt[0] in '"\'' and txt[-1] == txt[0] else None})
+    while i < b:
+        c = t[i]
+        if q:
+            if c == '\\':
+                i += 1
+            elif c == q:
+                q = None
+        elif c in '"\'':
+            q = c
+        elif c == '(':
+            d += 1
+        elif c == ')':
+            d -= 1
+        elif c == ',' and d == 0:
+            push(i); s = i + 1
+        i += 1
+    push(b)
+    return res
+
+
+def rt_num(s):
+    return float(s) if re.fullmatch(r'[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?', s) else None
+
+
+def rt_timenum(s):
+    g = re.findall(r'\d+', s or '')
+    if not g:
+        return None
+    return int(''.join(x if j == 0 or int(x) >= 10 else '0' + str(int(x)) for j, x in enumerate(g)))
+
+
+def rt_events(t, now):
+    bt, bad = rt_blank(t)
+    errs = [('err', p) for p in bad]
+    st = []
+    for i, c in enumerate(bt):
+        if c in '([{':
+            st.append(c)
+        elif c in ')]}':
+            if not st or st[-1] != {')': '(', ']': '[', '}': '{'}[c]:
+                errs.append(('err', i)); st = None
+                break
+            st.pop()
+    if st:
+        errs.append(('err', -1))
+    evs = []
+    for m in re.finditer(r'\b([A-Za-z_]\w*)\s*\(((?:[^()]|\([^()]*\))*)\)', bt):
+        name = m.group(1)
+        if name in RT_KW or re.search(r'function\s+$', bt[max(0, m.start() - 20):m.start()]) or bt[m.start() - 1:m.start()] in ('.', ':'):
+            continue
+        if name not in RT_KNOWN:
+            errs.append(('err', m.start())); continue   # attempt to call a nil value: the chunk stops
+        o, cl = m.start(2), m.end(2)
+        stmt = (m.start(), m.end())
+        if name == 'AddEvent':
+            a = rt_args(t, o, cl)
+            evs.append({'name': (a[0]['str'] if a[0]['str'] is not None else a[0]['text']), 'times': [], 'f': {}, 'last': stmt, 'wt': None, 'start': m.start()})
+            continue
+        if not name.startswith('Set'):
+            continue
+        if not evs:
+            errs.append(('err', m.start())); continue
+        e = evs[-1]
+        e['last'] = stmt
+        a = rt_args(t, o, cl)
+        if name == 'SetTime':
+            e['times'].append({'a': rt_timenum(a[0]['str'] if a[0]['str'] is not None else ''),
+                               'b': rt_timenum(a[1]['str'] if len(a) > 1 and a[1]['str'] is not None else ''), 'args': a})
+        elif name in RT_FN and a and a[0]['text']:
+            e['f'][RT_FN[name]] = {'v': rt_num(a[0]['text']), 'arg': a[0]}
+            if name == 'SetWeatherEvent':
+                e['wt'] = a[1] if len(a) > 1 else None
+    act = {'exp': 1.0, 'item': 1.0, 'piece': 1.0, 'gold': 1.0, 'weather': 1.0}
+    for e in evs:
+        on = False
+        for w in e['times']:
+            if w['a'] is not None and w['a'] <= now:
+                on = w['b'] is not None and w['b'] > now
+        e['on'] = on
+        if on:
+            for k in act:
+                if k in e['f'] and e['f'][k]['v'] is not None:
+                    act[k] *= e['f'][k]['v']
+    failed = any(x[0] == 'err' for x in errs)
+    if failed:
+        act = {k: 1.0 for k in act}
+    return {'events': evs, 'active': act, 'failed': failed, 'errs': errs}
+
+
+def rt_scan(t):
+    """the CScanner token stream with offsets: (kind, text, start, end); kind s = quoted string"""
+    out, i, n = [], 0, len(t)
+    nul = t.find('\0')
+    if nul >= 0:
+        n = nul
+    while True:
+        while i < n and 0 < ord(t[i]) <= 0x20:
+            i += 1
+        if t.startswith('//', i):
+            while i < n and t[i] not in '\r\n':
+                i += 1
+            continue
+        if t.startswith('/*', i):
+            j = t.find('*/', i + 2)
+            i = n if j < 0 else j + 2
+            continue
+        if i >= n:
+            return out
+        c = t[i]
+        if c == '"':
+            j = i + 1
+            while j < n and t[j] not in '"\r':
+                j += 1
+            out.append(('s', t[i + 1:j], i, j + 1 if j < n and t[j] == '"' else j)); i = j + 1
+            continue
+        if c in '+-*^/%=;(),\':{}.!<>':
+            k = 2 if c in '=!<>' and t[i + 1:i + 2] == '=' else 1
+            out.append(('d', t[i:i + k], i, i + k)); i += k
+            continue
+        j = i
+        while j < n and t[j] not in ' !:;,+-<>\'/*%^=()&|"{}\t\r\n':
+            j += 1
+        out.append(('n' if c.isdigit() else 'w', t[i:j], i, j)); i = j
+
+
+def rt_buff(t, kw, guild):
+    tk = rt_scan(t)
+    k = [0]
+    def tok():
+        x = tk[k[0]] if k[0] < len(tk) else ('e', '', len(t), len(t))
+        k[0] += 1
+        return x
+    cur = [None]
+    def number(what):
+        x = tok()
+        cur[0] = x
+        ok = x[0] == 'n' or x[1] == '='
+        v = atoi(x[1]) if x[0] == 'n' else (-1 if x[1] == '=' else 0)
+        a, b = x[2], x[3]
+        if x[1] in ('-', '+'):
+            y = tok(); cur[0] = y
+            ok = y[0] == 'n'
+            v = (-atoi(y[1]) if x[1] == '-' else atoi(y[1])) if y[0] == 'n' else 0
+            b = y[3]
+        elif x[0] == 'w':
+            v = atoi(x[1])
+        return {'v': v, 'ok': ok, 'start': a, 'end': b, 'text': t[a:b], 'word': x[0] == 'w' and x[1] != '='}
+    def string():
+        x = tok(); cur[0] = x
+        return {'v': x[1], 'ok': x[0] == 's', 'start': x[2], 'end': x[3]}
+    res = {'tiers': [], 'codes': [], 'open': None}
+    x = tok()
+    if x[1] != kw:
+        res['codes'].append('FIELDS')
+        return res
+    o = tok()
+    res['open'] = o
+    if o[1] != '{':
+        res['codes'].append('FIELDS')
+    tier = number('tier')
+    while cur[0][1][:1] != '}':
+        if cur[0][0] == 'e':
+            res['codes'].append('NO_CLOSE'); break
+        r = {'tier': tier}
+        if guild:
+            r['glv'] = number(1); r['online'] = number(2)
+            r['bonus'] = [(number(3), number(4)) for _ in range(5)]
+            r['name'] = string(); r['desc'] = string(); r['icon'] = string()
+        else:
+            r['online'] = number(1); r['pct'] = number(2); r['name'] = string(); r['icon'] = string()
+        r['start'], r['end'] = tier['start'], r['icon']['end']
+        res['tiers'].append(r)
+        tier = number('tier')
+    for r in res['tiers']:
+        nums = [r['tier'], r['glv'], r['online']] if guild else [r['tier'], r['online'], r['pct']]
+        if not all(z['ok'] for z in nums) or not all(r[z]['ok'] for z in (['name', 'desc', 'icon'] if guild else ['name', 'icon'])):
+            res['codes'].append('FIELDS')
+        if guild:
+            for d, _ in r['bonus']:
+                if d['word']:   # a name: atoi gives 0
+                    res['codes'].append('DST_NAME')
+    return res
+
+
+def rt_pick(tiers, *need):
+    best = None
+    for r in tiers:
+        req = [r['online']['v']] if len(need) == 1 else [r['glv']['v'], r['online']['v']]
+        if all(n >= q for n, q in zip(need, req)) and (best is None or r['tier']['v'] > best['tier']['v']):
+            best = r
+    return best
+
+
+def rt_factor(scroll, ev_exp, dst, sb, reb_rate, weather, wexp):
+    f = rt_f32(1.0)
+    if scroll:
+        f = rt_f32(f * rt_f32(1.0 + rt_f32(rt_f32(scroll) / 100.0)))
+    f = rt_f32(f * rt_f32(ev_exp))
+    if dst > 0:
+        f = rt_f32(f * rt_f32(1.0 + rt_f32(rt_f32(dst) / 100.0)))
+    if sb:
+        f = rt_f32(f + rt_f32(rt_f32(sb) / 100.0))
+    if reb_rate is not None:
+        f = rt_f32(f * rt_f32(reb_rate))
+    if weather:
+        f = rt_f32(f * rt_f32(wexp))
+    return f
+
+
+def rt_exp(expv, mlv, plv, limit, halve, f):
+    v = rt_f32(float(expv))
+    d = plv - mlv
+    if d > 0:
+        v = v * (rt_f32(0.7) if d <= 2 else rt_f32(0.4) if d <= 4 else rt_f32(0.1))
+    if limit is not None and v > limit:
+        v = float(limit)
+    n = int(v)
+    if halve:
+        n = int(n / 2) if n >= 0 else -int(-n / 2)
+    return int(rt_f32(rt_f32(float(n)) * f))
+
+
+def rt_limits(t):
+    tk = [x[1] for x in rt_scan(t)]
+    if 'expCharacter' not in tk:
+        return None
+    k = tk.index('expCharacter') + 2
+    rows = []
+    def num():
+        nonlocal k
+        x = tk[k]; k += 1
+        if x in ('-', '+'):
+            y = tk[k]; k += 1
+            return -int(re.match(r'\d*', y).group(0) or 0) if x == '-' else int(re.match(r'\d*', y).group(0) or 0)
+        if x == '=':
+            return -1
+        return int(re.match(r'\d*', x).group(0) or 0)
+    while tk[k][:1] != '}':
+        num(); num(); num(); rows.append(num())
+    return rows
+
+
+def rt_rebirth_rates(t):
+    tk = [x[1] for x in rt_scan(t)]
+    mx = 0
+    if 'Max' in tk:
+        mx = atoi(tk[tk.index('Max') + 1]) & 0xFFFF
+    k = tk.index('Rates') + 2
+    rates = []
+    while tk[k][:1] != '}':
+        if len(rates) <= mx:
+            rates.append(float(re.match(r'[-+]?\d*\.?\d*', tk[k]).group(0) or 0))
+            k += 4
+        else:
+            k += 1
+    return rates
+
+
+# ---- edits (as the C++ files are written by hand: a value replaced in place, a new line copying the line before)
+def rt_line_end(t, i):
+    while i < len(t) and t[i] not in '\r\n':
+        i += 1
+    eol = '\r\n' if t[i:i + 2] == '\r\n' else t[i:i + 1]
+    return i + len(eol), eol
+
+
+def rt_indent(t, i):
+    s = t.rfind('\n', 0, i) + 1
+    return re.match(r'[ \t]*', t[s:]).group(0)
+
+
+def rt_fmt(v):
+    v = round(v * 10000) / 10000
+    return str(int(v)) if v == int(v) else repr(v)
+
+
+def rt_edit(texts, op, now):
+    kind = op[0]
+    if kind in ('factor', 'time'):
+        t = texts['Event.lua']
+        E = rt_events(t, now)['events'][op[1]]
+        if kind == 'factor':
+            k, v = op[2], rt_fmt(op[3])
+            if k in E['f']:
+                a = E['f'][k]['arg']
+                t = t[:a['start']] + v + t[a['end']:]
+            else:
+                fn = {v_: k_ for k_, v_ in RT_FN.items()}[k]
+                row = '%s( %s, "Weather bonus: EXP x%s!" )\t-- only while it rains/snows' % (fn, v, v) if k == 'weather' else '%s( %s )' % (fn, v)
+                at, eol = rt_line_end(t, E['last'][1])
+                t = t[:at] + (rt_indent(t, E['last'][0]) + row + eol if eol else '\r\n' + rt_indent(t, E['last'][0]) + row) + t[at:]
+        else:
+            w = E['times'][op[2]]
+            a = w['args'][0 if op[3] == 'start' else 1]
+            t = t[:a['start']] + '"%s"' % op[4] + t[a['end']:]
+        texts['Event.lua'] = t
+        return
+    f = op[1]
+    guild = f == 'GuildBuff.txt'
+    t = texts[f]
+    B = rt_buff(t, 'GuildBuffTiers' if guild else 'ServerBuffTiers', guild)
+    if kind == 'addtier':
+        r = op[2]
+        row = ('%d %d %d  %s  "%s" "%s" "%s"' % (r['tier'], r['glv'], r['online'], '  '.join('%d %d' % (d, a) for d, a in r['bonus']), r['name'], r['desc'], r['icon'])) if guild \
+            else '%d  %d   %d   "%s" "%s"' % (r['tier'], r['online'], r['pct'], r['name'], r['icon'])
+        last = B['tiers'][-1]
+        at, eol = rt_line_end(t, last['end'])
+        t = t[:at] + rt_indent(t, last['start']) + row + eol + t[at:]
+    elif kind == 'remove':
+        r = B['tiers'][op[2]]
+        s = t.rfind('\n', 0, r['start']) + 1
+        at, _ = rt_line_end(t, r['end'])
+        t = t[:s] + t[at:]
+    elif kind in ('num', 'str'):
+        r = B['tiers'][op[2]]
+        fld = op[3]
+        span = r['bonus'][int(fld[3])][0 if fld[:3] == 'dst' else 1] if fld[:3] in ('dst', 'adj') else r[fld]
+        val = str(op[4]) if kind == 'num' else '"%s"' % op[4]
+        t = t[:span['start']] + val + t[span['end']:]
+    texts[f] = t
+
+
+RT_EV_FILES = {
+    'overlap': ('AddEvent( "A" )\r\n\tSetTime( "2026-10-01 00:00", "2026-10-31 00:00" )\r\n\tSetExpFactor( 2 )\r\n\tSetGoldDropFactor( 3 )\r\n'
+                'AddEvent( "B" )\r\n\tSetTime( "2026-1-1 0:00", "2026-12-31 00:00" )\r\n\tSetExpFactor( 1.5 )\r\n\tSetExpFactor( 4 )\r\n\tSetPieceItemDropRate( 2 )\r\n'
+                'AddEvent( "C later" )\r\n\tSetTime( "2026-11-01 00:00", "2026-11-02 00:00" )\r\n\tSetExpFactor( 100 )\r\n'
+                'AddEvent( "D ended then again" )\r\n\tSetTime( "2026-01-01 00:00", "2026-02-01 00:00" )\r\n\tSetTime( "2026-10-08 11:00", "2026-10-08 12:01" )\r\n\tSetItemDropRate( 20 )\r\n'
+                'AddEvent( "E ends now" )\r\n\tSetTime( "2026-10-01 00:00", "2026-10-08 12:00" )\r\n\tSetGoldDropFactor( 7 )\r\n'
+                'AddEvent( "F starts now" )\r\n\tSetTime( "2026-10-08 12:00", "2026-10-09 12:00" )\r\n\tSetPieceItemDropRate( 3 )\r\n'),
+    'lua_error': 'AddEvent( "A" )\r\n\tSetTime( "2026-10-01 00:00", "2026-10-31 00:00" )\r\n\tSetExpFactor( 2 \r\n',
+    'set_first': '\tSetExpFactor( 2 )\r\nAddEvent( "A" )\r\n\tSetTime( "2026-10-01 00:00", "2026-10-31 00:00" )\r\n\tSetExpFactor( 3 )\r\n',
+    'unknown_fn': 'AddEvent( "A" )\r\n\tSetTime( "2026-10-01 00:00", "2026-10-31 00:00" )\r\n\tSetExpFactr( 2 )\r\n\tSetGoldDropFactor( 5 ) -- note ( )\r\n',
+    'open_string': 'AddEvent( "A )\r\n\tSetTime( "2026-10-01 00:00", "2026-10-31 00:00" )\r\n',
+    'comments': '--[[ AddEvent( "X" )\r\nSetExpFactor( 9 ) ]]\r\nAddEvent( "A" ) -- SetExpFactor( 8 )\r\n\tSetTime( "2026-10-01 00:00", "2026-10-31 00:00" )\r\n\tSetWeatherEvent( 2.5, "rain! (x2.5)" )\r\n\tSetCouponEvent( MIN(120) )\r\n',
+}
+RT_SB_FILES = {
+    'ok': '// x\nServerBuffTiers\n{\n\t1  10   5   "Server Buff" "a.png"\n\t3  5   30  "Big" "b.png"\n\t2  20   10  "Server Buff" "a.png"\n}\n',
+    'no_close': 'ServerBuffTiers\n{\n\t1 10 5 "a" "b"\n',
+    'missing': 'ServerBuffTiers\n{\n\t1 10 "a" "b"\n\t2 20 10 "a" "b"\n}\n',
+    'no_kw': '{\n\t1 10 5 "a" "b"\n}\n',
+    'negative': 'ServerBuffTiers\n{\n\t1 - 5 5 "a" "b"\n\t= 0 7 "c" "d"\n}\n',
+    'dup': 'ServerBuffTiers\n{\n\t1 10 5 "a" "b"\n\t2 20 10 "first 2" "b"\n\t2 15 99 "second 2" "b"\n}\n',
+    'spaces': 'ServerBuffTiers\n{\n    1  10  5  "a" "b"\n    2  20  10  "c" "d"\n}\n',
+}
+RT_GB_FILES = {
+    'ok': 'GuildBuffTiers\n{\n\t1 10 5  10003 10  66 3   52 3   67 10  0 0  "L1" "d1" "i.dds"\n\t2 1 1  DST_STR 5  67 -5  0 0  0 0  0 0  "L2" "d2" "i.dds"\n}\n',
+    'brace': 'GuildBuffTiers\n{\n\t1 10 5\n}\n',
+    'short': 'GuildBuffTiers\n{\n\t1 10 5  10003 10  66 3   52 3   67 10  "L1" "d1" "i.dds"\n\t2 20 10  0 0  0 0  0 0  0 0  0 0  "L2" "d2" "i.dds"\n}\n',
+}
+
+
+def rt_run(root):
+    D = dr_defines(root)
+    rd = lambda n: open(os.path.join(root, n), 'rb').read().decode('latin-1') if os.path.exists(os.path.join(root, n)) else None
+    out = {'events': [], 'buffs': [], 'picks': [], 'kills': [], 'edits': []}
+    def ev_out(name, t):
+        E = rt_events(t, RT_FIXED_NOW)
+        out['events'].append({'name': name, 'failed': E['failed'], 'active': E['active'],
+                              'errs': sorted(x[0] for x in E['errs']),
+                              'events': [[e['name'], e['on'], [[w['a'], w['b']] for w in e['times']], {k: v['v'] for k, v in sorted(e['f'].items())}] for e in E['events']]})
+        return E
+    real = rd('Event.lua')
+    E = ev_out('Event.lua', real)
+    for k, t in RT_EV_FILES.items():
+        ev_out(k, t)
+    def buff_out(name, t, guild):
+        B = rt_buff(t, 'GuildBuffTiers' if guild else 'ServerBuffTiers', guild)
+        rows = []
+        for r in B['tiers']:
+            row = [r['tier']['v'], r['online']['v']] + ([r['glv']['v'], [[d['v'], a['v']] for d, a in r['bonus']], r['desc']['v']] if guild else [r['pct']['v']]) + [r['name']['v'], r['icon']['v']]
+            rows.append(row)
+        out['buffs'].append({'name': name, 'guild': guild, 'tiers': rows, 'codes': sorted(set(B['codes']))})
+        return B
+    SB = buff_out('ServerBuff.txt', rd('ServerBuff.txt'), False)
+    GB = buff_out('GuildBuff.txt', rd('GuildBuff.txt'), True)
+    for k, t in RT_SB_FILES.items():
+        buff_out('sb:' + k, t, False)
+    for k, t in RT_GB_FILES.items():
+        buff_out('gb:' + k, t, True)
+    sbok = rt_buff(RT_SB_FILES['ok'], 'ServerBuffTiers', False)
+    sbdup = rt_buff(RT_SB_FILES['dup'], 'ServerBuffTiers', False)
+    for on in range(0, 251, 3):
+        for name, B in (('real', SB), ('ok', sbok), ('dup', sbdup)):
+            p = rt_pick(B['tiers'], on)
+            out['picks'].append(['sb', name, on, p['tier']['v'] if p else 0, p['pct']['v'] if p else 0])
+    for lv in range(0, 61, 4):
+        for on in range(0, 41, 3):
+            p = rt_pick(GB['tiers'], lv, on)
+            out['picks'].append(['gb', 'real', lv, on, p['tier']['v'] if p else 0, 0])
+    # kills: every monster with EXP, 6 players each, the other inputs from a seeded draw
+    lim = rt_limits(rd('expTable.inc'))
+    reb = rt_rebirth_rates(rd('1Rebirth.inc'))
+    mons = dr_columns(os.path.join(root, 'propMover.txt'), ['dwID', 'dwLevel', 'dwExpValue'])
+    rnd = random.Random(1022)
+    dstexp = D.get('DST_EXPERIENCE')
+    seen = set()
+    act = E['active']
+    for r in mons:
+        mid = dr_val(r['dwID'], D)
+        if not mid or mid in seen:
+            continue
+        seen.add(mid)
+        ev = int(re.match(r'\d*', r['dwExpValue']).group(0) or 0)
+        if ev <= 0:
+            continue
+        mlv = dr_val(r['dwLevel'], D)
+        for dl in (0, 1, 3, 6, 12, -4):
+            plv = max(1, min(len(lim) - 1, mlv + dl))
+            inp = {'monster': mid, 'playerLevel': plv, 'tier': rnd.choice(['normal', 'normal', 'master', 'hero']),
+                   'scrollPct': rnd.choice([0, 0, 50, 100, 150]), 'gearExp': rnd.choice([0, 0, 10, 35]), 'online': rnd.randint(0, 230),
+                   'guildLevel': rnd.randint(0, 60), 'guildOnline': rnd.randint(0, 40), 'weather': rnd.random() < 0.3,
+                   'rebirth': rnd.choice([0, 0, 1, 5, 20])}
+            sbt = rt_pick(SB['tiers'], inp['online'])
+            gbt = rt_pick(GB['tiers'], inp['guildLevel'], inp['guildOnline'])
+            gexp = sum(a['v'] for d, a in gbt['bonus'] if d['v'] == dstexp) if gbt else 0
+            rr = (reb[inp['rebirth']] if inp['rebirth'] < len(reb) else 1.0) if inp['rebirth'] > 0 else None
+            f = rt_factor(inp['scrollPct'], act['exp'], gexp + inp['gearExp'], sbt['pct']['v'] if sbt else 0, rr, inp['weather'], act['weather'])
+            inp['factor'] = f
+            inp['exp'] = rt_exp(ev, mlv, plv, lim[plv] if plv < len(lim) else None, inp['tier'] in ('master', 'hero'), f)
+            out['kills'].append(inp)
+    # the EXP factor and one kill alone, around every edge (made-up numbers)
+    out['factors'] = []
+    for i in range(400):
+        a = [rnd.choice([0, 0, 25, 50, 150, 333]), rnd.choice([1, 2.5, 30, 0.75]), rnd.choice([0, 0, 10, 35, 200]), rnd.choice([0, 0, 5, 20, 100]),
+             rnd.choice([None, None, 1.0, 0.9, 1.25]), rnd.random() < 0.5, rnd.choice([1.5, 2.5, 1.25, 3])]
+        out['factors'].append(a + [rt_factor(*a)])
+    out['exps'] = []
+    for expv, mlv, plv, limit in [(100, 10, 10, 100), (101, 10, 10, 100), (100, 10, 10, 99), (150, 10, 12, 105), (150, 10, 12, 104), (151, 10, 12, 105),
+                                  (300, 10, 13, 120), (300, 10, 14, 120), (300, 10, 15, 30), (300, 10, 16, 29), (7, 20, 1, 16), (40, 20, 1, 16),
+                                  (10187103688, 150, 150, 10187103688), (99999, 50, 49, None), (3, 1, 2, 18), (5, 1, 9, 50)]:
+        for halve in (False, True):
+            for f in (1.0, 54.15, 0.5, 3.3):
+                out['exps'].append([expv, mlv, plv, limit, halve, f, rt_exp(expv, mlv, plv, limit, halve, rt_f32(f))])
+    # edit scripts: the files after each script, byte for byte
+    G6 = {'tier': 6, 'glv': 60, 'online': 35, 'bonus': [(10003, 35), (66, 18), (52, 18), (67, 60), (79, 6)], 'name': 'Guild Buff Lv.6', 'desc': 'All Stat +35', 'icon': 'Itm_SysSysScrChaCla1.dds'}
+    scripts = [
+        [['factor', 0, 'exp', 40]],
+        [['factor', 0, 'piece', 2]],
+        [['factor', 0, 'piece', 2.5], ['factor', 0, 'piece', 3]],
+        [['factor', 0, 'weather', 2], ['factor', 1, 'gold', 0.5]],
+        [['factor', 1, 'exp', 12.25], ['factor', 1, 'weather', 1.25]],
+        [['time', 0, 0, 'end', '2030-01-01 00:00'], ['time', 1, 0, 'start', '2026-10-09 18:00']],
+        [['addtier', 'ServerBuff.txt', {'tier': 21, 'online': 210, 'pct': 105, 'name': 'Server Buff', 'icon': 'Badge_EventPackage.png'}]],
+        [['remove', 'ServerBuff.txt', 0], ['remove', 'ServerBuff.txt', 18], ['num', 'ServerBuff.txt', 3, 'pct', 33]],
+        [['str', 'ServerBuff.txt', 2, 'name', 'Online Bonus'], ['str', 'ServerBuff.txt', 2, 'icon', 'x.dds']],
+        [['addtier', 'GuildBuff.txt', G6]],
+        [['num', 'GuildBuff.txt', 0, 'dst4', 79], ['num', 'GuildBuff.txt', 0, 'adj4', 2], ['str', 'GuildBuff.txt', 0, 'desc', 'New text']],
+        [['remove', 'GuildBuff.txt', 4], ['num', 'GuildBuff.txt', 1, 'glv', 25], ['num', 'GuildBuff.txt', 2, 'adj1', -3]],
+        [['remove', 'GuildBuff.txt', 0], ['addtier', 'GuildBuff.txt', G6], ['factor', 1, 'piece', 4]],
+    ]
+    scripts.append({'base': 'spaces', 'ops': [['addtier', 'ServerBuff.txt', {'tier': 3, 'online': 30, 'pct': 15, 'name': 'e', 'icon': 'f'}], ['remove', 'ServerBuff.txt', 0]]})
+    for sc in scripts:
+        base = sc['base'] if isinstance(sc, dict) else None
+        sc = sc['ops'] if isinstance(sc, dict) else sc
+        texts = {'Event.lua': real, 'ServerBuff.txt': RT_SB_FILES[base] if base else rd('ServerBuff.txt'), 'GuildBuff.txt': rd('GuildBuff.txt')}
+        for op in sc:
+            rt_edit(texts, op, RT_FIXED_NOW)
+        out['edits'].append({'ops': sc, 'base': base, 'files': texts})
+    out['now'] = RT_FIXED_NOW
+    out['evFiles'] = RT_EV_FILES
+    out['sbFiles'] = RT_SB_FILES
+    out['gbFiles'] = RT_GB_FILES
+    return out
+
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -7341,6 +7883,8 @@ if __name__ == '__main__':
         print(json.dumps(wh_run(root)))
     elif what == 'gifts':
         print(json.dumps(gf_run(root)))
+    elif what == 'rates':
+        print(json.dumps(rt_run(root)))
     elif what == 'dds':                         # a folder of .dds icons -> {file: [w, h, sha256 of the RGBA]}
         print(json.dumps(dds_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model

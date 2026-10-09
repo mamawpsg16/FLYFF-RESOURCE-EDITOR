@@ -8,7 +8,7 @@
   const { Script } = FRE.lexer;
   const MAX_PROPMOVER = 14900;      // _Common/ProjectCmn.h:82
 
-  // n = GetNumber, f = GetFloat, t = GetToken. GetExpInteger is read like GetNumber.
+  // n = GetNumber, f = GetFloat, t = GetToken, e = GetExpInteger (GetInt64, scanner.cpp:912).
   const SCHEMA_SRC = `
     dwAI:n dwStr:n dwSta:n dwDex:n dwInt:n dwHR:n dwER:n dwRace:n dwBelligerence:n dwGender:n
     dwLevel:n dwFlightLevel:n dwSize:n dwClass:n bIfParts:n nChaotic:n dwUseable:n dwActionRadius:n
@@ -18,7 +18,7 @@
     dwHideLevel:n fSpeed:f dwShelter:n dwFlying:n dwJumpIng:n dwAirJump:n bTaming:n dwResisMgic:n
     fResistElecricity:f fResistFire:f fResistWind:f fResistWater:f fResistEarth:f dwCash:n
     dwSourceMaterial:n dwMaterialAmount:n dwCohesion:n dwHoldingTime:n dwCorrectionValue:n
-    nExpValue:n nFxpValue:n nBodyState:n dwAddAbility:n bKillable:n dwVirtItem1:n dwVirtItem2:n
+    nExpValue:e nFxpValue:n nBodyState:n dwAddAbility:n bKillable:n dwVirtItem1:n dwVirtItem2:n
     dwVirtItem3:n bVirtType1:n bVirtType2:n bVirtType3:n dwSndAtk1:n dwSndAtk2:n dwSndDie1:n
     dwSndDie2:n dwSndDmg1:n dwSndDmg2:n dwSndDmg3:n dwSndIdle1:n dwSndIdle2:n szComment:t
     dwAreaColor:n szNpcMark:t dwMadrigalGiftPoint:n`;
@@ -27,6 +27,7 @@
   const CLASS = SCHEMA.findIndex(f => f.name === 'dwClass');
   const FLYING = SCHEMA.findIndex(f => f.name === 'dwFlying');
   const CORRECTION = SCHEMA.findIndex(f => f.name === 'dwCorrectionValue');
+  const EXPVALUE = SCHEMA.findIndex(f => f.name === 'nExpValue');
 
   // dwClass values (defineAttribute.h RANK_*), as BattlePass.inc's row comments name them
   const RANKS = { 1: 'low', 2: 'normal', 3: 'captain', 4: 'boss', 5: 'midboss', 6: 'material', 7: 'super', 8: 'guard', 9: 'citizen' };
@@ -48,14 +49,14 @@
       const vals = new Array(SCHEMA.length);
       for (let i = 0; i < SCHEMA.length; i++) {
         const k = SCHEMA[i].kind;
-        vals[i] = k === 't' ? script.getToken().text : (k === 'f' ? script.getFloat() : script.getNumber()).value;
+        vals[i] = k === 't' ? script.getToken().text : (k === 'f' ? script.getFloat() : k === 'e' ? script.getInt64() : script.getNumber()).value;
       }
       const name = String(nameTok.text || '').replace(/\s+$/, '');
       movers.set(id.value, {
         id: id.value, define: id.define || file.text.slice(id.start, id.end),
         name, nameKey: nameTok.stringKey || null,
         level: vals[LEVEL], rankId: vals[CLASS], rank: RANKS[vals[CLASS]] || `rank ${vals[CLASS]}`,
-        flying: vals[FLYING], correction: vals[CORRECTION],   // the kill path: drops into the bag; DropKind's chance % (Mover.cpp:8613 / 8866)
+        flying: vals[FLYING], correction: vals[CORRECTION], exp: vals[EXPVALUE],   // the kill path: drops into the bag; DropKind's chance % (Mover.cpp:8613 / 8866)
         start: id.start,
       });
     }

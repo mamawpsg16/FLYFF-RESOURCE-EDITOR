@@ -60,6 +60,7 @@
   // a new building tag's files (b4b9a465): defineNeuz.h is LF in Client, etc.inc / etc.txt.txt identical
   clientDir.children.set('defineNeuz.h', new FakeFile('defineNeuz.h', lfOnly(original.get('defineNeuz.h'))));
   for (const n of ['etc.inc', 'etc.txt.txt']) clientDir.children.set(n, new FakeFile(n, original.get(n).slice()));
+  if (original.has('GuildBuff.txt')) clientDir.children.set('GuildBuff.txt', new FakeFile('GuildBuff.txt', original.get('GuildBuff.txt').slice()));
   // a new exchange menu's files: defineText.h is LF in Client, textClient.* identical
   clientDir.children.set('defineText.h', new FakeFile('defineText.h', lfOnly(original.get('defineText.h'))));
   for (const n of ['textClient.inc', 'textClient.txt.txt']) clientDir.children.set(n, new FakeFile(n, original.get(n).slice()));
@@ -155,7 +156,7 @@
     click($('btn-root'));
     await waitFor(() => S.layout, 'folder detected');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
-    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 6 && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]'), 'real-files tag; 6 tasks to pick (exchanges are in NPC Shops; Monster Drops; Boxes; Where is this item from?)');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 7 && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 7 tasks to pick (exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
@@ -1335,6 +1336,49 @@
       search.value = ''; search.dispatchEvent(new Event('input'));
     }
 
+    // ---- Rates & Buffs (task I part 1)
+    {
+      await openTask('rates');
+      const ed = () => $('editor'), sec = id => click(document.querySelector(`#list .npc[data-sec="${id}"]`));
+      ok(S.mode === 'rates' && /Server rates/.test(ed().textContent) && /×30/.test(ed().textContent) && /Drop roll gate/.test(ed().textContent) && /Item chance/.test(ed().textContent),
+        'Rates & Buffs opens on the server rates: EXP ×30, both drop numbers explained');
+      const pieceBox = ed().querySelector('input[data-key="rt|0|piece"]');
+      ok(!!pieceBox && pieceBox.value === '', 'Server Rates: "Item chance ×" not set yet (empty box)');
+      pieceBox.value = '2'; pieceBox.dispatchEvent(new Event('change'));
+      ok(/SetPieceItemDropRate\( 2 \)/.test(S.ws.files.get('event.lua').text) && S.ws.models.rates.events.active.piece === 2, 'typing 2 adds SetPieceItemDropRate( 2 ) to the event');
+      const expBox = ed().querySelector('input[data-key="rt|0|exp"]');
+      expBox.value = '40'; expBox.dispatchEvent(new Event('change'));
+      ok(S.ws.models.rates.events.active.exp === 40 && /EXP ×40/.test(document.querySelector('#list').textContent), 'EXP 30 -> 40: the list shows ×40');
+      const gate = ed().querySelector('input[data-key="rt|0|item"]');
+      gate.value = '20'; gate.dispatchEvent(new Event('change'));
+      ok(/changes nothing/.test(ed().textContent) && S.ws.diags.some(d => d.code === 'RT_GATE_NO_EFFECT'), 'gate ×20: ⚠ "above ×10 changes nothing"');
+      click($('btn-undo'));
+      ok(S.ws.models.rates.events.active.item === 10, 'Undo puts the gate back to ×10');
+      sec('server');
+      ok(/Server Buff/.test(ed().textContent) && ed().querySelectorAll('table.rt tr').length === 21, 'Server Buff: 20 tiers');
+      click(btnByText(ed(), '+ Add tier'));
+      await waitFor(() => lastModalAny() && /Add a tier/.test(lastModalAny().textContent), 'add tier form');
+      ok(/\+\s*21\s+210\s+105/.test(lastModalAny().querySelector('pre.preview').textContent), 'the form proposes tier 21 at 210 players, +105%');
+      click(lastModalAny().querySelector('#rt-add-btn'));
+      ok(S.ws.models.rates.server.tiers.length === 21, 'Add: tier 21 written');
+      sec('guild');
+      ok(/Tier 5/.test(ed().textContent) && !/does not match the stats/.test(ed().textContent), 'Guild Buff: 5 tiers, descriptions match their stats');
+      const adj = ed().querySelector('input[data-key="rt|gb|0|adj0"]');
+      adj.value = '12'; adj.dispatchEvent(new Event('change'));
+      ok(/does not match the stats/.test(ed().textContent), 'All Stat 10 -> 12: ⚠ the description no longer matches');
+      click(btnByText(ed(), 'Write description from stats'));
+      await waitFor(() => lastModalAny() && /Edit description/.test(lastModalAny().textContent), 'describe dialog');
+      click(btnByText(lastModalAny().querySelector('footer'), 'Apply changes'));
+      ok(/"All Stat \+12, Atk \+3%, HP \+3%, EXP \+10%"/.test(S.ws.files.get('guildbuff.txt').text), 'Write description from stats: "All Stat +12, …"');
+      if (STOP === 'rates') { $('toasts').textContent = ''; return; }
+      sec('calc');
+      ok(/EXP factor/.test(ed().textContent) && /EXP per kill/.test(ed().textContent) && /×40 Event\.lua EXP/.test(ed().textContent) && /Penya per kill/.test(ed().textContent),
+        'calculator: the factor steps (×40 from the edit), EXP and Penya per kill');
+      if (STOP === 'ratescalc') { $('toasts').textContent = ''; return; }
+      while (S.ws.history.length) click($('btn-undo'));
+      ok(!S.ws.dirtyFiles().length, 'Undo all: nothing left to save');
+    }
+
     // ---- Battle Pass
     await openTask('battlepass');
     ok(S.mode === 'battlepass', 'Battle Pass mode');
@@ -1560,7 +1604,7 @@
     box.style.cssText = 'position:fixed;right:10px;bottom:10px;z-index:99;background:#000c;border:1px solid #4f8cff;padding:8px 12px;font:12px monospace;max-width:480px;white-space:pre-wrap';
     // only the failures are listed (the full list no longer fits on screen)
     box.textContent = `UI harness (stop=${STOP}): ${results.length - failed.length}/${results.length} passed` + (failed.length ? '\n' + failed.map(r => '✗ ' + r.name).join('\n') : ' ✓');
-    if (STOP !== 'end') box.style.display = 'none';
+    if (STOP !== 'end' && !failed.length) box.style.display = 'none';      // a failure always shows
     document.body.appendChild(box);
     const pre = document.createElement('pre'); pre.id = 'harness-json'; pre.hidden = true; pre.textContent = JSON.stringify(results); document.body.appendChild(pre);
   }));

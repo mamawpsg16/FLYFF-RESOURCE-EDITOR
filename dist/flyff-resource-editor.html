@@ -246,6 +246,8 @@ td.nowrap { white-space: nowrap; }
 
 /* Start screen: one folder, then one task */
 body.start #left, body.start #right, body.start .task-only { display: none; }
+body.no-items #right { display: none; }
+body.no-items #layout { grid-template-columns: 270px 1fr; }
 body.start #layout { grid-template-columns: 1fr; }
 .start-wrap { max-width: 880px; margin: 0 auto; padding: 28px 20px 40px; }
 .start-wrap h2 { margin: 0 0 4px; }
@@ -485,7 +487,7 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when": "Fri 9 Oct 2026, 13:09", "rev": "a57890d", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "60+", "when": "Fri 9 Oct 2026, 14:48", "rev": "e690ba8", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -1102,6 +1104,22 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when
       return r;
     }
 
+    // CScanner::GetInt64 (scanner.cpp:912): _atoi64, no clamp; hex gives 0. Values here stay below 2^53.
+    getInt64() {
+      this.def = 1;
+      const t = this.getToken();
+      const r = { value: 0, start: t.start, end: t.end, eof: t.type === 'eof' };
+      const a64 = s => { const m = /^\s*[-+]?\d+/.exec(s); return m ? Number(m[0]) : 0; };
+      if (t.type !== 'hex' && t.text !== '') {
+        const ch = t.text[0];
+        if (ch === '=') r.value = -1;
+        else if (ch === '-' || ch === '+') { const n = this.getToken(); r.end = n.end; r.value = ch === '-' ? -a64(n.text) : a64(n.text); }
+        else r.value = a64(t.text);
+      }
+      this.def = 0;
+      return r;
+    }
+
     // CScanner::GetFloat
     getFloat() {
       this.def = 1;
@@ -1559,7 +1577,16 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when
     return parts.join(' ') || '0 s';
   }
 
-  FRE.itemTooltip = { build, cfmt, duration };
+  // The game's words for a stat (FindDstString) and whether it shows with a % (IsDst_Rate): ws -> v -> { word, rate }
+  function dstWords(ws) {
+    const D = ws.defines.defines, out = new Map();
+    for (const [dst, tid] of DST_TEXT) { const v = D.get(dst); if (v !== undefined && !out.has(v)) out.set(v, { word: ws.texts.get(tid) || '', define: dst }); }
+    for (const [dst, txt] of Object.entries(DST_FIXED)) { const v = D.get(dst); if (v !== undefined) out.set(v, { word: txt, define: dst }); }
+    for (const dst of DST_RATE) { const v = D.get(dst); if (out.has(v)) out.get(v).rate = true; }
+    return out;
+  }
+
+  FRE.itemTooltip = { build, cfmt, duration, dstWords };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- loaders/item-category.js ----
@@ -1791,7 +1818,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when
   const { Script } = FRE.lexer;
   const MAX_PROPMOVER = 14900;      // _Common/ProjectCmn.h:82
 
-  // n = GetNumber, f = GetFloat, t = GetToken. GetExpInteger is read like GetNumber.
+  // n = GetNumber, f = GetFloat, t = GetToken, e = GetExpInteger (GetInt64, scanner.cpp:912).
   const SCHEMA_SRC = `
     dwAI:n dwStr:n dwSta:n dwDex:n dwInt:n dwHR:n dwER:n dwRace:n dwBelligerence:n dwGender:n
     dwLevel:n dwFlightLevel:n dwSize:n dwClass:n bIfParts:n nChaotic:n dwUseable:n dwActionRadius:n
@@ -1801,7 +1828,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when
     dwHideLevel:n fSpeed:f dwShelter:n dwFlying:n dwJumpIng:n dwAirJump:n bTaming:n dwResisMgic:n
     fResistElecricity:f fResistFire:f fResistWind:f fResistWater:f fResistEarth:f dwCash:n
     dwSourceMaterial:n dwMaterialAmount:n dwCohesion:n dwHoldingTime:n dwCorrectionValue:n
-    nExpValue:n nFxpValue:n nBodyState:n dwAddAbility:n bKillable:n dwVirtItem1:n dwVirtItem2:n
+    nExpValue:e nFxpValue:n nBodyState:n dwAddAbility:n bKillable:n dwVirtItem1:n dwVirtItem2:n
     dwVirtItem3:n bVirtType1:n bVirtType2:n bVirtType3:n dwSndAtk1:n dwSndAtk2:n dwSndDie1:n
     dwSndDie2:n dwSndDmg1:n dwSndDmg2:n dwSndDmg3:n dwSndIdle1:n dwSndIdle2:n szComment:t
     dwAreaColor:n szNpcMark:t dwMadrigalGiftPoint:n`;
@@ -1810,6 +1837,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when
   const CLASS = SCHEMA.findIndex(f => f.name === 'dwClass');
   const FLYING = SCHEMA.findIndex(f => f.name === 'dwFlying');
   const CORRECTION = SCHEMA.findIndex(f => f.name === 'dwCorrectionValue');
+  const EXPVALUE = SCHEMA.findIndex(f => f.name === 'nExpValue');
 
   // dwClass values (defineAttribute.h RANK_*), as BattlePass.inc's row comments name them
   const RANKS = { 1: 'low', 2: 'normal', 3: 'captain', 4: 'boss', 5: 'midboss', 6: 'material', 7: 'super', 8: 'guard', 9: 'citizen' };
@@ -1831,14 +1859,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when
       const vals = new Array(SCHEMA.length);
       for (let i = 0; i < SCHEMA.length; i++) {
         const k = SCHEMA[i].kind;
-        vals[i] = k === 't' ? script.getToken().text : (k === 'f' ? script.getFloat() : script.getNumber()).value;
+        vals[i] = k === 't' ? script.getToken().text : (k === 'f' ? script.getFloat() : k === 'e' ? script.getInt64() : script.getNumber()).value;
       }
       const name = String(nameTok.text || '').replace(/\s+$/, '');
       movers.set(id.value, {
         id: id.value, define: id.define || file.text.slice(id.start, id.end),
         name, nameKey: nameTok.stringKey || null,
         level: vals[LEVEL], rankId: vals[CLASS], rank: RANKS[vals[CLASS]] || `rank ${vals[CLASS]}`,
-        flying: vals[FLYING], correction: vals[CORRECTION],   // the kill path: drops into the bag; DropKind's chance % (Mover.cpp:8613 / 8866)
+        flying: vals[FLYING], correction: vals[CORRECTION], exp: vals[EXPVALUE],   // the kill path: drops into the bag; DropKind's chance % (Mover.cpp:8613 / 8866)
         start: id.start,
       });
     }
@@ -6172,6 +6200,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when
     M_NO_GOLD: ['The monster has no DropGold line, so it gives no Penya. PenyaTable.txt only changes a DropGold roll; it never adds one.', 'Add Penya if players should get some.'],
     M_GOLD_LATE: ['DropGold comes after drop lines that count toward the monster\'s max items per kill. When that many items drop first, the server stops reading the list and the Penya is skipped.', 'Move DropGold up, right after Maxitem.'],
     M_GEN_EDITED: ['This drop was written by one of the gen_*.ps1 scripts. Running that script again rewrites its block and undoes this edit.', 'Change the script too, or don\'t run it again.'],
+    // Rates & Buffs (loaders/rates.js: Event.lua, ServerBuff.txt, GuildBuff.txt)
+    RT_LUA_ERROR: ['Event.lua would not run (the server runs it as Lua at startup). When it fails, CEventLua turns every rate off: EXP, Penya and drops are all ×1, and no level-up gift is given.', 'Fix the line the message names (or Undo).'],
+    RT_GATE_NO_EFFECT: ['"Drop roll gate ×" (SetItemDropRate) only scales the roll that decides whether a kill drops anything: xRandom(100) < 10 to 100 × the rate. From ×10 every kill already passes, so a higher number changes nothing.', 'Leave it at 10 and raise "Item chance ×" (SetPieceItemDropRate) to make items drop more often.'],
+    RT_NO_CLOSE: ['The file ends before the closing }. The loader keeps reading 0s and never stops: the WorldServer hangs at startup.', 'Close the tier list with }.'],
+    RT_FIELDS: ['The loader reads a fixed list of values per tier and never checks them. A missing or extra value shifts this tier and every tier after it (numbers read as names and the other way round).', 'Give every tier all its values: Server Buff = tier, players online, EXP %, "name", "icon"; Guild Buff = tier, guild level, members online, 5 × (stat, amount), "name", "description", "icon".'],
+    RT_GB_DST_NAME: ['GuildBuff.txt is read with atoi, not with the #define list, so a stat written as a name (DST_STR) becomes 0, which means "no stat".', 'Write the stat number (the editor writes numbers and shows the names).'],
+    RT_GB_DST_UNKNOWN: ['The stat number is not one of the DST_ numbers in defineAttribute.h, so it changes no stat players know.', 'Pick a stat from the list.'],
+    RT_TIER_ORDER: ['The server does not use the line order: it picks the highest tier number whose needs are met. A tier with a higher number but lower needs hides the tiers between; a tier number used twice shows the first one in the tooltip.', 'Keep tier numbers 1, 2, 3 … with needs that grow with them.'],
+    RT_TEXT_LONG: ['The game receives the tier name in 128 bytes, the description in 256 and the icon name in 64 (DPClient.cpp:11578): longer text is cut off.', 'Shorten the text.'],
     // Boxes (loaders/boxes.js: propGiftbox.inc random boxes, propPackItem.inc sets)
     BX_TOO_MANY: ['A random box holds at most 128 lines (MAX_GIFTBOX_ITEM). The server does not check it: line 129 onward writes past the end of the box in memory.', 'Remove lines, or split the items over two boxes.'],
     BX_PACK_TOO_MANY: ['A set holds at most 24 items (MAX_ITEM_PER_PACK). At the 25th the server stops reading propPackItem.inc, so this set and every set after it in the file are lost.', 'Remove items, or split the set over two boxes.'],
@@ -8687,6 +8724,113 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when
   FRE.menuOps = { setLabel, tryTable, boardPlan, checkBoardText, setBoardText, boardFileName, boardText, BOARD_EOL, addSetsPlan, newMenusPlan, freeMenuIds, nextTid, nextTextId, menuText, setText, defineLines, FIRST_ID, MAX_MOVER_MENU, TID_MMI_DIALOG, FILES };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- edit/rates-ops.js ----
+// Rates & Buffs edits as minimal splices (ASCII only).
+//   Event.lua (CRLF, EUC-KR comments): a factor is the first argument of its Set… call; a missing one is added as a new line
+//   after the event's last call (copying its indent and line ending), e.g. `SetPieceItemDropRate( 2 )`, the style of the
+//   "Server Rates" block (4f268007 added SetWeatherEvent the same way). Dates are the SetTime strings ("2007-12-31 00:00").
+//   ServerBuff.txt / GuildBuff.txt (LF): a value is one token; a new tier is a row after the last one, a removed tier its whole line.
+//   GuildBuff.txt stats are written as numbers (the loader uses atoi, GuildBuff.cpp:33).
+(function (FRE) {
+  'use strict';
+  const T = FRE.textOps;
+  const R = () => FRE.rates;
+  const MAX_FACTOR = 100000;
+
+  // a Lua number as the file gets it: plain digits, at most 4 decimals
+  function luaNumber(v) {
+    if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0 || v > MAX_FACTOR) throw new Error(`A rate must be a number above 0 and at most ${FRE.num.group(MAX_FACTOR)}`);
+    const s = String(Math.round(v * 10000) / 10000);
+    if (/e/i.test(s) || s === '0') throw new Error('A rate needs at most 4 decimals');
+    return s;
+  }
+  function checkText(s, what, max) {
+    if (typeof s !== 'string') throw new Error(`The ${what} is missing`);
+    if (/["\r\n]/.test(s)) throw new Error(`The ${what} cannot hold a " or a line break`);
+    if (/[^\x20-\x7e]/.test(s)) throw new Error(`The ${what} must be plain ASCII text`);
+    if (max && s.length > max) throw new Error(`The ${what} can be at most ${max} characters (the game cuts the rest)`);
+  }
+
+  // ---------------------------------------------------------------- Event.lua
+  function setFactor(text, ev, kind, value) {
+    const k = R().KINDS[kind];
+    if (!k) throw new Error(`unknown rate ${kind}`);
+    const v = luaNumber(value);
+    const cur = ev.f[kind];
+    if (cur) return T.replaceSpan(cur.arg, v);
+    const row = kind === 'weather' ? `${k.fn}( ${v}, "Weather bonus: EXP x${v}!" )\t-- only while it rains/snows` : `${k.fn}( ${v} )`;
+    // a new line under the event's last call (a Lua "--" comment may follow it on its line)
+    const at = T.lineEnd(text, ev.last.end);
+    let eol = T.eolAt(text, ev.last.end), prefix = '';
+    if (!eol) { eol = T.dominantEol(text); prefix = eol; }
+    return [{ start: at, end: at, insert: prefix + T.indentOf(text, ev.last.start) + row + (prefix ? '' : eol) }];
+  }
+  // "YYYY-MM-DD HH:MM"
+  function checkDate(s) {
+    const m = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec(String(s));
+    if (!m) throw new Error('A date is written as YYYY-MM-DD HH:MM, e.g. 2026-10-09 18:00');
+    const [, , mo, d, hh, mm] = m.map(Number);
+    if (mo < 1 || mo > 12 || d < 1 || d > 31 || hh > 23 || mm > 59) throw new Error(`${s} is not a real date and time`);
+  }
+  function setTime(text, win, which, s) {
+    checkDate(s);
+    const arg = which === 'start' ? win.aArg : win.bArg;
+    if (!arg) throw new Error('This SetTime line has no such date');
+    const next = which === 'start' ? R().timeNumber(s) : win.a, end = which === 'end' ? R().timeNumber(s) : win.b;
+    if (end <= next) throw new Error('The end must come after the start');
+    return T.replaceSpan(arg, `"${s}"`);
+  }
+  function setWeatherTitle(text, ev, title) {
+    checkText(title, 'weather message');
+    if (!ev.weatherTitle) throw new Error('This event has no weather line yet');
+    return T.replaceSpan(ev.weatherTitle, `"${title}"`);
+  }
+
+  // ---------------------------------------------------------------- ServerBuff.txt / GuildBuff.txt
+  const int = (v, min, max, what) => { T.checkAmount(v, min, max, what); return String(v); };
+  function setNumber(span, v, min, max, what) { return T.replaceSpan(span, int(v, min, max, what)); }
+  function setString(span, s, what, max) { checkText(s, what, max); return T.replaceSpan(span, `"${s}"`); }
+
+  const serverRow = t => `${t.tier}  ${t.online}   ${t.pct}   "${t.name}" "${t.icon}"`;
+  const guildRow = t => `${t.tier} ${t.glv} ${t.online}  ${t.bonus.map(b => `${b.dst} ${b.adj}`).join('  ')}  "${t.name}" "${t.desc}" "${t.icon}"`;
+  function checkTier(t, guild) {
+    int(t.tier, 1, 2147483647, 'The tier'); int(t.online, 0, 100000, 'Players online');
+    if (guild) {
+      int(t.glv, 0, 1000, 'The guild level');
+      if (t.bonus.length !== 5) throw new Error('A guild tier has 5 stat slots');
+      for (const b of t.bonus) { int(b.dst, 0, 65535, 'A stat'); int(b.adj, -2147483647, 2147483647, 'A stat amount'); }
+      checkText(t.desc, 'description', R().DESC_MAX);
+    } else int(t.pct, 0, 100000, 'The EXP %');
+    checkText(t.name, 'name', R().NAME_MAX); checkText(t.icon, 'icon file name', R().ICON_MAX);
+    if (!t.icon) throw new Error('Pick an icon');
+  }
+  function addTier(text, b, t, guild) {
+    checkTier(t, guild);
+    if (!b || !b.open) throw new Error('The file has no tier block');
+    const row = guild ? guildRow(t) : serverRow(t);
+    const last = b.tiers[b.tiers.length - 1];
+    if (last) return T.insertRowAfter(text, last, row);
+    return T.insertRowBelowLine(text, b.open.start, row);
+  }
+  function removeTier(text, t) { return T.removeRow(text, t); }
+  function setBonus(slot, dst, adj) {
+    return [...setNumber(slot.dst, dst, 0, 65535, 'The stat'), ...setNumber(slot.adj, dst ? adj : 0, -2147483647, 2147483647, 'The amount')];
+  }
+
+  // "All Stat +10, Atk +3%, HP +3%, EXP +10%" (the style of GuildBuff.txt's own descriptions, ca02d0cb)
+  const SHORT = { DST_STAT_ALLUP: 'All Stat', DST_ATKPOWER_RATE: 'Atk', DST_HP_MAX_RATE: 'HP', DST_EXPERIENCE: 'EXP', DST_MONSTER_DMG: 'PvE Dmg',
+    DST_STR: 'STR', DST_STA: 'STA', DST_DEX: 'DEX', DST_INT: 'INT', DST_PENYA_RATE: 'Penya' };
+  function describe(bonus, words) {
+    return bonus.filter(b => b.dst).map(b => {
+      const w = words.get(b.dst) || { word: `stat ${b.dst}` };
+      const name = SHORT[w.define] || w.word.replace(/[:\s]+$/, '') || `stat ${b.dst}`;
+      return `${name} ${b.adj >= 0 ? '+' : ''}${b.adj}${w.rate ? '%' : ''}`;
+    }).join(', ');
+  }
+
+  FRE.ratesOps = { setFactor, setTime, setWeatherTitle, setNumber, setString, addTier, removeTier, setBonus, describe, luaNumber, checkDate, checkTier, serverRow, guildRow, MAX_FACTOR };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- validate/newnpc.js ----
 // Rules for a new NPC (docs/HANDOFF-ADD-NPC.md §6). They judge only the new NPC against the
 // loaded data; old quirks in the files never block it. BLOCK = the form cannot be saved.
@@ -10196,6 +10340,407 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when
   FRE.where = { index, sources, factsOf, payChances, kindChances, kindChance, siegeTable, CURRENCY };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/rates.js ----
+// Rates & Buffs (task I part 1): the server rates in Event.lua, ServerBuff.txt and GuildBuff.txt. No DOM.
+//   Event.lua    real Lua run by CLuaBase::RunScript (LuaBase.cpp:47, luaL_dofile) in the WorldServer (Project.cpp:983) and the
+//                DatabaseServer (databaseserver/Project.cpp:192). The calls are stored by LuaFunc/EventFunc.lua:
+//                AddEvent :235 (every factor starts at 1), SetTime :262 (GetTimeToNumber :222), SetExpFactor :322,
+//                SetItemDropRate :339, SetPieceItemDropRate :356, SetGoldDropFactor :373, SetWeatherEvent :582 (4f268007).
+//                A second Set… in one event overwrites the first. GetEventState :62: per time window in order, a window that
+//                has started sets the event on while before its end, off after it. Get…Factor: the product over the events
+//                that are on (:327-388, :588-598), read by CEventLua as a float (EventLua.cpp:275-360). If the script fails
+//                (RunScript != 0, EventLua.cpp:176-198) IsPossible() is false and every factor is 1.
+//                The DatabaseServer window menu "Apply now" (IDM_EVENTLUA_APPLYNOW, DatabaseServer.cpp:488) reloads it live.
+//   ServerBuff   ServerBuffManage::loadServerBuffFile (ServerBuff.cpp:27-63), a bare CScanner (no #defines, GetNumber = atoi):
+//                `ServerBuffTiers { tier minOnline expPercent "name" "icon" … }`, WorldServer only (Project.cpp:893). 02ad5901:
+//                the EXP per kill was not yet confirmed in game.
+//   GuildBuff    GuildBuffManage::loadGuildBuffFile (GuildBuff.cpp:12-60), bare CScanner: `tier minGuildLevel minOnline` +
+//                5 × `dst adj` + "name" "desc" "icon"; both the WorldServer and the game read it (Project.cpp:891), but the game
+//                only shows the strings the server sends (DPClient.cpp:11575: name 128, desc 256, icon 64 bytes). cd03ca46, ca02d0cb.
+//   Both buff loaders: no field-count check (a missing field shifts every later row); the file ending before `}` loops forever
+//   (GetNumber at the end returns 0, *token is never '}'); the highest tier NUMBER whose needs are met wins (findHighestEligibleTier,
+//   ServerBuff.cpp:65, GuildBuff.cpp:62).
+// Not modelled in Event.lua: Lua control flow / variables around the calls (the file has none), a non-number factor.
+(function (FRE) {
+  'use strict';
+  const f32 = Math.fround;
+  const KINDS = {
+    exp: { fn: 'SetExpFactor', label: 'EXP ×' },
+    gold: { fn: 'SetGoldDropFactor', label: 'Penya ×' },
+    item: { fn: 'SetItemDropRate', label: 'Drop roll gate ×' },
+    piece: { fn: 'SetPieceItemDropRate', label: 'Item chance ×' },
+    weather: { fn: 'SetWeatherEvent', label: 'Weather bonus ×' },
+  };
+  const FN_KIND = Object.fromEntries(Object.entries(KINDS).map(([k, v]) => [v.fn, k]));
+  // EventFunc.lua's functions, LuaBase.cpp:16-17 (TRACE, ERROR) and the Lua globals Event.lua may call
+  const KNOWN_FN = new Set(('SEC MIN Notice AddMessage IsNoticeTime SetNextNoticeTime GetNoticeMessage GetEventState SetState GetEventList ' +
+    'GetAllEventList GetEventInfo GetDesc GetTimeToNumber AddEvent SetTime SetItem GetItem SetExpFactor GetExpFactor SetItemDropRate ' +
+    'GetItemDropRate SetPieceItemDropRate GetPieceItemDropRate SetGoldDropFactor GetGoldDropFactor SetAttackPower GetAttackPower ' +
+    'SetDefensePower GetDefensePower SetCouponEvent GetCouponEvent SetLevelUpGift GetLevelUpGift SetCheerExpFactor GetCheerExpFactor ' +
+    'SetSpawn GetSpawn SetKeepConnectEvent GetKeepConnectTime GetKeepConnectItem SetRainEvent GetRainEventExpFactor GetRainEventTitle ' +
+    'SetWeatherEvent GetWeatherEventExpFactor GetWeatherEventTitle SetSnowEvent GetSnowEventExpFactor GetSnowEventTitle ' +
+    'TRACE ERROR dofile print tonumber tostring pairs ipairs type').split(' '));
+  // Lua keywords that may stand before "(" (not calls)
+  const KEYWORDS = new Set('and break do else elseif end false for function goto if in local nil not or repeat return then true until while'.split(' '));
+  const NAME_MAX = 127, DESC_MAX = 255, ICON_MAX = 63;     // DPClient.cpp:11578 (char szName[128], szDesc[256], szIcon[64])
+  const GATE_FULL = 10;                                     // nProbability 10 at a level gap of 8+ (Mover.cpp:8594): × 10 = 100
+
+  // ---------------------------------------------------------------- Event.lua
+  // comments AND strings blanked (same length), for the structure checks
+  function blankLua(text) {
+    let out = '', i = 0;
+    const n = text.length, bad = [];
+    while (i < n) {
+      const c = text[i];
+      if (c === '"' || c === "'") {
+        let j = i + 1;
+        while (j < n && text[j] !== c && text[j] !== '\n') j += text[j] === '\\' ? 2 : 1;
+        if (j >= n || text[j] !== c) bad.push({ start: i, end: j, what: 'a string with no closing quote on its line' });
+        out += c + text.slice(i + 1, j).replace(/[^\n]/g, ' ') + (j < n && text[j] === c ? c : ''); i = j + (j < n && text[j] === c ? 1 : 0); continue;
+      }
+      if (c === '-' && text[i + 1] === '-') {
+        let j;
+        if (text[i + 2] === '[' && text[i + 3] === '[') {
+          j = text.indexOf(']]', i + 4);
+          if (j < 0) { bad.push({ start: i, end: n, what: 'a --[[ comment that is never closed with ]]' }); j = n; } else j += 2;
+        } else { j = text.indexOf('\n', i); if (j < 0) j = n; }
+        out += text.slice(i, j).replace(/[^\n]/g, ' '); i = j; continue;
+      }
+      out += c; i++;
+    }
+    return { text: out, bad };
+  }
+
+  // the arguments of a call, with their spans in the file: [{ text (trimmed), start, end, str (unquoted, or null) }]
+  function argSpans(text, open, close) {
+    const out = [];
+    let s = open, q = null, depth = 0;
+    const push = e => {
+      let a = s, b = e;
+      while (a < b && /\s/.test(text[a])) a++;
+      while (b > a && /\s/.test(text[b - 1])) b--;
+      const t = text.slice(a, b);
+      out.push({ text: t, start: a, end: b, str: /^(["']).*\1$/s.test(t) ? t.slice(1, -1) : null });
+    };
+    for (let i = open; i < close; i++) {
+      const c = text[i];
+      if (q) { if (c === '\\') i++; else if (c === q) q = null; continue; }
+      if (c === '"' || c === "'") { q = c; continue; }
+      if (c === '(') depth++;
+      else if (c === ')') depth--;
+      else if (c === ',' && !depth) { push(i); s = i + 1; }
+    }
+    push(close);
+    return out;
+  }
+  const luaNum = t => /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(t) ? Number(t) : NaN;
+  // GetTimeToNumber (EventFunc.lua:222): the digit groups, every group after the first padded to 2 digits when below 10
+  function timeNumber(s) {
+    const g = String(s).match(/\d+/g) || [];
+    if (!g.length) return NaN;
+    return Number(g.map((x, j) => (j && Number(x) < 10) ? '0' + Number(x) : x).join(''));
+  }
+  const stampOf = d => Number(`${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+    + `${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`);
+
+  // -> { events: [{ name, idx, start, end, times: [{ a, b, aArg, bArg, stmt }], f: { kind: { value, arg, stmt } }, weatherTitle, last }],
+  //      active: { exp, item, piece, gold, weather } (double products), on: [names], errors: [{ start, end, message, warn }] }
+  function loadEvents(file, now) {
+    const res = { events: [], errors: [], active: { exp: 1, item: 1, piece: 1, gold: 1, weather: 1 }, file: file ? file.name : 'Event.lua' };
+    if (!file) return res;
+    const text = file.text;
+    const bl = blankLua(text), bt = bl.text;
+    for (const b of bl.bad) res.errors.push({ start: b.start, end: b.end, message: `Event.lua has ${b.what}` });
+    // brackets (Lua stops at the first one out of place)
+    const stack = [], PAIR = { ')': '(', ']': '[', '}': '{' };
+    for (let i = 0; i < bt.length; i++) {
+      const c = bt[i];
+      if (c === '(' || c === '[' || c === '{') stack.push(i);
+      else if (PAIR[c]) {
+        if (!stack.length || bt[stack[stack.length - 1]] !== PAIR[c]) { res.errors.push({ start: i, end: i + 1, message: `Event.lua has a "${c}" with nothing to close` }); break; }
+        stack.pop();
+      }
+    }
+    if (stack.length) { const i = stack[stack.length - 1]; res.errors.push({ start: i, end: i + 1, message: `Event.lua has a "${bt[i]}" that is never closed` }); }
+    // calls: name( … ) with one level of nested ( ) inside
+    const re = /\b([A-Za-z_]\w*)\s*\(((?:[^()]|\([^()]*\))*)\)/g;
+    let m, ev = null;
+    while ((m = re.exec(bt))) {
+      const name = m[1];
+      if (KEYWORDS.has(name)) { re.lastIndex = m.index + name.length; continue; }
+      if (/function\s+$/.test(bt.slice(Math.max(0, m.index - 20), m.index))) continue;
+      const before = bt.slice(Math.max(0, m.index - 1), m.index);
+      if (before === '.' || before === ':') continue;           // string.format( … ) and the like
+      const open = m.index + m[0].indexOf('(') + 1, close = m.index + m[0].length - 1;
+      const stmt = { start: m.index, end: m.index + m[0].length };
+      if (!KNOWN_FN.has(name)) { res.errors.push({ start: stmt.start, end: stmt.end, message: `Event.lua calls ${name}(), which neither EventFunc.lua nor the server defines (Lua: attempt to call a nil value)` }); continue; }
+      if (name === 'AddEvent') {
+        const a = argSpans(text, open, close);
+        ev = { name: a[0] ? (a[0].str != null ? a[0].str : a[0].text) : '', idx: res.events.length, start: stmt.start, stmt, nameArg: a[0] || null,
+          times: [], f: {}, weatherTitle: null, last: stmt, on: false };
+        res.events.push(ev);
+        continue;
+      }
+      if (!/^Set/.test(name)) continue;
+      if (!ev) { res.errors.push({ start: stmt.start, end: stmt.end, message: `${name}() comes before any AddEvent(): tEvent[0] is nil and Lua stops there` }); continue; }
+      ev.last = stmt;
+      const a = argSpans(text, open, close);
+      if (name === 'SetTime') {
+        ev.times.push({ a: timeNumber(a[0] && a[0].str != null ? a[0].str : ''), b: timeNumber(a[1] && a[1].str != null ? a[1].str : ''),
+          aArg: a[0] || null, bArg: a[1] || null, stmt });
+        continue;
+      }
+      const kind = FN_KIND[name];
+      if (!kind || !a[0]) continue;
+      ev.f[kind] = { value: luaNum(a[0].text), arg: a[0], stmt };        // the last one wins (it overwrites the field)
+      if (kind === 'weather') ev.weatherTitle = a[1] || null;
+    }
+    for (const e of res.events) e.end = e.idx + 1 < res.events.length ? res.events[e.idx + 1].start : text.length;
+    setState(res, now);
+    return res;
+  }
+  // GetEventState + the Get…Factor products at `now` (a Date)
+  function setState(res, now) {
+    const nowN = stampOf(now || new Date());
+    res.now = nowN;
+    const act = { exp: 1, item: 1, piece: 1, gold: 1, weather: 1 };
+    for (const e of res.events) {
+      let on = false;
+      for (const t of e.times) if (t.a <= nowN) on = t.b > nowN;
+      e.on = on;
+      if (!on) continue;
+      for (const k of Object.keys(act)) if (e.f[k] && !Number.isNaN(e.f[k].value)) act[k] *= e.f[k].value;
+    }
+    // a script that fails: CEventLua::IsPossible() is false, every Get… returns 1
+    res.failed = res.errors.some(x => !x.warn);
+    res.active = res.failed ? { exp: 1, item: 1, piece: 1, gold: 1, weather: 1 } : act;
+    res.activeF = Object.fromEntries(Object.entries(res.active).map(([k, v]) => [k, f32(v)]));   // (float) lua_tonumber
+    return res;
+  }
+
+  // ---------------------------------------------------------------- ServerBuff.txt / GuildBuff.txt
+  function scanTiers(file, kw, guild) {
+    const res = { file: file.name, tiers: [], open: null, close: null, kw: null, problems: [] };
+    const s = new FRE.lexer.Script(file.text, { file: file.name, defines: new Map(), diags: [] });
+    const num = what => {
+      const n = s.getNumber(), t = n.tokens[0];
+      const ok = t.type === 'number' || t.type === 'hex' || t.text === '=' || ((t.text === '-' || t.text === '+') && n.tokens[1] && n.tokens[1].type === 'number');
+      return { value: n.value, start: n.start, end: n.end, ok, text: file.text.slice(n.start, n.end), what, word: t.type === 'ident' };
+    };
+    const str = what => { const t = s.getToken(); return { text: t.text, start: t.start, end: t.end, ok: t.type === 'string', what }; };
+    s.getToken();
+    while (!s.eof) {
+      if (s.token.text !== kw) break;
+      res.kw = { start: s.token.start, end: s.token.end };
+      const o = s.getToken();
+      res.open = { start: o.start, end: o.end };
+      if (o.text !== '{') res.problems.push({ code: 'FIELDS', start: o.start, end: o.end, message: `${kw} is not followed by {: the server reads "${o.text}" as the { and every number after it shifts` });
+      let tier = num('tier');
+      while (s.token.text[0] !== '}') {
+        if (s.eof) { res.problems.push({ code: 'NO_CLOSE', start: tier.start, end: tier.start, message: `${file.name} ends before the closing }: the server loops forever at startup` }); break; }
+        const t = { tier };
+        if (guild) {
+          t.glv = num('guild level'); t.online = num('members online');
+          t.bonus = [];
+          for (let i = 0; i < 5; i++) t.bonus.push({ dst: num('stat'), adj: num('amount') });
+          t.name = str('name'); t.desc = str('description'); t.icon = str('icon');
+        } else {
+          t.online = num('players online'); t.pct = num('EXP %'); t.name = str('name'); t.icon = str('icon');
+        }
+        t.start = tier.start; t.end = t.icon.end;
+        res.tiers.push(t);
+        tier = num('tier');
+      }
+      if (s.token.text[0] === '}') res.close = { start: s.token.start, end: s.token.end };
+      break;          // the outer loop reads no second block: the next token is "}" (ServerBuff.cpp:57)
+    }
+    if (!res.kw) res.problems.push({ code: 'FIELDS', start: 0, end: 0, message: `${file.name} does not start with ${kw}: the server loads no tiers` });
+    return res;
+  }
+  const loadServerBuff = file => file ? scanTiers(file, 'ServerBuffTiers', false) : null;
+  const loadGuildBuff = file => file ? scanTiers(file, 'GuildBuffTiers', true) : null;
+
+  // findHighestEligibleTier: the highest tier number whose needs are met (first one on a tie)
+  function pickServerTier(sb, online) {
+    let best = null;
+    for (const t of sb ? sb.tiers : []) if (online >= t.online.value && (!best || t.tier.value > best.tier.value)) best = t;
+    return best;
+  }
+  function pickGuildTier(gb, guildLevel, online) {
+    let best = null;
+    for (const t of gb ? gb.tiers : []) if (guildLevel >= t.glv.value && online >= t.online.value && (!best || t.tier.value > best.tier.value)) best = t;
+    return best;
+  }
+  // DST names (defineAttribute.h) and the tooltip words for a stat number
+  function dstName(defines, v) { return v ? (defines.byValue ? defines.byValue('DST_', v) : null) : null; }
+
+  // ---------------------------------------------------------------- checks
+  function validate(model, opts = {}) {
+    const out = [];
+    const ev = model.events, defs = opts.defines;
+    for (const e of ev.errors) out.push({ module: 'rates', file: ev.file, code: e.warn ? 'RT_LUA_CALL' : 'RT_LUA_ERROR', severity: e.warn ? 'WARN' : 'BLOCK',
+      start: e.start, end: e.end, key: `${e.warn ? 'RT_LUA_CALL' : 'RT_LUA_ERROR'}|${e.message}`,
+      message: e.warn ? e.message : `${e.message}. The server cannot run Event.lua: every rate becomes 1 (no EXP ×, no Penya ×) and no level-up gift is given.` });
+    if (!ev.failed && ev.active.item > GATE_FULL) {
+      const by = ev.events.filter(e => e.on && e.f.item);
+      out.push({ module: 'rates', file: ev.file, code: 'RT_GATE_NO_EFFECT', severity: 'WARN', start: by.length ? by[0].f.item.arg.start : 0, end: by.length ? by[0].f.item.arg.end : 0,
+        key: 'RT_GATE_NO_EFFECT', message: `The drop roll gate is ×${ev.active.item} now: from ×10 every kill already passes the gate, so more changes nothing. Use "Item chance ×" to make items drop more often.` });
+    }
+    for (const [b, kind] of [[model.server, 'ServerBuff'], [model.guild, 'GuildBuff']]) {
+      if (!b) continue;
+      for (const p of b.problems) out.push({ module: 'rates', file: b.file, code: p.code === 'NO_CLOSE' ? 'RT_NO_CLOSE' : 'RT_FIELDS', severity: 'BLOCK',
+        start: p.start, end: p.end, key: `RT_${p.code}|${b.file}`, message: p.message });
+      const seen = new Set();
+      b.tiers.forEach((t, i) => {
+        const where = `${b.file} tier ${t.tier.value}`;
+        const nums = kind === 'GuildBuff' ? [t.tier, t.glv, t.online] : [t.tier, t.online, t.pct];
+        const bad = nums.find(n => !n.ok) || [t.name, t.icon, t.desc].filter(Boolean).find(x => !x.ok);
+        if (bad) out.push({ module: 'rates', file: b.file, code: 'RT_FIELDS', severity: 'BLOCK', start: bad.start, end: bad.end, key: `RT_FIELDS|${b.file}|${i}`,
+          message: `${where}: "${bad.text || '(end of file)'}" stands where the ${bad.what} should be. The server has no field check: this row and every row after it are read shifted.` });
+        if (kind === 'GuildBuff') t.bonus.forEach((x, j) => {
+          if (x.dst.word) out.push({ module: 'rates', file: b.file, code: 'RT_GB_DST_NAME', severity: 'WARN', start: x.dst.start, end: x.dst.end, key: `RT_GB_DST_NAME|${i}|${j}`,
+            message: `${where}, stat ${j + 1}: "${x.dst.text}" is a name. GuildBuff.txt is read with atoi, so it becomes 0 (no stat). Write the number.` });
+          else if (x.dst.value && defs && !dstName(defs, x.dst.value)) out.push({ module: 'rates', file: b.file, code: 'RT_GB_DST_UNKNOWN', severity: 'WARN', start: x.dst.start, end: x.dst.end, key: `RT_GB_DST_UNKNOWN|${i}|${j}`,
+            message: `${where}, stat ${j + 1}: ${x.dst.value} is not a DST_ number in defineAttribute.h` });
+        });
+        if (seen.has(t.tier.value)) out.push({ module: 'rates', file: b.file, code: 'RT_TIER_ORDER', severity: 'WARN', start: t.tier.start, end: t.tier.end, key: `RT_TIER_DUP|${b.file}|${t.tier.value}`,
+          message: `${b.file} has tier ${t.tier.value} twice: the first one is used for the tooltip` });
+        seen.add(t.tier.value);
+        const prev = b.tiers[i - 1];
+        if (prev && (t.tier.value <= prev.tier.value || t.online.value < prev.online.value || (kind === 'GuildBuff' && t.glv.value < prev.glv.value)))
+          out.push({ module: 'rates', file: b.file, code: 'RT_TIER_ORDER', severity: 'WARN', start: t.tier.start, end: t.tier.end, key: `RT_TIER_ORDER|${b.file}|${i}`,
+            message: `${where} comes after tier ${prev.tier.value} but has a lower number or needs less: the server picks the highest tier NUMBER whose needs are met, so a tier can hide another` });
+        for (const [x, max, what] of [[t.name, NAME_MAX, 'name'], [t.desc, DESC_MAX, 'description'], [t.icon, ICON_MAX, 'icon file name']])
+          if (x && x.ok && x.text.length > max) out.push({ module: 'rates', file: b.file, code: 'RT_TEXT_LONG', severity: 'WARN', start: x.start, end: x.end, key: `RT_TEXT_LONG|${b.file}|${i}|${what}`,
+            message: `${where}: the ${what} has ${x.text.length} characters; the game keeps only ${max}` });
+      });
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- the task's model
+  function fromWorkspace(ws) {
+    const f = n => ws.files.get(n);
+    return {
+      events: loadEvents(f('event.lua'), ws.now ? ws.now() : new Date()),
+      server: loadServerBuff(f('serverbuff.txt')),
+      guild: loadGuildBuff(f('guildbuff.txt')),
+      rebirth: FRE.gifts && f('1rebirth.inc') ? FRE.gifts.rebirth(f('1rebirth.inc'), ws.defines.defines, ws.items.items) : null,
+      exp: loadExpLimits(f('exptable.inc')),
+    };
+  }
+
+  // expTable.inc expCharacter (CProject::LoadExpTable, Project.cpp:3681-3693): per level nExp1, nExp2 (GetExpInteger), dwLPPoint, nLimitExp
+  function loadExpLimits(file) {
+    if (!file) return null;
+    const s = new FRE.lexer.Script(file.text, { file: file.name, defines: new Map(), diags: [] });
+    s.getToken();
+    while (!s.eof && s.token.text !== 'expCharacter') s.getToken();
+    if (s.eof) return null;
+    s.getToken();                              // {
+    const rows = [];
+    let v = s.getInt64();
+    while (s.token.text[0] !== '}' && !s.eof) {
+      const r = { exp1: v.value };
+      r.exp2 = s.getInt64().value; r.lp = s.getNumber().value; r.limit = s.getInt64().value;
+      rows.push(r);
+      v = s.getInt64();
+    }
+    return rows;
+  }
+
+  FRE.rates = { KINDS, loadEvents, setState, loadServerBuff, loadGuildBuff, pickServerTier, pickGuildTier, dstName, validate, fromWorkspace,
+    loadExpLimits, timeNumber, argSpans, blankLua, NAME_MAX, DESC_MAX, ICON_MAX, GATE_FULL };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/rates-sim.js ----
+// Rates & Buffs simulator: what one solo kill gives a player. A port of the WorldServer's kill path (paths under _Common/):
+//   SubExperience        Mover.cpp:6855-6890: fExpValue = nExpValue × m_fExp_Rate (1.0, ProjectCmn.cpp:550; __S1108_BACK_END_SYSTEM)
+//   AddExperienceKillMember  Mover.cpp:7001: fExpValuePerson = (float)( fExpValue × hit / max hit ): the killer did all the damage
+//   AddExperienceSolo    Mover.cpp:7034-7116: level gap ×0.7f / ×0.4f / ×0.1f (EXPFLOAT = double), capped at expTable.inc nLimitExp of
+//                        the player's level, then AddExperience( (EXPINTEGER)fExpValue )
+//   AddExperience        MoverParam.cpp:1140-1162: Master / Hero / Legend Hero halve it (nExp /= 2), then nExp = (EXPINTEGER)( nExp × GetExpFactor() )
+//                        (int64 × float is done in float)
+//   GetExpFactor         MoverParam.cpp:4465-4630 (float32, in this order): EXP scrolls ×(1 + Σ%/100) (__NEW_STACKABLE_AMPS: IK3_EXP_RATE
+//                        buffs in their level range), Event.lua EXP, the GM rate (1.0), ×(1 + DST_EXPERIENCE/100) (Guild Buff EXP + gear),
+//                        + Server Buff %/100 (ADDED, :4615), ×1Rebirth.inc fExpRate (m_nReb > 0), ×Event.lua weather while it rains / snows
+//                        (__ENVIRONMENT_EFFECT, :4648).
+//   Penya / items        loaders/drops-sim.js (penyaRange, exactChances) with this task's Event.lua rates.
+//   Server / Guild Buff  findHighestEligibleTier (ServerBuff.cpp:65, GuildBuff.cpp:62).
+// Not modelled (each is 1 / off here): old-boy mode, the cheer buffs, CEventGeneric (no propEvent.inc), Anarchy (server-wide and personal),
+// the Lord event and its buffs, Free PK Time, the rest-point bonus, PC-bang, EVE_EVENT0214, parties, a GM rate (/exprate).
+(function (FRE) {
+  'use strict';
+  const f32 = Math.fround;
+  const trunc = Math.trunc;
+
+  // -> { factor, steps: [{ what, text, after }] }
+  function expFactor(o) {
+    const steps = [];
+    let f = f32(1);
+    const step = (what, text) => steps.push({ what, text, after: f });
+    if (o.scrollPct) { f = f32(f * f32(1 + f32(f32(o.scrollPct) / 100))); step('scroll', `×${1 + o.scrollPct / 100} EXP scrolls (+${o.scrollPct}%)`); }
+    f = f32(f * f32(o.eventExp)); step('event', `×${f32(o.eventExp)} Event.lua EXP`);
+    if (o.dstExp > 0) { f = f32(f * f32(1 + f32(f32(o.dstExp) / 100))); step('dst', `×${1 + o.dstExp / 100} EXP stat (+${o.dstExp}%: Guild Buff and gear)`); }
+    if (o.serverBuffPct) { f = f32(f + f32(f32(o.serverBuffPct) / 100)); step('serverbuff', `+${o.serverBuffPct / 100} Server Buff (+${o.serverBuffPct}%, added)`); }
+    if (o.rebirth > 0 && o.rebirthRate != null) { f = f32(f * f32(o.rebirthRate)); step('rebirth', `×${f32(o.rebirthRate)} rebirth ${o.rebirth}`); }
+    if (o.weather) { f = f32(f * f32(o.weatherExp)); step('weather', `×${f32(o.weatherExp)} weather (rain / snow)`); }
+    return { factor: f, steps };
+  }
+
+  // -> { exp, steps: [text], base, capped }
+  function killExp(o) {
+    const steps = [];
+    let v = f32(o.expValue);                        // (float) on the way through AddExperienceKillMember
+    steps.push(`${v} the monster's EXP`);
+    const d = o.playerLevel - o.monsterLevel;
+    if (d > 0) {
+      const m = d <= 2 ? f32(0.7) : d <= 4 ? f32(0.4) : f32(0.1);
+      v = v * m;
+      steps.push(`×${d <= 2 ? 0.7 : d <= 4 ? 0.4 : 0.1} player ${d} level${d > 1 ? 's' : ''} above the monster`);
+    }
+    let capped = false;
+    if (o.limit != null && v > o.limit) { v = o.limit; capped = true; steps.push(`capped at ${o.limit} (expTable.inc, level ${o.playerLevel})`); }
+    let n = trunc(v);
+    if (o.halve) { n = trunc(n / 2); steps.push('÷2 Master / Hero'); }
+    const exp = trunc(f32(f32(n) * f32(o.factor)));
+    steps.push(`×${f32(o.factor)} the EXP factor`);
+    return { exp, steps, capped };
+  }
+
+  // The calculator: inputs { monsterId, playerLevel, tier: 'normal' | 'master' | 'hero', scrollPct, gearExp, online (Server Buff),
+  //   serverTier (number or null: from online), guildLevel, guildOnline, guildTier (number or null), weather, rebirth }
+  function calc(ws, model, inp, opt = {}) {
+    const ev = model.events, act = ev.activeF;
+    const sb = inp.serverTier != null ? (model.server ? model.server.tiers.find(t => t.tier.value === inp.serverTier) || null : null)
+      : FRE.rates.pickServerTier(model.server, inp.online | 0);
+    const gb = inp.guildTier != null ? (model.guild ? model.guild.tiers.find(t => t.tier.value === inp.guildTier) || null : null)
+      : FRE.rates.pickGuildTier(model.guild, inp.guildLevel | 0, inp.guildOnline | 0);
+    const dstExpV = ws.defines.defines.get('DST_EXPERIENCE');
+    let guildExp = 0;
+    if (gb) for (const b of gb.bonus) if (b.dst.value === dstExpV) guildExp += b.adj.value;
+    const rb = model.rebirth && inp.rebirth > 0 ? model.rebirth.rates[inp.rebirth] : null;
+    const ef = expFactor({ scrollPct: inp.scrollPct | 0, eventExp: act.exp, dstExp: guildExp + (inp.gearExp | 0), serverBuffPct: sb ? sb.pct.value : 0,
+      rebirth: inp.rebirth | 0, rebirthRate: rb ? rb.exp : (inp.rebirth > 0 ? 1 : null), weather: !!inp.weather, weatherExp: act.weather });
+    const mv = ws.movers.movers.get(inp.monsterId) || null;
+    const res = { factor: ef, serverTier: sb, guildTier: gb, guildExp, mover: mv, rates: act, failed: ev.failed };
+    if (!mv) return res;
+    const lim = model.exp && model.exp[inp.playerLevel] ? model.exp[inp.playerLevel].limit : null;
+    res.kill = killExp({ expValue: mv.exp, monsterLevel: mv.level | 0, playerLevel: inp.playerLevel, limit: lim, halve: inp.tier === 'master' || inp.tier === 'hero', factor: ef.factor });
+    if (ws.models.drops && !opt.expOnly) {
+      const env = FRE.dropsSim.envFor(ws, inp.monsterId);
+      const o = { playerLevel: inp.playerLevel, itemRate: ev.active.item, pieceRate: ev.active.piece, goldRate: ev.active.gold };
+      res.penya = FRE.dropsSim.penyaRange(env, o);
+      res.items = FRE.dropsSim.exactChances(env, o);
+      const gap = FRE.dropsSim.levelGap(inp.playerLevel, mv.level | 0);
+      res.gate = { base: gap[0], rate: f32(f32(gap[0]) * f32(ev.active.item)) };
+    }
+    return res;
+  }
+
+  FRE.ratesSim = { expFactor, killExp, calc };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- core/workspace.js ----
 // Workspace: the loaded Resource folder as the editor sees it. No DOM here,
 // so it can be tested outside the browser (tests/run-tests.js under gjs).
@@ -10336,9 +10881,21 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when
       },
     },
     {
+      // Rates & Buffs (task I, loaders/rates.js): Event.lua's rates (WorldServer + DatabaseServer), ServerBuff.txt (WorldServer only),
+      // GuildBuff.txt (both; the game only shows what the server sends, but every commit keeps the Client copy in sync: cd03ca46, ca02d0cb).
+      // uses drops: the calculator's Penya and item chances (loaders/drops-sim.js); propMover.txt for the monster EXP.
+      id: 'rates', label: 'Rates & Buffs',
+      required: ['Event.lua'], optional: ['ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc', 'expTable.inc'],
+      editable: ['Event.lua', 'ServerBuff.txt', 'GuildBuff.txt'], client: ['GuildBuff.txt'],
+      deps: ['ServerBuff.txt', 'GuildBuff.txt'],
+      uses: ['drops'],
+      parse(ws) { return FRE.rates.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.rates.validate(model, { defines: ws.defines }); },
+    },
+    {
       // Where is this item from? (task H, loaders/where.js): every model above parsed read-only, nothing editable.
       // Last, so its parse sees the other models. maps: towns of the NPCs, and whether they stand in the game.
-      id: 'where', label: 'Where is this item from?',
+      id: 'where', label: 'Item Sources & Uses',
       required: [], editable: [], client: [],
       // part 2 (loaders/gifts.js): level-up gifts (Event.lua), rebirth gifts, couple gifts, the max level (expTable.inc),
       // the Guild Siege config; the prize amounts compiled into the C++ come in as opts.cpp (io/source-read.js)
@@ -10841,6 +11398,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when
     'defineitem.h': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1376 LoadDefines' },
     'propitem.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1261 LoadStrings' },
     'mdldyna.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:768 m_modelMng.LoadScript (the "model" line of Masquerade.prj)' },
+    // Rates & Buffs: Event.lua (the WorldServer and the DatabaseServer, Project.cpp:983 / databaseserver/Project.cpp:192; the
+    // DatabaseServer menu "Apply now", DatabaseServer.cpp:488, reloads it live), ServerBuff.txt (WorldServer only, Project.cpp:893),
+    // GuildBuff.txt (both, Project.cpp:891; the game shows only what the server sends)
+    'event.lua': { server: STARTUP, client: null, cite: 'Project.cpp:983 m_EventLua.LoadScript (+ databaseserver/Project.cpp:192)' },
+    'serverbuff.txt': { server: STARTUP, client: null, cite: 'Project.cpp:893 loadServerBuffFile (#ifdef __WORLDSERVER)' },
+    'guildbuff.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:891 loadGuildBuffFile' },
     'client/donationshoptree.inc': { server: null, client: WINDOW, cite: 'WndDonationShop.cpp:346 (409 with donation-tree.diff) LoadTreeScript' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };
@@ -11628,7 +12191,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when
     return h('span.dur-wrap', el, ' ', sel, ' ', perm, hint);
   }
 
-  FRE.dom = { h, $, fmt, toast, toasts: () => toastCount, modal, progress, numInput, pctInput, pctText, keepFocus, LIVE_MS, flushLive, durationInput, durationText };
+  FRE.dom = { h, $, fmt, toast, liveCommit, toasts: () => toastCount, modal, progress, numInput, pctInput, pctText, keepFocus, LIVE_MS, flushLive, durationInput, durationText };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/common.js ----
@@ -16405,8 +16968,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when
   ];
 
   const mod = {
-    id: 'where', label: 'Where is this item from?', searchPlaceholder: 'Search items (name or II_ name)',
-    help: 'Where is this item from?: every way players get an item (shops, exchanges, monsters, boxes, Battle Pass, level-up / rebirth / couple gifts, Guild Siege prizes) and where it is used',
+    id: 'where', label: 'Item Sources & Uses', searchPlaceholder: 'Search items (name or II_ name)',
+    help: 'Item Sources & Uses: every way players get an item (shops, exchanges, monsters, boxes, Battle Pass, level-up / rebirth / couple gifts, Guild Siege prizes) and where it is used',
     st,
     onLoad() { st.show = 'all'; },          // the item stays: coming back from another task shows it again
 
@@ -16459,6 +17022,414 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when
 
   FRE.ui.where = { show };
   FRE.ui.modules.push(mod);
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- ui/rates.js ----
+// Rates & Buffs (task I part 1): the server rates in Event.lua, the Server Buff (ServerBuff.txt), the Guild Buff (GuildBuff.txt)
+// and a calculator that shows what one kill gives (loaders/rates-sim.js). Edits: edit/rates-ops.js. Plain words (the user, 2026-10-07);
+// both drop numbers explained (the user, 2026-10-09).
+(function (FRE) {
+  'use strict';
+  const { h, fmt, modal, numInput, toast, keepFocus, liveCommit } = FRE.dom;
+  const { diagTags, fieldLabel, formFooter, diagRow, pencil } = FRE.ui;
+  const EV = 'event.lua', SB = 'serverbuff.txt', GB = 'guildbuff.txt';
+  const st = { sel: 'rates', calc: null };
+  const R = () => FRE.rates, O = () => FRE.ratesOps, Sim = () => FRE.ratesSim;
+  const model = ctx => ctx.ws.models.rates;
+  const can = (ctx, f) => ctx.ws.isEditable(f);
+  const rDiags = ctx => ctx.ws.diags.filter(d => d.module === 'rates');
+  const spanDiags = (ctx, file, a, b) => rDiags(ctx).filter(d => d.file.toLowerCase() === file && d.start !== undefined && d.start >= a && d.start < Math.max(b, a + 1));
+  const num = v => Number.isFinite(v) ? String(Math.round(v * 10000) / 10000) : '?';
+  const stampText = n => { const s = String(n); return s.length === 12 ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)} ${s.slice(8, 10)}:${s.slice(10)}` : s; };
+  const keyOf = (sec, x) => `rates|${sec}|${x}`;
+
+  const SECTIONS = [
+    { id: 'rates', label: 'Server rates', sub: ctx => { const a = model(ctx).events.active; return `EXP ×${num(a.exp)} · Penya ×${num(a.gold)} · items ×${num(a.piece)}`; } },
+    { id: 'server', label: 'Server Buff', sub: ctx => model(ctx).server ? `${model(ctx).server.tiers.length} tiers (players online → EXP)` : 'ServerBuff.txt not found' },
+    { id: 'guild', label: 'Guild Buff', sub: ctx => model(ctx).guild ? `${model(ctx).guild.tiers.length} tiers (guild level + members online → stats)` : 'GuildBuff.txt not found' },
+    { id: 'calc', label: '🧮 Rate calculator', sub: () => 'What one kill gives a player' },
+  ];
+  const fileOfSection = { rates: EV, server: SB, guild: GB };
+
+  // a decimal box (rates): commits while typing (after a pause) and on Enter / leaving it
+  function decInput({ value, key, disabled, title, onCommit }) {
+    const el = h('input.num-input', { type: 'text', inputMode: 'decimal', value: value == null ? '' : num(value), disabled, title: title || '' });
+    if (key) el.dataset.key = key;
+    el.dataset.value = el.value;
+    const commit = () => {
+      if (!el.isConnected || el.value.trim() === el.dataset.value) return;
+      const v = Number(el.value.trim().replace(',', '.'));
+      if (!el.value.trim() || !Number.isFinite(v) || v <= 0) { toast('Type a number above 0 (decimals allowed, e.g. 1.5)', 'bad'); return; }
+      el.dataset.value = el.value.trim();
+      onCommit(v);
+    };
+    liveCommit(el, commit);
+    el.addEventListener('change', commit);
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') el.blur(); });
+    return el;
+  }
+  function textInput({ value, key, disabled, max, width, onCommit }) {
+    const el = h('input', { type: 'text', value: value || '', disabled, maxLength: max || 255, style: `width:${width || '14em'}` });
+    if (key) el.dataset.key = key;
+    el.dataset.value = el.value;
+    const commit = () => { if (!el.isConnected || el.value === el.dataset.value) return; el.dataset.value = el.value; onCommit(el.value); };
+    liveCommit(el, commit);
+    el.addEventListener('change', commit);
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') el.blur(); });
+    return el;
+  }
+  // a typed field: pauses while typing one value fold into one undo step
+  function typed(ctx, file, field, make, label, key) {
+    ctx.editGroup(() => [{ file, splices: make(ctx.ws.files.get(file).text) }], label, [key], `rt|${field}`);
+  }
+
+  // an icon of Client/Icon (.dds or a picture file)
+  const iconCache = new Map();
+  function iconPic(ctx, name, scale = 1) {
+    const box = h('span.dds-pic.rt-icon');
+    if (!name || !ctx.clientFile) return box;
+    const k = name.toLowerCase();
+    if (!iconCache.has(k)) iconCache.set(k, ctx.clientFile('Icon/' + name).then(b => {
+      if (!b) return null;
+      if (/\.dds$/i.test(name)) return { dds: FRE.dds.decode(b) };
+      return { url: URL.createObjectURL(new Blob([b])) };
+    }).catch(() => null));
+    iconCache.get(k).then(img => {
+      if (!img) { box.appendChild(h('span.tag.warn', { title: `The game looks for this picture in Client/Icon/${name} and did not find it there: the buff bar would show no picture. (Or no Client folder was picked.)` }, '⚠ picture not found')); return; }
+      if (img.url) { const i = h('img', { src: img.url, title: name }); i.style.height = 32 * scale + 'px'; box.appendChild(i); return; }
+      const d = img.dds, c = h('canvas', { width: d.w, height: d.h, title: name });
+      c.style.width = d.w * scale + 'px'; c.style.height = d.h * scale + 'px';
+      c.getContext('2d').putImageData(new ImageData(d.rgba, d.w, d.h), 0, 0);
+      box.appendChild(c);
+    });
+    return box;
+  }
+  // icon field: a searchable list of Client/Icon when the Client folder is there, else a text box
+  function iconField(ctx, { value, key, disabled, onCommit }) {
+    const wrap = h('span.rt-iconfield', iconPic(ctx, value));
+    const fallback = () => wrap.appendChild(textInput({ value, key, disabled, max: R().ICON_MAX, onCommit }));
+    if (!ctx.clientNames || disabled) { fallback(); return wrap; }
+    ctx.clientNames('Icon').then(names => {
+      if (!names) { fallback(); return; }
+      wrap.appendChild(FRE.ui.combo({ options: names.map(n => ({ v: n, label: n, find: n })), value, placeholder: 'Pick an icon (Client/Icon)', onPick: v => onCommit(v) }));
+    });
+    return wrap;
+  }
+
+  const mod = {
+    id: 'rates', label: 'Rates & Buffs', searchPlaceholder: 'Search sections', noItems: true,
+    help: 'Rates & Buffs: the server rates (Event.lua), the Server Buff and the Guild Buff, and what one kill gives',
+    st,
+    onLoad() { st.sel = 'rates'; st.calc = null; },
+
+    renderList(el, ctx) {
+      const q = ctx.query.toLowerCase();
+      for (const s of SECTIONS) {
+        if (q && !s.label.toLowerCase().includes(q)) continue;
+        const f = fileOfSection[s.id];
+        const ds = f ? rDiags(ctx).filter(d => d.file.toLowerCase() === f) : [];
+        const b = ds.filter(d => d.severity === 'BLOCK').length, w = ds.filter(d => d.severity === 'WARN').length;
+        el.appendChild(h('div.npc' + (st.sel === s.id ? '.sel' : ''), { 'data-sec': s.id, on: { click: () => { st.sel = s.id; ctx.renderAll(false); } } },
+          h('div.n', h('span', s.label), h('span', [...ctx.edited].some(k => k.startsWith(`rates|${s.id}|`)) ? h('span.tag.edit', 'edited') : null,
+            b ? h('span.tag.bad', '⛔' + b) : w ? h('span.tag.warn', '⚠' + w) : null)),
+          h('div.k', s.sub(ctx))));
+      }
+      el.appendChild(h('div.pad.muted.small', 'Later in this task: level-up gifts, rebirth tiers, the couple buff.'));
+    },
+
+    renderEditor(el, ctx) {
+      keepFocus(el, () => {
+        if (st.sel === 'server') serverView(el, ctx);
+        else if (st.sel === 'guild') guildView(el, ctx);
+        else if (st.sel === 'calc') calcView(el, ctx);
+        else ratesView(el, ctx);
+      });
+    },
+
+    addTarget() { return { ok: false, title: 'Items are not added in this task' }; },
+
+    locate(d) {
+      if (d.module !== 'rates') return false;
+      const f = String(d.file).toLowerCase();
+      st.sel = f === SB ? 'server' : f === GB ? 'guild' : 'rates';
+      return true;
+    },
+  };
+
+  function problems(el, ctx, file) {
+    const ds = rDiags(ctx).filter(d => d.file.toLowerCase() === file);
+    if (ds.length) { el.appendChild(h('h3', 'Problems')); for (const d of ds) el.appendChild(diagRow(d)); }
+  }
+
+  // ------------------------------------------------------------- Server rates (Event.lua)
+  function ratesView(el, ctx) {
+    const ev = model(ctx).events, f = ctx.ws.files.get(EV), edit_ = can(ctx, EV);
+    el.appendChild(h('div.npc-title', h('h2', 'Server rates'), h('span.def', 'Event.lua'), edit_ ? null : h('span.tag.bad', 'read-only')));
+    if (ev.failed) el.appendChild(h('div.banner.bad', 'Event.lua would not run: the server then uses ×1 for every rate and gives no level-up gifts. See the problems below.'));
+    const a = ev.active, on = ev.events.filter(e => e.on);
+    const who = k => on.filter(e => e.f[k]).map(e => e.name).join(' × ') || 'no event sets it';
+    el.appendChild(h('p.muted.small', `Running now (${stampText(ev.now)}): ${on.map(e => e.name).join(', ') || 'no event'}. When several events run at the same time, their numbers multiply.`));
+    const gate = R().GATE_FULL;
+    const rows = [
+      ['exp', 'EXP ×', 'Every monster kill gives this many times the EXP (more parts below in the calculator).'],
+      ['gold', 'Penya ×', 'The Penya of every kill is multiplied by this.'],
+      ['item', 'Drop roll gate ×', `Decides whether a kill can drop items at all: a roll of 0-99 must be below 100 × this (a monster at the player's level), down to 10 × this (8+ levels below the player). From ×${gate} every kill passes, so more changes nothing.`],
+      ['piece', 'Item chance ×', 'Every drop line\'s own chance is multiplied by this (a line that gives 2% gives about 4% at ×2). This is the number that makes items drop more often.'],
+      ['weather', 'Weather bonus ×', 'EXP is multiplied by this while it rains or snows (/weather). Only then.'],
+    ];
+    const tb = h('table.items.rt', h('tr', h('th', 'Rate'), h('th', 'Now'), h('th', 'Set by'), h('th', 'What it does')));
+    for (const [k, label, what] of rows) {
+      const warn = k === 'item' && a.item > gate ? h('span.tag.warn', { title: FRE.diagHelp.RT_GATE_NO_EFFECT.join('\n→ ') }, `⚠ above ×${gate} changes nothing`) : null;
+      tb.appendChild(h('tr', h('td', h('b', label)), h('td', `×${num(a[k])}`, warn), h('td.small', who(k)), h('td.small.muted', what)));
+    }
+    el.appendChild(tb);
+
+    for (const e of ev.events) eventCard(el, ctx, e, f, edit_);
+    problems(el, ctx, EV);
+  }
+
+  function eventCard(el, ctx, e, f, edit_) {
+    const rateKinds = Object.keys(R().KINDS);
+    const hasRates = rateKinds.some(k => e.f[k]);
+    const card = h('div.rt-card', h('div.dr-line', h('h3', { style: 'margin:0' }, e.name || '(no name)'),
+      h('span.tag.' + (e.on ? 'ok' : 'info'), e.on ? 'running now' : 'not running now'),
+      h('span.line', `Event.lua L${f.lineOf(e.start) + 1}`)));
+    const key = keyOf('rates', e.idx);
+    // time windows
+    for (const [i, t] of e.times.entries()) {
+      const set = (which, s) => typed(ctx, EV, `${e.idx}|t${i}|${which}`, txt => O().setTime(txt, t, which, s),
+        `${e.name}: changed the ${which} date (was ${stampText(which === 'start' ? t.a : t.b)})`, key);
+      card.appendChild(h('div.dr-line', h('span', i ? 'and from' : 'From'),
+        textInput({ value: t.aArg ? t.aArg.str : '', key: `rt|${e.idx}|t${i}|a`, disabled: !edit_, width: '10em', onCommit: v => set('start', v) }),
+        h('span', 'until'),
+        textInput({ value: t.bArg ? t.bArg.str : '', key: `rt|${e.idx}|t${i}|b`, disabled: !edit_, width: '10em', onCommit: v => set('end', v) }),
+        h('span.muted.small', '(YYYY-MM-DD HH:MM, the server\'s clock)')));
+    }
+    if (!e.times.length) card.appendChild(h('p.muted.small', 'No SetTime line: this event never runs.'));
+    // rates of this event: shown for events that have one (and for "Server Rates"-like events: any event may get one)
+    if (hasRates || /rate/i.test(e.name)) {
+      const tb = h('table.items.rt');
+      for (const k of rateKinds) {
+        const cur = e.f[k];
+        const label = R().KINDS[k].label;
+        tb.appendChild(h('tr', h('td', label),
+          h('td', decInput({ value: cur ? cur.value : null, key: `rt|${e.idx}|${k}`, disabled: !edit_,
+            title: cur ? `${R().KINDS[k].fn}( ${cur.arg.text} ), line ${f.lineOf(cur.stmt.start) + 1}` : `Not set (×1). Typing a number adds ${R().KINDS[k].fn}( … ) to this event.`,
+            onCommit: v => typed(ctx, EV, `${e.idx}|${k}`, txt => O().setFactor(txt, e, k, v), `${e.name}: ${label}${num(v)} (was ${cur ? '×' + num(cur.value) : 'not set'})`, key) })),
+          h('td.small.muted', cur ? '' : 'not set: ×1'),
+          h('td', cur ? diagTags(spanDiags(ctx, EV, cur.stmt.start, cur.stmt.end)) : null)));
+      }
+      card.appendChild(tb);
+      if (e.weatherTitle) card.appendChild(h('div.dr-line', h('span', 'Weather message'),
+        textInput({ value: e.weatherTitle.str, key: `rt|${e.idx}|wt`, disabled: !edit_, width: '22em',
+          onCommit: v => typed(ctx, EV, `${e.idx}|wt`, txt => O().setWeatherTitle(txt, e, v), `${e.name}: changed the weather message`, key) })));
+    } else card.appendChild(h('p.muted.small', 'This event sets no rate (level-up gifts and the like come in part 2).'));
+    el.appendChild(card);
+  }
+
+  // ------------------------------------------------------------- Server Buff
+  function serverView(el, ctx) {
+    const sb = model(ctx).server, edit_ = can(ctx, SB);
+    el.appendChild(h('div.npc-title', h('h2', 'Server Buff'), h('span.def', 'ServerBuff.txt'), edit_ ? null : h('span.tag.bad', 'read-only')));
+    if (!sb) { el.appendChild(h('p.empty-state', 'ServerBuff.txt is not in Server/Resource.')); return; }
+    el.appendChild(h('p.muted.small', 'Free EXP for everyone on this WorldServer, by how many players are online. The highest tier reached counts (tiers do not add up). ',
+      'Its % is ADDED to the EXP factor (×30 with +20% = ×30.2), not multiplied. The game shows the name, the icon and the next tier on the buff bar. ',
+      'Not yet confirmed in game: the EXP per kill (02ad5901).'));
+    const tb = h('table.items.rt', h('tr', h('th', 'Tier'), h('th', 'Players online'), h('th', 'EXP +%'), h('th', 'Name'), h('th', 'Icon'), h('th', '')));
+    const f = ctx.ws.files.get(SB);
+    for (const [i, t] of sb.tiers.entries()) {
+      const key = keyOf('server', i);
+      const n = (field, span, min, max, what) => numInput({ value: span.value, min, max, disabled: !edit_, key: `rt|sb|${i}|${field}`,
+        onCommit: v => { if (v === null) return; typed(ctx, SB, `sb|${i}|${field}`, () => O().setNumber(span, v, min, max, what), `Server Buff tier ${t.tier.value}: ${what} ${v} (was ${span.value})`, key); } });
+      tb.appendChild(h('tr', h('td', n('tier', t.tier, 1, 2147483647, 'tier number')),
+        h('td', n('on', t.online, 0, 100000, 'players online')), h('td', n('pct', t.pct, 0, 100000, 'EXP +%')),
+        h('td', textInput({ value: t.name.text, key: `rt|sb|${i}|name`, disabled: !edit_, max: R().NAME_MAX,
+          onCommit: v => typed(ctx, SB, `sb|${i}|name`, () => O().setString(t.name, v, 'name', R().NAME_MAX), `Server Buff tier ${t.tier.value}: name "${v}"`, key) })),
+        h('td', iconField(ctx, { value: t.icon.text, key: `rt|sb|${i}|icon`, disabled: !edit_,
+          onCommit: v => ctx.edit(SB, () => O().setString(t.icon, v, 'icon file name', R().ICON_MAX), `Server Buff tier ${t.tier.value}: icon ${v}`, key) })),
+        h('td', h('button.icon.danger', { disabled: !edit_, title: 'Remove this tier', on: { click: () => ctx.edit(SB, txt => O().removeTier(txt, t), `Server Buff: removed tier ${t.tier.value}`, key) } }, '✕'), ' ',
+          diagTags(spanDiags(ctx, SB, t.start, t.end)), h('span.line', `L${f.lineOf(t.start) + 1}`))));
+    }
+    el.appendChild(tb);
+    el.appendChild(h('div.dr-line', h('button.primary', { disabled: !edit_ || !sb.open, on: { click: () => tierForm(ctx, false) } }, '+ Add tier')));
+    problems(el, ctx, SB);
+  }
+
+  // ------------------------------------------------------------- Guild Buff
+  function dstOptions(ctx) {
+    const words = FRE.itemTooltip.dstWords(ctx.ws);
+    const opts = [{ v: 0, label: '(none)', find: 'none' }];
+    for (const [v, w] of [...words].sort((a, b) => (a[1].word || a[1].define).localeCompare(b[1].word || b[1].define)))
+      opts.push({ v, label: `${(w.word || '').replace(/[:\s]+$/, '') || w.define}${w.rate ? ' (%)' : ''} — ${w.define}`, find: `${w.word} ${w.define}` });
+    return { opts, words };
+  }
+  const dstLabel = (words, v) => { if (!v) return '(none)'; const w = words.get(v); return w ? `${(w.word || '').replace(/[:\s]+$/, '') || w.define}${w.rate ? ' %' : ''}` : `stat ${v}`; };
+
+  function guildView(el, ctx) {
+    const gb = model(ctx).guild, edit_ = can(ctx, GB);
+    el.appendChild(h('div.npc-title', h('h2', 'Guild Buff'), h('span.def', 'GuildBuff.txt'), edit_ ? null : h('span.tag.bad', 'read-only')));
+    if (!gb) { el.appendChild(h('p.empty-state', 'GuildBuff.txt is not in Server/Resource.')); return; }
+    el.appendChild(h('p.muted.small', 'Every online member of a guild gets these stats when the guild level AND the members online reach a tier. The highest tier reached counts. ',
+      'An EXP stat multiplies the EXP factor by (1 + %/100). The description is only text: players read it on the buff bar, so keep it in step with the stats ("✎ Write description from stats").'));
+    const { opts, words } = dstOptions(ctx);
+    const f = ctx.ws.files.get(GB);
+    for (const [i, t] of gb.tiers.entries()) {
+      const key = keyOf('guild', i), what = `Guild Buff tier ${t.tier.value}`;
+      const n = (field, span, min, max, label) => numInput({ value: span.value, min, max, disabled: !edit_, key: `rt|gb|${i}|${field}`,
+        onCommit: v => { if (v === null) return; typed(ctx, GB, `gb|${i}|${field}`, () => O().setNumber(span, v, min, max, label), `${what}: ${label} ${v} (was ${span.value})`, key); } });
+      const card = h('div.rt-card', h('div.dr-line', h('h3', { style: 'margin:0' }, `Tier ${t.tier.value}`), iconPic(ctx, t.icon.text),
+        h('span.line', `GuildBuff.txt L${f.lineOf(t.start) + 1}`), diagTags(spanDiags(ctx, GB, t.start, t.end)),
+        h('button.icon.danger', { disabled: !edit_, title: 'Remove this tier', on: { click: () => ctx.edit(GB, txt => O().removeTier(txt, t), `Guild Buff: removed tier ${t.tier.value}`, key) } }, '✕')));
+      card.appendChild(h('div.dr-line', h('span', 'Tier number'), n('tier', t.tier, 1, 2147483647, 'tier number'),
+        h('span', 'Guild level'), n('glv', t.glv, 0, 1000, 'guild level'), h('span', 'Members online'), n('on', t.online, 0, 100000, 'members online')));
+      const stats = h('table.items.rt', h('tr', h('th', 'Stat'), h('th', 'Amount'), h('th', '')));
+      t.bonus.forEach((b, j) => {
+        const cur = b.dst.ok ? b.dst.value : 0;
+        stats.appendChild(h('tr',
+          h('td', edit_ ? FRE.ui.combo({ options: opts, value: cur, placeholder: 'Pick a stat', wordStart: true,
+            onPick: v => ctx.edit(GB, () => O().setBonus(b, v, v ? (b.adj.value || 1) : 0), `${what}: stat ${j + 1} ${dstLabel(words, v)} (was ${dstLabel(words, cur)})`, key) }) : dstLabel(words, cur)),
+          h('td', numInput({ value: b.adj.value, min: -2147483647, max: 2147483647, disabled: !edit_ || !cur, key: `rt|gb|${i}|adj${j}`,
+            onCommit: v => { if (v === null) return; typed(ctx, GB, `gb|${i}|adj${j}`, () => O().setNumber(b.adj, v, -2147483647, 2147483647, 'amount'), `${what}: ${dstLabel(words, cur)} ${v} (was ${b.adj.value})`, key); } }),
+            words.get(cur) && words.get(cur).rate ? ' %' : ''),
+          h('td', diagTags(spanDiags(ctx, GB, b.dst.start, b.adj.end)))));
+      });
+      card.appendChild(stats);
+      card.appendChild(h('div.dr-line', h('span', 'Name'), textInput({ value: t.name.text, key: `rt|gb|${i}|name`, disabled: !edit_, max: R().NAME_MAX,
+        onCommit: v => typed(ctx, GB, `gb|${i}|name`, () => O().setString(t.name, v, 'name', R().NAME_MAX), `${what}: name "${v}"`, key) }),
+        h('span', 'Icon'), iconField(ctx, { value: t.icon.text, key: `rt|gb|${i}|icon`, disabled: !edit_,
+          onCommit: v => ctx.edit(GB, () => O().setString(t.icon, v, 'icon file name', R().ICON_MAX), `${what}: icon ${v}`, key) })));
+      const auto = O().describe(t.bonus.map(b => ({ dst: b.dst.ok ? b.dst.value : 0, adj: b.adj.value })), words);
+      card.appendChild(h('div.dr-line', h('span', 'Description'), textInput({ value: t.desc.text, key: `rt|gb|${i}|desc`, disabled: !edit_, max: R().DESC_MAX, width: '28em',
+        onCommit: v => typed(ctx, GB, `gb|${i}|desc`, () => O().setString(t.desc, v, 'description', R().DESC_MAX), `${what}: description`, key) }),
+        h('button', { disabled: !edit_ || auto === t.desc.text || !auto, title: auto === t.desc.text ? 'The description already says this' : `Write: ${auto}`,
+          on: { click: () => describeDialog(ctx, t, auto, what, key) } }, pencil(), ' Write description from stats')));
+      if (auto && auto !== t.desc.text) card.appendChild(h('p.small.warn-text', `⚠ The description does not match the stats: they give "${auto}".`));
+      el.appendChild(card);
+    }
+    el.appendChild(h('div.dr-line', h('button.primary', { disabled: !edit_ || !gb.open, on: { click: () => tierForm(ctx, true) } }, '+ Add tier')));
+    problems(el, ctx, GB);
+  }
+
+  function describeDialog(ctx, t, auto, what, key) {
+    modal({ title: `Edit description: ${what}`, body: h('div', h('p', 'Now:'), h('pre.preview', t.desc.text), h('p', 'From the stats:'), h('pre.preview', auto),
+      h('p.muted.small', 'One undo step. Players see it on the buff bar after Stop / Start Server.bat.')),
+    buttons: [{ label: 'Cancel' }, { label: 'Apply changes', cls: 'primary', onClick: () => ctx.edit(GB, () => O().setString(t.desc, auto, 'description', R().DESC_MAX), `${what}: description written from the stats`, key) }] });
+  }
+
+  // ------------------------------------------------------------- + Add tier (both files)
+  function tierForm(ctx, guild) {
+    const ws = ctx.ws, b = guild ? model(ctx).guild : model(ctx).server, file = guild ? GB : SB, last = b.tiers[b.tiers.length - 1];
+    const s = guild
+      ? { tier: last ? last.tier.value + 1 : 1, glv: last ? last.glv.value + 10 : 1, online: last ? last.online.value + 5 : 1,
+        bonus: last ? last.bonus.map(x => ({ dst: x.dst.ok ? x.dst.value : 0, adj: x.adj.value })) : [0, 0, 0, 0, 0].map(() => ({ dst: 0, adj: 0 })),
+        name: last ? last.name.text.replace(/\d+\s*$/, m => String(Number(m) + 1)) : 'Guild Buff Lv.1', desc: '', icon: last ? last.icon.text : '', descAuto: true }
+      : { tier: last ? last.tier.value + 1 : 1, online: last ? last.online.value + 10 : 10, pct: last ? last.pct.value + 5 : 5,
+        name: last ? last.name.text : 'Server Buff', icon: last ? last.icon.text : '' };
+    const words = guild ? dstOptions(ctx).words : null, opts = guild ? dstOptions(ctx).opts : null;
+    const checks = h('div'), preview = h('div'), body = h('div.nn-form');
+    let btn = null;
+    const plan = () => O().addTier(ws.files.get(file).text, b, s, guild);
+    function refresh() {
+      if (guild && s.descAuto) s.desc = O().describe(s.bonus, words);
+      checks.textContent = ''; preview.textContent = '';
+      const probs = [];
+      try { O().checkTier(s, guild); } catch (e) { probs.push(['BLOCK', e.message]); }
+      if (b.tiers.some(t => t.tier.value === s.tier)) probs.push(['BLOCK', `Tier ${s.tier} exists already`]);
+      if (last && (s.tier < last.tier.value || s.online < last.online.value || (guild && s.glv < last.glv.value)))
+        probs.push(['WARN', 'This tier needs less than the last one or has a lower number: the server picks the highest tier NUMBER whose needs are met']);
+      for (const [sev, msg] of probs) checks.appendChild(diagRow({ severity: sev, code: '', message: msg }));
+      if (!probs.length) checks.appendChild(h('p.muted.small', 'No problems.'));
+      const ok = !probs.some(p => p[0] === 'BLOCK');
+      if (btn) btn.disabled = !ok;
+      if (!ok) { preview.appendChild(h('p.muted', 'Fix the ⛔ first.')); return; }
+      const sp = plan(), f = ws.files.get(file);
+      preview.appendChild(h('pre.preview', `${f.name}, line ${f.lineOf(sp[0].start) + 1}:\n+${sp[0].insert.replace(/\r?\n$/, '')}`));
+      preview.appendChild(h('p', guild ? `Members of a guild of level ${s.glv}+ with ${s.online}+ members online get: ${O().describe(s.bonus, words) || 'nothing'}.`
+        : `With ${s.online}+ players online, every kill gets +${s.pct}% EXP (added to the EXP factor).`));
+    }
+    const row = (label, req, ...x) => h('div.nn-row', fieldLabel(label, req), ...x);
+    const n = (field, min, max) => numInput({ value: s[field], min, max, key: `rt|add|${field}`, live: true, onCommit: v => { s[field] = v === null ? NaN : v; refresh(); } });
+    body.appendChild(row('Tier number', true, n('tier', 1, 2147483647)));
+    if (guild) { body.appendChild(row('Guild level (at least)', true, n('glv', 0, 1000))); body.appendChild(row('Members online (at least)', true, n('online', 0, 100000))); }
+    else { body.appendChild(row('Players online (at least)', true, n('online', 0, 100000))); body.appendChild(row('EXP +%', true, n('pct', 0, 100000))); }
+    if (guild) s.bonus.forEach((x, j) => body.appendChild(row(`Stat ${j + 1}`, false,
+      FRE.ui.combo({ options: opts, value: x.dst, placeholder: 'Pick a stat', wordStart: true, onPick: v => { x.dst = v; if (!v) x.adj = 0; refresh(); } }),
+      numInput({ value: x.adj, min: -2147483647, max: 2147483647, key: `rt|add|adj${j}`, live: true, onCommit: v => { x.adj = v || 0; refresh(); } }))));
+    body.appendChild(row('Name', true, textInput({ value: s.name, key: 'rt|add|name', max: R().NAME_MAX, onCommit: v => { s.name = v; refresh(); } })));
+    if (guild) {
+      const descBox = textInput({ value: s.desc, key: 'rt|add|desc', max: R().DESC_MAX, width: '28em', onCommit: v => { s.desc = v; s.descAuto = false; refresh(); } });
+      body.appendChild(row('Description', false, descBox, h('span.muted.small', ' written from the stats until you type in it')));
+    }
+    body.appendChild(row('Icon', true, iconField(ctx, { value: s.icon, key: 'rt|add|icon', onCommit: v => { s.icon = v; refresh(); } })));
+    formFooter({ checks, action: 'Add', previewTitle: 'What will be written / what players get', preview }).forEach(x => body.appendChild(x));
+    const m = modal({ title: `Add a tier: ${guild ? 'Guild Buff' : 'Server Buff'}`, body, wide: true, buttons: [{ label: 'Cancel' },
+      { label: 'Add', cls: 'primary', id: 'rt-add-btn', onClick: () => ctx.edit(file, () => plan(), `${guild ? 'Guild' : 'Server'} Buff: added tier ${s.tier}`, keyOf(guild ? 'guild' : 'server', b.tiers.length)) }] });
+    btn = m.el.querySelector('#rt-add-btn');
+    refresh();
+  }
+
+  // ------------------------------------------------------------- 🧮 calculator
+  function calcView(el, ctx) {
+    const ws = ctx.ws, m = model(ctx);
+    const mvs = ws.movers ? ws.movers.movers : new Map();
+    if (!st.calc) {
+      const first = [...mvs.values()].find(x => /AIBATT1$/.test(x.define)) || [...mvs.values()].find(x => x.exp > 0);
+      st.calc = { monsterId: first ? first.id : null, playerLevel: first ? first.level : 1, tier: 'normal', scrollPct: 0, gearExp: 0,
+        serverTier: null, online: 0, guildTier: null, guildLevel: 0, guildOnline: 0, weather: false, rebirth: 0 };
+    }
+    const c = st.calc;
+    el.appendChild(h('div.npc-title', h('h2', '🧮 Rate calculator')));
+    el.appendChild(h('p.muted.small', 'One kill by one player alone who did all the damage, with the rates in the files as they are now (also before saving). ',
+      'Not counted: party EXP, cheers, Anarchy, the Lord event, Free PK Time, rest points, a GM /exprate.'));
+    const rerender = () => ctx.renderAll(false);
+    const monOpts = ws._rtMonOpts || [...mvs.values()].filter(x => x.exp > 0).sort((a, b) => a.level - b.level || a.define.localeCompare(b.define))
+      .map(x => ({ v: x.id, label: `${x.name || x.define} (lv ${x.level})`, find: `${x.name} ${x.define}` }));
+    ws._rtMonOpts = monOpts;
+    const sel = (key, list) => h('select', { on: { change: e => { const v = e.target.value; c[key] = v === '' ? null : (isNaN(Number(v)) ? v : Number(v)); rerender(); } } },
+      list.map(([v, l]) => h('option', { value: v === null ? '' : v, selected: c[key] === v }, l)));
+    const n = (key, min, max) => numInput({ value: c[key], min, max, key: `rt|calc|${key}`, live: true, onCommit: v => { c[key] = v || 0; rerender(); } });
+    const sbT = m.server ? m.server.tiers : [], gbT = m.guild ? m.guild.tiers : [];
+    const maxReb = m.rebirth ? m.rebirth.max : 0;
+    el.appendChild(h('div.nn-form',
+      h('div.nn-row', fieldLabel('Monster', true), h('div', { style: 'flex:1' }, FRE.ui.combo({ options: monOpts, value: c.monsterId, placeholder: 'Type a monster…', onPick: v => { c.monsterId = v; rerender(); } }))),
+      h('div.nn-row', fieldLabel('Player level', true), n('playerLevel', 1, 300), fieldLabel('Job', false),
+        sel('tier', [['normal', 'normal / 1st / 2nd job'], ['master', 'Master (EXP ÷2)'], ['hero', 'Hero / Legend (EXP ÷2)']]),
+        maxReb ? fieldLabel('Rebirth', false) : null, maxReb ? sel('rebirth', [...Array(maxReb + 1).keys()].map(i => [i, i ? `rebirth ${i}` : 'none'])) : null),
+      h('div.nn-row', fieldLabel('Server Buff', false), sel('serverTier', [[null, 'from players online →']].concat(sbT.map(t => [t.tier.value, `tier ${t.tier.value} (+${t.pct.value}%)`]))),
+        c.serverTier === null ? n('online', 0, 100000) : null, c.serverTier === null ? h('span.muted.small', 'players online') : null),
+      h('div.nn-row', fieldLabel('Guild Buff', false), sel('guildTier', [[null, 'from guild level + members online →']].concat(gbT.map(t => [t.tier.value, `tier ${t.tier.value}`]))),
+        c.guildTier === null ? [n('guildLevel', 0, 1000), h('span.muted.small', 'guild level'), n('guildOnline', 0, 1000), h('span.muted.small', 'members online')] : null),
+      h('div.nn-row', fieldLabel('EXP scrolls', false), n('scrollPct', 0, 10000), h('span.muted.small', '% (all active EXP scrolls added)'),
+        fieldLabel('Other EXP stat', false), n('gearExp', 0, 10000), h('span.muted.small', '% (gear, buffs)'),
+        h('label', h('input', { type: 'checkbox', checked: c.weather, on: { change: e => { c.weather = e.target.checked; rerender(); } } }), ' raining / snowing'))));
+    const r = Sim().calc(ws, m, c);
+    if (r.failed) el.appendChild(h('div.banner.bad', 'Event.lua would not run as it is now: every Event.lua rate counts as ×1 below.'));
+    el.appendChild(h('h3', 'EXP factor'));
+    el.appendChild(h('ul.small', r.factor.steps.map(s => h('li', `${s.text} → ${num(s.after)}`))));
+    el.appendChild(h('p', 'EXP factor: ', h('b', `×${num(r.factor.factor)}`),
+      h('span.muted.small', ` (Server Buff: ${r.serverTier ? `tier ${r.serverTier.tier.value}, +${r.serverTier.pct.value}%` : 'none'}; Guild Buff: ${r.guildTier ? `tier ${r.guildTier.tier.value}${r.guildExp ? `, EXP +${r.guildExp}%` : ', no EXP stat'}` : 'none'})`)));
+    if (!r.mover) { el.appendChild(h('p.muted', 'Pick a monster.')); return; }
+    el.appendChild(h('h3', `One kill of ${r.mover.name || r.mover.define} (lv ${r.mover.level})`));
+    el.appendChild(h('ul.small', r.kill.steps.map(s => h('li', s))));
+    el.appendChild(h('p', 'EXP per kill: ', h('b', fmt(r.kill.exp)), r.kill.capped ? h('span.muted.small', ' (the level\'s cap from expTable.inc was reached before the factor)') : null));
+    if (r.penya) el.appendChild(h('p', 'Penya per kill: ', h('b', `${fmt(r.penya.min)} - ${fmt(r.penya.max)}`), h('span.muted.small', ` (${r.penya.from}, × ${num(m.events.active.gold)} Event.lua, level gap counted)`)));
+    else if (ws.models.drops) el.appendChild(h('p.muted', 'This monster gives no Penya (no DropGold line).'));
+    if (r.items) {
+      const g = r.gate;
+      el.appendChild(h('p.small', `Drop roll gate: a kill can drop items when a roll of 0-99 is below ${g.base} × ${num(m.events.active.item)} = ${num(g.rate)}: `,
+        h('b', g.rate >= 100 ? 'every kill' : `${num(Math.max(0, Math.min(100, Math.ceil(g.rate))))}% of kills`), `. Item chance ×${num(m.events.active.piece)} on every line:`));
+      const tb = h('table.items.rt', h('tr', h('th', 'Item'), h('th', 'Per kill')));
+      for (const l of r.items.lines) {
+        if (l.entry.kind !== 'item') continue;
+        const it = ws.itemById(l.entry.itemId);
+        tb.appendChild(h('tr', FRE.ui.itemCell(it ? ws.itemInfo(it) : null, l.entry.define), h('td', FRE.drops.pct(l.perKill))));
+      }
+      el.appendChild(tb);
+    }
+  }
+
+  FRE.ui.modules.push(mod);
+  FRE.ui.rates = { tierForm };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/app.js ----
@@ -16521,6 +17492,20 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when
       }
       const fh = (await S.itemIndex.map).get(String(name).toLowerCase());
       return fh ? (await FRE.fsa.readHandle(fh)).bytes : null;
+    },
+    // file names in a Client sub-folder ('Icon'), listed once per Client folder; null without a Client folder or that folder
+    async clientNames(sub) {
+      if (!S.client) return null;
+      if (!S.dirNames || S.dirNames.client !== S.client) S.dirNames = { client: S.client, map: new Map() };
+      const key = sub.toLowerCase();
+      if (!S.dirNames.map.has(key)) S.dirNames.map.set(key, (async () => {
+        const dir = await FRE.fsa.dirAt(S.client.dir, sub);
+        if (!dir) return null;
+        const out = [];
+        for await (const [n, fh] of dir.entries()) if (fh.kind === 'file') out.push(n);
+        return out.sort((a, b) => a.localeCompare(b));
+      })());
+      return S.dirNames.map.get(key);
     },
     // Apply an edit op: make(text) -> splices. `key` marks what was edited (list badges).
     // Repeated edits of the same field within 2 s (typing) are folded into one undo step.
@@ -16830,6 +17815,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "59+", "when
 
   function renderAll(withItems = true) {
     document.body.classList.toggle('start', !S.task);
+    // a task that never adds items (Rates & Buffs) has no item list on the right
+    const um = S.task ? modules().find(x => x.id === S.task) : null;
+    document.body.classList.toggle('no-items', !!(um && um.noItems));
     renderToolbar(); renderBanners(); renderModes();
     if (!S.task) { renderStart(); return; }
     renderList(); renderEditor();
