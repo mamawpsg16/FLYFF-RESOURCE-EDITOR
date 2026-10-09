@@ -2193,6 +2193,32 @@ section('move an NPC / change its model: same-length .dyo rewrite (JS and Python
     if (why && bad++ < 3) ok(false, `case "${c.name}"`, why);
   }
   eq(bad, 0, `${py.cases.length} moves / model changes: same bytes and same read-back as the Python copy`);
+  // + NPC's key: the start the region's NPCs use + the name (newNpcSim.keyPrefix / keyFrom)
+  {
+    const S2 = FRE.newNpcSim, regs = S2.regions(w), pre = label => { const r = regs.find(x => x.label === label); const k = r && S2.keyPrefix(w, r); return k ? `${k.prefix} ${k.from}` : null; };
+    eq([pre('Flaris'), pre('Saint Morning'), pre('Darkon 3'), pre('Kaillun Grassland')].join(), 'MaFl_ region,MaSa_ region,MaDa_ region,MaEw_ region', 'key starts: Flaris MaFl_, Saint Morning MaSa_, Darkon MaDa_, Kaillun MaEw_ (what the NPCs there use)');
+    ok(regs.some(r => r.npcs === 0 && !S2.keyPrefix(w, r)), 'a place with no NPC on its map: no start (typed by hand)');
+    eq(S2.keyFrom('MaFl_', 'Lu mi-2!'), 'MaFl_Lumi2', 'the name keeps letters, digits and _');
+    eq(S2.keyFrom('MaFl_', 'x'.repeat(40)).length, 31, 'the key stops at 31 characters');
+  }
+  // a /position line pasted into the spot form, and "Face toward" (GetDegree, Obj.h:288)
+  const pos = py.pos || { lines: [], faces: [] };
+  ok(pos.lines.length > 90 && pos.faces.length > 1000, `Python made ${pos.lines.length} pasted lines and ${pos.faces.length} face-toward cases`);
+  const badLines = pos.lines.filter(c => JSON.stringify(E.parsePosition(c.line)) !== JSON.stringify(c.pos));
+  ok(!badLines.length, 'every pasted /position line reads the same x y z (or is refused) as in the Python copy', badLines.slice(0, 3).map(c => `${JSON.stringify(c.line)}: JS ${JSON.stringify(E.parsePosition(c.line))} vs Python ${JSON.stringify(c.pos)}`).join('; '));
+  const badFaces = pos.faces.filter(c => E.faceToward({ x: c.src[0], z: c.src[1] }, { x: c.dst[0], z: c.dst[1] }) !== c.angle);
+  ok(!badFaces.length, 'every "Face toward" gives the same facing as the Python copy', badFaces.slice(0, 3).map(c => JSON.stringify(c)).join('; '));
+  ok(pos.faces.every(c => c.angle === null || c.looks), 'each facing points at the pasted spot (AngleToVectorXZ, xUtil3D.h:37, within 0.06°)');
+  {
+    const pp = npcOf('MaFl_Postbox'), sp = E.placementsOf(w, pp)[0];
+    const line = `Position : x = ${(sp.x + 3).toFixed(6)}, y = ${sp.y.toFixed(6)}, z = ${(sp.z - 2).toFixed(6)}`;
+    const at = E.parsePosition(line), face = E.faceToward(sp, { x: sp.x, z: sp.z + 5 });
+    const plan = E.placePlan(w, pp, 0, Object.assign({}, at, { angle: face }));
+    w.applyGroup(plan.parts, 'paste test');
+    const back = E.placementsOf(w, pp)[0];
+    ok(Math.abs(back.x - at.x) < 0.01 && Math.abs(back.z - at.z) < 0.01 && Math.abs(back.angle - 180) < 0.01, `a pasted line + Face toward (a spot south, +z) is written: x ${back.x}, z ${back.z}, facing ${back.angle}`);
+    w.undo();
+  }
   ok([...w.mapFiles].every(([m, lower]) => FRE.bytes.bytesEqual(w.files.get(lower).serialize(), before.get(m))), 'after every undo the map files are the originals');
   // built files with an OT_CTRL record of each version ahead of an NPC: same record offsets and read-back
   for (const c of py.small) {

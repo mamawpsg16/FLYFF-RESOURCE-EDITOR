@@ -321,5 +321,25 @@
     return out;
   }
 
-  FRE.newNpcSim = { inGame, describe, rightClick, opensOf, OWN_CASE, modelNames, modelEntries, missingModelFiles, unusedCompleteModels, visibleNpcs, provenModels, seenBefore, o3dTextures, SEEN_BEFORE, buildingNames, structures, freeStructureIds, tagOf, whereAt, regions, TID_MMI_DIALOG };
+  // The key start NPCs already use in a region (+ NPC fills the key as prefix + name): the keys of the NPCs players see
+  // there ("MaFl_Peach" -> "MaFl_"), the most used one; else the most used on the same map; else null (typed by hand).
+  // region: an entry of regions(ws). Ties: the first in key order. -> { prefix, from: 'region' | 'map', count } | null
+  function keyPrefix(ws, region) {
+    if (!region) return null;
+    const vis = visibleNpcs(ws).filter(p => p.map === region.map);
+    const best = list => {
+      const n = new Map();
+      for (const p of list) { const m = /^([A-Za-z]{2,4}_)/.exec(p.key); if (m) n.set(m[1], (n.get(m[1]) || 0) + 1); }
+      const top = [...n].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))[0];
+      return top ? { prefix: top[0], count: top[1] } : null;
+    };
+    const here = best(vis.filter(p => { const w = whereAt(ws, p.map, p.x, p.z); return w && w.place === region.place; }));
+    if (here) return Object.assign(here, { from: 'region' });
+    const map = best(vis);
+    return map ? Object.assign(map, { from: 'map' }) : null;
+  }
+  // prefix + the name's letters and digits ("Lumi the 2nd" -> "MaFl_Lumithe2nd"), 31 characters at most (NN_KEY rules)
+  const keyFrom = (prefix, name) => (prefix + String(name || '').replace(/[^A-Za-z0-9_]/g, '')).slice(0, 31);
+
+  FRE.newNpcSim = { keyPrefix, keyFrom, inGame, describe, rightClick, opensOf, OWN_CASE, modelNames, modelEntries, missingModelFiles, unusedCompleteModels, visibleNpcs, provenModels, seenBefore, o3dTextures, SEEN_BEFORE, buildingNames, structures, freeStructureIds, tagOf, whereAt, regions, TID_MMI_DIALOG };
 })(globalThis.FRE = globalThis.FRE || {});

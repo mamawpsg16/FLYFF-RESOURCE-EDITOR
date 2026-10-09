@@ -126,58 +126,83 @@
   async function useRoot(dir) {
     if (!(await FRE.fsa.ensurePermission(dir))) { toast('Permission to the folder was not granted.', 'bad'); return; }
     let layout;
-    try { layout = await FRE.layout.detectLayout(dir); } catch (e) { toast(e.message, 'bad'); return; }
+    const P = FRE.dom.progress(`Opening ${dir.name}…`);
+    try {
+      await P.phase('Looking for Server/Resource, Client and backups…');
+      try { layout = await FRE.layout.detectLayout(dir); } catch (e) { toast(e.message, 'bad'); return; }
     S.layout = layout; S.pendingRoot = null;
     if (layout.backups) S.backupDir = layout.backups;
     else if (S.backupDir && S.backupKind === 'test') S.backupDir = null;     // never back up real files into a test folder
     S.backupKind = layout.kind;
     // which client patches are in FLYFF-V19-SOURCE (read-only; "unknown" on test-data): Save's "After saving" list
-    S.patchSrc = await FRE.patchState.inSource(layout);
+      if (layout.kind === 'real') await P.phase('Checking which client patches are in Source/ (read only)…');
+      S.patchSrc = await FRE.patchState.inSource(layout);
+    } finally { P.close(); }
     FRE.fsa.remember('root', dir);
     renderAll(false);
   }
 
+  // Opening a task shows a "Loading…" window with the phase and a count (the real folder takes seconds:
+  // Client/Model alone lists ~19,000 names); each phase is timed and the toast names the slowest one.
   async function loadTask(id) {
     const L = S.layout;
     if (!L || S.busy) return;
-    S.busy = true;
+    S.busy = true; S.loadingTask = id;
+    const wm = FRE.Workspace.MODULES.find(x => x.id === id), res = FRE.layout.describe(L).res;
+    renderAll(false);
+    const P = FRE.dom.progress(`Opening ${wm ? wm.label : id}…`);
+    const times = [];
+    let cur = null, t = performance.now();
+    const t0 = t;
+    const phase = async name => { const now = performance.now(); if (cur) times.push([cur, now - t]); cur = name; t = now; await P.phase(name + '…'); };
     try {
+      await phase(`Finding the files in ${res}`);
       const found = await FRE.fsa.findFiles(L.res, FRE.Workspace.ALL_FILES);
       for (const must of ['masquerade.prj', 'spec_item.txt']) {
         if (!found.has(must)) { toast(`${FRE.layout.describe(L).res} has no ${must}. Nothing was loaded.`, 'bad'); return; }
       }
       const files = new Map();
+      await phase(`Reading ${res}`);
+      let i = 0;
       for (const [lower, handle] of found) {
+        await P.count(++i, found.size, handle.name);
         const { bytes, stamp } = await FRE.fsa.readHandle(handle);
         files.set(lower, new FRE.SourceFile(handle.name, bytes, { handle, stamp }));
       }
-      const t0 = performance.now();
+      await phase('Reading the items, names and defines, then checking the files');
       S.ws = new FRE.Workspace(files, { only: id }).load();
       S.resDir = L.res;
       S.client = null;
-      if (L.client) await loadClient(L.client);
-      if (S.ws.needsMaps()) await loadMaps(L.res);
+      if (L.client) { await phase('Reading the game client\'s copies (Client/)'); await loadClient(L.client, P, phase); }
+      if (S.ws.needsMaps()) { await phase('Reading the maps (World/)'); await loadMaps(L.res, P); }
+      await phase('Building the lists');
       S.mode = id; S.task = id;
       $('list-search').value = S.queries[id] || '';
       buildItems();
       const m = modules().find(x => x.id === id);
       if (S.ws.available[id].ok && m && m.onLoad) m.onLoad(ctx);
       renderAll();
-      toast(`${m ? m.label : id}: loaded from ${FRE.layout.describe(L).res} in ${Math.round(performance.now() - t0)} ms`, 'ok');
+      times.push([cur, performance.now() - t]);
+      const sec = ms => ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
+      const slow = times.reduce((a, b) => (b[1] > a[1] ? b : a));
+      console.info('[load] ' + times.map(([n, ms]) => `${n}: ${sec(ms)}`).join(' · '));
+      toast(`${m ? m.label : id}: loaded from ${res} in ${sec(performance.now() - t0)}${performance.now() - t0 >= 1000 ? ` (slowest: ${slow[0].replace(/^./, c => c.toLowerCase())}, ${sec(slow[1])})` : ''}`, 'ok');
     } catch (e) { toast(e.message, 'bad'); }
-    finally { S.busy = false; }
+    finally { P.close(); S.busy = false; S.loadingTask = null; if (!S.task) renderAll(false); }
   }
 
   // For every map in World.inc (read-only): World/<map>/<map>.dyo (which NPCs stand in the game),
   // <map>.rgn + <map>.txt.txt (area names) and WdMadrigal.wld.cnt (continents): loaders/area.js
-  async function loadMaps(res) {
+  async function loadMaps(res, P = null) {
     const world = await FRE.layout.child(res, 'World');
     if (!world) return;
     const dyo = new Map(), worldFiles = new Map(), seen = new Set();
     const cworld = S.client ? await FRE.layout.child(S.client.dir, 'World') : null;
-    for (const w of S.ws.worldList()) {
+    const list = S.ws.worldList(), maps = new Set(list.map(w => w.name)).size;
+    for (const w of list) {
       if (seen.has(w.name)) continue;
       seen.add(w.name);
+      if (P) await P.count(seen.size, maps, w.name);
       const dir = await FRE.layout.child(world, w.name);
       if (!dir) continue;
       const names = ['.dyo', '.rgn', '.txt.txt', '.wld.cnt'].map(e => w.name + e);
@@ -234,10 +259,13 @@
   const clientNames = () => S.ws ? S.ws.clientFileNames()
     : [...new Set([...FRE.Workspace.CORE_CLIENT, ...FRE.Workspace.MODULES.flatMap(m => m.client)])];
 
-  async function loadClient(dir) {
+  // P / phase (optional): the "Loading…" window of loadTask
+  async function loadClient(dir, P = null, phase = async () => {}) {
     const found = await FRE.fsa.findFiles(dir, clientNames());
     const files = new Map();
+    let i = 0;
     for (const [lower, handle] of found) {
+      if (P) await P.count(++i, found.size, handle.name);
       const { bytes, stamp } = await FRE.fsa.readHandle(handle);
       files.set(lower, new FRE.SourceFile(handle.name, bytes, { handle, stamp }));
     }
@@ -272,9 +300,11 @@
       try {
         modelDir = await FRE.layout.child(dir, 'Model');
         if (modelDir) {
-          models = []; for await (const [name, handle] of modelDir.entries()) if (handle.kind === 'file') models.push(name);
+          await phase('Listing the model files (Client/Model, names only)');
+          models = []; for await (const [name, handle] of modelDir.entries()) { if (handle.kind === 'file') models.push(name); if (P) await P.count(models.length, 0, 'files'); }
+          await phase('Listing the textures (Client/Model/Texture, names only)');
           const td = await FRE.layout.child(modelDir, 'Texture');
-          if (td) { textures = []; for await (const [name, handle] of td.entries()) if (handle.kind === 'file') textures.push(name); }
+          if (td) { textures = []; for await (const [name, handle] of td.entries()) { if (handle.kind === 'file') textures.push(name); if (P) await P.count(textures.length, 0, 'files'); } }
         } else {
           // a test copy has no Model folder (the 3D files are large): tools/refresh-fixtures.sh writes Client/Model.list (names),
           // Client/ModelTexture.list (Model/Texture names) and Client/Model.textures (each Mvr_*.o3d's textures, tab-separated)
@@ -371,7 +401,7 @@
           h('div', d.client ? `✓ ${d.client}  (the game client's copies get the same change)` : '✗ no Client folder next to it: copy changed files to the client by hand'),
           h('div', d.backups ? `✓ ${d.backups}  (a backup before every save)` : S.backupDir ? `✓ backups: ${S.backupDir.name}` : '• backups: asked at the first save (pick a folder outside the source, e.g. FLYFF-RESOURCE-EDITOR/backups)')),
         L.kind === 'real' ? h('p.small', { style: 'color:var(--bad)' }, 'These are the real server files. Test on FLYFF-RESOURCE-EDITOR/test-data first.') : null,
-        h('button', { id: 'btn-root', on: { click: chooseRoot } }, 'Choose another folder')));
+        h('button', { id: 'btn-root', disabled: S.busy, on: { click: chooseRoot } }, 'Choose another folder')));
     } else if (S.pendingRoot) {
       wrap.appendChild(h('div.folder-card', h('p', `Last time: `, h('b', S.pendingRoot.name)),
         h('div.row', { style: 'justify-content:flex-start;gap:8px' },
@@ -384,8 +414,9 @@
     wrap.appendChild(h('div.start-step', '2 · Task'));
     wrap.appendChild(h('div.task-grid', FRE.Workspace.MODULES.filter(wm => !wm.hidden).map(wm => {
       const um = modules().find(x => x.id === wm.id);
-      return h('button.task-card', { 'data-task': wm.id, disabled: !L || S.busy, title: L ? '' : 'Choose the folder first', on: { click: () => loadTask(wm.id) } },
-        h('b', wm.label), h('span', um && um.help ? um.help.replace(/^[^:]+:\s*/, '').replace(/^./, c => c.toUpperCase()) : wm.required.join(', ')));
+      return h('button.task-card' + (S.loadingTask === wm.id ? '.loading' : ''), { 'data-task': wm.id, disabled: !L || S.busy, title: L ? '' : 'Choose the folder first', on: { click: () => loadTask(wm.id) } },
+        h('b', wm.label), h('span', um && um.help ? um.help.replace(/^[^:]+:\s*/, '').replace(/^./, c => c.toUpperCase()) : wm.required.join(', ')),
+        S.loadingTask === wm.id ? h('div.loading-tag', h('span.spinner'), 'Loading…') : null);
     })));
     el.appendChild(wrap);
   }

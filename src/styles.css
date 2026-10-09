@@ -399,3 +399,13 @@ table.bx td input.pct-input { width: 80px; }
 input.num-input.dur-input { width: 64px; }
 select.dur-unit { padding: 2px 4px; }
 button.dur-perm { padding: 2px 8px; font-size: 12px; }
+
+/* "Loading…" window (FRE.dom.progress) and the task card being opened */
+.modal.loading { width: min(460px, 92vw); }
+.modal.loading header { display: flex; align-items: center; gap: 10px; }
+.load-phase { margin-bottom: 4px; }
+.spinner { width: 16px; height: 16px; border: 2px solid var(--line); border-top-color: var(--accent, #4aa3ff); border-radius: 50%; display: inline-block; animation: fre-spin .8s linear infinite; flex: none; }
+@keyframes fre-spin { to { transform: rotate(360deg); } }
+.task-card.loading { border-color: var(--accent, #4aa3ff); }
+.task-card .loading-tag { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--text); }
+.nn-paste { min-width: 360px !important; flex: 1; }

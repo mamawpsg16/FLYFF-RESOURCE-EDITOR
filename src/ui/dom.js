@@ -145,6 +145,27 @@
     return { close, el: back };
   }
 
+  // A "Loading…" window with no buttons (opening a task can take seconds on the real folder):
+  // progress(title) -> { phase(text), count(i, n, what), close() }. phase() and count() let the browser paint
+  // (count at most every 100 ms), so the window shows what is being read while the files load.
+  function progress(title) {
+    const phaseEl = h('div.load-phase'), countEl = h('div.muted.small.load-count');
+    const back = h('div.modal-back.loading-back', h('div.modal.loading', h('header', h('span.spinner'), title), h('div.body', phaseEl, countEl)));
+    $('modal-root').appendChild(back);
+    let last = 0;
+    // FRE.dom.instant (the UI harness, which runs in microtasks only): no wait for a paint
+    const paint = () => FRE.dom.instant ? Promise.resolve() : new Promise(r => { let done = false; const go = () => { if (!done) { done = true; r(); } }; requestAnimationFrame(() => setTimeout(go, 0)); setTimeout(go, 50); });
+    return {
+      async phase(text) { phaseEl.textContent = text; countEl.textContent = ''; last = Date.now(); await paint(); },
+      async count(i, n, what = '') {
+        if (Date.now() - last < 100 && i !== n) return;
+        countEl.textContent = (n ? `${fmt(i)} / ${fmt(n)}` : fmt(i)) + (what ? ` · ${what}` : '');
+        last = Date.now(); await paint();
+      },
+      close() { back.remove(); },
+    };
+  }
+
   // A time limit typed as a number (decimals allowed) + a unit: minutes / hours / days. The file keeps whole minutes:
   // 0.5 hours = 30, 1.5 days = 2,160 (rounded to the minute). The unit starts at the biggest one that fits the value;
   // a keyed field remembers the unit chosen across re-renders. onCommit(minutes).
@@ -196,5 +217,5 @@
     return h('span.dur-wrap', el, ' ', sel, ' ', perm, hint);
   }
 
-  FRE.dom = { h, $, fmt, toast, toasts: () => toastCount, modal, numInput, pctInput, pctText, keepFocus, LIVE_MS, flushLive, durationInput, durationText };
+  FRE.dom = { h, $, fmt, toast, toasts: () => toastCount, modal, progress, numInput, pctInput, pctText, keepFocus, LIVE_MS, flushLive, durationInput, durationText };
 })(globalThis.FRE = globalThis.FRE || {});

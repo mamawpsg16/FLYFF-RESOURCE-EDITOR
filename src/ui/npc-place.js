@@ -37,7 +37,8 @@
     const shown = v => (v === null || v === undefined ? '' : Number.isFinite(v) ? Math.round(v * 100) / 100 : v);
     const typed = (field, attrs) => h('input', Object.assign({ value: shown(form[field]), type: 'number', step: 'any',
       on: { input: e => { form[field] = e.target.value === '' ? null : Number(e.target.value);
-        if (['x', 'y', 'z'].includes(field)) form.nextTo = null;          // a typed spot is no longer "next to" that NPC
+        if (['x', 'y', 'z'].includes(field)) { form.nextTo = null; form.pasteNote = null; }   // a typed spot is no longer "next to" that NPC
+        if (field === 'angle') form.faceNote = null;
         opts.changed(); } } }, attrs));
     const rows = [];
     const groups = [...new Set(regions.map(r => r.group))];
@@ -55,10 +56,34 @@
       Object.assign(form, { nextTo: v, map: p.map, x: Math.round((p.x + 6) * 10) / 10, y: Math.round(p.y * 10) / 10, z: Math.round(p.z * 10) / 10, angle: Math.round(p.angle * 10) / 10 });
     }, `Search the ${near.length} NPCs players see here`) : h('span.muted', 'No NPC stands here yet: type the spot in /position.'),
       note('Fills the spot: 6 steps to that NPC\'s side, same height and facing.')));
+    // a /position line pasted from the game chat (npcEditOps.parsePosition); form.pasteNote / faceNote: what it did
+    const E = FRE.npcEditOps;
+    const paste = (placeholder, onLine) => h('input.nn-paste', { type: 'text', placeholder, on: { input: e => {
+      const t = e.target.value.trim();
+      if (!t) return;
+      const p = E.parsePosition(t);
+      onLine(p, t);
+      opts.rerender();
+    } } });
+    const said = k => form[k] ? h('span.small', { style: `color:var(--${form[k].bad ? 'bad' : 'ok'})` }, form[k].text) : null;
+    rows.push(row('Paste from the game', false, paste('Position : x = 6970.12, y = 100.00, z = 3337.45', p => {
+      if (!p) { form.pasteNote = { bad: true, text: '⛔ That is not a /position line: it should look like "Position : x = …, y = …, z = …".' }; return; }
+      Object.assign(form, { x: p.x, y: p.y, z: p.z, nextTo: null });
+      form.pasteNote = { text: `✓ Spot filled from your /position line: x ${shown(p.x)}, y ${shown(p.y)}, z ${shown(p.z)}.` };
+    }), said('pasteNote'), note('In game: stand where the NPC should stand, type /position (or /pos), copy the chat line and paste it here.')));
     rows.push(row('/position', true, typed('x', { placeholder: 'x' }), typed('y', { placeholder: 'y (height)' }), typed('z', { placeholder: 'z' }),
-      note('In game: stand on the spot, type /position, copy x y z.')));
+      note('Or type the x y z that /position printed.')));
     rows.push(whereNow);
     rows.push(row('Facing', true, typed('angle', { min: 0, max: 359.9 }), note('Degrees, 0-359.9. "Next to" copies the neighbour\'s.')));
+    rows.push(row('Face toward', false, paste('Position : x = …, y = …, z = … (where players stand)', p => {
+      const spot = [form.x, form.z].every(v => typeof v === 'number' && Number.isFinite(v));
+      if (!p) { form.faceNote = { bad: true, text: '⛔ That is not a /position line.' }; return; }
+      if (!spot) { form.faceNote = { bad: true, text: '⛔ Fill the NPC\'s spot first (paste or type it above).' }; return; }
+      const a = E.faceToward(form, p);
+      if (a === null) { form.faceNote = { bad: true, text: '⛔ That is the NPC\'s own spot: stand a few steps in front of it.' }; return; }
+      form.angle = a; form.nextTo = null;
+      form.faceNote = { text: `✓ Facing ${a}°: the NPC looks toward x ${shown(p.x)}, z ${shown(p.z)}.` };
+    }), said('faceNote'), note('Optional: stand where players will talk to the NPC, type /position, paste the line: the NPC turns to look at that spot.')));
 
     function refreshWhere() {
       whereNow.textContent = '';

@@ -147,6 +147,7 @@
   }
 
   async function scenario() {
+    FRE.dom.instant = true;      // the loading window must not wait for a paint (this harness runs in microtasks)
     await waitFor(() => FRE.app.state && $('btn-root'), 'app init');
     const S = FRE.app.state;
     ok(document.body.classList.contains('start') && /What do you want to edit/.test($('editor').textContent), 'start screen first');
@@ -157,7 +158,18 @@
     ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 5 && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]'), 'real-files tag; 5 tasks to pick (exchanges are in NPC Shops; Monster Drops; Boxes)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
-    await openTask('npc');
+    // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
+    click(document.querySelector('.task-card[data-task="npc"]'));
+    const card = document.querySelector('.task-card[data-task="npc"]'), lw = document.querySelector('.loading-back');
+    ok(lw && /Opening NPC Shops/.test(lw.textContent) && /Finding the files/.test(lw.textContent), 'loading window shows at once, with the phase');
+    ok(card && card.classList.contains('loading') && /Loading…/.test(card.textContent) && [...document.querySelectorAll('.task-card')].every(b => b.disabled) && $('btn-root').disabled, 'the clicked card says Loading…; the other cards and Choose another folder are greyed');
+    const phases = new Set();
+    const watch = new MutationObserver(() => { const e = document.querySelector('.loading-back .load-phase'); if (e) phases.add(e.textContent); });
+    watch.observe($('modal-root'), { subtree: true, childList: true, characterData: true });
+    await waitFor(() => S.task === 'npc' && S.ws && !S.busy, 'task npc');
+    watch.disconnect();
+    ok(!document.querySelector('.loading-back') && /NPC Shops: loaded from/.test($('toasts').textContent), 'loading window closed; the toast says it loaded');
+    ok([...phases].some(t => /Reading the game client/.test(t)) || phases.size >= 2, `the window went through the phases (${[...phases].join(' | ')})`);
     ok(!document.body.classList.contains('start') && /Task:\s*NPC Shops/.test($('mode-tabs').textContent), 'NPC Shops task open');
     ok(S.client && S.client.dir === clientDir, 'Client copies attached automatically');
     ok(S.ws.items.rows.length === 8067, 'items loaded (8067)');
@@ -325,7 +337,13 @@
       await waitFor(() => document.querySelector('.newnpc'), 'new NPC form');
       const form = document.querySelector('.newnpc');
       const type = (sel, v) => { const el = form.querySelector(sel); el.value = v; el.dispatchEvent(new Event('input')); };
-      type('input[placeholder="MaFl_Lumi"]', 'MaFl_Lumi'); type('input[placeholder="Lumi"]', 'Lumi');
+      // the key is made from the region + the name until it is typed by hand (the user, 2026-10-09)
+      type('input[placeholder="Lumi"]', 'Lu mi');
+      ok(form.querySelector('input[placeholder="MaFl_Lumi"]').value === 'MaFl_Lumi' && /MaFl_ is what \d+ NPCs in Flaris use/.test(form.textContent), 'name "Lu mi" in Flaris: key MaFl_Lumi, and the note says why');
+      type('input[placeholder="MaFl_Lumi"]', 'MaFl_Lumi2'); type('input[placeholder="Lumi"]', 'Lumi');
+      ok(form.querySelector('input[placeholder="MaFl_Lumi"]').value === 'MaFl_Lumi2' && /Typed by hand/.test(form.textContent) && btnByText(form, '↺ From region + name'), 'a typed key stays when the name changes; ↺ is offered');
+      click(btnByText(form, '↺ From region + name'));
+      ok(document.querySelector('.newnpc input[placeholder="MaFl_Lumi"]').value === 'MaFl_Lumi', '↺: back to region + name');
       type('input[placeholder="x"]', '6966'); type('input[placeholder="y (height)"]', '100'); type('input[placeholder="z"]', '3220');
       type('input[placeholder="Tab title, e.g. Scrolls"]', 'General Goods');
       const combos = [...form.querySelectorAll('.combo')];
@@ -770,6 +788,26 @@
       ok(/✓ \[Jewel Manager\] Peach: moved — not saved yet/.test($('toasts').textContent), 'standard note after the move');
       click($('btn-undo'));
       ok(FRE.bytes.bytesEqual(S.ws.files.get(p0.file).serialize(), dyo0), 'Undo: the map file is back');
+      // paste the /position chat line, then "Face toward" a second line (the user's in-game test, 2026-10-09)
+      click($('editor').querySelector('.place-edit'));
+      await waitFor(() => lastModalAny() && /^Change position \/ model: /.test(lastModalAny().querySelector('header').textContent), 'Peach dialog again');
+      const pasteIn = (i, v) => { const el = lastModalAny().querySelectorAll('input.nn-paste')[i]; el.value = v; el.dispatchEvent(new Event('input')); };
+      ok(lastModalAny().querySelectorAll('input.nn-paste').length === 2, 'two paste boxes: the spot and Face toward');
+      pasteIn(0, 'hello');
+      ok(/That is not a \/position line/.test(lastModalAny().textContent), 'a line that is not /position: ⛔ says so');
+      const nx = p0.x + 4, nz = p0.z - 3;
+      pasteIn(0, `[12:01] Position : x = ${nx.toFixed(6)}, y = ${p0.y.toFixed(6)}, z = ${nz.toFixed(6)}`);
+      box = lastModalAny();
+      ok(Math.abs(Number(box.querySelector('input[placeholder="x"]').value) - nx) < 0.01 && Math.abs(Number(box.querySelector('input[placeholder="z"]').value) - nz) < 0.01 && /Spot filled from your \/position line/.test(box.textContent), 'the pasted line fills x y z');
+      pasteIn(1, `Position : x = ${(nx + 5).toFixed(6)}, y = ${p0.y.toFixed(6)}, z = ${nz.toFixed(6)}`);
+      box = lastModalAny();
+      ok(Number(box.querySelectorAll('input[type=number]')[3].value) === 90 && /Facing 90°/.test(box.textContent), 'Face toward a spot 5 to the east (+x): facing 90°');
+      if (STOP === 'pospaste') { $('toasts').textContent = ''; return; }
+      click(btnByText(box.querySelector('footer'), 'Apply changes'));
+      const p2 = P();
+      ok(Math.abs(p2.x - nx) < 0.01 && Math.abs(p2.z - nz) < 0.01 && Math.abs(p2.angle - 90) < 0.01, `written: x ${p2.x}, z ${p2.z}, facing ${p2.angle}`);
+      click($('btn-undo'));
+      ok(FRE.bytes.bytesEqual(S.ws.files.get(p0.file).serialize(), dyo0), 'Undo: the map file is back (after the paste)');
       // an NPC in 11 places: pick spot 7, change the model on all spots
       const pb = openNpc('MaFl_Postbox');
       const spots0 = FRE.npcEditOps.placementsOf(S.ws, pb);

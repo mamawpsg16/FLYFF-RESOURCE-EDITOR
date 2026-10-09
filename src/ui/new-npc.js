@@ -15,7 +15,7 @@
   const blankTab = slot => ({ slot, title: '', rules: [], items: [] });
   function defaults(ws) {
     const madrigal = ws.area ? ws.area.madrigal : 'WdMadrigal';
-    return { key: '', name: '', model: 'MI_MAFL_JURIA', image: null, structure: null, newTag: null, region: `${madrigal}|Flaris`,
+    return { key: '', keyAuto: true, name: '', model: 'MI_MAFL_JURIA', image: null, structure: null, newTag: null, region: `${madrigal}|Flaris`,
       map: ws.mapFiles.has(madrigal) ? madrigal : [...ws.mapFiles.keys()][0],
       x: null, y: null, z: null, angle: 0, menus: ['MMI_TRADE'], tabs: [blankTab(0)],
       // + Menu's Exchange / Rules text, filled in this form and created with the NPC (one undo step).
@@ -172,7 +172,26 @@
     const input = (field, attrs = {}) => h('input', Object.assign({ value: form[field] === null || form[field] === undefined ? '' : form[field],
       on: { input: e => { form[field] = attrs.number ? num(e.target.value) : e.target.value; touched = true;
         if (['x', 'y', 'z'].includes(field)) form.nextTo = null;          // a typed spot is no longer "next to" that NPC
+        if (field === 'key') { form.keyAuto = false; fillKeyNote(); }      // typed by hand: the region no longer changes it
+        if (field === 'name' && form.keyAuto) { autoKey(); if (keyEl) keyEl.value = form.key; fillKeyNote(); }
         refresh(); } } }, attrs.el || {}));
+    // The key = the start the NPCs of the chosen region use (newNpcSim.keyPrefix: "MaFl_" in Flaris) + the name,
+    // until the key is typed by hand; "↺ From region + name" goes back to that.
+    let keyEl = null, keyPre = null;
+    const keyNote = h('span.muted.small');
+    function autoKey() {
+      const r = SIM().regions(ws).find(x => x.value === form.region);
+      keyPre = SIM().keyPrefix(ws, r);
+      if (form.keyAuto) form.key = form.name ? SIM().keyFrom(keyPre ? keyPre.prefix : '', form.name) : '';
+    }
+    function fillKeyNote() {
+      keyNote.textContent = '';
+      const r = (form.region || '').split('|')[1] || 'this place';
+      keyNote.append(form.keyAuto
+        ? (keyPre ? `Made from the region + name: ${keyPre.prefix} is what ${keyPre.count} NPC${keyPre.count === 1 ? '' : 's'} ${keyPre.from === 'region' ? `in ${r}` : 'on this map'} use. Type to change it. ` : `No NPC stands in ${r} yet: the key is the name; type a start like MaFl_ if you want one. `)
+        : 'Typed by hand. ', 'Internal name, unique, never shown. Letters, digits, _ (31 max).');
+      if (!form.keyAuto) keyNote.append(' ', h('button.small', { type: 'button', on: { click: () => { form.keyAuto = true; touched = true; autoKey(); render(); } } }, '↺ From region + name'));
+    }
     const combo = (value, options, onPick, placeholder, onNew) => FRE.ui.combo({ options, value, placeholder, onNew, onPick: v => { touched = true; onPick(v); refresh(); } });
     const select = (value, options, onChange) => h('select', { on: { change: e => { onChange(e.target.value); refresh(); } } },
       options.map(o => o.group ? h('optgroup', { label: o.group }, o.options.map(x => h('option', { value: x.v, selected: String(x.v) === String(value) }, x.label)))
@@ -185,7 +204,10 @@
       body.textContent = '';
       // --- who
       body.appendChild(h('h3', 'NPC'));
-      body.appendChild(row('Key', true, input('key', { el: { placeholder: 'MaFl_Lumi', maxLength: 31 } }), note('Internal name, unique, never shown. Letters, digits, _ (31 max). Style: MaFl_ = Madrigal Flaris, MaSa_ = Saint Morning, MaDa_ = Darkon.')));
+      autoKey();
+      keyEl = input('key', { el: { placeholder: 'MaFl_Lumi', maxLength: 31 } });
+      fillKeyNote();
+      body.appendChild(row('Key', true, keyEl, keyNote));
       body.appendChild(row('Name', true, input('name', { el: { placeholder: 'Lumi', maxLength: 63 } }), note('Shown above the NPC\'s head.')));
       body.appendChild(FRE.ui.npcPlace.modelField(ctx, form, place, { cache: place.cache, rerender: render, changed: refresh, picked: () => { touched = true; } }));
       const imgFile = form.image ? (images.find(i => i.key === form.image) || {}).file : null;

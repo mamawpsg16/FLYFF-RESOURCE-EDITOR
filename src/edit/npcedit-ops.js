@@ -202,5 +202,31 @@
     return { parts, changes };
   }
 
-  FRE.npcEditOps = { placementsOf, placePlan, keyUses, canEditTexts, renameNpc, renameTab, nextSlot, addTab, removableTab, removeTab, addMenu, removeMenu, namedSlots, slotRec, nameRec };
+  // The chat line /position prints (TextCmd_Position, _Interface/FuncTextCmd.cpp:3955: TID_GAME_NOWPOSITION,
+  // textClient.txt.txt IDS_TEXTCLIENT_INC_000385 "Position : x = %f, y = %f, z = %f"; usable: it is above the "open"
+  // entry). Anything before it (a time, a name) is skipped; three bare numbers "x y z" work too. -> { x, y, z } | null
+  function parsePosition(text) {
+    const s = String(text || ''), num = '(-?\\d+(?:\\.\\d+)?)';
+    const m = s.match(new RegExp(`\\bx\\s*=\\s*${num}\\s*,?\\s*y\\s*=\\s*${num}\\s*,?\\s*z\\s*=\\s*${num}`, 'i'));
+    if (m) return { x: Number(m[1]), y: Number(m[2]), z: Number(m[3]) };
+    const n = s.trim().split(/[\s,;]+/);
+    if (n.length === 3 && n.every(v => /^-?\d+(\.\d+)?$/.test(v))) return { x: Number(n[0]), y: Number(n[1]), z: Number(n[2]) };
+    return null;
+  }
+
+  // The facing that turns an NPC standing at `from` toward `to` (both { x, z } in /position units): GetDegree
+  // (_Common/Obj.h:288), the turn the game itself makes toward a target (MoverMove.cpp:295 SetAngle(GetDegree(...))).
+  // Angle 0 faces VelocityToVec(0, 1) = (0, 0, -1) (Obj.h:278); the angle grows toward +x. Rounded to 0.1 degree,
+  // 0-359.9. -> number | null (the same spot)
+  function faceToward(from, to) {
+    const dx = to.x - from.x, dz = to.z - from.z, len = Math.sqrt(dx * dx + dz * dz);
+    if (!(len > 0)) return null;
+    const dot = Math.max(-1, Math.min(1, -dz / len));        // vDir1 (0, 0, -1) · vDir2 normalised
+    let deg = Math.acos(dot) * 180 / Math.PI;
+    if (dx / len < 0) deg = 360 - deg;
+    deg = Math.round(deg * 10) / 10;
+    return deg >= 360 ? 0 : deg;
+  }
+
+  FRE.npcEditOps = { placementsOf, placePlan, parsePosition, faceToward, keyUses, canEditTexts, renameNpc, renameTab, nextSlot, addTab, removableTab, removeTab, addMenu, removeMenu, namedSlots, slotRec, nameRec };
 })(globalThis.FRE = globalThis.FRE || {});

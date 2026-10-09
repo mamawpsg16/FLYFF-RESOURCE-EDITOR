@@ -1,6 +1,22 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-09 (J. Boxes part 2 user-tested + committed; next: V. Save History, plan first; the in-game test steps are in the guides repo; handoff on top)._
+_Last updated 2026-10-09 (V. Save History started: step 0 = paste /position + Face toward, step 0b = loading window; built, waiting for the user's Brave test; handoff on top)._
+
+> **Handoff (2026-10-09, V step 0 + 0b) — built, NOT committed, waiting for the user's Brave test.** Plan: `/home/kevin/.claude/plans/cozy-tinkering-hearth.md` (V. Save History: step 0, 0b, then part 1 History screen read-only, then part 2 Undo this save / Go back; user decisions: 2 parts, 🕘 History button in each task, undo = one pending edit + the normal Save, full plain words for old saves).
+> - **In-game news (user, 2026-10-08):** the new NPC stands in game; Trade, Exchange and Rules text menus work (TODOS Done). Its spot / facing were hard to get right.
+> - **Step 0 — Paste from the game** (`ui/npc-place.js`, in + NPC and 📍 Change position / model): paste the `/position` chat line ("Position : x = …, y = …, z = …", `FuncTextCmd.cpp:3955`) → x y z filled; **Face toward**: paste a second line from where players stand → the facing (`GetDegree`, `Obj.h:288`; 0 = toward -z, 90 = +x). `npcEditOps.parsePosition` / `faceToward`; Python copy in `oracle_sim.py npcmove` (`pos`); INVESTIGATION §1.14.
+> - **Step 0b — Loading window** (`FRE.dom.progress`, `ui/app.js` loadTask / useRoot): the clicked card says Loading…, the others grey out; the window shows the phase (Server/Resource files n / N, the Client copies, Client/Model and Model/Texture names (~19,000 on the real client: likely the slow part), the maps); the toast gives the time and the slowest phase, every phase in the console (`[load]`).
+> - **User's Brave test 2026-10-09:** loading window OK (real folder 1.6 s, slowest = the maps 444 ms: no speed-up needed); paste + Face toward OK in 📍 and + NPC.
+> - **Then (the user's idea): the + NPC key is made from the region + the name** (`newNpcSim.keyPrefix`: the key start most NPCs there use, e.g. Flaris `MaFl_` 83, Saint Morning `MaSa_`, Darkon `MaDa_`, Kaillun `MaEw_`; else the map's; else none) + `keyFrom` (letters, digits, _; 31 max). Typing the key stops it ("Typed by hand", **↺ From region + name**).
+> - Tests: core 1131 (npcmove pos cases agree; key starts), UI harness 410 (new checks in `loaded` and `newnpcform`; new stage `pospaste`).
+>
+> **User's test:** `python3 build.py`, reload.
+> 1. Pick FLYFF-V19-SOURCE (real folder; nothing is written), click NPC Shops: the card says Loading…, the window shows each phase with counts. The toast says the time and the slowest phase: tell Claude which one (and the time).
+> 2. test-data → NPC Shops → Peach → 📍 Change position / model. Paste `Position : x = 6934.68, y = 100.000000, z = 3223.02` into "Paste from the game": x y z fill in. Paste `hello`: ⛔.
+> 3. Paste `Position : x = 6939.68, y = 100, z = 3223.02` into "Face toward": Facing 90°, the preview says facing → 90°. Apply, Undo.
+> 4. In game later: stand where players should talk to the NPC, `/pos`, paste into Face toward.
+> 5. + NPC: type a name → the key fills as `MaFl_<name>`; pick Saint Morning → `MaSa_<name>`; type in the key → "Typed by hand" + ↺.
+> Then commit + push; next: V part 1.
 
 > **Handoff (2026-10-09) — J part 2 (+ New box, ✎ Edit box settings) is user-tested in Brave (all 7 steps + Save) and committed + pushed. Next: V. Save History, plan first.** After the first test the forms also show the picked item's full tooltip (stats, effects, editor info): under the item in + Add an item, and for the last picked row in + New box (hover an icon for the others; the user is fine with that).
 > Earlier: **J part 2 built** Plan: `/home/kevin/.claude/plans/hazy-beaming-leaf.md`. The in-game test of the 8 waiting items is the user's, with `FLYFF-SOURCES-EDIT-GUIDES/SOURCES DOCUMENTATION/RESOURCE-EDITOR-IN-GAME-TEST.md`; results come back later.

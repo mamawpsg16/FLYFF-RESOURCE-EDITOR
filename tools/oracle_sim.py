@@ -16,7 +16,7 @@ xRand / xRandom. __NEW_EXCHANGE_V19 on.
 Same simplification as the JS copy: equipped items sit after the 336 bag slots
 (in the server they keep the object id they had in the bag).
 """
-import json, os, re, struct, sys
+import json, math, os, random, re, struct, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from oracle import tokens, ISDELIM  # the CScanner token split (shared with tools/oracle.py)
@@ -3194,6 +3194,95 @@ def nv_apply(files, maps_order, case, D):
             struct.pack_into('<I', b, at + NV_INDEX, model)
 
 
+
+# ---- a /position line pasted into the spot form, and "face toward" -------------------------------------
+# TextCmd_Position (_Interface/FuncTextCmd.cpp:3955) formats TID_GAME_NOWPOSITION with g_pPlayer->GetPos();
+# textClient.txt.txt IDS_TEXTCLIENT_INC_000385 = "Position : x = %f, y = %f, z = %f" (C %f: 6 decimals).
+def nv_parse_pos(line):
+    low = line.lower()
+    vals = {}
+    i = 0
+    for axis in 'xyz':
+        j = low.find(axis, i)
+        while j >= 0:
+            k = j + 1
+            while k < len(low) and low[k] == ' ': k += 1
+            before_ok = j == 0 or not (low[j - 1].isalnum() or low[j - 1] == '_')
+            # y and z follow straight after the value before them: spaces and at most one comma between
+            if axis != 'x' and low[i:j].replace(' ', '') not in ('', ','): return nv_bare(line)
+            if before_ok and k < len(low) and low[k] == '=':
+                k += 1
+                while k < len(low) and low[k] == ' ': k += 1
+                e = k + (1 if k < len(low) and low[k] == '-' else 0)
+                d = e
+                while d < len(low) and low[d].isdigit(): d += 1
+                if d > e:
+                    if d < len(low) and low[d] == '.' and d + 1 < len(low) and low[d + 1].isdigit():
+                        d += 1
+                        while d < len(low) and low[d].isdigit(): d += 1
+                    vals[axis] = float(low[k:d]); i = d
+                    break
+            j = low.find(axis, j + 1)
+        if axis not in vals: break
+    if len(vals) == 3:
+        return vals
+    return nv_bare(line)
+
+def nv_bare(line):
+    parts = [p for p in re.split(r'[\s,;]+', line.strip()) if p]
+    if len(parts) == 3 and all(re.fullmatch(r'-?\d+(\.\d+)?', p) for p in parts):
+        return dict(x=float(parts[0]), y=float(parts[1]), z=float(parts[2]))
+    return None
+
+# GetDegree(vDestPos, vSrcPos) (_Common/Obj.h:288): the angle between VelocityToVec(0, 1) = (sin 0, 0, -cos 0)
+# (Obj.h:278) and the flat direction to the target, acos of the dot; x < 0 -> 360 - angle.
+def nv_face(src, dst):
+    dx, dz = dst[0] - src[0], dst[1] - src[1]
+    length = math.sqrt(dx * dx + dz * dz)
+    if length == 0: return None
+    v1 = (math.sin(0.0), -math.cos(0.0))
+    dot = v1[0] * dx / length + v1[1] * dz / length
+    dot = min(1.0, max(-1.0, dot))
+    deg = math.degrees(math.acos(dot))
+    if dx / length < 0: deg = 360.0 - deg
+    deg = round(deg * 10) / 10      # the form keeps 0.1 degree
+    return 0.0 if deg >= 360 else deg
+
+def nv_pos_cases(orig, order):
+    lines = []
+    spots = [nv_read(orig[m], at) for m in order for at, _ in nv_records(orig[m])][:60]
+    for i, sp in enumerate(spots):
+        x, y, z = sp['x'], sp['y'], sp['z']
+        lines.append('Position : x = %f, y = %f, z = %f' % (x, y, z))
+        if i % 3 == 0: lines.append('[12:04:55] Position : x = %f, y = %f, z = %f' % (x + 0.5, y, z - 0.25))
+        if i % 5 == 0: lines.append('%.2f %.2f %.2f' % (x, y, z))
+    lines += ['Position : x = -12.500000, y = 0.000000, z = -3.000000', 'position: X = 1, Y = 2, Z = 3', 'x=1,y=2,z=3',
+              '6970.5, 100, 3337', '6970 100', 'hello', '', 'Position : x = abc, y = 1, z = 2', 'box = 1, y = 2, z = 3',
+              'x = 1 y = 2 z = 3', '1 2 3 4', '-0.5 -1 -2', 'x = 1 and y = 2, z = 3', 'x = 1,, y = 2, z = 3',
+              'Position : x = 6970.000000, y = 100.000000, z = 3337.000000 (Flaris)', 'x = 5.', 'x = 5., y = 1, z = 2']
+    parsed = [dict(line=l, pos=nv_parse_pos(l)) for l in lines]
+    rng = random.Random(19)
+    faces = []
+    for sp in spots[:40]:
+        src = (sp['x'], sp['z'])
+        for a in range(0, 360, 15):
+            r = rng.choice([1.0, 3.0, 6.0, 40.0])
+            dst = (src[0] + r * math.sin(math.radians(a)), src[1] - r * math.cos(math.radians(a)))
+            faces.append(dict(src=list(src), dst=list(dst)))
+        faces.append(dict(src=list(src), dst=list(src)))
+        faces.append(dict(src=list(src), dst=[src[0] - 0.0001, src[1] - 10.0]))      # rounds to 360.0 = 0
+        faces.append(dict(src=list(src), dst=[src[0], src[1] + 7.0]))               # straight behind (+z): 180
+        for _ in range(5):
+            faces.append(dict(src=list(src), dst=[src[0] + rng.uniform(-80, 80), src[1] + rng.uniform(-80, 80)]))
+    for f in faces:
+        f['angle'] = nv_face(f['src'], f['dst'])
+        # the game turns the NPC this way: AngleToVectorXZ(angle) (xUtil3D.h:37) points at the target
+        if f['angle'] is not None:
+            t = math.radians(f['angle']); dx, dz = f['dst'][0] - f['src'][0], f['dst'][1] - f['src'][1]
+            n = math.sqrt(dx * dx + dz * dz)
+            f['looks'] = (math.sin(t) * dx - math.cos(t) * dz) / n > math.cos(math.radians(0.06))
+    return dict(lines=parsed, faces=faces)
+
 def nv_run(root):
     import hashlib
     maps, D = nv_maps(root)
@@ -3257,7 +3346,7 @@ def nv_run(root):
         data = ctrl + bytes(mover) + struct.pack('<I', 0xFFFFFFFF)
         recs = [dict(at=at, key=k, **nv_read(data, at)) for at, k in nv_records(data)]
         small.append(dict(version=v, hex=data.hex(), records=recs))
-    return dict(cases=out, records=len(every), small=small)
+    return dict(cases=out, records=len(every), small=small, pos=nv_pos_cases(orig, order))
 
 
 

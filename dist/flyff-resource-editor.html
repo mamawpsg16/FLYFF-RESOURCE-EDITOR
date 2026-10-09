@@ -408,6 +408,16 @@ input.num-input.dur-input { width: 64px; }
 select.dur-unit { padding: 2px 4px; }
 button.dur-perm { padding: 2px 8px; font-size: 12px; }
 
+/* "Loading…" window (FRE.dom.progress) and the task card being opened */
+.modal.loading { width: min(460px, 92vw); }
+.modal.loading header { display: flex; align-items: center; gap: 10px; }
+.load-phase { margin-bottom: 4px; }
+.spinner { width: 16px; height: 16px; border: 2px solid var(--line); border-top-color: var(--accent, #4aa3ff); border-radius: 50%; display: inline-block; animation: fre-spin .8s linear infinite; flex: none; }
+@keyframes fre-spin { to { transform: rotate(360deg); } }
+.task-card.loading { border-color: var(--accent, #4aa3ff); }
+.task-card .loading-tag { display: flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--text); }
+.nn-paste { min-width: 360px !important; flex: 1; }
+
 </style>
 </head>
 <body class="start">
@@ -463,7 +473,7 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "51+", "when": "Fri 9 Oct 2026, 08:37", "rev": "c64e5a3", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "52+", "when": "Fri 9 Oct 2026, 09:27", "rev": "4805d0c", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -8381,7 +8391,33 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "51+", "when
     return { parts, changes };
   }
 
-  FRE.npcEditOps = { placementsOf, placePlan, keyUses, canEditTexts, renameNpc, renameTab, nextSlot, addTab, removableTab, removeTab, addMenu, removeMenu, namedSlots, slotRec, nameRec };
+  // The chat line /position prints (TextCmd_Position, _Interface/FuncTextCmd.cpp:3955: TID_GAME_NOWPOSITION,
+  // textClient.txt.txt IDS_TEXTCLIENT_INC_000385 "Position : x = %f, y = %f, z = %f"; usable: it is above the "open"
+  // entry). Anything before it (a time, a name) is skipped; three bare numbers "x y z" work too. -> { x, y, z } | null
+  function parsePosition(text) {
+    const s = String(text || ''), num = '(-?\\d+(?:\\.\\d+)?)';
+    const m = s.match(new RegExp(`\\bx\\s*=\\s*${num}\\s*,?\\s*y\\s*=\\s*${num}\\s*,?\\s*z\\s*=\\s*${num}`, 'i'));
+    if (m) return { x: Number(m[1]), y: Number(m[2]), z: Number(m[3]) };
+    const n = s.trim().split(/[\s,;]+/);
+    if (n.length === 3 && n.every(v => /^-?\d+(\.\d+)?$/.test(v))) return { x: Number(n[0]), y: Number(n[1]), z: Number(n[2]) };
+    return null;
+  }
+
+  // The facing that turns an NPC standing at `from` toward `to` (both { x, z } in /position units): GetDegree
+  // (_Common/Obj.h:288), the turn the game itself makes toward a target (MoverMove.cpp:295 SetAngle(GetDegree(...))).
+  // Angle 0 faces VelocityToVec(0, 1) = (0, 0, -1) (Obj.h:278); the angle grows toward +x. Rounded to 0.1 degree,
+  // 0-359.9. -> number | null (the same spot)
+  function faceToward(from, to) {
+    const dx = to.x - from.x, dz = to.z - from.z, len = Math.sqrt(dx * dx + dz * dz);
+    if (!(len > 0)) return null;
+    const dot = Math.max(-1, Math.min(1, -dz / len));        // vDir1 (0, 0, -1) · vDir2 normalised
+    let deg = Math.acos(dot) * 180 / Math.PI;
+    if (dx / len < 0) deg = 360 - deg;
+    deg = Math.round(deg * 10) / 10;
+    return deg >= 360 ? 0 : deg;
+  }
+
+  FRE.npcEditOps = { placementsOf, placePlan, parsePosition, faceToward, keyUses, canEditTexts, renameNpc, renameTab, nextSlot, addTab, removableTab, removeTab, addMenu, removeMenu, namedSlots, slotRec, nameRec };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- edit/menu-ops.js ----
@@ -9227,7 +9263,27 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "51+", "when
     return out;
   }
 
-  FRE.newNpcSim = { inGame, describe, rightClick, opensOf, OWN_CASE, modelNames, modelEntries, missingModelFiles, unusedCompleteModels, visibleNpcs, provenModels, seenBefore, o3dTextures, SEEN_BEFORE, buildingNames, structures, freeStructureIds, tagOf, whereAt, regions, TID_MMI_DIALOG };
+  // The key start NPCs already use in a region (+ NPC fills the key as prefix + name): the keys of the NPCs players see
+  // there ("MaFl_Peach" -> "MaFl_"), the most used one; else the most used on the same map; else null (typed by hand).
+  // region: an entry of regions(ws). Ties: the first in key order. -> { prefix, from: 'region' | 'map', count } | null
+  function keyPrefix(ws, region) {
+    if (!region) return null;
+    const vis = visibleNpcs(ws).filter(p => p.map === region.map);
+    const best = list => {
+      const n = new Map();
+      for (const p of list) { const m = /^([A-Za-z]{2,4}_)/.exec(p.key); if (m) n.set(m[1], (n.get(m[1]) || 0) + 1); }
+      const top = [...n].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))[0];
+      return top ? { prefix: top[0], count: top[1] } : null;
+    };
+    const here = best(vis.filter(p => { const w = whereAt(ws, p.map, p.x, p.z); return w && w.place === region.place; }));
+    if (here) return Object.assign(here, { from: 'region' });
+    const map = best(vis);
+    return map ? Object.assign(map, { from: 'map' }) : null;
+  }
+  // prefix + the name's letters and digits ("Lumi the 2nd" -> "MaFl_Lumithe2nd"), 31 characters at most (NN_KEY rules)
+  const keyFrom = (prefix, name) => (prefix + String(name || '').replace(/[^A-Za-z0-9_]/g, '')).slice(0, 31);
+
+  FRE.newNpcSim = { keyPrefix, keyFrom, inGame, describe, rightClick, opensOf, OWN_CASE, modelNames, modelEntries, missingModelFiles, unusedCompleteModels, visibleNpcs, provenModels, seenBefore, o3dTextures, SEEN_BEFORE, buildingNames, structures, freeStructureIds, tagOf, whereAt, regions, TID_MMI_DIALOG };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- core/workspace.js ----
@@ -10547,6 +10603,27 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "51+", "when
     return { close, el: back };
   }
 
+  // A "Loading…" window with no buttons (opening a task can take seconds on the real folder):
+  // progress(title) -> { phase(text), count(i, n, what), close() }. phase() and count() let the browser paint
+  // (count at most every 100 ms), so the window shows what is being read while the files load.
+  function progress(title) {
+    const phaseEl = h('div.load-phase'), countEl = h('div.muted.small.load-count');
+    const back = h('div.modal-back.loading-back', h('div.modal.loading', h('header', h('span.spinner'), title), h('div.body', phaseEl, countEl)));
+    $('modal-root').appendChild(back);
+    let last = 0;
+    // FRE.dom.instant (the UI harness, which runs in microtasks only): no wait for a paint
+    const paint = () => FRE.dom.instant ? Promise.resolve() : new Promise(r => { let done = false; const go = () => { if (!done) { done = true; r(); } }; requestAnimationFrame(() => setTimeout(go, 0)); setTimeout(go, 50); });
+    return {
+      async phase(text) { phaseEl.textContent = text; countEl.textContent = ''; last = Date.now(); await paint(); },
+      async count(i, n, what = '') {
+        if (Date.now() - last < 100 && i !== n) return;
+        countEl.textContent = (n ? `${fmt(i)} / ${fmt(n)}` : fmt(i)) + (what ? ` · ${what}` : '');
+        last = Date.now(); await paint();
+      },
+      close() { back.remove(); },
+    };
+  }
+
   // A time limit typed as a number (decimals allowed) + a unit: minutes / hours / days. The file keeps whole minutes:
   // 0.5 hours = 30, 1.5 days = 2,160 (rounded to the minute). The unit starts at the biggest one that fits the value;
   // a keyed field remembers the unit chosen across re-renders. onCommit(minutes).
@@ -10598,7 +10675,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "51+", "when
     return h('span.dur-wrap', el, ' ', sel, ' ', perm, hint);
   }
 
-  FRE.dom = { h, $, fmt, toast, toasts: () => toastCount, modal, numInput, pctInput, pctText, keepFocus, LIVE_MS, flushLive, durationInput, durationText };
+  FRE.dom = { h, $, fmt, toast, toasts: () => toastCount, modal, progress, numInput, pctInput, pctText, keepFocus, LIVE_MS, flushLive, durationInput, durationText };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/common.js ----
@@ -11496,7 +11573,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "51+", "when
     const shown = v => (v === null || v === undefined ? '' : Number.isFinite(v) ? Math.round(v * 100) / 100 : v);
     const typed = (field, attrs) => h('input', Object.assign({ value: shown(form[field]), type: 'number', step: 'any',
       on: { input: e => { form[field] = e.target.value === '' ? null : Number(e.target.value);
-        if (['x', 'y', 'z'].includes(field)) form.nextTo = null;          // a typed spot is no longer "next to" that NPC
+        if (['x', 'y', 'z'].includes(field)) { form.nextTo = null; form.pasteNote = null; }   // a typed spot is no longer "next to" that NPC
+        if (field === 'angle') form.faceNote = null;
         opts.changed(); } } }, attrs));
     const rows = [];
     const groups = [...new Set(regions.map(r => r.group))];
@@ -11514,10 +11592,34 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "51+", "when
       Object.assign(form, { nextTo: v, map: p.map, x: Math.round((p.x + 6) * 10) / 10, y: Math.round(p.y * 10) / 10, z: Math.round(p.z * 10) / 10, angle: Math.round(p.angle * 10) / 10 });
     }, `Search the ${near.length} NPCs players see here`) : h('span.muted', 'No NPC stands here yet: type the spot in /position.'),
       note('Fills the spot: 6 steps to that NPC\'s side, same height and facing.')));
+    // a /position line pasted from the game chat (npcEditOps.parsePosition); form.pasteNote / faceNote: what it did
+    const E = FRE.npcEditOps;
+    const paste = (placeholder, onLine) => h('input.nn-paste', { type: 'text', placeholder, on: { input: e => {
+      const t = e.target.value.trim();
+      if (!t) return;
+      const p = E.parsePosition(t);
+      onLine(p, t);
+      opts.rerender();
+    } } });
+    const said = k => form[k] ? h('span.small', { style: `color:var(--${form[k].bad ? 'bad' : 'ok'})` }, form[k].text) : null;
+    rows.push(row('Paste from the game', false, paste('Position : x = 6970.12, y = 100.00, z = 3337.45', p => {
+      if (!p) { form.pasteNote = { bad: true, text: '⛔ That is not a /position line: it should look like "Position : x = …, y = …, z = …".' }; return; }
+      Object.assign(form, { x: p.x, y: p.y, z: p.z, nextTo: null });
+      form.pasteNote = { text: `✓ Spot filled from your /position line: x ${shown(p.x)}, y ${shown(p.y)}, z ${shown(p.z)}.` };
+    }), said('pasteNote'), note('In game: stand where the NPC should stand, type /position (or /pos), copy the chat line and paste it here.')));
     rows.push(row('/position', true, typed('x', { placeholder: 'x' }), typed('y', { placeholder: 'y (height)' }), typed('z', { placeholder: 'z' }),
-      note('In game: stand on the spot, type /position, copy x y z.')));
+      note('Or type the x y z that /position printed.')));
     rows.push(whereNow);
     rows.push(row('Facing', true, typed('angle', { min: 0, max: 359.9 }), note('Degrees, 0-359.9. "Next to" copies the neighbour\'s.')));
+    rows.push(row('Face toward', false, paste('Position : x = …, y = …, z = … (where players stand)', p => {
+      const spot = [form.x, form.z].every(v => typeof v === 'number' && Number.isFinite(v));
+      if (!p) { form.faceNote = { bad: true, text: '⛔ That is not a /position line.' }; return; }
+      if (!spot) { form.faceNote = { bad: true, text: '⛔ Fill the NPC\'s spot first (paste or type it above).' }; return; }
+      const a = E.faceToward(form, p);
+      if (a === null) { form.faceNote = { bad: true, text: '⛔ That is the NPC\'s own spot: stand a few steps in front of it.' }; return; }
+      form.angle = a; form.nextTo = null;
+      form.faceNote = { text: `✓ Facing ${a}°: the NPC looks toward x ${shown(p.x)}, z ${shown(p.z)}.` };
+    }), said('faceNote'), note('Optional: stand where players will talk to the NPC, type /position, paste the line: the NPC turns to look at that spot.')));
 
     function refreshWhere() {
       whereNow.textContent = '';
@@ -11630,7 +11732,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "51+", "when
   const blankTab = slot => ({ slot, title: '', rules: [], items: [] });
   function defaults(ws) {
     const madrigal = ws.area ? ws.area.madrigal : 'WdMadrigal';
-    return { key: '', name: '', model: 'MI_MAFL_JURIA', image: null, structure: null, newTag: null, region: `${madrigal}|Flaris`,
+    return { key: '', keyAuto: true, name: '', model: 'MI_MAFL_JURIA', image: null, structure: null, newTag: null, region: `${madrigal}|Flaris`,
       map: ws.mapFiles.has(madrigal) ? madrigal : [...ws.mapFiles.keys()][0],
       x: null, y: null, z: null, angle: 0, menus: ['MMI_TRADE'], tabs: [blankTab(0)],
       // + Menu's Exchange / Rules text, filled in this form and created with the NPC (one undo step).
@@ -11787,7 +11889,26 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "51+", "when
     const input = (field, attrs = {}) => h('input', Object.assign({ value: form[field] === null || form[field] === undefined ? '' : form[field],
       on: { input: e => { form[field] = attrs.number ? num(e.target.value) : e.target.value; touched = true;
         if (['x', 'y', 'z'].includes(field)) form.nextTo = null;          // a typed spot is no longer "next to" that NPC
+        if (field === 'key') { form.keyAuto = false; fillKeyNote(); }      // typed by hand: the region no longer changes it
+        if (field === 'name' && form.keyAuto) { autoKey(); if (keyEl) keyEl.value = form.key; fillKeyNote(); }
         refresh(); } } }, attrs.el || {}));
+    // The key = the start the NPCs of the chosen region use (newNpcSim.keyPrefix: "MaFl_" in Flaris) + the name,
+    // until the key is typed by hand; "↺ From region + name" goes back to that.
+    let keyEl = null, keyPre = null;
+    const keyNote = h('span.muted.small');
+    function autoKey() {
+      const r = SIM().regions(ws).find(x => x.value === form.region);
+      keyPre = SIM().keyPrefix(ws, r);
+      if (form.keyAuto) form.key = form.name ? SIM().keyFrom(keyPre ? keyPre.prefix : '', form.name) : '';
+    }
+    function fillKeyNote() {
+      keyNote.textContent = '';
+      const r = (form.region || '').split('|')[1] || 'this place';
+      keyNote.append(form.keyAuto
+        ? (keyPre ? `Made from the region + name: ${keyPre.prefix} is what ${keyPre.count} NPC${keyPre.count === 1 ? '' : 's'} ${keyPre.from === 'region' ? `in ${r}` : 'on this map'} use. Type to change it. ` : `No NPC stands in ${r} yet: the key is the name; type a start like MaFl_ if you want one. `)
+        : 'Typed by hand. ', 'Internal name, unique, never shown. Letters, digits, _ (31 max).');
+      if (!form.keyAuto) keyNote.append(' ', h('button.small', { type: 'button', on: { click: () => { form.keyAuto = true; touched = true; autoKey(); render(); } } }, '↺ From region + name'));
+    }
     const combo = (value, options, onPick, placeholder, onNew) => FRE.ui.combo({ options, value, placeholder, onNew, onPick: v => { touched = true; onPick(v); refresh(); } });
     const select = (value, options, onChange) => h('select', { on: { change: e => { onChange(e.target.value); refresh(); } } },
       options.map(o => o.group ? h('optgroup', { label: o.group }, o.options.map(x => h('option', { value: x.v, selected: String(x.v) === String(value) }, x.label)))
@@ -11800,7 +11921,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "51+", "when
       body.textContent = '';
       // --- who
       body.appendChild(h('h3', 'NPC'));
-      body.appendChild(row('Key', true, input('key', { el: { placeholder: 'MaFl_Lumi', maxLength: 31 } }), note('Internal name, unique, never shown. Letters, digits, _ (31 max). Style: MaFl_ = Madrigal Flaris, MaSa_ = Saint Morning, MaDa_ = Darkon.')));
+      autoKey();
+      keyEl = input('key', { el: { placeholder: 'MaFl_Lumi', maxLength: 31 } });
+      fillKeyNote();
+      body.appendChild(row('Key', true, keyEl, keyNote));
       body.appendChild(row('Name', true, input('name', { el: { placeholder: 'Lumi', maxLength: 63 } }), note('Shown above the NPC\'s head.')));
       body.appendChild(FRE.ui.npcPlace.modelField(ctx, form, place, { cache: place.cache, rerender: render, changed: refresh, picked: () => { touched = true; } }));
       const imgFile = form.image ? (images.find(i => i.key === form.image) || {}).file : null;
@@ -15267,58 +15391,83 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "51+", "when
   async function useRoot(dir) {
     if (!(await FRE.fsa.ensurePermission(dir))) { toast('Permission to the folder was not granted.', 'bad'); return; }
     let layout;
-    try { layout = await FRE.layout.detectLayout(dir); } catch (e) { toast(e.message, 'bad'); return; }
+    const P = FRE.dom.progress(`Opening ${dir.name}…`);
+    try {
+      await P.phase('Looking for Server/Resource, Client and backups…');
+      try { layout = await FRE.layout.detectLayout(dir); } catch (e) { toast(e.message, 'bad'); return; }
     S.layout = layout; S.pendingRoot = null;
     if (layout.backups) S.backupDir = layout.backups;
     else if (S.backupDir && S.backupKind === 'test') S.backupDir = null;     // never back up real files into a test folder
     S.backupKind = layout.kind;
     // which client patches are in FLYFF-V19-SOURCE (read-only; "unknown" on test-data): Save's "After saving" list
-    S.patchSrc = await FRE.patchState.inSource(layout);
+      if (layout.kind === 'real') await P.phase('Checking which client patches are in Source/ (read only)…');
+      S.patchSrc = await FRE.patchState.inSource(layout);
+    } finally { P.close(); }
     FRE.fsa.remember('root', dir);
     renderAll(false);
   }
 
+  // Opening a task shows a "Loading…" window with the phase and a count (the real folder takes seconds:
+  // Client/Model alone lists ~19,000 names); each phase is timed and the toast names the slowest one.
   async function loadTask(id) {
     const L = S.layout;
     if (!L || S.busy) return;
-    S.busy = true;
+    S.busy = true; S.loadingTask = id;
+    const wm = FRE.Workspace.MODULES.find(x => x.id === id), res = FRE.layout.describe(L).res;
+    renderAll(false);
+    const P = FRE.dom.progress(`Opening ${wm ? wm.label : id}…`);
+    const times = [];
+    let cur = null, t = performance.now();
+    const t0 = t;
+    const phase = async name => { const now = performance.now(); if (cur) times.push([cur, now - t]); cur = name; t = now; await P.phase(name + '…'); };
     try {
+      await phase(`Finding the files in ${res}`);
       const found = await FRE.fsa.findFiles(L.res, FRE.Workspace.ALL_FILES);
       for (const must of ['masquerade.prj', 'spec_item.txt']) {
         if (!found.has(must)) { toast(`${FRE.layout.describe(L).res} has no ${must}. Nothing was loaded.`, 'bad'); return; }
       }
       const files = new Map();
+      await phase(`Reading ${res}`);
+      let i = 0;
       for (const [lower, handle] of found) {
+        await P.count(++i, found.size, handle.name);
         const { bytes, stamp } = await FRE.fsa.readHandle(handle);
         files.set(lower, new FRE.SourceFile(handle.name, bytes, { handle, stamp }));
       }
-      const t0 = performance.now();
+      await phase('Reading the items, names and defines, then checking the files');
       S.ws = new FRE.Workspace(files, { only: id }).load();
       S.resDir = L.res;
       S.client = null;
-      if (L.client) await loadClient(L.client);
-      if (S.ws.needsMaps()) await loadMaps(L.res);
+      if (L.client) { await phase('Reading the game client\'s copies (Client/)'); await loadClient(L.client, P, phase); }
+      if (S.ws.needsMaps()) { await phase('Reading the maps (World/)'); await loadMaps(L.res, P); }
+      await phase('Building the lists');
       S.mode = id; S.task = id;
       $('list-search').value = S.queries[id] || '';
       buildItems();
       const m = modules().find(x => x.id === id);
       if (S.ws.available[id].ok && m && m.onLoad) m.onLoad(ctx);
       renderAll();
-      toast(`${m ? m.label : id}: loaded from ${FRE.layout.describe(L).res} in ${Math.round(performance.now() - t0)} ms`, 'ok');
+      times.push([cur, performance.now() - t]);
+      const sec = ms => ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
+      const slow = times.reduce((a, b) => (b[1] > a[1] ? b : a));
+      console.info('[load] ' + times.map(([n, ms]) => `${n}: ${sec(ms)}`).join(' · '));
+      toast(`${m ? m.label : id}: loaded from ${res} in ${sec(performance.now() - t0)}${performance.now() - t0 >= 1000 ? ` (slowest: ${slow[0].replace(/^./, c => c.toLowerCase())}, ${sec(slow[1])})` : ''}`, 'ok');
     } catch (e) { toast(e.message, 'bad'); }
-    finally { S.busy = false; }
+    finally { P.close(); S.busy = false; S.loadingTask = null; if (!S.task) renderAll(false); }
   }
 
   // For every map in World.inc (read-only): World/<map>/<map>.dyo (which NPCs stand in the game),
   // <map>.rgn + <map>.txt.txt (area names) and WdMadrigal.wld.cnt (continents): loaders/area.js
-  async function loadMaps(res) {
+  async function loadMaps(res, P = null) {
     const world = await FRE.layout.child(res, 'World');
     if (!world) return;
     const dyo = new Map(), worldFiles = new Map(), seen = new Set();
     const cworld = S.client ? await FRE.layout.child(S.client.dir, 'World') : null;
-    for (const w of S.ws.worldList()) {
+    const list = S.ws.worldList(), maps = new Set(list.map(w => w.name)).size;
+    for (const w of list) {
       if (seen.has(w.name)) continue;
       seen.add(w.name);
+      if (P) await P.count(seen.size, maps, w.name);
       const dir = await FRE.layout.child(world, w.name);
       if (!dir) continue;
       const names = ['.dyo', '.rgn', '.txt.txt', '.wld.cnt'].map(e => w.name + e);
@@ -15375,10 +15524,13 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "51+", "when
   const clientNames = () => S.ws ? S.ws.clientFileNames()
     : [...new Set([...FRE.Workspace.CORE_CLIENT, ...FRE.Workspace.MODULES.flatMap(m => m.client)])];
 
-  async function loadClient(dir) {
+  // P / phase (optional): the "Loading…" window of loadTask
+  async function loadClient(dir, P = null, phase = async () => {}) {
     const found = await FRE.fsa.findFiles(dir, clientNames());
     const files = new Map();
+    let i = 0;
     for (const [lower, handle] of found) {
+      if (P) await P.count(++i, found.size, handle.name);
       const { bytes, stamp } = await FRE.fsa.readHandle(handle);
       files.set(lower, new FRE.SourceFile(handle.name, bytes, { handle, stamp }));
     }
@@ -15413,9 +15565,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "51+", "when
       try {
         modelDir = await FRE.layout.child(dir, 'Model');
         if (modelDir) {
-          models = []; for await (const [name, handle] of modelDir.entries()) if (handle.kind === 'file') models.push(name);
+          await phase('Listing the model files (Client/Model, names only)');
+          models = []; for await (const [name, handle] of modelDir.entries()) { if (handle.kind === 'file') models.push(name); if (P) await P.count(models.length, 0, 'files'); }
+          await phase('Listing the textures (Client/Model/Texture, names only)');
           const td = await FRE.layout.child(modelDir, 'Texture');
-          if (td) { textures = []; for await (const [name, handle] of td.entries()) if (handle.kind === 'file') textures.push(name); }
+          if (td) { textures = []; for await (const [name, handle] of td.entries()) { if (handle.kind === 'file') textures.push(name); if (P) await P.count(textures.length, 0, 'files'); } }
         } else {
           // a test copy has no Model folder (the 3D files are large): tools/refresh-fixtures.sh writes Client/Model.list (names),
           // Client/ModelTexture.list (Model/Texture names) and Client/Model.textures (each Mvr_*.o3d's textures, tab-separated)
@@ -15512,7 +15666,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "51+", "when
           h('div', d.client ? `✓ ${d.client}  (the game client's copies get the same change)` : '✗ no Client folder next to it: copy changed files to the client by hand'),
           h('div', d.backups ? `✓ ${d.backups}  (a backup before every save)` : S.backupDir ? `✓ backups: ${S.backupDir.name}` : '• backups: asked at the first save (pick a folder outside the source, e.g. FLYFF-RESOURCE-EDITOR/backups)')),
         L.kind === 'real' ? h('p.small', { style: 'color:var(--bad)' }, 'These are the real server files. Test on FLYFF-RESOURCE-EDITOR/test-data first.') : null,
-        h('button', { id: 'btn-root', on: { click: chooseRoot } }, 'Choose another folder')));
+        h('button', { id: 'btn-root', disabled: S.busy, on: { click: chooseRoot } }, 'Choose another folder')));
     } else if (S.pendingRoot) {
       wrap.appendChild(h('div.folder-card', h('p', `Last time: `, h('b', S.pendingRoot.name)),
         h('div.row', { style: 'justify-content:flex-start;gap:8px' },
@@ -15525,8 +15679,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "51+", "when
     wrap.appendChild(h('div.start-step', '2 · Task'));
     wrap.appendChild(h('div.task-grid', FRE.Workspace.MODULES.filter(wm => !wm.hidden).map(wm => {
       const um = modules().find(x => x.id === wm.id);
-      return h('button.task-card', { 'data-task': wm.id, disabled: !L || S.busy, title: L ? '' : 'Choose the folder first', on: { click: () => loadTask(wm.id) } },
-        h('b', wm.label), h('span', um && um.help ? um.help.replace(/^[^:]+:\s*/, '').replace(/^./, c => c.toUpperCase()) : wm.required.join(', ')));
+      return h('button.task-card' + (S.loadingTask === wm.id ? '.loading' : ''), { 'data-task': wm.id, disabled: !L || S.busy, title: L ? '' : 'Choose the folder first', on: { click: () => loadTask(wm.id) } },
+        h('b', wm.label), h('span', um && um.help ? um.help.replace(/^[^:]+:\s*/, '').replace(/^./, c => c.toUpperCase()) : wm.required.join(', ')),
+        S.loadingTask === wm.id ? h('div.loading-tag', h('span.spinner'), 'Loading…') : null);
     })));
     el.appendChild(wrap);
   }
