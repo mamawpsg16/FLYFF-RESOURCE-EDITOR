@@ -43,6 +43,13 @@ block('🎲 Random gear (DropKind)', of('kind').sort(byKill).map(l => `${l.who} 
 block('🎁 Random box', of('box').sort((a, b) => b.chance - a.chance).map(l => `${l.who}: ${pct(l.chance)}, ×${fmt(l.num)}${l.bound ? ', bound' : ''}${l.minutes ? `, ${l.minutes} min` : ''}${l.upgrade ? `, +${l.upgrade}` : ''}`));
 block('📦 Set', of('set').map(l => `${l.who}: ×${fmt(l.num)}${l.box.span ? `, ${l.box.span} min` : ''}${l.upgrade ? `, +${l.upgrade}` : ''}`));
 block('🏆 Battle Pass', of('bp').sort((a, b) => a.level - b.level).map(l => `level ${l.level} (${fmt(l.points)} points): ×${fmt(l.num)}`));
+const who = a => (a === 'all' ? 'everyone' : `accounts with "${a}"`);
+block('🎂 Level-up gift', of('levelup').sort((a, b) => a.level - b.level).map(l => `level ${l.level}: ×${fmt(l.num)}${l.bound ? ', bound' : ''}${l.minutes ? `, ${l.minutes} min` : ''}, ${who(l.account)}`
+  + (!l.on ? '  EVENT NOT RUNNING' : l.first === 0 && l.perRebirth === 0 ? '  NEVER GIVEN' : `  (${l.first}× per character, +${l.perRebirth} per rebirth)`)));
+block('♻️ Rebirth gift', of('rebirth').map(l => `rebirth ${l.tier}: ×${fmt(l.num)}`));
+block('💞 Couple gift', of('couple').map(l => `couple level ${l.level}: ×${fmt(l.num)} to ${['the male partner', 'the female partner', 'both partners'][l.sex] || 'nobody'}${l.reached ? '' : '  NEVER REACHED'} (mail)`));
+block('🏰 Guild Siege, per siege', of('siege').flatMap(l => l.table.map(r => `${r[0]} guilds applied: ${r.slice(1).map((c, i) => `rank ${i + 1} ${fmt(c)}`).join(', ')} each`)));
+block('🏰 Guild Siege, weekly', of('weekly').flatMap(l => Object.entries(l.weekly).map(([k, a]) => `${k}: ${a.map(fmt).join(' / ')}`)));
 block('🔧 Used in', of('use').map(l => `${l.who} · ${l.menu.name} exchange ${l.si + 1}: takes ${fmt(l.num)}`));
 block(r.contains.length && r.contains[0].kind === 'set' ? '📦 Opening it gives all of' : '🎁 Opening it gives one of',
   r.contains.map(c => `${c.name} ×${fmt(c.num)}${c.chance !== undefined ? ` (${pct(c.chance)})` : ''}`));

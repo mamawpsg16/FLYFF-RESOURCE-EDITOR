@@ -481,7 +481,7 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "55+", "when": "Fri 9 Oct 2026, 10:56", "rev": "df10e42", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "57+", "when": "Fri 9 Oct 2026, 12:34", "rev": "1676447", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -9296,6 +9296,510 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "55+", "when
   FRE.newNpcSim = { keyPrefix, keyFrom, inGame, describe, rightClick, opensOf, OWN_CASE, modelNames, modelEntries, missingModelFiles, unusedCompleteModels, visibleNpcs, provenModels, seenBefore, o3dTextures, SEEN_BEFORE, buildingNames, structures, freeStructureIds, tagOf, whereAt, regions, TID_MMI_DIALOG };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/gifts.js ----
+// Gifts and Guild Siege prizes (task H part 2): read-only readers, no DOM. Each cites the C++ that reads the file.
+//   levelUp  Event.lua SetLevelUpGift (real Lua 5.3, CLuaBase::RunScript = luaL_dofile, LuaBase.cpp:47; the calls are
+//            stored by LuaFunc/EventFunc.lua:442 and read back by GetLevelUpGift, :455): exact level, "all" or a piece of
+//            the account name, active events only (GetEventState, :61). Given by CEventLua::SetLevelUpGift
+//            (EventLua.cpp:513-575, a021ff44): flag (2 = bound), minutes -> m_dwKeepTime, bag full -> mail.
+//   rebirth  1Rebirth.inc, CProject::LoadRebirthProp (Project.cpp:6058-6131): Max, Rates{}, Gifts{ tier item count }
+//            (one item per tier: map::insert keeps the first row; a tier above Max or an unknown item is rejected).
+//   couple   couple.inc, CCoupleProperty::Initialize / LoadLevel / LoadItem (couple.cpp:234-292): the exp ladder and
+//            the gifts per couple level { item SEX flag minutes count }. eMaxLevel 21 is compiled (couple.h:17).
+//   maxLevel expTable.inc expCharacter (CProject::LoadExpTable, Project.cpp:3681): the last row with an EXP value;
+//            IsMaxLevel = m_aExpCharacter[level + 1].nExp1 == 0 (Mover.h:1335).
+//   siege    GuildCombat.txt JOINPENYA / MINJOINGUILDSIZE / MAXJOINGUILDSIZE (CGuildCombat::LoadScript,
+//            eveschool.cpp:3528-3544) and the amounts compiled into the C++: per siege (GuildCombatResultRanking,
+//            eveschool.cpp:1688-1712) and weekly (GuildSiegePrize.cpp:17-20, cda3af21). When the C++ is not there
+//            (test-data) the copies below are used.
+// Not modelled: a Lua `if` / loop / variable around the calls (the file has none: every call is read as written);
+// Lua patterns in the account filter (read as plain text).
+(function (FRE) {
+  'use strict';
+  const u16 = v => v & 0xFFFF;
+  const MAX_COUPLE_LEVEL = 21;            // CCouple::eMaxLevel, couple.h:17
+  const FLAG_BOUND = 2;                   // CItemElem::binds, Item.h:132
+
+  // The amounts in the C++ today (read from the source when FLYFF-V19-SOURCE is picked)
+  const BUILTIN = {
+    siege: { factors: [0.9, 0.00001, 0.1], shares: [0.7, 0.2, 0.1] },         // eveschool.cpp:1702-1712
+    weekly: {                                                                   // GuildSiegePrize.cpp:17-20 (cda3af21)
+      guild: [3000, 1500, 900, 360, 240], total: [1000, 500, 300, 200, 150, 120, 100, 70, 40, 20],
+      perClass: [500, 250, 150, 100, 75, 60, 50, 35, 20, 10], mvp: [1500, 750, 450, 300, 225, 180, 150, 105, 60, 30],
+    },
+  };
+  const ARRAYS = { guild: 's_nGuildPrize', total: 's_nClassPrize', perClass: 's_nClassPerClassPrize', mvp: 's_nMvpPrize' };
+
+  // ---------------------------------------------------------------- Lua
+  // Lua comments out (`--[[ … ]]` blocks, `--` to the end of the line), strings kept; same length (offsets stay).
+  function stripLua(text) {
+    let out = '', i = 0;
+    const n = text.length;
+    while (i < n) {
+      const c = text[i];
+      if (c === '"' || c === "'") {
+        let j = i + 1;
+        while (j < n && text[j] !== c && text[j] !== '\n') j += text[j] === '\\' ? 2 : 1;
+        out += text.slice(i, j + 1); i = j + 1; continue;
+      }
+      if (c === '-' && text[i + 1] === '-') {
+        let j;
+        if (text[i + 2] === '[' && text[i + 3] === '[') { j = text.indexOf(']]', i + 4); j = j < 0 ? n : j + 2; }
+        else { j = text.indexOf('\n', i); if (j < 0) j = n; }
+        out += text.slice(i, j).replace(/[^\n]/g, ' '); i = j; continue;
+      }
+      out += c; i++;
+    }
+    return out;
+  }
+  // `name( a, "b, c", 3 )` -> [ 'a', 'b, c', 3 ]: strings unquoted, numbers as numbers
+  function luaArgs(s) {
+    const out = [];
+    let cur = '', q = null;
+    for (const c of s) {
+      if (q) { if (c === q) q = null; else cur += c; continue; }
+      if (c === '"' || c === "'") { q = c; cur += '\u0000'; continue; }
+      if (c === ',') { out.push(cur); cur = ''; continue; }
+      cur += c;
+    }
+    out.push(cur);
+    return out.map(a => {
+      if (a.includes('\u0000')) return a.replace(/\u0000/g, '').replace(/^\s+|\s+$/g, '');
+      const t = a.trim();
+      return t === '' ? undefined : (/^[-+]?(\d+\.?\d*|\.\d+)$/.test(t) ? Number(t) : t);
+    });
+  }
+  const stamp = d => Number(`${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+    + `${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`);
+
+  // -> { events: [{ name, times: [[start, end]], on }], gifts: [{ event, level, account, define, id, num, flag, minutes, line }] }
+  function levelUp(file, defines, now) {
+    const res = { events: [], gifts: [] };
+    if (!file) return res;
+    const text = stripLua(file.text);
+    const nowN = stamp(now || new Date());
+    const re = /\b(AddEvent|SetTime|SetLevelUpGift)\s*\(([^()]*)\)/g;
+    let m, ev = null;
+    while ((m = re.exec(text))) {
+      const a = luaArgs(m[2]), line = text.slice(0, m.index).split('\n').length;
+      if (m[1] === 'AddEvent') { ev = { name: String(a[0]), times: [], on: false, line }; res.events.push(ev); continue; }
+      if (!ev) continue;                 // before any AddEvent: tEvent[0] is nil, the Lua call fails
+      if (m[1] === 'SetTime') { ev.times.push([String(a[0]).replace(/\D/g, ''), String(a[1]).replace(/\D/g, '')].map(Number)); continue; }
+      const def = String(a[2]);
+      const id = defines.has(def) ? defines.get(def) >>> 0 : null;      // CScript::GetDefineNum
+      res.gifts.push({ event: ev, level: Number(a[0]), account: String(a[1]), define: def, id,
+        num: Math.trunc(Number(a[3]) || 0), flag: (Number(a[4]) || 0) & 0xFF, minutes: Math.trunc(Number(a[5]) || 0), line });
+    }
+    // GetEventState (EventFunc.lua:61): per time window, started -> on while before the end, off after it
+    for (const e of res.events) for (const [s, t] of e.times) if (s <= nowN) e.on = t > nowN;
+    return res;
+  }
+  // GetLevelUpGift (EventFunc.lua:455): "all" or the account name contains the text, the exact level, events that are on
+  const giftsFor = (lu, level, account) => lu.gifts.filter(g => g.event.on && (g.account === 'all' || String(account).includes(g.account)) && g.level === level);
+
+  // ---------------------------------------------------------------- 1Rebirth.inc
+  // -> { max, rates: [{ exp, drop, penya, gp }], gifts: Map tier -> { id, num, define }, rejected: [{ tier, define, why }], dup: [...] }
+  function rebirth(file, defines, items) {
+    const res = { max: 0, rates: [], gifts: new Map(), rejected: [], dup: [] };
+    if (!file) return null;
+    const s = new FRE.lexer.Script(file.text, { file: file.name, defines, diags: [] });
+    s.getToken();
+    while (!s.eof) {
+      const t = s.token.text;
+      if (t === 'Max') res.max = u16(s.getNumber().value);
+      else if (t === 'Rates') {
+        s.getToken(); s.getToken();
+        while (s.token.text[0] !== '}' && !s.eof) {
+          if (res.rates.length <= res.max) {
+            const r = { exp: FRE.lexer.atof(s.token.text) };
+            r.drop = s.getFloat().value; r.penya = s.getFloat().value; r.gp = s.getNumber().value;
+            res.rates.push(r);
+          }
+          s.getToken();
+        }
+      } else if (t === 'Gifts') {
+        s.getToken(); s.getToken();
+        while (s.token.text[0] !== '}' && !s.eof) {
+          const tier = u16(FRE.lexer.atoi(s.token.text).value);
+          const n = s.getNumber(), id = n.value >>> 0, num = u16(s.getNumber().value);
+          const define = n.define || String(id);
+          if (tier <= res.max && items.has(id)) {
+            if (res.gifts.has(tier)) res.dup.push({ tier, define, id, num });
+            else res.gifts.set(tier, { id, num, define });
+          } else res.rejected.push({ tier, define, why: tier > res.max ? 'tier above Max' : 'not an item' });
+          s.getToken();
+        }
+      }
+      s.getToken();
+    }
+    return res;
+  }
+
+  // ---------------------------------------------------------------- couple.inc
+  // -> { exp: [total exp of level i + 1], items: [{ level, id, define, sex, flag, minutes, num }], bad: [{ level, define }] }
+  function couple(file, defines) {
+    if (!file) return null;
+    const res = { exp: [], items: [], bad: [], kinds: 0 };
+    const s = new FRE.lexer.Script(file.text, { file: file.name, defines, diags: [] });
+    const block = fn => { s.getToken(); fn(); };
+    s.getToken();
+    while (!s.eof) {
+      const t = s.token.text;
+      if (t === 'Level') block(() => {
+        let n = s.getNumber();
+        while (s.token.text[0] !== '}' && !s.eof) { res.exp.push(n.value); n = s.getNumber(); }   // __MAINSERVER: no ÷100
+      });
+      else if (t === 'Item') block(() => {
+        let level = s.getNumber().value;
+        while (s.token.text[0] !== '}' && !s.eof) {
+          s.getToken();
+          let it = s.getNumber();
+          while (s.token.text[0] !== '}' && !s.eof) {
+            const sex = s.getNumber().value, flag = s.getNumber().value, minutes = s.getNumber().value, num = s.getNumber().value;
+            const row = { level, id: it.value >>> 0, define: it.define || String(it.value >>> 0), sex, flag, minutes, num };
+            // GetItems( nLevel ) = m_vItems[nLevel - 1]: outside the Level ladder the server writes out of bounds
+            if (level < 1 || level > res.exp.length) res.bad.push(row); else res.items.push(row);
+            it = s.getNumber();
+          }
+          level = s.getNumber().value;
+        }
+      });
+      else if (t === 'SkillKind') block(() => { let n = s.getNumber(); while (s.token.text[0] !== '}' && !s.eof) { res.kinds++; n = s.getNumber(); } });
+      else if (t === 'SkillLevel') block(() => {
+        let n = s.getNumber();
+        while (s.token.text[0] !== '}' && !s.eof) { for (let i = 0; i < res.kinds; i++) s.getNumber(); n = s.getNumber(); }
+      });
+      s.getToken();
+    }
+    return res;
+  }
+  // CCoupleProperty::GetLevel (couple.cpp:342): the first i whose total is above the exp; past the ladder: 1
+  function coupleLevel(c, exp) {
+    for (let i = 0; i < c.exp.length; i++) if (exp < c.exp[i]) return i;
+    return 1;
+  }
+
+  // ---------------------------------------------------------------- expTable.inc
+  // the highest level a character can have: IsMaxLevel( level ) = expCharacter[level + 1] EXP is 0 (or no row)
+  function maxLevel(file) {
+    if (!file) return null;
+    const s = new FRE.lexer.Script(file.text, { file: file.name, defines: new Map(), diags: [] });
+    let t;
+    do { t = s.getToken(); } while (!s.eof && t.text !== 'expCharacter');
+    if (s.eof) return null;
+    s.getToken();
+    const exp1 = [];
+    let v = s.getToken();
+    while (v.text[0] !== '}' && !s.eof) { exp1.push(v.text); s.getToken(); s.getNumber(); s.getToken(); v = s.getToken(); }
+    // the level whose next row is missing or 0 (rows 0 and 1 are 0: a new character starts at level 1)
+    for (let lv = 1; lv < exp1.length + 1; lv++) if (lv + 1 >= exp1.length || /^0*$/.test(exp1[lv + 1].replace(/^[+]/, '') || '0')) return lv;
+    return exp1.length - 1;
+  }
+
+  // ---------------------------------------------------------------- Guild Siege
+  // GuildCombat.txt: the last JOINPENYA / MINJOINGUILDSIZE / MAXJOINGUILDSIZE line wins (each is a plain assignment)
+  function siegeConfig(file, defines) {
+    const res = { joinPenya: 0, minGuild: 0, maxGuild: 0, found: false };
+    if (!file) return null;
+    const s = new FRE.lexer.Script(file.text, { file: file.name, defines, diags: [] });
+    s.getToken();
+    while (!s.eof) {
+      const t = s.token.text;
+      if (t === 'JOINPENYA') { res.joinPenya = s.getNumber().value; res.found = true; }
+      else if (t === 'MINJOINGUILDSIZE') res.minGuild = s.getNumber().value;
+      else if (t === 'MAXJOINGUILDSIZE') res.maxGuild = s.getNumber().value;
+      s.getToken();
+    }
+    return res;
+  }
+  // The compiled amounts: from the C++ text when given ({ 'eveschool.cpp': text, 'guildsiegeprize.cpp': text }), else BUILTIN.
+  // -> { siege: { factors, shares }, weekly: { guild, total, perClass, mvp }, from: 'cpp' | 'builtin', changed: [what was not found] }
+  function compiled(cpp) {
+    const res = { siege: JSON.parse(JSON.stringify(BUILTIN.siege)), weekly: JSON.parse(JSON.stringify(BUILTIN.weekly)), from: 'builtin', changed: [] };
+    if (!cpp) return res;
+    const ev = cpp.get ? cpp.get('eveschool.cpp') : cpp['eveschool.cpp'], gp = cpp.get ? cpp.get('guildsiegeprize.cpp') : cpp['guildsiegeprize.cpp'];
+    if (!ev && !gp) return res;
+    res.from = 'cpp';
+    if (ev) {
+      const f = /float\s+fChipNum\s*=\s*m_nJoinPanya\s*\*\s*vecGCRanking\.size\(\)\s*\*\s*([\d.]+)f\s*\*\s*([\d.]+)f\s*\*\s*([\d.]+)f\s*;/.exec(ev);
+      if (f) res.siege.factors = [f[1], f[2], f[3]].map(Number); else res.changed.push('eveschool.cpp: the Red Chip formula (fChipNum)');
+      const sh = [0, 1, 2].map(i => new RegExp(`case\\s+${i}\\s*:[^\\n]*\\r?\\n\\s*fChipNum\\s*\\*=\\s*([\\d.]+)f`).exec(ev));
+      if (sh.every(Boolean)) res.siege.shares = sh.map(x => Number(x[1])); else res.changed.push('eveschool.cpp: the rank 1-3 shares (fChipNum *=)');
+      if (!/if\(\s*i\s*>=\s*3\s*\)\s*break;/.test(ev)) res.changed.push('eveschool.cpp: "only the top 3 guilds" (i >= 3)');
+    } else res.changed.push('eveschool.cpp not found');
+    if (gp) {
+      for (const [k, name] of Object.entries(ARRAYS)) {
+        const m = new RegExp(`${name}\\[\\s*\\d+\\s*\\]\\s*=\\s*\\{([^}]*)\\}`).exec(gp);
+        if (m) res.weekly[k] = m[1].split(',').map(x => Number(x.trim())).filter(x => !Number.isNaN(x));
+        else res.changed.push(`GuildSiegePrize.cpp: ${name}`);
+      }
+      if (!/nRank\s*<\s*5\s*&&\s*!vecGuild\.empty\(\)/.test(gp)) res.changed.push('GuildSiegePrize.cpp: the top 5 guilds');
+      if (!/LogPlayerBoard\(\s*pQuery,\s*vecByPoint,\s*10,/.test(gp)) res.changed.push('GuildSiegePrize.cpp: the top 10 players');
+    } else res.changed.push('GuildSiegePrize.cpp not found');
+    return res;
+  }
+  // GuildCombatResultRanking (eveschool.cpp:1702-1715): chips for the guild at rank i (0-2) when n guilds applied.
+  // m_nJoinPanya (int) × size() (unsigned) -> unsigned, then float × 0.9f × 0.00001f × 0.1f × share, (int), at least 1.
+  function siegeChips(joinPenya, n, rank, comp) {
+    const f32 = Math.fround, { factors, shares } = (comp || BUILTIN).siege;
+    let x = f32(Math.imul(joinPenya | 0, n | 0) >>> 0);
+    for (const k of factors) x = f32(x * f32(k));
+    x = f32(x * f32(shares[rank]));
+    const v = x >= 2147483648 || Number.isNaN(x) ? -2147483648 : Math.trunc(x);
+    return v < 1 ? 1 : v;
+  }
+
+  // ---------------------------------------------------------------- one workspace
+  // -> { levelUp, rebirth, couple, maxLevel, siege: { config, comp } } (null parts: the file is not there)
+  function fromWorkspace(ws) {
+    const f = n => ws.files.get(n);
+    const D = ws.defines.defines;
+    return {
+      levelUp: f('event.lua') ? levelUp(f('event.lua'), D, ws.now ? ws.now() : new Date()) : null,
+      rebirth: rebirth(f('1rebirth.inc'), D, ws.items.items),
+      couple: couple(f('couple.inc'), D),
+      maxLevel: maxLevel(f('exptable.inc')),
+      siege: f('guildcombat.txt') ? { config: siegeConfig(f('guildcombat.txt'), D), comp: compiled(ws.cpp || null) } : null,
+    };
+  }
+
+  FRE.gifts = { levelUp, giftsFor, rebirth, couple, coupleLevel, maxLevel, siegeConfig, compiled, siegeChips, fromWorkspace,
+    stripLua, luaArgs, BUILTIN, MAX_COUPLE_LEVEL, FLAG_BOUND };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/gifts-sim.js ----
+// What players get from the gifts and the Guild Siege (task H part 2): a port of the code that GIVES them. No DOM.
+//   life     one character from level 1: CMover::AddExperience one level at a time (MoverParam.cpp:1401-1660, the
+//            __AUTO_JOB_CHANGE branch of 30727fd4): Vagrant stops at 15 and Expert at 60 (MAX_JOB_LEVEL /
+//            MAX_EXP_LEVEL, MoverParam.cpp:1230-1245) until the job change; a Pro or Master at 120 changes job
+//            automatically: Pro -> Master InitLevel( job, 60 ), Master -> Hero InitLevel( job, 121 ) (:1602-1622); a Hero
+//            stops at 130 (MAX_LEGEND_LEVEL) until the player picks Legend (DoLegendPromotion = InitLevel( job, 131 ),
+//            User.cpp:2465, DPSrvr.cpp:5376); a Legend stops at 150 (MAX_3RD_LEGEND_LEVEL). InitLevel sets
+//            m_nDeathLevel = the new level (Mover.cpp:2164). The level-up gifts come only when m_nDeathLevel < m_nLevel
+//            (MoverParam.cpp:1627 -> CEventLua::SetLevelUpGift, EventLua.cpp:513). A death keeps the level it happened
+//            at (m_nDeathLevel = m_nLevel, Mover.cpp:8061) and may cost a level.
+//            Rebirth (the Rebirth Stone, CUser::ProcessRebirthLevelUp, User.cpp:4838-4920): at the max level
+//            (IsMaxLevel: the exp table has no next level), below Max, enough stones (1/2/3/5/7/10 by tier); the gift of
+//            the new tier (GiveRebirthGift, User.cpp:4821: bag, else mail), then InitLevel( Master job, 60 ).
+//            CreateItem = exchangeSim.createItem (IsFull + Add); a gift that does not fit is mailed.
+//   couple   a couple from level 1: CCouple::AddExperience( 1 ) per tick (couple.cpp:96: none at eMaxLevel 21) and
+//            CCoupleHelper::PostItem on every level change (databaseserver/couplehelper.cpp:194-257): the new level's
+//            rows, SEX_SEXLESS to both partners, a male / female row to that partner only (an unknown sex counts as
+//            SEX_SEXLESS); always by mail.
+//   siege    CGuildCombat::GuildCombatResultRanking (eveschool.cpp:1582-1759): the bubble sort (points, then lives,
+//            then the average level of the members still alive and online, int division), then the top 3 guilds:
+//            every ONLINE lineup member gets the chips (bag, else mail). Not after a GM stop (eveschool.cpp:3089).
+//   weekly   CGuildSiegePrizeDBController::ComputeAndLogWeeklyPrizes (GuildSiegePrize.cpp:353-480, cda3af21): top 5
+//            guilds by wins (> 0) -> the guild bank (full: lost, DPDatabaseClient.cpp:3790); top 10 players by points on
+//            the Total board and on their class board, top 10 by MVP count; ties: the first row; by mail.
+// Deaths: IsAfterDeath (Mover.cpp:9545) at level granularity: at the death level itself the EXP counts as not back yet.
+// Not modelled: the guild order before
+// the sort (vecRequestRanking, given as the input order); the bag search of Rebirth Stones (a count is given).
+(function (FRE) {
+  'use strict';
+  const MAX_JOB_LEVEL = 15, MAX_EXP_LEVEL = 45, MAX_GENERAL_LEVEL = 120, MAX_LEGEND_LEVEL = 130, MAX_3RD_LEGEND_LEVEL = 150;   // defineJob.h:32-54
+  const STONES = tier => (tier <= 3 ? 1 : tier <= 6 ? 2 : tier <= 8 ? 3 : tier <= 10 ? 5 : tier <= 15 ? 7 : 10);           // User.cpp:4869
+  const X = () => FRE.exchangeSim;
+  const G = () => FRE.gifts;
+
+  // env: { gifts (FRE.gifts.fromWorkspace), prop (exchangeSim env.prop) }
+  function envFor(ws, model) {
+    const base = X().envFromWorkspace(ws);
+    const D = ws.defines.defines;
+    return { gifts: model || G().fromWorkspace(ws), prop: base.prop, text: base.text, redChip: D.has('II_CHP_RED') ? D.get('II_CHP_RED') >>> 0 : null };
+  }
+  // a bag with `free` empty slots (the rest filled with other items)
+  function bag(free = X().MAX_INVENTORY_FREE) {
+    const items = [];
+    for (let i = 0; i < X().MAX_INVENTORY_FREE - free; i++) items.push({ id: X().FILLER, num: 1 });
+    return X().player({ items });
+  }
+  const give = (env, p, id, num, flag, charged = 0) => (env.prop(id) && X().createItem(env, p, id, num, flag, charged) ? 'bag' : 'mail');
+
+  // ---------------------------------------------------------------- one character
+  // o: { account = 'player', rebirths = 0, free = 168, stones = Infinity, deaths: [levels, in order: die there and lose a level],
+  //      stopAt: { tier, level } (optional) }
+  // -> { got: [{ what: 'level' | 'rebirth', level, tier, reb, id, num, flag, minutes, where, gift }], steps: [...], end }
+  function life(env, o = {}) {
+    const g = env.gifts, lu = g.levelUp || { gifts: [], events: [] };
+    const account = o.account || 'player';
+    const p = { tier: 'vagrant', level: 1, death: 0, reb: 0, stones: o.stones === undefined ? Infinity : o.stones, bag: bag(o.free) };
+    const deaths = (o.deaths || []).slice();       // in this order: the next death happens at deaths[0]
+    const got = [], steps = [];
+    const maxLv = g.maxLevel || MAX_3RD_LEGEND_LEVEL;
+    const initLevel = (tier, level) => { p.tier = tier; p.level = level; p.death = level; };
+    const levelGifts = () => {
+      for (const gift of G().giftsFor(lu, p.level, account)) {
+        if (gift.id === null || !env.prop(gift.id)) continue;           // "ItemProp is NULL": logged, skipped
+        got.push({ what: 'level', level: p.level, tier: p.tier, reb: p.reb, id: gift.id, num: gift.num, flag: gift.flag, minutes: gift.minutes,
+          where: give(env, p.bag, gift.id, (gift.num << 16) >> 16, gift.flag), gift });
+      }
+    };
+    // CMover::AddExperience with enough EXP for one level -> 'up' | 'cap'
+    const gain = () => {
+      if (p.tier === 'vagrant' && p.level >= MAX_JOB_LEVEL) return 'cap';
+      if (p.tier === 'expert' && p.level >= MAX_JOB_LEVEL + MAX_EXP_LEVEL) return 'cap';
+      const next = p.level + 1;
+      let change = false;
+      if (p.tier === 'legend' && next > MAX_3RD_LEGEND_LEVEL) return 'cap';
+      if (p.tier === 'hero' && next > MAX_LEGEND_LEVEL) return 'cap';
+      if (p.tier !== 'hero' && p.tier !== 'legend' && next > MAX_GENERAL_LEVEL) change = true;
+      p.level = next;
+      if (change) {
+        if (p.tier === 'master') initLevel('hero', MAX_GENERAL_LEVEL + 1);
+        else initLevel('master', 60);
+        steps.push(`auto job change: ${p.tier} ${p.level}`);
+      }
+      if (p.death < p.level) levelGifts();
+      return 'up';
+    };
+    const rebirth = () => {
+      const r = g.rebirth;
+      if (!r || p.level < maxLv || p.reb >= r.max) return false;
+      const tier = p.reb + 1;
+      if (p.stones < STONES(tier)) return false;
+      p.stones -= STONES(tier);
+      const gift = r.gifts.get(tier);
+      if (gift) got.push({ what: 'rebirth', level: p.level, tier: p.tier, reb: tier, id: gift.id, num: gift.num, flag: 0, minutes: 0,
+        where: give(env, p.bag, gift.id, (gift.num << 16) >> 16, 0) });
+      p.reb = tier;
+      initLevel('master', 60);
+      steps.push(`rebirth ${tier}`);
+      return true;
+    };
+    let left = o.rebirths || 0, guard = 0;
+    while (guard++ < 100000) {
+      if (o.stopAt && p.tier === o.stopAt.tier && p.level >= o.stopAt.level) break;
+      if (deaths.length && p.level === deaths[0]) {
+        deaths.shift();
+        // Mover.cpp:8058: m_nDeathLevel = m_nLevel unless IsAfterDeath (Mover.cpp:9545: the death level is above the
+        // level, or equal while the EXP is not back yet; at the death level itself this counts it as not back yet)
+        if (!(p.death >= p.level)) p.death = p.level;
+        if (p.level > 1) p.level--;
+        steps.push(`died at ${p.level + 1}, back to ${p.level}`);
+        continue;
+      }
+      if (gain() === 'up') continue;
+      // capped: the player's own choice points
+      if (p.tier === 'vagrant') { p.tier = 'expert'; steps.push('job change: expert'); continue; }
+      if (p.tier === 'expert') { p.tier = 'pro'; steps.push('job change: pro'); continue; }
+      if (p.tier === 'hero') { initLevel('legend', MAX_LEGEND_LEVEL + 1); steps.push('Legend: 131'); continue; }
+      if (left > 0 && rebirth()) { left--; continue; }
+      break;
+    }
+    return { got, steps, end: { tier: p.tier, level: p.level, reb: p.reb } };
+  }
+
+  // How many times each level-up gift row pays one character: in the first life (level 1 -> 150) and per rebirth after it.
+  // -> Map gift -> { first, perRebirth }
+  function levelPays(env, account = 'player') {
+    const one = life(env, { account, rebirths: 0 }), two = life(env, { account, rebirths: 1 });
+    const out = new Map();
+    const lu = env.gifts.levelUp;
+    if (!lu) return out;
+    const can = env.gifts.rebirth && env.gifts.rebirth.max > 0 && two.end.reb === 1;
+    for (const gift of lu.gifts) {
+      const a = one.got.filter(x => x.gift === gift).length, b = two.got.filter(x => x.gift === gift).length;
+      out.set(gift, { first: a, perRebirth: can ? b - a : 0 });
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- a couple
+  // o: { sex: [first, second] (0 male, 1 female, 2 unknown) } -> { posts: [{ level, to, id, num, flag, minutes }], levels: [reached], end }
+  function couple(env, o = {}) {
+    const c = env.gifts.couple, MAX = G().MAX_COUPLE_LEVEL;
+    const out = { posts: [], levels: [], end: 1 };
+    if (!c || !c.exp.length) return out;
+    const sex = o.sex || [0, 1];
+    const limit = Math.max(...c.exp) + 2;
+    let exp = 0, level = G().coupleLevel(c, 0);
+    while (exp <= limit) {
+      if (level >= MAX) break;                    // ProcessCouple: no exp at eMaxLevel; AddExperience: none at it
+      exp += 1;
+      const now = G().coupleLevel(c, exp);
+      if (now === level) continue;
+      level = now;
+      out.levels.push(level);
+      for (const it of c.items.filter(x => x.level === level)) {
+        for (const to of [0, 1]) if (it.sex === 2 || it.sex === sex[to]) out.posts.push({ level, to, id: it.id, num: it.num, flag: it.flag, minutes: it.minutes });
+      }
+    }
+    out.end = level;
+    return out;
+  }
+
+  // ---------------------------------------------------------------- one siege
+  // o: { guilds: [{ name, points, lineup: [{ life, level, online, free }] }] (the order the guilds applied), gm }
+  // -> { order: [guild index], paid: [{ guild, rank, chips, member, where }] }
+  function siege(env, o) {
+    const s = env.gifts.siege, cfg = s.config, comp = s.comp;
+    const out = { order: [], paid: [] };
+    if (o.gm) return out;
+    const gs = o.guilds.map((x, i) => ({ i, x }));
+    const lives = gr => gr.x.lineup.reduce((a, m) => a + m.life, 0);
+    const avg = gr => {
+      let lv = 0, n = 0;
+      for (const m of gr.x.lineup) if (m.life > 0 && m.online) { lv += m.level; n++; }
+      return n ? Math.fround(Math.trunc(lv / n)) : 1;
+    };
+    for (let i = 0; i < gs.length - 1; i++) {
+      if (i >= cfg.maxGuild) break;
+      for (let j = 0; j < gs.length - 1 - i; j++) {
+        const a = gs[j], b = gs[j + 1];
+        let swap = false;
+        if (a.x.points < b.x.points) swap = true;
+        else if (a.x.points === b.x.points) {
+          const la = lives(a), lb = lives(b);
+          if (la < lb) swap = true;
+          else if (la === lb && avg(a) < avg(b)) swap = true;
+        }
+        if (swap) { gs[j] = b; gs[j + 1] = a; }
+      }
+    }
+    out.order = gs.map(g => g.i);
+    const charged = env.prop(env.redChip) ? env.prop(env.redChip).charged : 0;
+    for (let r = 0; r < gs.length && r < 3; r++) {
+      const chips = G().siegeChips(cfg.joinPenya, gs.length, r, comp);
+      gs[r].x.lineup.forEach((m, k) => {
+        if (!m.online) return;
+        const p = bag(m.free === undefined ? X().MAX_INVENTORY_FREE : m.free);
+        out.paid.push({ guild: gs[r].i, rank: r + 1, chips, member: k, where: give(env, p, env.redChip, (chips << 16) >> 16, 0, charged) });
+      });
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- the weekly payout
+  // o: { guilds: [{ wins, bankFull }], players: [{ point, mvp, group (0-3, -1 none) }] }
+  // -> { guild: [{ guild, rank, chips, lost }], boards: { total|merc|mage|acro|asst|mvp: [{ player, rank, chips }] } }
+  function weekly(env, o) {
+    const w = env.gifts.siege.comp.weekly;
+    const top = (rows, key, n) => {
+      const v = rows.slice(), res = [];
+      for (let r = 0; r < n && v.length; r++) {
+        let best = 0;
+        for (let i = 1; i < v.length; i++) if (key(v[i]) > key(v[best])) best = i;
+        res.push(v[best]);
+        v.splice(best, 1);
+      }
+      return res;
+    };
+    const guilds = o.guilds.map((g, i) => Object.assign({ i }, g)).filter(g => g.wins > 0);
+    const out = { guild: top(guilds, g => g.wins, Math.min(5, w.guild.length)).map((g, r) => ({ guild: g.i, rank: r + 1, chips: w.guild[r], lost: !!g.bankFull })), boards: {} };
+    const pl = o.players.map((p, i) => Object.assign({ i }, p));
+    const byPoint = pl.filter(p => p.point > 0);
+    const board = (rows, key, ladder) => top(rows, key, Math.min(10, ladder.length)).map((p, r) => ({ player: p.i, rank: r + 1, chips: ladder[r] }));
+    out.boards.total = board(byPoint, p => p.point, w.total);
+    ['merc', 'mage', 'acro', 'asst'].forEach((k, gi) => { out.boards[k] = board(byPoint.filter(p => p.group === gi), p => p.point, w.perClass); });
+    out.boards.mvp = board(pl.filter(p => p.mvp > 0), p => p.mvp, w.mvp);
+    return out;
+  }
+
+  FRE.giftsSim = { envFor, life, levelPays, couple, siege, weekly, bag, STONES,
+    MAX_JOB_LEVEL, MAX_EXP_LEVEL, MAX_GENERAL_LEVEL, MAX_LEGEND_LEVEL, MAX_3RD_LEGEND_LEVEL };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- loaders/where.js ----
 // Where is this item from? (task H part 1). No DOM: gjs-testable. Read-only: it reports what the other loaders and
 // simulators give, for one item:
@@ -9307,6 +9811,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "55+", "when
 //              (propDropEvent.inc, Project.cpp:4048); DropKind per item = kindChance (Mover.cpp:8823-8956)
 //   boxes      CGiftboxMan chances (random boxes), CPackItem (sets: always every item; a set is checked first)
 //   battlepass the live BPReward rows (nType of the login pass)
+//   part 2 (loaders/gifts.js + gifts-sim.js): level-up gifts (Event.lua; how often one character gets each: giftsSim.life),
+//              rebirth gifts (1Rebirth.inc), couple gifts (couple.inc; which levels a couple reaches: giftsSim.couple),
+//              Guild Siege Red Chips per siege (top 3 guilds, GuildCombatResultRanking) and weekly (GuildSiegePrize.cpp)
 // Each line has `facts`: the plain values the independent Python copy (tools/oracle_sim.py where) must find too.
 (function (FRE) {
   'use strict';
@@ -9457,7 +9964,30 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "55+", "when
     }
     const bp = ws.models.battlepass;
     if (bp && bp.pass) for (const r of bp.rows.BP4) if (r.type.value === bp.pass.type.value && bp.ladder.get(r.level.value) === r) add(r.id, { k: 'bp', row: r });
-    return { idx, table, cache: { ex: new Map(), kinds } };
+    // part 2: gifts and Guild Siege prizes
+    const gifts = FRE.gifts.fromWorkspace(ws), genv = FRE.giftsSim.envFor(ws, gifts);
+    const has = id => id !== null && !!ws.itemById(id);
+    const pays = new Map();          // level-up gift -> { first, perRebirth } (for an account the gift is meant for)
+    if (gifts.levelUp) {
+      const accounts = new Set(gifts.levelUp.gifts.map(g => g.account));
+      for (const a of accounts) for (const [g, v] of FRE.giftsSim.levelPays(genv, a === 'all' ? 'player' : a)) if (g.account === a) pays.set(g, v);
+      for (const g of gifts.levelUp.gifts) if (has(g.id)) add(g.id, { k: 'levelup', g });
+    }
+    if (gifts.rebirth) for (const [tier, g] of gifts.rebirth.gifts) add(g.id, { k: 'rebirth', tier, g });
+    const reached = new Set(gifts.couple ? FRE.giftsSim.couple(genv, { sex: [0, 1] }).levels : []);
+    if (gifts.couple) for (const row of gifts.couple.items) if (has(row.id)) add(row.id, { k: 'couple', row });
+    if (gifts.siege && has(genv.redChip)) { add(genv.redChip, { k: 'siege' }); add(genv.redChip, { k: 'weekly' }); }
+    return { idx, table, cache: { ex: new Map(), kinds }, gifts, pays, reached };
+  }
+  // the per-siege table: for n guilds that applied (MINJOINGUILDSIZE .. MAXJOINGUILDSIZE), the chips of rank 1-3
+  function siegeTable(gifts) {
+    const { config: c, comp } = gifts.siege, rows = [];
+    for (let n = Math.max(1, c.minGuild); n <= Math.max(c.minGuild, c.maxGuild); n++) {
+      const r = [n];
+      for (let k = 0; k < Math.min(3, n); k++) r.push(FRE.gifts.siegeChips(c.joinPenya, n, k, comp));
+      rows.push(r);
+    }
+    return rows;
   }
 
   // ---------------------------------------------------------------- one item
@@ -9571,6 +10101,34 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "55+", "when
       lines.push({ kind: 'bp', who: 'Battle Pass', level: row.level.value, points, num, facts: { kind: 'bp', level: row.level.value, points, num } });
     }
 
+    // part 2: gifts and Guild Siege prizes
+    for (const r of refs.filter(r => r.k === 'levelup')) {
+      const g = r.g, p = (model.pays && model.pays.get(g)) || { first: 0, perRebirth: 0 };
+      lines.push({ kind: 'levelup', who: 'Level-up gift', level: g.level, num: g.num, flag: g.flag, bound: (g.flag & FRE.gifts.FLAG_BOUND) !== 0,
+        minutes: g.minutes > 0 ? g.minutes : 0, account: g.account, event: g.event.name, on: g.event.on, first: p.first, perRebirth: p.perRebirth,
+        facts: { kind: 'levelup', level: g.level, num: g.num, flag: g.flag, minutes: g.minutes > 0 ? g.minutes : 0, account: g.account, on: g.event.on, first: p.first, perRebirth: p.perRebirth } });
+    }
+    for (const r of refs.filter(r => r.k === 'rebirth')) {
+      lines.push({ kind: 'rebirth', who: 'Rebirth gift', tier: r.tier, num: r.g.num, facts: { kind: 'rebirth', tier: r.tier, num: r.g.num } });
+    }
+    for (const r of refs.filter(r => r.k === 'couple')) {
+      const row = r.row, reached = !!(model.reached && model.reached.has(row.level));
+      lines.push({ kind: 'couple', who: 'Couple gift', level: row.level, sex: row.sex, flag: row.flag, bound: (row.flag & FRE.gifts.FLAG_BOUND) !== 0,
+        minutes: row.minutes > 0 ? row.minutes : 0, num: row.num, reached,
+        facts: { kind: 'couple', level: row.level, sex: row.sex, flag: row.flag, minutes: row.minutes > 0 ? row.minutes : 0, num: row.num, reached } });
+    }
+    const gifts = model.gifts;
+    if (refs.some(r => r.k === 'siege') && gifts && gifts.siege) {
+      const table = siegeTable(gifts), c = gifts.siege.config;
+      lines.push({ kind: 'siege', who: 'Guild Siege', table, config: c, from: gifts.siege.comp.from,
+        facts: { kind: 'siege', joinPenya: c.joinPenya, table } });
+    }
+    if (refs.some(r => r.k === 'weekly') && gifts && gifts.siege) {
+      const w = gifts.siege.comp.weekly;
+      lines.push({ kind: 'weekly', who: 'Guild Siege weekly', weekly: w, from: gifts.siege.comp.from,
+        facts: { kind: 'weekly', guild: w.guild, total: w.total, perClass: w.perClass, mvp: w.mvp } });
+    }
+
     // the item is a box: what opening it gives
     const contains = [];
     const bx = ws.models.boxes;
@@ -9580,11 +10138,22 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "55+", "when
       bound: (FRE.boxes.flagOf(l) & FRE.boxes.FLAG_BOUND) !== 0, minutes: FRE.boxes.minutesOf(l), upgrade: FRE.boxes.upgradeOf(l) })); }
 
     // checks
+    const never = l => l.kind === 'levelup' && (!l.on || (l.first === 0 && l.perRebirth === 0));
     const gets = lines.filter(l => l.kind !== 'use' && !l.dropped);
     const real = gets.filter(l => !(l.kind === 'shop' && l.inGame === false) && !(l.kind === 'exchange' && l.live === false)
-      && !((l.kind === 'drop' || l.kind === 'event' || l.kind === 'kind') && !(l.perKill > 0)));
-    if (!gets.length) checks.push({ severity: 'WARN', code: 'W_NONE', text: 'Can\'t be obtained in game: no shop, exchange, monster, box or Battle Pass gives it (only a GM can create it).' });
-    else if (!real.length) checks.push({ severity: 'WARN', code: 'W_HIDDEN', text: 'Can\'t be obtained in game: only from NPCs or exchanges that are not in the game (not placed on a map, or hidden).' });
+      && !((l.kind === 'drop' || l.kind === 'event' || l.kind === 'kind') && !(l.perKill > 0)) && !never(l) && !(l.kind === 'couple' && !l.reached));
+    if (!gets.length) checks.push({ severity: 'WARN', code: 'W_NONE', text: 'Can\'t be obtained in game: no shop, exchange, monster, box, Battle Pass, gift or prize gives it (only a GM can create it).' });
+    else if (!real.length) checks.push({ severity: 'WARN', code: 'W_HIDDEN', text: 'Can\'t be obtained in game: only from NPCs or exchanges that are not in the game, or from gifts that are never given.' });
+    for (const l of lines.filter(l => l.kind === 'levelup')) {
+      if (!l.on) checks.push({ severity: 'WARN', code: 'W_GIFT_EVENT_OFF', text: `The level ${l.level} gift is in the Event.lua event "${l.event}", which is not running now (its SetTime dates): nobody gets it.` });
+      else if (l.first === 0 && l.perRebirth === 0) checks.push({ severity: 'WARN', code: 'W_GIFT_NEVER', text: (l.level === 121 || l.level === 131)
+        ? `The level ${l.level} gift is never given: players get to level ${l.level} by ${l.level === 121 ? 'the automatic Master → Hero change' : 'the Legend promotion'}, which sets the level directly (InitLevel), and only a level gained with EXP gives a gift (MoverParam.cpp:1627).`
+        : `The level ${l.level} gift is never given: no character gains level ${l.level} with EXP (levels go 1-15 Vagrant, 16-60 Expert, 61-120 Pro and Master, 122-130 Hero, 132-150 Legend).` });
+      else if (l.first > 1 || l.perRebirth > 0) checks.push({ severity: 'INFO', code: 'W_GIFT_REPEAT', text: `The level ${l.level} gift is given ${l.first} times before the first rebirth (as Pro and again as Master)${l.perRebirth ? `, and ${l.perRebirth === 1 ? 'once' : l.perRebirth + ' times'} more after every rebirth (rebirth starts again at Master level 60)` : ''}.` });
+    }
+    for (const l of lines.filter(l => l.kind === 'couple' && !l.reached)) checks.push({ severity: 'WARN', code: 'W_COUPLE_UNREACHABLE', text: `The couple level ${l.level} gift is never given: couples stop at level ${FRE.gifts.MAX_COUPLE_LEVEL} (couple.h:17).` });
+    const sg = lines.find(l => l.kind === 'siege' || l.kind === 'weekly');
+    if (sg && gifts.siege.comp.changed.length) checks.push({ severity: 'WARN', code: 'W_CPP_CHANGED', text: `The Guild Siege C++ changed: ${gifts.siege.comp.changed.join('; ')}. The numbers shown for those parts are the editor's own copy (cda3af21).` });
     const set = costs && costs.get(itemId);
     if (set && set.by.length) {
       const last = set.by[set.by.length - 1];
@@ -9600,7 +10169,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "55+", "when
     return res.lines.filter(l => l.facts).map(l => l.facts).sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
   }
 
-  FRE.where = { index, sources, factsOf, payChances, kindChances, kindChance, CURRENCY };
+  FRE.where = { index, sources, factsOf, payChances, kindChances, kindChance, siegeTable, CURRENCY };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- core/workspace.js ----
@@ -9747,6 +10316,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "55+", "when
       // Last, so its parse sees the other models. maps: towns of the NPCs, and whether they stand in the game.
       id: 'where', label: 'Where is this item from?',
       required: [], editable: [], client: [],
+      // part 2 (loaders/gifts.js): level-up gifts (Event.lua), rebirth gifts, couple gifts, the max level (expTable.inc),
+      // the Guild Siege config; the prize amounts compiled into the C++ come in as opts.cpp (io/source-read.js)
+      optional: ['Event.lua', 'expTable.inc', '1Rebirth.inc', 'couple.inc', 'GuildCombat.txt'],
       uses: ['npc', 'donation', 'exchange', 'drops', 'boxes', 'battlepass'],
       maps: true,
       parse(ws) { return FRE.where.index(ws); },
@@ -9762,6 +10334,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "55+", "when
     constructor(files, opts = {}) {
       this.files = files;
       this.only = opts.only || null;
+      this.cpp = opts.cpp || null;      // Map 'eveschool.cpp' / 'guildsiegeprize.cpp' -> text (read-only, FLYFF-V19-SOURCE picked)
       this.history = [];      // lowercase file names, in edit order (for global undo)
       this.redoStack = [];
       this.missing = CORE.filter(n => !files.has(n.toLowerCase()));
@@ -10571,6 +11144,31 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "55+", "when
   }
 
   FRE.patchState = { inSource, effective, ticked, setTicked };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- io/source-read.js ----
+// The C++ files a task reads (never writes) when FLYFF-V19-SOURCE is picked: the Guild Siege prize amounts are
+// compiled in, not in a data file (loaders/gifts.js `compiled`). -> Map lowercase name -> text (latin1), or null
+// (test-data, or the files are not there: the editor then uses its own copy of the numbers).
+(function (FRE) {
+  'use strict';
+  const FILES = ['Source/Source/_Common/eveschool.cpp', 'Source/Source/_Common/GuildSiegePrize.cpp'];
+
+  async function read(layout) {
+    if (!layout || layout.kind !== 'real') return null;
+    const out = new Map();
+    for (const path of FILES) {
+      try {
+        const parts = path.split('/'), name = parts.pop();
+        const dir = await FRE.fsa.dirAt(layout.root, parts.join('/'));
+        const fh = dir && (await FRE.fsa.findFiles(dir, [name])).get(name.toLowerCase());
+        if (fh) out.set(name.toLowerCase(), new TextDecoder('latin1').decode((await FRE.fsa.readHandle(fh)).bytes));
+      } catch (e) { /* not readable: left out */ }
+    }
+    return out.size ? out : null;
+  }
+
+  FRE.sourceRead = { read, FILES };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- io/save.js ----
@@ -15706,6 +16304,37 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "55+", "when
     put(section('🏆', 'Battle Pass reward', ['Level', 'Cost', 'Count', ''], of('bp').sort((a, b) => a.level - b.level).map(l => h('tr',
       h('td', `level ${l.level}`), h('td', `${group(l.points)} points`), h('td', `×${group(l.num)}`),
       h('td', openIn('battlepass', 'Battle Pass', s => { s.view = 'ladder'; }))))));
+    // 🎂 level-up gifts (Event.lua)
+    const who = a => (a === 'all' ? 'everyone' : `accounts with "${a}" in the name`);
+    const often = l => (!l.on ? h('span.tag.warn', 'event not running') : l.first === 0 && l.perRebirth === 0 ? h('span.tag.warn', 'never given')
+      : [`${l.first === 1 ? 'once' : l.first + ' times'} per character`, l.perRebirth ? h('div.muted.small', `+${l.perRebirth} after every rebirth`) : null]);
+    const extras = l => [l.bound ? 'bound' : null, l.minutes ? durText(l.minutes) : null].filter(Boolean).join(' · ');
+    put(section('🎂', 'Level-up gift', ['Level', 'Count', '', 'Who', 'How often'], of('levelup').sort((a, b) => a.level - b.level).map(l => h('tr' + (l.first === 0 && l.perRebirth === 0 || !l.on ? '.muted' : ''),
+      h('td', `level ${l.level}`), h('td', `×${group(l.num)}`), h('td.muted.small', extras(l)), h('td', who(l.account)), h('td', often(l)))),
+      'From Event.lua (event "Level Up Rewards"): when a level is gained with EXP. A full bag: it comes by mail.'));
+    // ♻️ rebirth gifts (1Rebirth.inc)
+    put(section('♻️', 'Rebirth gift', ['Rebirth', 'Count'], of('rebirth').sort((a, b) => a.tier - b.tier).map(l => h('tr',
+      h('td', `rebirth ${l.tier}`), h('td', `×${group(l.num)}`))),
+      'From 1Rebirth.inc: given when the player reaches that rebirth (Rebirth Stone). A full bag: it comes by mail.'));
+    // 💞 couple gifts (couple.inc)
+    const sexText = x => (x === 0 ? 'the male partner' : x === 1 ? 'the female partner' : 'both partners');
+    put(section('💞', 'Couple gift', ['Couple level', 'Count', '', 'Who'], of('couple').sort((a, b) => a.level - b.level).map(l => h('tr' + (l.reached ? '' : '.muted'),
+      h('td', `level ${l.level}`, l.reached ? null : h('span.tag.warn', ' never reached')), h('td', `×${group(l.num)}`), h('td.muted.small', extras(l)), h('td', sexText(l.sex)))),
+      'From couple.inc: sent by mail to the partners when the couple reaches that level (couples earn points while both are online).'));
+    // 🏰 Guild Siege prizes (the amounts are compiled into the C++)
+    const fromText = l => (l.from === 'cpp' ? 'Read from the C++ in FLYFF-V19-SOURCE.' : 'From the C++ (the editor\'s own copy: pick FLYFF-V19-SOURCE to read it).');
+    for (const l of of('siege')) {
+      put(section('🏰', 'Guild Siege, after each siege (top 3 guilds)', ['Guilds that applied', 'Rank 1', 'Rank 2', 'Rank 3'], l.table.map(r => h('tr',
+        h('td', String(r[0])), [1, 2, 3].map(k => h('td', r[k] === undefined ? '' : `${group(r[k])} each`)))),
+        `Every lineup member who is online gets this many (bag, or mail when it is full); offline members get none. More guilds that applied give more (JOINPENYA ${group(l.config.joinPenya)} in GuildCombat.txt × guilds × 0.9 × 0.00001 × 0.1, then 70 / 20 / 10% for rank 1 / 2 / 3). Not after a GM stop. ${fromText(l)} A change needs a server rebuild.`));
+    }
+    for (const l of of('weekly')) {
+      const w = l.weekly, n = Math.max(w.guild.length, w.total.length, w.perClass.length, w.mvp.length);
+      const cell = (a, i) => h('td', a[i] === undefined ? '' : group(a[i]));
+      put(section('🏰', 'Guild Siege, every week (rankings)', ['Rank', 'Guild (wins) → guild bank', 'Total points', 'Each class board', 'MVP count'],
+        Array.from({ length: n }, (_, i) => h('tr', h('td', `#${i + 1}`), cell(w.guild, i), cell(w.total, i), cell(w.perClass, i), cell(w.mvp, i))),
+        `Paid on Monday 00:00 (GuildSiegePrize.lua). Players get theirs by mail and can win on several boards. The guild's chips go into the guild bank: when it is full they are lost (the server only writes a log line). ${fromText(l)} A change needs a server rebuild.`));
+    }
     // 🔧 used in
     put(section('🔧', 'Used in an exchange (players give it)', ['NPC', 'Exchange', 'Takes', 'Gives', ''], of('use').map(l => h('tr' + (l.live === false ? '.muted' : ''),
       h('td', exNpcs(l)), h('td', `${l.menu.name}, exchange ${l.si + 1}`), h('td', `${group(l.num)} ×`),
@@ -15720,8 +16349,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "55+", "when
           h('td.muted.small', [c.bound ? 'bound' : null, c.minutes ? durText(c.minutes) : null, c.upgrade ? `+${c.upgrade}` : null].filter(Boolean).join(' · ')))),
         null));
     }
-    if (!r.lines.length && !r.contains.length) el.appendChild(h('p.muted', 'Nothing in the files the editor reads gives or uses this item. Quests, level-up gifts and other rewards come in part 2.'));
-    else el.appendChild(h('p.muted.small', 'Not listed yet: quest rewards, level-up gifts, rebirth gifts, collecting, couple gifts, Guild Siege prizes (part 2).'));
+    if (!r.lines.length && !r.contains.length) el.appendChild(h('p.muted', 'Nothing in the files the editor reads gives or uses this item. Quest rewards and collecting are not listed yet.'));
+    else el.appendChild(h('p.muted.small', 'Not listed yet: quest rewards, collecting.'));
   }
 
   const SHOW = [
@@ -15732,7 +16361,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "55+", "when
 
   const mod = {
     id: 'where', label: 'Where is this item from?', searchPlaceholder: 'Search items (name or II_ name)',
-    help: 'Where is this item from?: every way players get an item (shops, exchanges, monsters, boxes, Battle Pass) and where it is used',
+    help: 'Where is this item from?: every way players get an item (shops, exchanges, monsters, boxes, Battle Pass, level-up / rebirth / couple gifts, Guild Siege prizes) and where it is used',
     st,
     onLoad() { st.show = 'all'; },          // the item stays: coming back from another task shows it again
 
@@ -15927,6 +16556,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "55+", "when
     // which client patches are in FLYFF-V19-SOURCE (read-only; "unknown" on test-data): Save's "After saving" list
       if (layout.kind === 'real') await P.phase('Checking which client patches are in Source/ (read only)…');
       S.patchSrc = await FRE.patchState.inSource(layout);
+      S.cpp = await FRE.sourceRead.read(layout);      // the Guild Siege prize amounts (Where is this item from?)
     } finally { P.close(); }
     FRE.fsa.remember('root', dir);
     renderAll(false);
@@ -15960,7 +16590,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "55+", "when
         files.set(lower, new FRE.SourceFile(handle.name, bytes, { handle, stamp }));
       }
       await phase('Reading the items, names and defines, then checking the files');
-      S.ws = new FRE.Workspace(files, { only: id }).load();
+      S.ws = new FRE.Workspace(files, { only: id, cpp: S.cpp || null }).load();
       S.resDir = L.res;
       S.client = null;
       if (L.client) { await phase('Reading the game client\'s copies (Client/)'); await loadClient(L.client, P, phase); }

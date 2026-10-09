@@ -110,6 +110,37 @@
     put(section('🏆', 'Battle Pass reward', ['Level', 'Cost', 'Count', ''], of('bp').sort((a, b) => a.level - b.level).map(l => h('tr',
       h('td', `level ${l.level}`), h('td', `${group(l.points)} points`), h('td', `×${group(l.num)}`),
       h('td', openIn('battlepass', 'Battle Pass', s => { s.view = 'ladder'; }))))));
+    // 🎂 level-up gifts (Event.lua)
+    const who = a => (a === 'all' ? 'everyone' : `accounts with "${a}" in the name`);
+    const often = l => (!l.on ? h('span.tag.warn', 'event not running') : l.first === 0 && l.perRebirth === 0 ? h('span.tag.warn', 'never given')
+      : [`${l.first === 1 ? 'once' : l.first + ' times'} per character`, l.perRebirth ? h('div.muted.small', `+${l.perRebirth} after every rebirth`) : null]);
+    const extras = l => [l.bound ? 'bound' : null, l.minutes ? durText(l.minutes) : null].filter(Boolean).join(' · ');
+    put(section('🎂', 'Level-up gift', ['Level', 'Count', '', 'Who', 'How often'], of('levelup').sort((a, b) => a.level - b.level).map(l => h('tr' + (l.first === 0 && l.perRebirth === 0 || !l.on ? '.muted' : ''),
+      h('td', `level ${l.level}`), h('td', `×${group(l.num)}`), h('td.muted.small', extras(l)), h('td', who(l.account)), h('td', often(l)))),
+      'From Event.lua (event "Level Up Rewards"): when a level is gained with EXP. A full bag: it comes by mail.'));
+    // ♻️ rebirth gifts (1Rebirth.inc)
+    put(section('♻️', 'Rebirth gift', ['Rebirth', 'Count'], of('rebirth').sort((a, b) => a.tier - b.tier).map(l => h('tr',
+      h('td', `rebirth ${l.tier}`), h('td', `×${group(l.num)}`))),
+      'From 1Rebirth.inc: given when the player reaches that rebirth (Rebirth Stone). A full bag: it comes by mail.'));
+    // 💞 couple gifts (couple.inc)
+    const sexText = x => (x === 0 ? 'the male partner' : x === 1 ? 'the female partner' : 'both partners');
+    put(section('💞', 'Couple gift', ['Couple level', 'Count', '', 'Who'], of('couple').sort((a, b) => a.level - b.level).map(l => h('tr' + (l.reached ? '' : '.muted'),
+      h('td', `level ${l.level}`, l.reached ? null : h('span.tag.warn', ' never reached')), h('td', `×${group(l.num)}`), h('td.muted.small', extras(l)), h('td', sexText(l.sex)))),
+      'From couple.inc: sent by mail to the partners when the couple reaches that level (couples earn points while both are online).'));
+    // 🏰 Guild Siege prizes (the amounts are compiled into the C++)
+    const fromText = l => (l.from === 'cpp' ? 'Read from the C++ in FLYFF-V19-SOURCE.' : 'From the C++ (the editor\'s own copy: pick FLYFF-V19-SOURCE to read it).');
+    for (const l of of('siege')) {
+      put(section('🏰', 'Guild Siege, after each siege (top 3 guilds)', ['Guilds that applied', 'Rank 1', 'Rank 2', 'Rank 3'], l.table.map(r => h('tr',
+        h('td', String(r[0])), [1, 2, 3].map(k => h('td', r[k] === undefined ? '' : `${group(r[k])} each`)))),
+        `Every lineup member who is online gets this many (bag, or mail when it is full); offline members get none. More guilds that applied give more (JOINPENYA ${group(l.config.joinPenya)} in GuildCombat.txt × guilds × 0.9 × 0.00001 × 0.1, then 70 / 20 / 10% for rank 1 / 2 / 3). Not after a GM stop. ${fromText(l)} A change needs a server rebuild.`));
+    }
+    for (const l of of('weekly')) {
+      const w = l.weekly, n = Math.max(w.guild.length, w.total.length, w.perClass.length, w.mvp.length);
+      const cell = (a, i) => h('td', a[i] === undefined ? '' : group(a[i]));
+      put(section('🏰', 'Guild Siege, every week (rankings)', ['Rank', 'Guild (wins) → guild bank', 'Total points', 'Each class board', 'MVP count'],
+        Array.from({ length: n }, (_, i) => h('tr', h('td', `#${i + 1}`), cell(w.guild, i), cell(w.total, i), cell(w.perClass, i), cell(w.mvp, i))),
+        `Paid on Monday 00:00 (GuildSiegePrize.lua). Players get theirs by mail and can win on several boards. The guild's chips go into the guild bank: when it is full they are lost (the server only writes a log line). ${fromText(l)} A change needs a server rebuild.`));
+    }
     // 🔧 used in
     put(section('🔧', 'Used in an exchange (players give it)', ['NPC', 'Exchange', 'Takes', 'Gives', ''], of('use').map(l => h('tr' + (l.live === false ? '.muted' : ''),
       h('td', exNpcs(l)), h('td', `${l.menu.name}, exchange ${l.si + 1}`), h('td', `${group(l.num)} ×`),
@@ -124,8 +155,8 @@
           h('td.muted.small', [c.bound ? 'bound' : null, c.minutes ? durText(c.minutes) : null, c.upgrade ? `+${c.upgrade}` : null].filter(Boolean).join(' · ')))),
         null));
     }
-    if (!r.lines.length && !r.contains.length) el.appendChild(h('p.muted', 'Nothing in the files the editor reads gives or uses this item. Quests, level-up gifts and other rewards come in part 2.'));
-    else el.appendChild(h('p.muted.small', 'Not listed yet: quest rewards, level-up gifts, rebirth gifts, collecting, couple gifts, Guild Siege prizes (part 2).'));
+    if (!r.lines.length && !r.contains.length) el.appendChild(h('p.muted', 'Nothing in the files the editor reads gives or uses this item. Quest rewards and collecting are not listed yet.'));
+    else el.appendChild(h('p.muted.small', 'Not listed yet: quest rewards, collecting.'));
   }
 
   const SHOW = [
@@ -136,7 +167,7 @@
 
   const mod = {
     id: 'where', label: 'Where is this item from?', searchPlaceholder: 'Search items (name or II_ name)',
-    help: 'Where is this item from?: every way players get an item (shops, exchanges, monsters, boxes, Battle Pass) and where it is used',
+    help: 'Where is this item from?: every way players get an item (shops, exchanges, monsters, boxes, Battle Pass, level-up / rebirth / couple gifts, Guild Siege prizes) and where it is used',
     st,
     onLoad() { st.show = 'all'; },          // the item stays: coming back from another task shows it again
 

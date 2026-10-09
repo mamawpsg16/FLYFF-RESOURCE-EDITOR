@@ -47,6 +47,8 @@ edit/menu-ops.js
 validate/newnpc.js
 validate/newmenu.js
 loaders/newnpc-sim.js
+loaders/gifts.js
+loaders/gifts-sim.js
 loaders/where.js
 core/workspace.js
 core/client-sync.js
@@ -54,6 +56,7 @@ core/after-save.js
 io/fsa.js
 io/layout.js
 io/patch-state.js
+io/source-read.js
 io/save.js
 ui/dom.js
 ui/common.js

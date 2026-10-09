@@ -1,6 +1,22 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-09 (H part 1 done, `54406b5`; next: H part 2; handoff on top)._
+_Last updated 2026-10-09 (H part 2 done; next: Boxes filter by what's inside, then I; handoff on top)._
+
+> **Handoff (2026-10-09) — H. "Where is this item from?" part 2: user-tested in Brave (steps 1-5 OK; step 6, the "Read from the C++" note on the real folder, not shown in the screenshots) and committed + pushed. Next: Boxes filter by what's inside, then I.** Plan: `/home/kevin/.claude/plans/read-claude-md-in-flyff-resource-editor-cheerful-cocoa.md`. User decisions: no quest rewards and no collecting for now; no Guild Siege per-kill prize (none exists: a kill gives points only); read-only (editing gifts comes with task I); the Guild Siege amounts are read from the C++ when FLYFF-V19-SOURCE is picked.
+> - **New sections on the item page:** 🎂 Level-up gift (level, count, bound / time limit, who, how often per character and per rebirth), ♻️ Rebirth gift, 💞 Couple gift (couple level, who: male / female / both, by mail), 🏰 Guild Siege after each siege (Red Chips per online lineup member for ranks 1-3, by the number of guilds that applied) and every week (guild bank / Total / each class / MVP ladders).
+> - **Found (INVESTIGATION §1.21):** the level 121 gift (Pet Dog) is never given: Master → Hero sets the level with InitLevel (`W_GIFT_NEVER`); the 75 / 90 / 105 gifts come twice before the first rebirth and once more per rebirth (`W_GIFT_REPEAT`); the per-siege chips grow with every guild that applied (63 / 18 / 9 per guild); the weekly guild chips are lost when the guild bank is full.
+> - Code: `loaders/gifts.js` (readers + the C++ numbers), `loaders/gifts-sim.js` (a character's life, a couple, a siege, the weekly payout), `io/source-read.js` (reads the two .cpp, read-only), `where.js` / `ui/where.js` (new kinds and checks), `tools/gifts-sim.js`. Fixtures: + 1Rebirth.inc, couple.inc, GuildCombat.txt (+ the two .cpp in fixtures/src).
+> - Python copy `oracle_sim.py gifts` (6 file variants: lives, couples, sieges, weekly payouts, made-up files) + `where` facts for the new kinds; every case agrees; 27 of 29 planted bugs caught. Tests: core 1232, UI harness 425 (new stage `wheregifts`).
+>
+> **User's test:** run `tools/refresh-fixtures.sh test-data` (new: 1Rebirth.inc, couple.inc, GuildCombat.txt) and `python3 build.py`, reload, pick `test-data`, card **Where is this item from?**
+> 1. Christmas Cake (`II_SYS_SYS_EVE_CHRISTMASCAKE01`): 🎂 level 105 ×3, bound, "2 times per character, +1 after every rebirth", and the ⓘ note.
+> 2. Pet Dog (`II_PET_DOG1`): level 15 (7 days, once) and level 121 "never given" with the ⚠.
+> 3. Cloak of Bravery (`II_ARM_S_CLO_CLO_SPIRIT_1`): ♻️ rebirth 20.
+> 4. Wedding Bridegroom Set Box(M) (`II_SYS_SYS_SCR_BXMWED01_1`): 💞 couple level 21, the male partner, bound, 14 days, by mail.
+> 5. Red Chips: 🏰 the per-siege table (3 guilds: 189 / 54 / 27 each) and the weekly ladders; the note says "the editor's own copy".
+> 6. Pick FLYFF-V19-SOURCE (real folder, nothing is written), same task, Red Chips: the note says "Read from the C++ in FLYFF-V19-SOURCE".
+> 7. By hand: `gjs -m tools/gifts-sim.js life rebirths=2`, `couple`, `siege n=5`.
+> Then commit + push; next: Boxes filter by what's inside, then I.
 
 > **Handoff (2026-10-09) — H. "Where is this item from?" part 1: user-tested in Brave and committed + pushed (`54406b5`). Next: H part 2 (quests, level-up / rebirth / couple gifts, collecting, Guild Siege prizes), plan first.** Plan: `/home/kevin/.claude/plans/read-claude-md-in-flyff-resource-editor-quiet-tulip.md`. User decisions: 2 parts; a new start card.
 > - **New task card "Where is this item from?"** (`MODULES` id `where`, read-only: every model parsed, maps read, nothing editable; Client/Model is not listed for it). Pick an item (search on the left, or + on the right); the page lists: 🛒 NPC shops (price players pay, tab, town, "not in the game" when unplaced / hidden, "auto" for rule items), 💎 Donation Shop, 🔁 exchange rewards (who, costs, chance per exchange), ⚔️ monsters (in % of kills), 🎉 propDropEvent.inc extra drops (per monster), 🎲 random gear (DropKind, per item), 🎁 random boxes, 📦 sets, 🏆 Battle Pass levels, 🔧 the exchanges that take it, and "Opening it gives …" for a box. Checks: can't be obtained in game, an AddShopItem price set server-wide, Donation crash items. Every line: **Open in NPC Shops / Monster Drops / Boxes / Donation Shop / Battle Pass** (the task opens at that NPC / monster / box; coming back shows the same item).
@@ -440,7 +456,9 @@ _Last updated 2026-10-09 (H part 1 done, `54406b5`; next: H part 2; handoff on t
 
 ## Next (in this order, agreed with the user)
 
-**Order (agreed 2026-10-06; tasks S, V, D-sim, C and H–M added that day):**
+**What's left, in this order (the user, 2026-10-09; FLYFF TODOS.md has the same list):** H part 2 (done) → **Boxes: filter by what's inside** (Fashion, Armor, Weapons, Pets, Scrolls…, from `loaders/item-category.js`) → **I. Rates & Buffs** → **K. Upgrade rates** → **G. Item set and weapon effects** → **C. GM Commands list** → L → M. Add NPC step 3 is covered by + Menu → Rules text (`376f694`, tested in game). Quest rewards and collecting in "Where is this item from?": later.
+
+**Order (agreed 2026-10-06; tasks S, V, D-sim, C and H–M added that day; kept as history, see the line above):**
 1. Add New NPC step 1: committed (`7cbb9c9`), **not tested in game yet**. Do the in-game test (handoff §8) before calling it done; fix what it finds before starting S.
 2. **S. Shops: everything editable** (asked 2026-10-06: "the idea is we're able to edit everything in a shop").
 3. ~~V. Save History~~ **skipped (the user, 2026-10-09)**: backups + git cover it. Steps 0 / 0b (paste /position, loading window) were built and kept (`85012df`).
@@ -659,7 +677,7 @@ Result: "works", "your level is too low", "can't be used on this server", or "un
 
 Tests: the table parse (count, the `#ifdef` handling, the `open` cut-off) and the simulator cases, checked by an independent Python copy of the same file. Planted bugs (e.g. `continue` instead of `break`) must be caught.
 
-### H. "Where is this item from / used?" (asked 2026-10-06; widened the same day: "where can it be dropped or obtained"; part 1 built 2026-10-09, see the handoff)
+### H. "Where is this item from / used?" (asked 2026-10-06; widened the same day: "where can it be dropped or obtained"; part 1 built 2026-10-09; part 2 (gifts, Guild Siege) built 2026-10-09; quests and collecting later)
 **For players' words:** pick any item and see every way a player can GET it, and where it is USED. Example:
 ```
 Scroll of Awakening

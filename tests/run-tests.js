@@ -2936,5 +2936,92 @@ section('where is this item from: every source, exact chances (JS and Python cop
   }
 }
 
+// ---------------------------------------------------------------- gifts and Guild Siege prizes (task H part 2)
+section('gifts and Guild Siege prizes: level-up / rebirth / couple gifts, siege chips (JS and Python copies agree)');
+{
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} gifts ${FIXTURES}`);
+  const py = JSON.parse(new TextDecoder().decode(out));
+  const J = x => JSON.stringify(x);
+  const latin1 = t => { const b = new Uint8Array(t.length); for (let i = 0; i < t.length; i++) b[i] = t.charCodeAt(i) & 0xFF; return b; };
+  for (const v of py.variants) {
+    const fs = new Map();
+    for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e));
+    for (const [n, text] of Object.entries(v.files)) fs.set(n.toLowerCase(), new FRE.SourceFile(n, latin1(text)));
+    const w = new FRE.Workspace(fs, { only: 'where', cpp: v.cpp ? new Map(Object.entries(v.cpp)) : null });
+    w.now = () => new Date(2026, 9, 8, 12, 0);          // oracle_sim.py DR_FIXED_NOW
+    w.load();
+    const env = FRE.giftsSim.envFor(w), g = env.gifts, r = v.res, P = r.parsed, S = FRE.giftsSim;
+    // what the readers find
+    const lu = g.levelUp;
+    const luJ = lu ? { events: lu.events.map(e => [e.name, e.on ? 1 : 0, e.times]), gifts: lu.gifts.map(x => [lu.events.indexOf(x.event), x.level, x.account, x.define, x.id, x.num, x.flag, x.minutes]) } : null;
+    const rbJ = g.rebirth ? { max: g.rebirth.max, rates: g.rebirth.rates.length, gifts: [...g.rebirth.gifts].map(([t, x]) => [t, x.id, x.num]).sort((a, b) => a[0] - b[0]), rejected: g.rebirth.rejected.length } : null;
+    const cpJ = g.couple ? { exp: g.couple.exp, items: g.couple.items.map(x => [x.level, x.id, x.sex, x.flag, x.minutes, x.num]), bad: g.couple.bad.length } : null;
+    const sgJ = g.siege ? { join: g.siege.config.joinPenya, min: g.siege.config.minGuild, max: g.siege.config.maxGuild } : null;
+    const c = g.siege.comp;
+    const compJ = { factors: c.siege.factors, shares: c.siege.shares, weekly: c.weekly, from: c.from, changed: c.changed.length };
+    const chips = g.siege ? Array.from({ length: 12 }, (_, i) => [i + 1, [0, 1, 2].map(k => FRE.gifts.siegeChips(g.siege.config.joinPenya, i + 1, k, c))]) : [];
+    const norm = o => JSON.parse(JSON.stringify(o));
+    eq(J(norm(luJ)), J(norm(P.levelup)), `${v.name}: Event.lua: the same events, windows and level-up gifts`);
+    eq(J(rbJ), J(P.rebirth), `${v.name}: 1Rebirth.inc: Max, Rates rows, gifts (first row of a tier wins), rejected rows`);
+    eq(J(cpJ), J(P.couple), `${v.name}: couple.inc: the exp ladder and the gift rows`);
+    eq(g.maxLevel, P.maxlevel, `${v.name}: expTable.inc: the max level`);
+    eq(J(sgJ), J(P.siege), `${v.name}: GuildCombat.txt: JOINPENYA, MIN/MAXJOINGUILDSIZE`);
+    eq(J(compJ), J(P.comp), `${v.name}: the amounts compiled into the C++ (and what was not found)`);
+    eq(J(chips), J(P.chips), `${v.name}: per-siege Red Chips for 1-12 guilds, ranks 1-3 (float32)`);
+    // how often each level-up gift pays
+    const pays = [];
+    for (const name of [...new Set(r.pays.map(x => x[0]))]) {
+      const m = S.levelPays(env, name);
+      lu.gifts.forEach((x, i) => { const p = m.get(x); pays.push([name, i, p.first, p.perRebirth]); });
+    }
+    eq(J(pays), J(r.pays), `${v.name}: times each level-up gift is given per character and per rebirth (${r.pays.length} rows)`);
+    // one character's life
+    let same = 0;
+    for (const L of r.life) {
+      const o = L.opts, res = S.life(env, { rebirths: o.rebirths || 0, account: o.account || 'player', free: o.free, deaths: o.deaths || [], stones: o.stones === undefined || o.stones === null ? undefined : o.stones });
+      const got = res.got.map(x => [x.what, x.level, x.tier, x.reb, x.id, x.num, x.flag, x.minutes, x.where]);
+      if (J(norm(got)) === J(norm(L.got)) && J([res.end.tier, res.end.level, res.end.reb]) === J(L.end)) same++;
+      else if (same >= 0) { print(`   life ${J(o)}: JS ${J(got).slice(0, 300)} | Py ${J(L.got).slice(0, 300)}`); same = -1000; }
+    }
+    eq(same, r.life.length, `${v.name}: ${r.life.length} lives (rebirths, a full bag, deaths, accounts, few stones): every gift, where it went, the end`);
+    same = 0;
+    for (const C of r.couple) {
+      const res = S.couple(env, { sex: C.sex });
+      if (J(res.posts.map(x => [x.level, x.to, x.id, x.num, x.flag, x.minutes])) === J(C.posts) && J(res.levels) === J(C.levels) && res.end === C.end) same++;
+    }
+    eq(same, r.couple.length, `${v.name}: ${r.couple.length} couples (every sex pair): every mail, the levels reached`);
+    same = 0;
+    for (const s of r.siege) {
+      const guilds = s.guilds.map(x => ({ points: x.points, lineup: x.lineup.map(m => ({ life: m[0], level: m[1], online: m[2], free: m[3] })) }));
+      const res = S.siege(env, { guilds });
+      if (J(res.order) === J(s.order) && J(res.paid.map(p => [p.guild, p.rank, p.chips, p.member, p.where])) === J(s.paid)) same++;
+    }
+    eq(same, r.siege.length, `${v.name}: ${r.siege.length} sieges (ties on points, lives, levels; offline and full bags): the order and every payout`);
+    same = 0;
+    for (const k of r.weekly) {
+      const res = S.weekly(env, { guilds: k.guilds.map(x => ({ wins: x[0], bankFull: x[1] })), players: k.players.map(x => ({ point: x[0], mvp: x[1], group: x[2] })) });
+      const js = { guild: res.guild.map(x => [x.guild, x.rank, x.chips, x.lost]) };
+      for (const b of ['total', 'merc', 'mage', 'acro', 'asst', 'mvp']) js[b] = res.boards[b].map(x => [x.player, x.rank, x.chips]);
+      if (J(js) === J(k.res)) same++;
+    }
+    eq(same, r.weekly.length, `${v.name}: ${r.weekly.length} weekly payouts (ties, empty boards, full guild banks)`);
+  }
+  // the findings, on the real files
+  const fs = new Map();
+  for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e));
+  const ws = new FRE.Workspace(fs, { only: 'where' });
+  ws.now = () => new Date(2026, 9, 8, 12, 0);
+  ws.load();
+  const D = ws.defines.defines, codes = d => FRE.where.sources(ws, D.get(d)).checks.map(c => c.code);
+  ok(codes('II_PET_DOG1').includes('W_GIFT_NEVER'), 'the level 121 gift (Pet Dog) is never given: Master -> Hero sets the level with InitLevel');
+  ok(codes('II_SYS_SYS_EVE_CHRISTMASCAKE01').includes('W_GIFT_REPEAT'), 'the level 105 gift (Christmas Cake) repeats: as Pro, as Master and after each rebirth');
+  const cloak = FRE.where.factsOf(FRE.where.sources(ws, D.get('II_ARM_S_CLO_CLO_SPIRIT_1'))).find(f => f.kind === 'rebirth');
+  eq(cloak && cloak.tier, 20, 'Cloak of Bravery: the rebirth 20 gift (3fb37a62)');
+  const wed = FRE.where.factsOf(FRE.where.sources(ws, D.get('II_SYS_SYS_SCR_BXMWED01_1'))).find(f => f.kind === 'couple');
+  ok(wed && wed.level === 21 && wed.sex === 0 && wed.reached, 'the male wedding box: couple level 21, male partner, reached');
+  const red = FRE.where.factsOf(FRE.where.sources(ws, D.get('II_CHP_RED'))).find(f => f.kind === 'siege');
+  eq(J(red && red.table[1]), J([3, 189, 54, 27]), 'Red Chips: 3 guilds applied -> 189 / 54 / 27 chips each (eveschool.cpp:1702)');
+}
+
 print(`\n${pass} passed, ${fail} failed`);
 if (fail) System.exit(1);

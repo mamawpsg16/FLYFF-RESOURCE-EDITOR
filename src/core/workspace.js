@@ -141,6 +141,9 @@
       // Last, so its parse sees the other models. maps: towns of the NPCs, and whether they stand in the game.
       id: 'where', label: 'Where is this item from?',
       required: [], editable: [], client: [],
+      // part 2 (loaders/gifts.js): level-up gifts (Event.lua), rebirth gifts, couple gifts, the max level (expTable.inc),
+      // the Guild Siege config; the prize amounts compiled into the C++ come in as opts.cpp (io/source-read.js)
+      optional: ['Event.lua', 'expTable.inc', '1Rebirth.inc', 'couple.inc', 'GuildCombat.txt'],
       uses: ['npc', 'donation', 'exchange', 'drops', 'boxes', 'battlepass'],
       maps: true,
       parse(ws) { return FRE.where.index(ws); },
@@ -156,6 +159,7 @@
     constructor(files, opts = {}) {
       this.files = files;
       this.only = opts.only || null;
+      this.cpp = opts.cpp || null;      // Map 'eveschool.cpp' / 'guildsiegeprize.cpp' -> text (read-only, FLYFF-V19-SOURCE picked)
       this.history = [];      // lowercase file names, in edit order (for global undo)
       this.redoStack = [];
       this.missing = CORE.filter(n => !files.has(n.toLowerCase()));

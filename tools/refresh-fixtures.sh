@@ -21,6 +21,8 @@ cp -p $SRC/Server/Resource/propDropEvent.inc $SRC/Server/Resource/except.txt $SR
   $SRC/Server/Resource/expTable.inc $SRC/Server/Resource/Event.lua $SRC/Server/Resource/propItemEtc.inc "$DST/Resource/"
 # Boxes: random boxes (server only) and sets (+ the game's LF copy below)
 cp -p $SRC/Server/Resource/propGiftbox.inc $SRC/Server/Resource/propPackItem.inc "$DST/Resource/"
+# Where is this item from? part 2: rebirth gifts, couple gifts, the Guild Siege config (+ Event.lua, expTable.inc above)
+cp -p $SRC/Server/Resource/1Rebirth.inc $SRC/Server/Resource/couple.inc $SRC/Server/Resource/GuildCombat.txt "$DST/Resource/"
 for d in $SRC/Server/Resource/World/*/; do
   n=$(basename "$d")
   # NPC placement (.dyo), area names (.rgn + the map's .txt.txt), continents (WdMadrigal.wld.cnt)
@@ -57,3 +59,5 @@ else cp -p "$SRC"/Client/Item/* "$DST/Client/Item/"; fi
 echo "refreshed $DST"
 # the client's menu click switch (oracle_sim.py newmenu reads which menu ids open the exchange window)
 if [ "$DST" = "test-data/fixtures" ]; then mkdir -p "$DST/src" && cp -p "$SRC/Source/Source/_Interface/WndWorld.cpp" "$DST/src/"; fi
+# the Guild Siege prize amounts compiled into the C++ (loaders/gifts.js reads them when FLYFF-V19-SOURCE is picked)
+if [ "$DST" = "test-data/fixtures" ]; then cp -p "$SRC/Source/Source/_Common/eveschool.cpp" "$SRC/Source/Source/_Common/GuildSiegePrize.cpp" "$DST/src/"; fi

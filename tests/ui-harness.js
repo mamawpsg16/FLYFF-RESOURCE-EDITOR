@@ -1284,6 +1284,20 @@
       ok(/🏆 Battle Pass reward \(5\)/.test(ed().textContent) && /⚔️ Dropped by/.test(ed().textContent) && /of kills/.test(ed().textContent), 'Red Chip (+ on the right): Battle Pass levels and the monsters that drop it, with the chance');
       isearch.value = ''; isearch.dispatchEvent(new Event('input'));
       if (STOP === 'where') { $('toasts').textContent = ''; return; }
+      // part 2: gifts and Guild Siege prizes
+      ok(/🏰 Guild Siege, after each siege \(top 3 guilds\)/.test(ed().textContent) && /189 each/.test(ed().textContent) && /🏰 Guild Siege, every week/.test(ed().textContent) && /3,000/.test(ed().textContent),
+        'Red Chip: the per-siege table (3 guilds: 189 each for rank 1) and the weekly ladders');
+      const pick = def => { search.value = def; search.dispatchEvent(new Event('input')); click([...document.querySelectorAll('#list .npc')].find(n => new RegExp(def + '\\b').test(n.textContent))); };
+      pick('II_SYS_SYS_EVE_CHRISTMASCAKE01');
+      ok(/🎂 Level-up gift \(1\)/.test(ed().textContent) && /level 105/.test(ed().textContent) && /2 times per character/.test(ed().textContent) && /\+1 after every rebirth/.test(ed().textContent)
+        && /given 2 times before the first rebirth/.test(ed().textContent), 'Christmas Cake: level 105 gift, 2 times per character, +1 per rebirth, with the note');
+      pick('II_PET_DOG1');
+      ok(/never given/.test(ed().textContent) && /automatic Master → Hero change/.test(ed().textContent) && /once per character/.test(ed().textContent), 'Pet Dog: the level 121 gift is never given (InitLevel), the level 15 one once');
+      pick('II_ARM_S_CLO_CLO_SPIRIT_1');
+      ok(/♻️ Rebirth gift \(1\)/.test(ed().textContent) && /rebirth 20/.test(ed().textContent), 'Cloak of Bravery: the rebirth 20 gift');
+      pick('II_SYS_SYS_SCR_BXMWED01_1');
+      ok(/💞 Couple gift \(1\)/.test(ed().textContent) && /level 21/.test(ed().textContent) && /the male partner/.test(ed().textContent) && /by mail/.test(ed().textContent), 'the male wedding box: couple level 21, male partner, by mail');
+      if (STOP === 'wheregifts') { $('toasts').textContent = ''; return; }
       // Open in …: the other task opens at that NPC; coming back shows the same item
       search.value = 'II_SYS_SYS_SCR_AWAKE'; search.dispatchEvent(new Event('input'));
       click([...document.querySelectorAll('#list .npc')].find(n => /II_SYS_SYS_SCR_AWAKE\b/.test(n.textContent)));

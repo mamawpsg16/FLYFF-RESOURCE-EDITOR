@@ -6581,6 +6581,33 @@ def wh_facts(root, rates=None):
             for lv, (ty, pts, iid, qty) in B['ladder'].items():
                 if ty == ptype:
                     add(iid, {'kind': 'bp', 'level': lv, 'points': pts, 'num': qty})
+    # part 2: level-up / rebirth / couple gifts, Guild Siege Red Chips (the gf_ copy above)
+    G, gp, _ = gf_world(root)
+    if G['levelup'] is not None:
+        pays = {}
+        for name in {'player' if g['account'] == 'all' else g['account'] for g in G['levelup']['gifts']}:
+            for i, v in gf_pays(G, gp, name).items():
+                if ('player' if G['levelup']['gifts'][i]['account'] == 'all' else G['levelup']['gifts'][i]['account']) == name:
+                    pays[i] = v
+        for i, g in enumerate(G['levelup']['gifts']):
+            if g['id'] is not None and g['id'] in props:
+                add(g['id'], {'kind': 'levelup', 'level': g['level'], 'num': g['num'], 'flag': g['flag'], 'minutes': max(0, g['minutes']),
+                              'account': g['account'], 'on': G['levelup']['events'][g['ev']]['state'] == 1, 'first': pays[i][0], 'perRebirth': pays[i][1]})
+    if G['rebirth'] is not None:
+        for tier, (iid, cnt) in G['rebirth']['gifts'].items():
+            add(iid, {'kind': 'rebirth', 'tier': tier, 'num': cnt})
+    if G['couple'] is not None:
+        reached = set(gf_couple_run(G, [0, 1])[1])
+        for r in G['couple']['items']:
+            if r['id'] in props:
+                add(r['id'], {'kind': 'couple', 'level': r['level'], 'sex': r['sex'], 'flag': r['flag'], 'minutes': max(0, r['minutes']),
+                              'num': r['num'], 'reached': r['level'] in reached})
+    red = D.get('II_CHP_RED')
+    if G['siege'] is not None and red is not None and (red & 0xFFFFFFFF) in props:
+        c = G['siege']
+        table = [[n] + [gf_chips(c['join'], n, k, G['comp']) for k in range(min(3, n))] for n in range(max(1, c['min']), max(c['min'], c['max']) + 1)]
+        add(red, {'kind': 'siege', 'joinPenya': c['join'], 'table': table})
+        add(red, {'kind': 'weekly', **G['comp']['weekly']})
     return facts, props, D
 
 
@@ -6639,6 +6666,644 @@ def wh_run(root):
 
 
 
+# ====================================================================== gifts (task H part 2)
+# Level-up gifts: Event.lua is run by Lua (LuaBase.cpp:47); SetLevelUpGift (LuaFunc/EventFunc.lua:442) adds a row
+# { nLevel, strAccount, strItemId, nItemNum, byFlag, nLifeMinutes or 0 } to the LAST AddEvent; GetLevelUpGift (:455)
+# returns the rows of the events whose State is 1 (GetEventState :61) with tGift.strAccount == "all" or found in the
+# account name, and nLevel == the level. CEventLua::SetLevelUpGift (EventLua.cpp:513): GetDefineNum, no prop -> skipped,
+# CreateItem (m_bCharged stays 0) else mail. Called from CMover::AddExperience only when m_nDeathLevel < m_nLevel
+# (MoverParam.cpp:1627). Rebirth: CProject::LoadRebirthProp (Project.cpp:6058), CUser::ProcessRebirthLevelUp
+# (User.cpp:4838). Couple: CCoupleProperty (couple.cpp:234-350), CCoupleHelper::PostItem (couplehelper.cpp:221).
+# Guild Siege: CGuildCombat::GuildCombatResultRanking (eveschool.cpp:1582), GuildSiegePrize.cpp (cda3af21).
+GF_JOB = 15            # MAX_JOB_LEVEL (defineJob.h:32)
+GF_EXPERT = 45         # MAX_EXP_LEVEL
+GF_GENERAL = 120       # MAX_GENERAL_LEVEL
+GF_LEGEND = 130        # MAX_LEGEND_LEVEL
+GF_THIRD = 150         # MAX_3RD_LEGEND_LEVEL
+GF_COUPLE_MAX = 21     # CCouple::eMaxLevel (couple.h:17)
+GF_SIEGE = ([0.9, 0.00001, 0.1], [0.7, 0.2, 0.1])                       # eveschool.cpp:1702-1712
+GF_WEEKLY = {'guild': [3000, 1500, 900, 360, 240], 'total': [1000, 500, 300, 200, 150, 120, 100, 70, 40, 20],
+             'perClass': [500, 250, 150, 100, 75, 60, 50, 35, 20, 10], 'mvp': [1500, 750, 450, 300, 225, 180, 150, 105, 60, 30]}
+
+
+def gf_f32(x):
+    return struct.unpack('<f', struct.pack('<f', x))[0]
+
+
+def gf_nolua_comments(t):
+    """the Lua chunk without comments (strings untouched)"""
+    pat = re.compile(r'"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|--\[\[.*?(?:\]\]|\Z)|--[^\n]*', re.S)
+    return pat.sub(lambda m: m.group(0) if m.group(0)[0] in '"\'' else re.sub(r'[^\n]', ' ', m.group(0)), t)
+
+
+def gf_args(s):
+    out, cur, q = [], [], None
+    for ch in s:
+        if q:
+            if ch == q:
+                q = None
+            else:
+                cur.append(ch)
+        elif ch in '"\'':
+            q = ch
+            cur.append('\0')
+        elif ch == ',':
+            out.append(''.join(cur)); cur = []
+        else:
+            cur.append(ch)
+    out.append(''.join(cur))
+    res = []
+    for a in out:
+        if '\0' in a:
+            res.append(a.replace('\0', '').strip())
+        elif re.fullmatch(r'\s*[-+]?(\d+\.?\d*|\.\d+)\s*', a):
+            res.append(float(a))
+        else:
+            res.append(a.strip() or None)
+    return res
+
+
+def gf_levelup(data, D, now):
+    if data is None:
+        return None
+    t = gf_nolua_comments(data.decode('latin-1'))
+    evs, gifts = [], []
+    for m in re.finditer(r'\b(AddEvent|SetTime|SetLevelUpGift)\s*\(([^()]*)\)', t):
+        a = gf_args(m.group(2))
+        if m.group(1) == 'AddEvent':
+            evs.append({'name': str(a[0]), 'times': [], 'state': 0})
+            continue
+        if not evs:
+            continue
+        ev = evs[-1]
+        if m.group(1) == 'SetTime':
+            ev['times'].append((int(re.sub(r'\D', '', str(a[0]))), int(re.sub(r'\D', '', str(a[1])))))
+            continue
+        num = lambda k: (a[k] if len(a) > k and isinstance(a[k], float) else 0.0)
+        name = str(a[2])
+        gifts.append({'ev': len(evs) - 1, 'level': num(0), 'account': str(a[1]), 'define': name,
+                      'id': (D[name] & 0xFFFFFFFF) if name in D else None, 'num': int(num(3)), 'flag': int(num(4)) & 0xFF,
+                      'minutes': int(num(5))})
+    for e in evs:
+        for st, en in e['times']:
+            if st <= now:
+                e['state'] = 1 if en > now else 0
+    return {'events': evs, 'gifts': gifts}
+
+
+def gf_level_gifts(L, level, account):
+    out = []
+    for g in L['gifts']:
+        if L['events'][g['ev']]['state'] != 1:
+            continue
+        if not (g['account'] == 'all' or g['account'] in account):
+            continue
+        if g['level'] == level:
+            out.append(g)
+    return out
+
+
+class GfScan:
+    """CScript over the CScanner tokens, with the defines (GetNumber / GetFloat / GetToken)"""
+    def __init__(self, data, D):
+        self.t = [x.decode('latin-1') for x in tokens(data)]
+        self.k, self.D, self.tok = 0, D, None
+
+    def token(self):
+        self.tok = self.t[self.k] if self.k < len(self.t) else None
+        self.k += 1
+        if self.tok is not None and self.tok in self.D:
+            self.tok = str(self.D[self.tok])
+        return self.tok
+
+    def number(self):
+        x = self.token()
+        if x is None:
+            return 0
+        if x.lower().startswith('0x'):
+            return s32(int(x[2:] or '0', 16))
+        if x == '=':
+            return -1
+        if x in ('-', '+'):
+            y = self.token() or ''
+            return s32(-atoi(y)) if x == '-' else atoi(y)
+        return atoi(x)
+
+    def float(self):
+        x = self.token()
+        if x is None:
+            return 0.0
+        m = re.match(r'\s*[-+]?(\d+\.?\d*|\.\d+)', x)
+        return float(m.group(0)) if m else 0.0
+
+    def first(self):
+        return (self.tok or '')[:1]
+
+
+def gf_rebirth(data, D, props):
+    if data is None:
+        return None
+    s = GfScan(data, D)
+    mx, rates, gifts, rej = 0, 0, {}, []
+    s.token()
+    while s.tok is not None:
+        if s.tok == 'Max':
+            mx = s.number() & 0xFFFF
+        elif s.tok == 'Rates':
+            s.token(); s.token()
+            while s.tok is not None and s.first() != '}':
+                if rates <= mx:
+                    s.float(); s.float(); s.number()
+                    rates += 1
+                s.token()
+        elif s.tok == 'Gifts':
+            s.token(); s.token()
+            while s.tok is not None and s.first() != '}':
+                tier = atoi(s.tok) & 0xFFFF
+                iid = s.number() & 0xFFFFFFFF
+                cnt = s.number() & 0xFFFF
+                if tier <= mx and iid in props:
+                    gifts.setdefault(tier, (iid, cnt))       # std::map::insert keeps the first
+                else:
+                    rej.append(tier)
+                s.token()
+        s.token()
+    return {'max': mx, 'rates': rates, 'gifts': gifts, 'rejected': rej}
+
+
+def gf_couple(data, D):
+    if data is None:
+        return None
+    s = GfScan(data, D)
+    exp, items, bad, kinds = [], [], [], 0
+    s.token()
+    while s.tok is not None:
+        w = s.tok
+        if w == 'Level':
+            s.token()
+            v = s.number()
+            while s.tok is not None and s.first() != '}':
+                exp.append(v)
+                v = s.number()
+        elif w == 'Item':
+            s.token()
+            lv = s.number()
+            while s.tok is not None and s.first() != '}':
+                s.token()
+                it = s.number()
+                while s.tok is not None and s.first() != '}':
+                    row = {'level': lv, 'id': it & 0xFFFFFFFF, 'sex': s.number(), 'flag': s.number(), 'minutes': s.number(), 'num': s.number()}
+                    (items if 1 <= lv <= len(exp) else bad).append(row)
+                    it = s.number()
+                lv = s.number()
+        elif w == 'SkillKind':
+            s.token()
+            v = s.number()
+            while s.tok is not None and s.first() != '}':
+                kinds += 1
+                v = s.number()
+        elif w == 'SkillLevel':
+            s.token()
+            v = s.number()
+            while s.tok is not None and s.first() != '}':
+                for _ in range(kinds):
+                    s.number()
+                v = s.number()
+        s.token()
+    return {'exp': exp, 'items': items, 'bad': bad}
+
+
+def gf_couple_level(c, e):
+    for i, need in enumerate(c['exp']):
+        if e < need:
+            return i
+    return 1
+
+
+def gf_max_level(data):
+    """IsMaxLevel: expCharacter[level + 1] has no EXP (Mover.h:1335); the rows are EXP PXP GP LimitEXP"""
+    if data is None:
+        return None
+    t = [x.decode('latin-1') for x in tokens(data)]
+    if 'expCharacter' not in t:
+        return None
+    k = t.index('expCharacter') + 2
+    rows = []
+    while k < len(t) and t[k][:1] != '}':
+        rows.append(t[k]); k += 4
+        if t[k - 2] in ('-', '+'):            # a signed GP takes one token more
+            k += 1
+    lv = 1
+    while lv + 1 < len(rows) and int(re.match(r'\d*', rows[lv + 1]).group(0) or '0') != 0:
+        lv += 1
+    return lv
+
+
+def gf_siege_cfg(data, D):
+    if data is None:
+        return None
+    s = GfScan(data, D)
+    c = {'join': 0, 'min': 0, 'max': 0}
+    s.token()
+    while s.tok is not None:
+        key = {'JOINPENYA': 'join', 'MINJOINGUILDSIZE': 'min', 'MAXJOINGUILDSIZE': 'max'}.get(s.tok)
+        if key:
+            c[key] = s.number()
+        s.token()
+    return c
+
+
+def gf_compiled(cpp):
+    """the amounts compiled into the C++ (cpp: {'eveschool.cpp': text, 'guildsiegeprize.cpp': text} or None)"""
+    out = {'factors': list(GF_SIEGE[0]), 'shares': list(GF_SIEGE[1]), 'weekly': {k: list(v) for k, v in GF_WEEKLY.items()}, 'from': 'builtin', 'changed': 0}
+    if not cpp:
+        return out
+    out['from'] = 'cpp'
+    ev, gp = cpp.get('eveschool.cpp'), cpp.get('guildsiegeprize.cpp')
+    if ev is None:
+        out['changed'] += 1
+    else:
+        m = re.search(r'fChipNum = m_nJoinPanya \* vecGCRanking\.size\(\) \* ([0-9.]+)f \* ([0-9.]+)f \* ([0-9.]+)f;', ev)
+        if m:
+            out['factors'] = [float(x) for x in m.groups()]
+        else:
+            out['changed'] += 1
+        sh = re.findall(r'case (\d) :[^\n]*\n\s*fChipNum \*= ([0-9.]+)f', ev)
+        got = {int(a): float(b) for a, b in sh if int(a) < 3}
+        if len(got) == 3:
+            out['shares'] = [got[0], got[1], got[2]]
+        else:
+            out['changed'] += 1
+        if not re.search(r'if\(\s*i\s*>=\s*3\s*\)\s*break;', ev):
+            out['changed'] += 1
+    if gp is None:
+        out['changed'] += 1
+    else:
+        for k, name in (('guild', 's_nGuildPrize'), ('total', 's_nClassPrize'), ('perClass', 's_nClassPerClassPrize'), ('mvp', 's_nMvpPrize')):
+            m = re.search(name + r'\[\s*\d+\s*\]\s*=\s*\{([^}]*)\}', gp)
+            if m:
+                out['weekly'][k] = [int(x) for x in m.group(1).replace(' ', '').split(',') if x.strip()]
+            else:
+                out['changed'] += 1
+        if 'nRank < 5 && !vecGuild.empty()' not in gp:
+            out['changed'] += 1
+        if not re.search(r'LogPlayerBoard\(\s*pQuery,\s*vecByPoint,\s*10,', gp):
+            out['changed'] += 1
+    return out
+
+
+def gf_chips(join, n, rank, comp):
+    """fChipNum = m_nJoinPanya * size() * 0.9f * 0.00001f * 0.1f (unsigned int product, then float), × the share, (int), min 1"""
+    x = gf_f32(float((join * n) & 0xFFFFFFFF))
+    for k in comp['factors']:
+        x = gf_f32(x * gf_f32(k))
+    x = gf_f32(x * gf_f32(comp['shares'][rank]))
+    v = -2147483648 if (x != x or x >= 2147483648.0 or x < -2147483648.0) else int(x)
+    return max(v, 1)
+
+
+class GfBag:
+    """CItemContainer::IsFull + Add for CMover::CreateItem; `free` empty slots of the 168, the rest other items"""
+    def __init__(self, props, free):
+        self.props = props
+        self.box = [{'id': FILLER, 'n': 1, 'flag': 0, 'ch': 0} for _ in range(FREE - free)] + [None] * free + [None] * (BAG - FREE)
+
+    def create(self, iid, num, flag, ch):
+        if iid not in self.props or iid == 0:
+            return False
+        pmax = self.props[iid][0]
+        pack, n = s16(pmax), s16(num)
+        need = n
+        ok = False
+        for e in self.box[:FREE]:
+            if e is None:
+                if need <= pack:
+                    ok = True; break
+                need -= pack
+            elif (e['id'], e['flag'], e['ch']) == (iid, flag, ch):
+                if e['n'] + need <= pack:
+                    ok = True; break
+                need -= pack - e['n']
+        if not ok:
+            return False
+        if pmax != 1:
+            for e in self.box[:FREE]:
+                if e is not None and (e['id'], e['flag'], e['ch']) == (iid, flag, ch) and e['n'] < pack:
+                    room = pack - e['n']
+                    if n > room:
+                        e['n'] = pack; n -= room
+                    else:
+                        e['n'] += n; n = 0
+                        break
+        i = 0
+        while n > 0 and i < FREE:
+            if self.box[i] is None:
+                put = min(n, pack)
+                self.box[i] = {'id': iid, 'n': put, 'flag': flag, 'ch': ch}
+                n -= put
+            i += 1
+        return True
+
+
+def gf_stones(tier):
+    for top, n in ((3, 1), (6, 2), (8, 3), (10, 5), (15, 7)):
+        if tier <= top:
+            return n
+    return 10
+
+
+def gf_life(G, props, rebirths=0, account='player', free=FREE, deaths=(), stones=None):
+    """one character from level 1 -> [[what, level, tier, reb, id, num, flag, minutes, where, gift index]], end"""
+    L = G['levelup'] or {'events': [], 'gifts': []}
+    bag = GfBag(props, free)
+    st = {'tier': 'vagrant', 'lv': 1, 'dl': 0, 'reb': 0, 'stones': 10 ** 9 if stones is None else stones}
+    got = []
+    dead = list(deaths)
+    top = G['maxlevel'] or GF_THIRD
+
+    def init(tier, lv):
+        st['tier'], st['lv'], st['dl'] = tier, lv, lv
+
+    def deliver(iid, num, flag, ch):
+        return 'bag' if bag.create(iid, num, flag, ch) else 'mail'
+
+    def level_up():
+        t, lv = st['tier'], st['lv']
+        if t == 'vagrant' and lv >= GF_JOB:
+            return False
+        if t == 'expert' and lv >= GF_JOB + GF_EXPERT:
+            return False
+        nxt = lv + 1
+        if t == 'legend' and nxt > GF_THIRD:
+            return False
+        if t == 'hero' and nxt > GF_LEGEND:
+            return False
+        promote = t not in ('hero', 'legend') and nxt > GF_GENERAL
+        st['lv'] = nxt
+        if promote:
+            init('hero', 121) if t == 'master' else init('master', 60)
+        if st['dl'] < st['lv']:
+            for g in gf_level_gifts(L, st['lv'], account):
+                if g['id'] is None or g['id'] not in props:
+                    continue
+                gi = L['gifts'].index(g)
+                got.append(['level', st['lv'], st['tier'], st['reb'], g['id'], g['num'], g['flag'], g['minutes'], deliver(g['id'], g['num'], g['flag'], 0), gi])
+        return True
+
+    def reborn():
+        R = G['rebirth']
+        if R is None or st['lv'] < top or st['reb'] >= R['max']:
+            return False
+        nt = st['reb'] + 1
+        if st['stones'] < gf_stones(nt):
+            return False
+        st['stones'] -= gf_stones(nt)
+        if nt in R['gifts']:
+            iid, cnt = R['gifts'][nt]
+            got.append(['rebirth', st['lv'], st['tier'], nt, iid, cnt, 0, 0, deliver(iid, cnt, 0, 0), -1])
+        st['reb'] = nt
+        init('master', 60)
+        return True
+
+    left = rebirths
+    for _ in range(100000):
+        if dead and st['lv'] == dead[0]:          # the deaths happen in the order given
+            dead.pop(0)
+            if st['dl'] < st['lv']:          # IsAfterDeath (Mover.cpp:9545) false: the death level is kept
+                st['dl'] = st['lv']
+            if st['lv'] > 1:
+                st['lv'] -= 1
+            continue
+        if level_up():
+            continue
+        t = st['tier']
+        if t == 'vagrant':
+            st['tier'] = 'expert'
+        elif t == 'expert':
+            st['tier'] = 'pro'
+        elif t == 'hero':
+            init('legend', GF_LEGEND + 1)
+        elif left > 0 and reborn():
+            left -= 1
+        else:
+            break
+    return got, [st['tier'], st['lv'], st['reb']]
+
+
+def gf_pays(G, props, account):
+    """per level-up gift row: times in a life without rebirth, and the extra per rebirth"""
+    a, end_a = gf_life(G, props, 0, account)
+    b, end_b = gf_life(G, props, 1, account)
+    can = G['rebirth'] is not None and G['rebirth']['max'] > 0 and end_b[2] == 1
+    out = {}
+    for i in range(len((G['levelup'] or {'gifts': []})['gifts'])):
+        x = sum(1 for r in a if r[9] == i)
+        y = sum(1 for r in b if r[9] == i)
+        out[i] = (x, y - x if can else 0)
+    return out
+
+
+def gf_couple_run(G, sex):
+    c = G['couple']
+    posts, levels = [], []
+    if c is None or not c['exp']:
+        return posts, levels, 1
+    lv, e = gf_couple_level(c, 0), 0
+    while e <= max(c['exp']) + 2 and lv < GF_COUPLE_MAX:
+        e += 1
+        nl = gf_couple_level(c, e)
+        if nl == lv:
+            continue
+        lv = nl
+        levels.append(lv)
+        for it in c['items']:
+            if it['level'] != lv:
+                continue
+            if it['sex'] == 2 or it['sex'] == sex[0]:
+                posts.append([lv, 0, it['id'], it['num'], it['flag'], it['minutes']])
+            if it['sex'] == 2 or it['sex'] == sex[1]:
+                posts.append([lv, 1, it['id'], it['num'], it['flag'], it['minutes']])
+    return posts, levels, lv
+
+
+def gf_siege_run(G, props, guilds, red):
+    cfg, comp = G['siege'], G['comp']
+    v = list(range(len(guilds)))
+    life = lambda gi: sum(m[0] for m in guilds[gi]['lineup'])
+
+    def avg(gi):
+        alive = [m[1] for m in guilds[gi]['lineup'] if m[0] > 0 and m[2]]
+        return float(sum(alive) // len(alive)) if alive else 1.0
+    for i in range(len(v) - 1):
+        if i >= cfg['max']:
+            break
+        for j in range(len(v) - 1 - i):
+            a, b = v[j], v[j + 1]
+            pa, pb = guilds[a]['points'], guilds[b]['points']
+            if pa < pb or (pa == pb and (life(a) < life(b) or (life(a) == life(b) and avg(a) < avg(b)))):
+                v[j], v[j + 1] = b, a
+    paid = []
+    ch = props.get(red, (1, 0))[1]
+    for r in range(min(3, len(v))):
+        chips = gf_chips(cfg['join'], len(v), r, comp)
+        for k, m in enumerate(guilds[v[r]]['lineup']):
+            if m[2]:
+                bag = GfBag(props, m[3])
+                paid.append([v[r], r + 1, chips, k, 'bag' if bag.create(red, chips, 0, ch) else 'mail'])
+    return v, paid
+
+
+def gf_weekly_run(comp, guilds, players):
+    w = comp['weekly']
+
+    def best(rows, key, n):
+        rows, out = list(rows), []
+        while rows and len(out) < n:
+            b = 0
+            for i in range(1, len(rows)):
+                if key(rows[i]) > key(rows[b]):
+                    b = i
+            out.append(rows.pop(b))
+        return out
+    gl = [(i, g) for i, g in enumerate(guilds) if g[0] > 0]
+    res = {'guild': [[i, r + 1, w['guild'][r], g[1]] for r, (i, g) in enumerate(best(gl, lambda x: x[1][0], min(5, len(w['guild']))))]}
+    pts = [(i, p) for i, p in enumerate(players) if p[0] > 0]
+    ladder = lambda rows, key, lad: [[i, r + 1, lad[r]] for r, (i, p) in enumerate(best(rows, key, min(10, len(lad))))]
+    res['total'] = ladder(pts, lambda x: x[1][0], w['total'])
+    for gi, k in enumerate(['merc', 'mage', 'acro', 'asst']):
+        res[k] = ladder([x for x in pts if x[1][2] == gi], lambda x: x[1][0], w['perClass'])
+    res['mvp'] = ladder([(i, p) for i, p in enumerate(players) if p[1] > 0], lambda x: x[1][1], w['mvp'])
+    return res
+
+
+def gf_world(root, cpp=None, now=None):
+    D = defines(root)
+    props = spec_props(root, D)
+    props.pop(FILLER, None)
+    rd = lambda n: open(os.path.join(root, n), 'rb').read() if os.path.exists(os.path.join(root, n)) else None
+    G = {'levelup': gf_levelup(rd('Event.lua'), D, now or DR_FIXED_NOW), 'rebirth': gf_rebirth(rd('1Rebirth.inc'), D, props),
+         'couple': gf_couple(rd('couple.inc'), D), 'maxlevel': gf_max_level(rd('expTable.inc')),
+         'siege': gf_siege_cfg(rd('GuildCombat.txt'), D), 'comp': gf_compiled(cpp)}
+    props[FILLER] = (1, 0)
+    return G, props, D
+
+
+def gf_cases(G, props, D, seed):
+    """life / couple / siege / weekly cases on one world, the results of this copy"""
+    red = D.get('II_CHP_RED', 0) & 0xFFFFFFFF
+    R = Rand(seed)
+    out = {'life': [], 'couple': [], 'siege': [], 'weekly': [], 'pays': [], 'parsed': {}}
+    accounts = sorted({g['account'] for g in (G['levelup'] or {'gifts': []})['gifts']} | {'player'})
+    for name in sorted({'player' if a == 'all' else a for a in accounts}):
+        for i, (x, y) in sorted(gf_pays(G, props, name).items()):
+            out['pays'].append([name, i, x, y])
+    lifes = [dict(rebirths=r) for r in (0, 1, 2, 3)] + [dict(rebirths=1, free=2), dict(rebirths=1, free=0), dict(rebirths=2, deaths=[75, 105]),
+             dict(rebirths=0, deaths=[15, 60, 60]), dict(rebirths=21), dict(rebirths=3, stones=4),
+             dict(rebirths=1, free=1), dict(rebirths=1, deaths=[60, 59]), dict(rebirths=0, deaths=[16, 15, 16])]
+    lifes += [dict(rebirths=1, account=a) for a in accounts if a != 'all'] + [dict(rebirths=0, account='x' + a + '1') for a in accounts if a != 'all']
+    for o in lifes:
+        got, end = gf_life(G, props, o.get('rebirths', 0), o.get('account', 'player'), o.get('free', FREE), o.get('deaths', ()), o.get('stones'))
+        out['life'].append({'opts': o, 'got': [r[:9] for r in got], 'end': end})
+    for sex in ([0, 1], [1, 0], [0, 0], [1, 1], [2, 1], [2, 2]):
+        posts, levels, end = gf_couple_run(G, sex)
+        out['couple'].append({'sex': sex, 'posts': posts, 'levels': levels, 'end': end})
+    if G['siege'] is not None:
+        for k in range(40):
+            n = 1 + R(10)
+            guilds = []
+            for g in range(n):
+                guilds.append({'points': R(4), 'lineup': [[R(3), 100 + R(3) * 10, R(4) != 0, [0, 1, 168][R(3)]] for _ in range(1 + R(4))]})
+            order, paid = gf_siege_run(G, props, guilds, red)
+            out['siege'].append({'guilds': guilds, 'order': order, 'paid': paid})
+        for k in range(30):
+            guilds = [[R(4) - 1, R(2) == 0] for _ in range(R(9))]
+            players = [[R(5) - 1, R(4) - 1, R(6) - 1] for _ in range(R(30))]
+            out['weekly'].append({'guilds': guilds, 'players': players, 'res': gf_weekly_run(G['comp'], guilds, players)})
+    L = G['levelup']
+    out['parsed'] = {
+        'levelup': None if L is None else {'events': [[e['name'], e['state'], [list(t) for t in e['times']]] for e in L['events']],
+                                           'gifts': [[g['ev'], g['level'], g['account'], g['define'], g['id'], g['num'], g['flag'], g['minutes']] for g in L['gifts']]},
+        'rebirth': None if G['rebirth'] is None else {'max': G['rebirth']['max'], 'rates': G['rebirth']['rates'],
+                                                      'gifts': sorted([t, i, c] for t, (i, c) in G['rebirth']['gifts'].items()), 'rejected': len(G['rebirth']['rejected'])},
+        'couple': None if G['couple'] is None else {'exp': G['couple']['exp'], 'items': [[r['level'], r['id'], r['sex'], r['flag'], r['minutes'], r['num']] for r in G['couple']['items']],
+                                                    'bad': len(G['couple']['bad'])},
+        'maxlevel': G['maxlevel'], 'siege': G['siege'],
+        'comp': {'factors': G['comp']['factors'], 'shares': G['comp']['shares'], 'weekly': G['comp']['weekly'], 'from': G['comp']['from'], 'changed': G['comp']['changed']},
+        'chips': [[n, [gf_chips(G['siege']['join'], n, r, G['comp']) for r in range(3)]] for n in range(1, 13)] if G['siege'] else [],
+    }
+    return out
+
+
+GF_EVENT = ('dofile(".\\\\LuaFunc\\\\EventFunc.lua")\r\n'
+            'SetLevelUpGift( 5, "all", "II_CHP_RED", 1, 0, 0 )\r\n'                  # before any AddEvent: never stored
+            'AddEvent( "Gifts" )\r\n--{\r\n\tSetTime( "2007-12-31 00:00", "2099-12-31 00:00" )\r\n'
+            '\tSetLevelUpGift( 10, "all", "II_CHP_RED", 9999, 2, 60 )\r\n'                 # a full stack: fits one free slot exactly
+            '\tSetLevelUpGift( 16, "all", "II_CHP_RED", 2, 0, 0 )\r\n'
+            '\tSetLevelUpGift( 10, "all", "II_CHP_RED", 3, 0 )\r\n'                   # no minutes: or 0
+            '\tSetLevelUpGift( 60, "all", "II_SYS_SYS_SCR_AWAKE", 2, 2, 0 )\r\n'
+            '\tSetLevelUpGift( 75, "__bu", "II_SYS_SYS_SCR_AWAKE", 1, 2, 0 ) -- an account filter\r\n'
+            '\tSetLevelUpGift( 131, "all", "II_CHP_RED", 1, 0, 0 )\r\n'
+            '\tSetLevelUpGift( 125, "all", "II_CHP_RED", 9, 0, 0 )\r\n'
+            '\tSetLevelUpGift( 151, "all", "II_CHP_RED", 9, 0, 0 )\r\n'
+            '\tSetLevelUpGift( 20, "all", "II_NOT_AN_ITEM", 1, 0, 0 )\r\n'
+            '--[[\r\n\tSetLevelUpGift( 11, "all", "II_CHP_RED", 1, 0, 0 )\r\n--]]\r\n'
+            '\t-- SetLevelUpGift( 12, "all", "II_CHP_RED", 1, 0, 0 )\r\n'
+            '\tSetLevelUpGift( 13, "all", "II_CHP_RED", 1, 0, 0 )  -- "SetLevelUpGift( 14 )"\r\n--}\r\n'
+            'AddEvent( "Old" )\r\n\tSetTime( "2007-01-01 00:00", "2008-01-01 00:00" )\r\n\tSetTime( "2030-01-01 00:00", "2031-01-01 00:00" )\r\n'
+            '\tSetLevelUpGift( 30, "all", "II_CHP_RED", 5, 0, 0 )\r\n'
+            'AddEvent( "Twice" )\r\n\tSetTime( "2001-01-01 00:00", "2002-01-01 00:00" )\r\n\tSetTime( "2020-01-01 00:00", "2040-01-01 00:00" )\r\n'
+            '\tSetLevelUpGift( 40, "all", "II_CHP_RED", 4, 0, 0 )\r\n'
+            'AddEvent( "Ends now" )\r\n\tSetTime( "2026-01-01 00:00", "2026-10-08 12:00" )\r\n'      # off at DR_FIXED_NOW (nEnd > now)
+            '\tSetLevelUpGift( 17, "all", "II_CHP_RED", 1, 0, 0 )\r\n'
+            'AddEvent( "Starts now" )\r\n\tSetTime( "2026-10-08 12:00", "2026-10-09 00:00" )\r\n'      # on (nStart <= now)
+            '\tSetLevelUpGift( 18, "all", "II_CHP_RED", 1, 0, 0 )\r\n')
+GF_REBIRTH = ('Max 3\r\nRates\r\n{\r\n\t1.0 1.0 1.0 0\r\n\t1.0 1.0 1.0 10\r\n\t1.0 1.0 1.0 20\r\n\t1.0 1.0 1.0 30\r\n\t1.0 1.0 1.0 40\r\n}\r\n'
+              'Gifts\r\n{\r\n\t1 II_CHP_RED 50\r\n\t1 II_SYS_SYS_SCR_AWAKE 1\r\n\t2 II_NOT_AN_ITEM 1\r\n\t3 II_SYS_SYS_SCR_AWAKE 70000\r\n\t4 II_CHP_RED 1\r\n}\r\n')
+GF_COUPLE = ('Level\r\n{\r\n\t0\r\n\t5\r\n\t9\r\n\t9\r\n\t20\r\n\t15\r\n\t30\r\n}\r\n'
+             'Item\r\n{\r\n\t2\r\n\t{\r\n\t\tII_CHP_RED\tSEX_SEXLESS\t2\t0\t5\r\n\t\tII_SYS_SYS_SCR_AWAKE\tSEX_FEMALE\t0\t60\t1\r\n\t}\r\n'
+             '\t4\r\n\t{\r\n\t\tII_CHP_RED\tSEX_MALE\t2\t0\t4\r\n\t}\r\n\t5\r\n\t{\r\n\t\tII_CHP_RED\tSEX_SEXLESS\t0\t0\t6\r\n\t}\r\n'
+             '\t1\r\n\t{\r\n\t\tII_SYS_SYS_SCR_AWAKE\tSEX_SEXLESS\t0\t0\t2\r\n\t}\r\n\t7\r\n\t{\r\n\t\tII_CHP_RED\tSEX_FEMALE\t0\t0\t3\r\n\t}\r\n\t8\r\n\t{\r\n\t\tII_CHP_RED\tSEX_MALE\t0\t0\t3\r\n\t}\r\n\t9\r\n\t{\r\n\t\tII_CHP_RED\tSEX_SEXLESS\t0\t0\t1\r\n\t}\r\n}\r\n'
+             'SkillKind\r\n{\r\n\tII_COUPLE_BUFF_POWER_01\r\n}\r\nSkillLevel\r\n{\r\n\t1\t0\r\n\t3\t1\r\n}\r\n')
+
+
+def gf_run(root):
+    srcdir = os.path.join(os.path.dirname(os.path.abspath(root)), 'src')
+    cpp = {}
+    for f in ('eveschool.cpp', 'GuildSiegePrize.cpp'):
+        p = os.path.join(srcdir, f)
+        if os.path.exists(p):
+            cpp[f.lower()] = open(p, 'rb').read().decode('latin-1')
+    files = []
+    ev = cpp.get('eveschool.cpp', '')
+    gp = cpp.get('guildsiegeprize.cpp', '')
+    variants = [
+        {'name': 'the real files, the editor\'s own copy of the C++ numbers', 'files': {}, 'cpp': None},
+        {'name': 'the real files and the real C++', 'files': {}, 'cpp': cpp or None},
+        {'name': 'made-up Event.lua, 1Rebirth.inc, couple.inc', 'files': {'Event.lua': GF_EVENT, '1Rebirth.inc': GF_REBIRTH, 'couple.inc': GF_COUPLE}, 'cpp': None},
+        {'name': 'GuildCombat.txt: JOINPENYA 0, MAXJOINGUILDSIZE 2', 'files': {'GuildCombat.txt': 'JOINPENYA\t0\r\nMAXJOINGUILDSIZE\t2\r\nMINJOINGUILDSIZE 1\r\n'}, 'cpp': None},
+        {'name': 'GuildCombat.txt: JOINPENYA 2,000,000,000 (the product wraps), MAXJOINGUILDSIZE 0',
+         'files': {'GuildCombat.txt': '/* JOINPENYA 5 */\r\nJOINPENYA\t1\r\nJOINPENYA 2000000000\r\nMAXJOINGUILDSIZE 0\r\n'}, 'cpp': None},
+        {'name': 'changed C++: shares 50/30/20, a missing ladder and the top 5 rule changed',
+         'files': {}, 'cpp': {'eveschool.cpp': ev.replace('fChipNum *= 0.7f', 'fChipNum *= 0.5f').replace('fChipNum *= 0.2f', 'fChipNum *= 0.3f').replace('fChipNum *= 0.1f;\n', 'fChipNum *= 0.2f;\n').replace('fChipNum *= 0.1f;\r\n', 'fChipNum *= 0.2f;\r\n'),
+                              'guildsiegeprize.cpp': gp.replace('s_nMvpPrize[10]', 's_nMvpReward[10]').replace('nRank < 5 && !vecGuild.empty()', 'nRank < 3 && !vecGuild.empty()')}},
+    ]
+    import shutil, tempfile
+    for k, v in enumerate(variants):
+        tmp = tempfile.mkdtemp(prefix='gf_')
+        try:
+            for n in os.listdir(root):
+                if n not in v['files']:
+                    os.symlink(os.path.join(os.path.abspath(root), n), os.path.join(tmp, n))
+            for n, text in v['files'].items():
+                open(os.path.join(tmp, n), 'wb').write(text.encode('latin-1'))
+            G, props, D = gf_world(tmp, v['cpp'])
+            res = gf_cases(G, props, D, 11 + k)
+        finally:
+            shutil.rmtree(tmp)
+        files.append({'name': v['name'], 'files': v['files'], 'cpp': v['cpp'], 'res': res})
+    return {'variants': files}
+
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -6674,6 +7339,8 @@ if __name__ == '__main__':
         print(json.dumps(nb_run(root)))
     elif what == 'where':
         print(json.dumps(wh_run(root)))
+    elif what == 'gifts':
+        print(json.dumps(gf_run(root)))
     elif what == 'dds':                         # a folder of .dds icons -> {file: [w, h, sha256 of the RGBA]}
         print(json.dumps(dds_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model

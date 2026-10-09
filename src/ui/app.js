@@ -137,6 +137,7 @@
     // which client patches are in FLYFF-V19-SOURCE (read-only; "unknown" on test-data): Save's "After saving" list
       if (layout.kind === 'real') await P.phase('Checking which client patches are in Source/ (read only)…');
       S.patchSrc = await FRE.patchState.inSource(layout);
+      S.cpp = await FRE.sourceRead.read(layout);      // the Guild Siege prize amounts (Where is this item from?)
     } finally { P.close(); }
     FRE.fsa.remember('root', dir);
     renderAll(false);
@@ -170,7 +171,7 @@
         files.set(lower, new FRE.SourceFile(handle.name, bytes, { handle, stamp }));
       }
       await phase('Reading the items, names and defines, then checking the files');
-      S.ws = new FRE.Workspace(files, { only: id }).load();
+      S.ws = new FRE.Workspace(files, { only: id, cpp: S.cpp || null }).load();
       S.resDir = L.res;
       S.client = null;
       if (L.client) { await phase('Reading the game client\'s copies (Client/)'); await loadClient(L.client, P, phase); }

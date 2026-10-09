@@ -8,6 +8,9 @@
 //              (propDropEvent.inc, Project.cpp:4048); DropKind per item = kindChance (Mover.cpp:8823-8956)
 //   boxes      CGiftboxMan chances (random boxes), CPackItem (sets: always every item; a set is checked first)
 //   battlepass the live BPReward rows (nType of the login pass)
+//   part 2 (loaders/gifts.js + gifts-sim.js): level-up gifts (Event.lua; how often one character gets each: giftsSim.life),
+//              rebirth gifts (1Rebirth.inc), couple gifts (couple.inc; which levels a couple reaches: giftsSim.couple),
+//              Guild Siege Red Chips per siege (top 3 guilds, GuildCombatResultRanking) and weekly (GuildSiegePrize.cpp)
 // Each line has `facts`: the plain values the independent Python copy (tools/oracle_sim.py where) must find too.
 (function (FRE) {
   'use strict';
@@ -158,7 +161,30 @@
     }
     const bp = ws.models.battlepass;
     if (bp && bp.pass) for (const r of bp.rows.BP4) if (r.type.value === bp.pass.type.value && bp.ladder.get(r.level.value) === r) add(r.id, { k: 'bp', row: r });
-    return { idx, table, cache: { ex: new Map(), kinds } };
+    // part 2: gifts and Guild Siege prizes
+    const gifts = FRE.gifts.fromWorkspace(ws), genv = FRE.giftsSim.envFor(ws, gifts);
+    const has = id => id !== null && !!ws.itemById(id);
+    const pays = new Map();          // level-up gift -> { first, perRebirth } (for an account the gift is meant for)
+    if (gifts.levelUp) {
+      const accounts = new Set(gifts.levelUp.gifts.map(g => g.account));
+      for (const a of accounts) for (const [g, v] of FRE.giftsSim.levelPays(genv, a === 'all' ? 'player' : a)) if (g.account === a) pays.set(g, v);
+      for (const g of gifts.levelUp.gifts) if (has(g.id)) add(g.id, { k: 'levelup', g });
+    }
+    if (gifts.rebirth) for (const [tier, g] of gifts.rebirth.gifts) add(g.id, { k: 'rebirth', tier, g });
+    const reached = new Set(gifts.couple ? FRE.giftsSim.couple(genv, { sex: [0, 1] }).levels : []);
+    if (gifts.couple) for (const row of gifts.couple.items) if (has(row.id)) add(row.id, { k: 'couple', row });
+    if (gifts.siege && has(genv.redChip)) { add(genv.redChip, { k: 'siege' }); add(genv.redChip, { k: 'weekly' }); }
+    return { idx, table, cache: { ex: new Map(), kinds }, gifts, pays, reached };
+  }
+  // the per-siege table: for n guilds that applied (MINJOINGUILDSIZE .. MAXJOINGUILDSIZE), the chips of rank 1-3
+  function siegeTable(gifts) {
+    const { config: c, comp } = gifts.siege, rows = [];
+    for (let n = Math.max(1, c.minGuild); n <= Math.max(c.minGuild, c.maxGuild); n++) {
+      const r = [n];
+      for (let k = 0; k < Math.min(3, n); k++) r.push(FRE.gifts.siegeChips(c.joinPenya, n, k, comp));
+      rows.push(r);
+    }
+    return rows;
   }
 
   // ---------------------------------------------------------------- one item
@@ -272,6 +298,34 @@
       lines.push({ kind: 'bp', who: 'Battle Pass', level: row.level.value, points, num, facts: { kind: 'bp', level: row.level.value, points, num } });
     }
 
+    // part 2: gifts and Guild Siege prizes
+    for (const r of refs.filter(r => r.k === 'levelup')) {
+      const g = r.g, p = (model.pays && model.pays.get(g)) || { first: 0, perRebirth: 0 };
+      lines.push({ kind: 'levelup', who: 'Level-up gift', level: g.level, num: g.num, flag: g.flag, bound: (g.flag & FRE.gifts.FLAG_BOUND) !== 0,
+        minutes: g.minutes > 0 ? g.minutes : 0, account: g.account, event: g.event.name, on: g.event.on, first: p.first, perRebirth: p.perRebirth,
+        facts: { kind: 'levelup', level: g.level, num: g.num, flag: g.flag, minutes: g.minutes > 0 ? g.minutes : 0, account: g.account, on: g.event.on, first: p.first, perRebirth: p.perRebirth } });
+    }
+    for (const r of refs.filter(r => r.k === 'rebirth')) {
+      lines.push({ kind: 'rebirth', who: 'Rebirth gift', tier: r.tier, num: r.g.num, facts: { kind: 'rebirth', tier: r.tier, num: r.g.num } });
+    }
+    for (const r of refs.filter(r => r.k === 'couple')) {
+      const row = r.row, reached = !!(model.reached && model.reached.has(row.level));
+      lines.push({ kind: 'couple', who: 'Couple gift', level: row.level, sex: row.sex, flag: row.flag, bound: (row.flag & FRE.gifts.FLAG_BOUND) !== 0,
+        minutes: row.minutes > 0 ? row.minutes : 0, num: row.num, reached,
+        facts: { kind: 'couple', level: row.level, sex: row.sex, flag: row.flag, minutes: row.minutes > 0 ? row.minutes : 0, num: row.num, reached } });
+    }
+    const gifts = model.gifts;
+    if (refs.some(r => r.k === 'siege') && gifts && gifts.siege) {
+      const table = siegeTable(gifts), c = gifts.siege.config;
+      lines.push({ kind: 'siege', who: 'Guild Siege', table, config: c, from: gifts.siege.comp.from,
+        facts: { kind: 'siege', joinPenya: c.joinPenya, table } });
+    }
+    if (refs.some(r => r.k === 'weekly') && gifts && gifts.siege) {
+      const w = gifts.siege.comp.weekly;
+      lines.push({ kind: 'weekly', who: 'Guild Siege weekly', weekly: w, from: gifts.siege.comp.from,
+        facts: { kind: 'weekly', guild: w.guild, total: w.total, perClass: w.perClass, mvp: w.mvp } });
+    }
+
     // the item is a box: what opening it gives
     const contains = [];
     const bx = ws.models.boxes;
@@ -281,11 +335,22 @@
       bound: (FRE.boxes.flagOf(l) & FRE.boxes.FLAG_BOUND) !== 0, minutes: FRE.boxes.minutesOf(l), upgrade: FRE.boxes.upgradeOf(l) })); }
 
     // checks
+    const never = l => l.kind === 'levelup' && (!l.on || (l.first === 0 && l.perRebirth === 0));
     const gets = lines.filter(l => l.kind !== 'use' && !l.dropped);
     const real = gets.filter(l => !(l.kind === 'shop' && l.inGame === false) && !(l.kind === 'exchange' && l.live === false)
-      && !((l.kind === 'drop' || l.kind === 'event' || l.kind === 'kind') && !(l.perKill > 0)));
-    if (!gets.length) checks.push({ severity: 'WARN', code: 'W_NONE', text: 'Can\'t be obtained in game: no shop, exchange, monster, box or Battle Pass gives it (only a GM can create it).' });
-    else if (!real.length) checks.push({ severity: 'WARN', code: 'W_HIDDEN', text: 'Can\'t be obtained in game: only from NPCs or exchanges that are not in the game (not placed on a map, or hidden).' });
+      && !((l.kind === 'drop' || l.kind === 'event' || l.kind === 'kind') && !(l.perKill > 0)) && !never(l) && !(l.kind === 'couple' && !l.reached));
+    if (!gets.length) checks.push({ severity: 'WARN', code: 'W_NONE', text: 'Can\'t be obtained in game: no shop, exchange, monster, box, Battle Pass, gift or prize gives it (only a GM can create it).' });
+    else if (!real.length) checks.push({ severity: 'WARN', code: 'W_HIDDEN', text: 'Can\'t be obtained in game: only from NPCs or exchanges that are not in the game, or from gifts that are never given.' });
+    for (const l of lines.filter(l => l.kind === 'levelup')) {
+      if (!l.on) checks.push({ severity: 'WARN', code: 'W_GIFT_EVENT_OFF', text: `The level ${l.level} gift is in the Event.lua event "${l.event}", which is not running now (its SetTime dates): nobody gets it.` });
+      else if (l.first === 0 && l.perRebirth === 0) checks.push({ severity: 'WARN', code: 'W_GIFT_NEVER', text: (l.level === 121 || l.level === 131)
+        ? `The level ${l.level} gift is never given: players get to level ${l.level} by ${l.level === 121 ? 'the automatic Master → Hero change' : 'the Legend promotion'}, which sets the level directly (InitLevel), and only a level gained with EXP gives a gift (MoverParam.cpp:1627).`
+        : `The level ${l.level} gift is never given: no character gains level ${l.level} with EXP (levels go 1-15 Vagrant, 16-60 Expert, 61-120 Pro and Master, 122-130 Hero, 132-150 Legend).` });
+      else if (l.first > 1 || l.perRebirth > 0) checks.push({ severity: 'INFO', code: 'W_GIFT_REPEAT', text: `The level ${l.level} gift is given ${l.first} times before the first rebirth (as Pro and again as Master)${l.perRebirth ? `, and ${l.perRebirth === 1 ? 'once' : l.perRebirth + ' times'} more after every rebirth (rebirth starts again at Master level 60)` : ''}.` });
+    }
+    for (const l of lines.filter(l => l.kind === 'couple' && !l.reached)) checks.push({ severity: 'WARN', code: 'W_COUPLE_UNREACHABLE', text: `The couple level ${l.level} gift is never given: couples stop at level ${FRE.gifts.MAX_COUPLE_LEVEL} (couple.h:17).` });
+    const sg = lines.find(l => l.kind === 'siege' || l.kind === 'weekly');
+    if (sg && gifts.siege.comp.changed.length) checks.push({ severity: 'WARN', code: 'W_CPP_CHANGED', text: `The Guild Siege C++ changed: ${gifts.siege.comp.changed.join('; ')}. The numbers shown for those parts are the editor's own copy (cda3af21).` });
     const set = costs && costs.get(itemId);
     if (set && set.by.length) {
       const last = set.by[set.by.length - 1];
@@ -301,5 +366,5 @@
     return res.lines.filter(l => l.facts).map(l => l.facts).sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
   }
 
-  FRE.where = { index, sources, factsOf, payChances, kindChances, kindChance, CURRENCY };
+  FRE.where = { index, sources, factsOf, payChances, kindChances, kindChance, siegeTable, CURRENCY };
 })(globalThis.FRE = globalThis.FRE || {});
