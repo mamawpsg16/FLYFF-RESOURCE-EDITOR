@@ -97,7 +97,17 @@
         const before = S.ws.history[S.ws.history.length - 1];
         S.ws.applyGroup(make(), label);
         const last = S.ws.history[S.ws.history.length - 1], now = Date.now();
-        if (mergeKey && before && before !== last && before.mergeKey === mergeKey && now - (before.at || 0) < 2000 && S.ws.mergeLast()) { before.at = now; return; }
+        if (mergeKey && before && before !== last && before.mergeKey === mergeKey && now - (before.at || 0) < 2000 && S.ws.mergeLast()) {
+          // one undo step for the whole typed value: its label (and the toast) say the final value, "was" keeps the value before typing
+          before.at = now;
+          const files = S.ws.history[S.ws.history.length - 1];
+          const u0 = files && files.length ? S.ws.files.get(files[0])._undo : null, first = u0 && u0.length ? u0[u0.length - 1].label : null;
+          const was = first && /\(was [^)]*\)\s*$/.exec(first);
+          const merged = was ? label.replace(/\(was [^)]*\)\s*$/, was[0]) : label;
+          for (const n of files || []) { const u = S.ws.files.get(n)._undo; if (u.length) u[u.length - 1].label = merged; }
+          done(merged, said);
+          return;
+        }
         tagLast(keys, label);
         if (last && last !== before) { last.at = now; last.mergeKey = mergeKey; }
         done(label, said);

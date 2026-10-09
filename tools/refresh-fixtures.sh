@@ -26,6 +26,10 @@ cp -p $SRC/Server/Resource/1Rebirth.inc $SRC/Server/Resource/couple.inc $SRC/Ser
 # Rates & Buffs: the Server Buff and the Guild Buff (+ the game's copy of GuildBuff.txt below; Event.lua above)
 cp -p $SRC/Server/Resource/ServerBuff.txt $SRC/Server/Resource/GuildBuff.txt "$DST/Resource/"
 cp -p $SRC/Client/GuildBuff.txt $SRC/Client/1Rebirth.inc "$DST/Client/"
+# Upgrade Rates: the chance tables (+ the game's copies of s.txt and WeaponRarity.inc)
+cp -p $SRC/Server/Resource/ItemUpgrade.lua $SRC/Server/Resource/s.txt $SRC/Server/Resource/Ultimate_UltimateWeapon.txt \
+  $SRC/Server/Resource/WeaponRarity.inc "$DST/Resource/"
+cp -p $SRC/Client/s.txt $SRC/Client/WeaponRarity.inc "$DST/Client/"
 # the buff icons (Client/Icon): all of them in a manual test copy, the two the buff files use for the tests
 mkdir -p "$DST/Client/Icon"
 if [ "$DST" = "test-data/fixtures" ]; then cp -p "$SRC/Client/Icon/Badge_EventPackage.png" "$SRC/Client/Icon/Itm_SysSysScrChaCla1.dds" "$DST/Client/Icon/"

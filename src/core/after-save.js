@@ -56,6 +56,14 @@
     'guildbuff.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:891 loadGuildBuffFile' },
     // rebirth tiers: both load it (Project.cpp:928, #ifdef __REBIRTH_SYSTEM only); the game discards the numbers but reads the file
     '1rebirth.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:928 LoadRebirthProp' },
+    // Upgrade Rates (task K): ItemUpgrade.lua (CItemUpgrade's constructor -> LoadScript, WORLDSERVER/ItemUpgrade.cpp:31 / :59, WorldServer
+    // only), s.txt (LoadServerScript Project.cpp:994, WorldServer; the game reads its own copy for the Collector Details window :937),
+    // Ultimate_UltimateWeapon.txt (Project.cpp:967 LoadUltimateWeapon -> UltimateWeapon.cpp:116, #ifdef __WORLDSERVER),
+    // WeaponRarity.inc (Project.cpp:971 LoadWeaponRarity, both)
+    'itemupgrade.lua': { server: STARTUP, client: null, cite: 'ItemUpgrade.cpp:31 CItemUpgrade() -> LoadScript :59 (WorldServer only)' },
+    's.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:994 LoadServerScript (+ the game: :937 LoadCollectingInfo)' },
+    'ultimate_ultimateweapon.txt': { server: STARTUP, client: null, cite: 'Project.cpp:967 LoadUltimateWeapon -> UltimateWeapon.cpp:116 (#ifdef __WORLDSERVER)' },
+    'weaponrarity.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:971 LoadWeaponRarity' },
     // couple: the WorldServer, the DatabaseServer and the game each load it (couplehelper.cpp Initialize); the game's couple window
     // draws its level bar from its own copy (WndField.cpp:26910 GetExperienceRate)
     'couple.inc': { server: STARTUP, client: STARTUP, cite: 'WORLDSERVER/couplehelper.cpp:44, databaseserver/couplehelper.cpp:158, Neuz/couplehelper.cpp:33 CCoupleProperty::Initialize' },

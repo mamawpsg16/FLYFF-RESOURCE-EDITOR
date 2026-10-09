@@ -61,6 +61,8 @@
   clientDir.children.set('defineNeuz.h', new FakeFile('defineNeuz.h', lfOnly(original.get('defineNeuz.h'))));
   for (const n of ['etc.inc', 'etc.txt.txt']) clientDir.children.set(n, new FakeFile(n, original.get(n).slice()));
   if (original.has('GuildBuff.txt')) clientDir.children.set('GuildBuff.txt', new FakeFile('GuildBuff.txt', original.get('GuildBuff.txt').slice()));
+  for (const n of ['WeaponRarity.inc']) if (original.has(n)) clientDir.children.set(n, new FakeFile(n, original.get(n).slice()));
+  if (original.has('s.txt')) clientDir.children.set('s.txt', new FakeFile('s.txt', lfOnly(original.get('s.txt'))));
   // a new exchange menu's files: defineText.h is LF in Client, textClient.* identical
   clientDir.children.set('defineText.h', new FakeFile('defineText.h', lfOnly(original.get('defineText.h'))));
   for (const n of ['textClient.inc', 'textClient.txt.txt']) clientDir.children.set(n, new FakeFile(n, original.get(n).slice()));
@@ -156,7 +158,7 @@
     click($('btn-root'));
     await waitFor(() => S.layout, 'folder detected');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
-    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 7 && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 7 tasks to pick (exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs)');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 8 && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 8 tasks to pick (exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
@@ -1476,6 +1478,43 @@
       ok(S.ws.diags.filter(d => d.code === 'CP_DESC').length === 7 && /Attack \+3% while your partner is online\./.test(S.ws.files.get('propitem.txt.txt').text), 'Power of Love tier 1: description written from the stats; 7 tiers left');
       ok(['couple.inc', 'propItem.txt.txt'].every(n => S.ws.dirtyFiles().some(f => f.name === n)), 'couple.inc and propItem.txt.txt are to be saved');
       if (STOP === 'couple') { $('toasts').textContent = ''; return; }
+      while (S.ws.history.length) click($('btn-undo'));
+      ok(!S.ws.dirtyFiles().length, 'Undo all: nothing left to save');
+    }
+
+    // ---- Upgrade Rates (K part 1)
+    {
+      await openTask('upgrade');
+      const ed = () => $('editor'), sec = id => click(document.querySelector(`#list .npc[data-sec="${id}"]`));
+      ok(S.mode === 'upgrade' && /Normal upgrade/.test(ed().textContent) && /14\.64/.test(ed().innerHTML + [...ed().querySelectorAll('input')].map(i => i.value).join(' ')), 'Upgrade Rates opens on Normal upgrade: +3 → +4 shows the real 14.64%');
+      const box = ed().querySelector('input[data-key="up|general|3"]');
+      ok(box && box.value === '14.64', 'the +3 box holds the real chance (file 1626, ×0.9, +1)');
+      box.value = '25'; box.dispatchEvent(new Event('change'));
+      ok(/tGeneral = \{ 3251, 3251, 2276, 2777,/.test(S.ws.files.get('itemupgrade.lua').text), '25% written as 2777 (×0.9 = 2499, +1 = 25.00%)');
+      ok(/easier than/.test(ed().textContent), '⚠ +3 → +4 now easier than +2 → +3');
+      {
+        const b0 = () => ed().querySelector('input[data-key="up|general|0"]');
+        b0().value = '4'; b0().dispatchEvent(new Event('change'));
+        b0().value = '40'; b0().dispatchEvent(new Event('change'));
+        const last = [...$('toasts').children].pop();
+        ok(last && /\+0 → \+1 40% \(was 32\.52%\)/.test(last.textContent), 'typing 4 then 40 = one step; the toast says 40% (was 32.52%)');
+        click($('btn-undo'));
+        ok(/tGeneral = \{ 3251,/.test(S.ws.files.get('itemupgrade.lua').text), '… one Undo goes back to 32.52%');
+      }
+      sec('acc');
+      ok(/Safe window/.test(ed().textContent) && ed().querySelectorAll('input[data-key^="up|acc|"]').length === 20, 'Accessory: 20 steps with the safe-window chance');
+      sec('ult');
+      ok(/Ultimate weapon \+1 → \+10/.test(ed().textContent) && /dwReferTarget2/.test(ed().textContent) && /used by 0 of them/.test(ed().textContent), 'Ultimate: transforms, General → Unique line used by none (own chances)');
+      sec('rarity');
+      ok([...ed().querySelectorAll('input')].some(i => i.value === 'Mythic') && /Total: 100%/.test(ed().textContent), 'Weapon Rarity: 6 tiers, total 100%');
+      const luck = ed().querySelector('input[data-key="up|wr|6|luck"]'); luck.value = '2'; luck.dispatchEvent(new Event('change'));
+      ok(/not 100/.test(ed().textContent), 'Mythic 1 → 2%: ⚠ the total is not 100');
+      if (STOP === 'upgrade') { $('toasts').textContent = ''; return; }
+      sec('calc');
+      ok(/Per finished item/.test(ed().textContent), 'calculator: per finished item');
+      click(btnByText(ed(), 'Run'));
+      ok(/items: /.test(ed().textContent) && /reached/.test(ed().textContent), '🎲 Run: the totals');
+      if (STOP === 'upgradecalc') { $('toasts').textContent = ''; return; }
       while (S.ws.history.length) click($('btn-undo'));
       ok(!S.ws.dirtyFiles().length, 'Undo all: nothing left to save');
     }

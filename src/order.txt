@@ -46,6 +46,7 @@ edit/npcedit-ops.js
 edit/menu-ops.js
 edit/rates-ops.js
 edit/couple-ops.js
+edit/upgrade-ops.js
 validate/newnpc.js
 validate/newmenu.js
 loaders/newnpc-sim.js
@@ -57,6 +58,9 @@ loaders/rates-sim.js
 loaders/couple.js
 loaders/couple-sim.js
 validate/couple.js
+loaders/upgrade.js
+loaders/upgrade-sim.js
+validate/upgrade.js
 core/workspace.js
 core/client-sync.js
 core/after-save.js
@@ -86,4 +90,5 @@ ui/boxes.js
 ui/exchange.js
 ui/where.js
 ui/rates.js
+ui/upgrade.js
 ui/app.js

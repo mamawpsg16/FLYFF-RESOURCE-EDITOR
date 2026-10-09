@@ -3310,5 +3310,99 @@ section('couple (I part 3): couple.inc levels, buffs, gifts, edits (JS and Pytho
   for (const k of ['CP_EXP_FIRST', 'CP_EXP_ROWS', 'CP_EXP_ORDER', 'CP_ROWS_UNUSED', 'CP_KIND_ITEM', 'CP_SKILL_LEVEL', 'CP_SKILL_DUP', 'CP_TIER_BAD', 'CP_GIFT_LEVEL', 'CP_GIFT_ITEM', 'CP_GIFT_SEX', 'CP_GIFT_COUNT', 'CP_GIFT_STACK', 'CP_DESC']) ok(FRE.diagHelp[k], `help text for ${k}`);
 }
 
+section('upgrade rates (K): ItemUpgrade.lua, s.txt, Ultimate, WeaponRarity; tries, runs, averages, edits (JS and Python copies agree)');
+{
+  const J = JSON.stringify;
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} upgrade ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py upgrade) gave no readable result', e.message); }
+  const fresh = () => { const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e)); return new FRE.Workspace(fs, { only: 'upgrade' }).load(); };
+  const ws = fresh(), D = ws.defines.defines, U = FRE.upgrade, S = FRE.upgradeSim;
+  const bin = t => B.binaryStringToBytes(t);
+  const u16 = t => B.concatBytes([new Uint8Array([0xff, 0xfe]), B.stringToUtf16le(t)]);
+  const sfOf = T => ({ lua: new FRE.SourceFile('ItemUpgrade.lua', bin(T.lua)), s: new FRE.SourceFile('s.txt', bin(T.s)), ult: new FRE.SourceFile('Ultimate_UltimateWeapon.txt', bin(T.ult)),
+    wr: new FRE.SourceFile('WeaponRarity.inc', u16(T.wr)) });
+  const modelOf = F => { const lua = U.loadLua(F.lua); return { lua, t: U.luaTables(lua), s: U.loadS(F.s, D), ult: U.loadUltimate(F.ult), rarity: U.loadRarity(F.wr, D), scrolls: [] }; };
+  const SYS = ['general', 'attr', 'weapon', 'suit', 'acc', 'coll', 'ult'];
+  if (py) {
+    for (const f of py.facts) {
+      const m = modelOf(sfOf(py.files[f.name]));
+      eq(!m.lua.failed, f.ok, `${f.name}: ItemUpgrade.lua ${f.ok ? 'runs' : 'fails to run'}`);
+      for (const sys of SYS) {
+        const lad = U.ladder(m, sys), top = S.maxLevel(m, sys);
+        const rows = Array.from({ length: top }, (_, L) => { const r = lad.find(x => x.level === L); return r ? [L, r.eff, r.count, r.safeCount === undefined ? null : r.safeCount] : [L, null]; });
+        eq(J(rows), J(f.ladders[sys]), `${f.name}: ${sys}: every step's value and real chance`);
+      }
+      eq(J(Object.fromEntries(Object.entries(m.ult.single).map(([k, v]) => [k, v.value]))), J(f.single), `${f.name}: the Ultimate single chances`);
+      eq(J([...U.firstByLevel(m.ult.makeGem).values()].sort((a, b) => a.level.value - b.level.value).map(r => [r.level.value, r.gProb.value, r.gNum.value, r.uProb.value, r.uNum.value])), J(f.make), `${f.name}: MAKE_GEM (first row of a level)`);
+      const R = m.rarity;
+      eq(J({ high: R.high, total: R.dropTotal, closed: !!(R.dropBlock && R.dropBlock.closeTok.text === '}'),
+        tiers: [...R.tiers].sort((a, b) => a[0] - b[0]).map(([lv, t]) => [lv, t.name, t.color >>> 0, t.pct, t.flat, t.luck]),
+        rolls: Array.from({ length: 100 }, (_, r) => { let tot = 0; for (const t of U.rarityChances(R).tiers) { tot += R.tiers.get(t.level).luck; if (r < tot) return t.level; } return 0; }) }), J(f.rarity), `${f.name}: Weapon Rarity tiers, Drop and the scroll's 100 rolls`);
+      let same = 0, n = 0;
+      for (const c of f.cases) {
+        const o = f.opts[c.sys][c.o];
+        const r = S.run(m, c.sys, c.a, c.b, o, c.seed, 25, 2000);
+        const e = S.expect(m, c.sys, c.a, c.b, o);
+        const js = { run: { totals: r.totals, log: r.log, items: r.items.map(x => [x.tries, x.reached, x.broke, x.end]) },
+          expect: { rows: e.rows.map(x => [x.level, x.chance, x.fail, x.reach, x.tries]), reach: e.reach, per: e.per ? [e.per.tries, e.per.items, e.per.protect, e.per.scrolls, e.per.penya] : null, never: e.never } };
+        n++;
+        if (J(js) === J({ run: c.run, expect: c.expect })) same++;
+        else if (n - same <= 3) eq(J(js).slice(0, 600), J({ run: c.run, expect: c.expect }).slice(0, 600), `${f.name}: ${c.sys} ${J(o).slice(0, 60)} +${c.a} → +${c.b} seed ${c.seed}`);
+      }
+      eq(same, n, `${f.name}: ${n} upgrade cases (every roll, item, scroll and average)`);
+    }
+    for (const e of py.edits) {
+      let T = { ...py.files[e.base] };
+      for (const op of e.ops) {
+        const F = sfOf(T), m = modelOf(F), O = FRE.upgradeOps;
+        let file, sp;
+        if (op[0] === 'chance') { const sys = op[1]; file = sys === 'acc' || sys === 'coll' ? 's' : sys === 'ult' ? 'ult' : 'lua'; sp = O.setChance(m, sys, op[2], op[3]).splices; }
+        else if (op[0] === 'attrfield') { file = 'lua'; sp = O.setAttrField(U.ladder(m, 'attr').find(r => r.level === op[1]).call, op[2], op[3], 'x'); }
+        else if (op[0] === 'single') { file = 'ult'; sp = O.setSingle(m, op[1], op[2]).splices; }
+        else if (op[0] === 'gem') { file = 'ult'; sp = O.setMakeGem(U.firstByLevel(m.ult.makeGem).get(op[1]), op[2], op[3]).splices; }
+        else if (op[0] === 'rnum') { file = 'wr'; sp = O.setRarityNumber(m.rarity.blocks[op[1]], op[2], op[3]); }
+        else if (op[0] === 'rname') { file = 'wr'; sp = O.setRarityName(m.rarity.blocks[op[1]], op[2]); }
+        else if (op[0] === 'rcolor') { file = 'wr'; sp = O.setRarityColor(m.rarity.blocks[op[1]], op[2]); }
+        else if (op[0] === 'luck') { file = 'wr'; sp = O.setDropLuck(m.rarity.drop.find(d => d.level.value === op[1]), op[2]); }
+        F[file].applySplices(sp, 'x');
+        T = { ...T, [file]: F[file].text };
+      }
+      eq(J(T), J(e.texts), `edit script on ${e.base}: ${J(e.ops).slice(0, 90)}: the same files`);
+    }
+    // the real files read back in the browser's way: the four files round-trip
+    const cd = (name, T) => { const X = fresh(); for (const [k, t, w] of [['itemupgrade.lua', T.lua], ['s.txt', T.s], ['ultimate_ultimateweapon.txt', T.ult]]) { const f = X.files.get(k); if (f.text !== t) f.applySplices([{ start: 0, end: f.text.length, insert: t }], 'b'); }
+      const f = X.files.get('weaponrarity.inc'); if (f.text !== T.wr) f.applySplices([{ start: 0, end: f.text.length, insert: T.wr }], 'b'); X.reparse(); return X.diags.filter(d => d.module === 'upgrade').map(d => d.code); };
+    const sc = cd('short', py.files.short);
+    for (const c of ['UP_ATTR_GAP', 'UP_ATTR_DUP', 'UP_ZERO', 'UP_RISE', 'UP_ACC_ROWS', 'UP_ULT_DUP', 'UP_ULT_MISSING', 'UP_RARITY_DUP', 'UP_RARITY_INHERIT', 'UP_RARITY_DROP', 'UP_RARITY_SUM', 'UP_TRANSY_MISSING', 'UP_CAPPED']) ok(sc.includes(c), `made-up files: ${c}`);
+    ok(sc.filter(c => c === 'UP_ACC_ROWS').length && cd('short', py.files.short).length, '22 accessory rows: BLOCK (past the 20-slot table)');
+    ok(cd('late', py.files.late).includes('UP_LUA_ERROR'), 'AddAttribute called before its function: UP_LUA_ERROR (the script fails)');
+    ok(cd('broken', py.files.broken).includes('UP_LUA_ERROR'), 'a { never closed: UP_LUA_ERROR');
+  }
+  // the real files
+  const m = ws.models.upgrade;
+  eq(J([...new Set(ws.diags.filter(d => d.module === 'upgrade').map(d => d.code))]), J(['UP_TRANS_OWN']), 'the real files: no problem (150 weapons with their own transform chance: INFO)');
+  const g = U.ladder(m, 'general');
+  eq(J(g.map(r => r.count)), J([3252, 3252, 2277, 1464, 1171, 879, 586, 293, 147, 59]), 'normal upgrade: the real chances (+1 for r <= p, ×0.9 from +3 → +4)');
+  eq(U.valueForPercent('general', 3, 14.64).value, 1626, '14.64% at +3 → +4 is the file\'s 1626 (×0.9 = 1463, +1)');
+  eq(Math.round(S.expect(m, 'general', 0, 10, { protect: true }).per.tries), 326, '+0 → +10 with a protect scroll every try: 326 tries on average');
+  eq(S.expect(m, 'general', 0, 10, {}).reach.toExponential(3), '2.244e-10', '… without one, 1 item in 4.5 billion gets there');
+  eq(U.rarityChances(m.rarity).tiers.map(t => t.chance).join(), '0.35,0.3,0.2,0.1,0.04,0.01', 'Weapon Rarity: 35 / 30 / 20 / 10 / 4 / 1 %');
+  ok(m.scrolls.some(s => s.define === 'II_SYS_SYS_SCR_SMELTING' && s.kind === 'general'), 'the success scrolls are read from Spec_Item.txt (SMELTING = IK3_GENERAL_ENCHANT_RATE)');
+  // edits through the workspace
+  const W = fresh();
+  W.apply('itemupgrade.lua', FRE.upgradeOps.setChance(W.models.upgrade, 'general', 3, 20).splices, 'x');
+  eq(U.ladder(W.models.upgrade, 'general')[3].count, 2000, '+3 → +4 typed as 20%: players get exactly 20%');
+  ok(W.diags.some(d => d.code === 'UP_STALE_COMMENT'), '… the comment on that line may still hold the old numbers (INFO)');
+  W.apply('itemupgrade.lua', FRE.upgradeOps.setChance(W.models.upgrade, 'general', 3, 25).splices, 'x');
+  ok(W.diags.some(d => d.code === 'UP_RISE'), '25%: +3 → +4 is now easier than +2 → +3 (22.77%, WARN)');
+  ok(W.clientFileNames().includes('s.txt') && W.clientFileNames().includes('WeaponRarity.inc'), 's.txt and WeaponRarity.inc go to Client/ too');
+  for (const k of ['itemupgrade.lua', 's.txt', 'ultimate_ultimateweapon.txt', 'weaponrarity.inc']) ok(FRE.afterSave.readerOf(k).cite !== '?', `After saving knows ${k}`);
+  throws(() => FRE.upgradeOps.setChance(m, 'general', 3, 101), 'a chance above 100% is refused');
+  throws(() => FRE.upgradeOps.setRarityName(m.rarity.blocks[0], 'a "quote"'), 'a tier name with a quote is refused');
+  for (const k of ['UP_LUA_ERROR', 'UP_LUA_VALUE', 'UP_TABLE_MISSING', 'UP_TRANSY_MISSING', 'UP_ZERO', 'UP_RISE', 'UP_CAPPED', 'UP_ATTR_GAP', 'UP_ATTR_DUP', 'UP_ACC_ROWS', 'UP_COLL_EMPTY',
+    'UP_ULT_MISSING', 'UP_ULT_DUP', 'UP_TRANS_OWN', 'UP_RARITY_DUP', 'UP_RARITY_INHERIT', 'UP_RARITY_DROP', 'UP_RARITY_SUM', 'UP_STALE_COMMENT']) ok(FRE.diagHelp[k], `help text for ${k}`);
+}
+
 print(`\n${pass} passed, ${fail} failed`);
 if (fail) System.exit(1);

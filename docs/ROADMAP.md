@@ -1,6 +1,21 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-09 (I part 3, Couple: user-tested and committed; next: K, plan first)._
+_Last updated 2026-10-09 (K part 1 user-tested and committed; next: K part 2, fees, plan first)._
+
+> **Handoff (2026-10-09) — K. Upgrade Rates part 1: user-tested in Brave and committed + pushed. START HERE next session: K part 2 (fees: `upgrade-fees.diff` applied + pushed in V19 by Claude, + an Upgrade fees screen), plan first.** After the test: typed values fold into one step whose toast / undo label say the final value (ui/app.js editGroup, every task); astronomical calculator numbers read "about 9.3 × 10^22". Plan: `/home/kevin/.claude/plans/tingly-frolicking-adleman.md`. User decisions: core ladders + Ultimate + Weapon Rarity (no Baruna); part 2 = fees (`upgrade-fees.diff`, applied + pushed in V19 by Claude, not yet tested in game) + Upgrade fees screen.
+> - **New task card "Upgrade Rates"** (`MODULES` id `upgrade`): Normal upgrade, Element upgrade, Piercing, Accessory upgrade, Collector upgrade, Ultimate weapons (transforms, +1-+10, gems), Weapon Rarity, 🧮 Upgrade calculator. Every chance is the REAL chance (INVESTIGATION §1.24), typed in %; the file value is in the box's tooltip.
+> - **Found:** normal +3 and up are cut ×0.9 (file 1626 = 14.64%); GENERAL2UNIQUE is used by no weapon (each General weapon has its own dwReferTarget2: 1.5 / 2 / 2.5%); piercing costs 100,000 Penya per try (not the formula above in K); a piercing fail without PIEPROT destroys the item.
+> - Python copy `oracle_sim.py upgrade`: every case agrees; 15 of 16 planted bugs caught. Core 1496, UI harness 480 (stages `upgrade`, `upgradecalc`).
+>
+> **User's test:** `tools/refresh-fixtures.sh test-data` (new: ItemUpgrade.lua, s.txt, Ultimate_UltimateWeapon.txt, WeaponRarity.inc + Client copies), `python3 build.py`, reload, pick `test-data`, card **Upgrade Rates**.
+> 1. Normal upgrade: +3 → +4 shows 14.64% (hover: file 1626 × 0.9 = 1463). Type 25 → ⚠ easier than +2 → +3; Undo.
+> 2. Accessory: 20 steps with a Safe window column; Collector: 5 steps at 10%.
+> 3. Ultimate weapons: General → Unique says its line is used by 0 weapons; change Unique → Ultimate to 1.5%.
+> 4. Weapon Rarity: Mythic chance 1 → 2 → ⚠ total 101; change a name and a colour; Undo.
+> 5. 🧮 calculator: Normal +0 → +10, tick the protect scroll → about 326 tries; Run 1,000 items.
+> 6. Save: ItemUpgrade.lua / WeaponRarity.inc (+ Client copy); After saving = Stop / Start Server.bat.
+> 7. By hand: `gjs -m tools/upgrade-sim.js tables`, `gjs -m tools/upgrade-sim.js general protect n=2000`.
+> Then commit + push; next: K part 2 (fees), plan first.
 
 > **Handoff (2026-10-09) — I. Rates & Buffs part 3 (💞 Couple): user-tested in Brave (all 21 steps) and committed + pushed. START HERE next session: K. Upgrade rates, plan first.** Plan: `/home/kevin/.claude/plans/cheeky-weaving-lake.md`. User decisions: edit all four parts; create a loose `Client/couple.inc`; existing buff tiers only; the buff tiers edited like the Guild / Server Buff (stats, name, icon, description).
 > - **New section 💞 Couple** (4 tabs): Time per level (TOTAL points with the time online together, row 22 = end of level 21), Buffs per level (tier per kind, carried rows greyed, ✕ removes a level's own row), Buff tiers (8 cards: 6 stat slots in Spec_Item, name + description in propItem.txt.txt, icon from Client/Item, ✎ Write description from stats), Gifts (+ Add a couple gift / ✎ Edit couple gift / ✕: item, count, male / female / both, bound, time limit).

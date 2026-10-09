@@ -487,7 +487,7 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "62+", "when": "Fri 9 Oct 2026, 16:58", "rev": "92e9655", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when": "Fri 9 Oct 2026, 21:18", "rev": "d5c98e0", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -6254,6 +6254,26 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "62+", "when
     BX_TEMPLATE_MISSING: ['A new box copies the Spec_Item.txt row of II_SYS_SYS_SCR_BXMCOOK01 (a usable box with stack 1, like the boxes 949f2cc2 added). That row is missing.', 'Put the row back, or ask for another template.'],
     BX_MODEL_DUP: ['mdlDyna.inc lists the same model (type and index) twice. CModelMng::LoadScript stops the server and the game at startup with a message box (ModelMng.cpp:455).', 'Remove one of the two lines.'],
     BX_EMPTIED: ['The box no longer has any contents. Players who already own it keep the item, but using it does nothing.', 'Undo if that was not meant, or remove the box from shops and drops too.'],
+    // Upgrade Rates (loaders/upgrade.js: ItemUpgrade.lua, s.txt, Ultimate_UltimateWeapon.txt, WeaponRarity.inc)
+    UP_LUA_ERROR: ['ItemUpgrade.lua is real Lua. When it stops with an error, the server only logs "Run Failed" and keeps empty tables, so every normal upgrade, element upgrade and piercing is refused.', 'Fix the line shown (a missing bracket, quote or comma, or a call to something not defined).'],
+    UP_LUA_VALUE: ['A value in ItemUpgrade.lua is not a number (or AddAttribute has the wrong number of values). The server reads it as 0.', 'Write a whole number.'],
+    UP_TABLE_MISSING: ['The server reads tGeneral, tSuitProb, tWeaponProb and tAttribute after running ItemUpgrade.lua. One of them is not there.', 'Put the table back (Undo, or copy it from the git history of FLYFF-V19-SOURCE).'],
+    UP_TRANSY_MISSING: ['nItemTransyLowLevel / nItemTransyHighLevel set the Penya the gender change (Transy) costs. Without the line the server reads 0.', 'Put the line back, e.g. nItemTransyLowLevel = 500000.'],
+    UP_ZERO: ['This step has a 0% chance: no try ever passes, so no item gets past this level.', 'Type a chance above 0 if players should be able to get there.'],
+    UP_RISE: ['This step is easier than the one below it. Each step is normally harder than the last, so this is often a typing slip.', 'Check the number; leave it if it is meant.'],
+    UP_CAPPED: ['The file value is higher than what 100% needs, so every try passes. Higher numbers change nothing.', 'Nothing to do, or type 100% to write the exact value.'],
+    UP_ATTR_GAP: ['The server looks up an element step by its level and counts how many levels there are. A gap gives that step 0% and makes the top level unreachable.', 'Number the AddAttribute lines 1, 2, 3, … with no gap.'],
+    UP_ATTR_DUP: ['Two AddAttribute lines have the same level; the later one replaces the earlier one.', 'Remove one of them, or give it the right level.'],
+    UP_ACC_ROWS: ['Accessory_Probability holds one row per step, +0 → +1 up to +19 → +20 (20 rows). The server never checks the count: a 21st row writes past the end of its table, a missing row means 0% for that step.', 'Keep exactly 20 rows.'],
+    UP_COLL_EMPTY: ['Collecting_Enchant holds one row per collector level; the highest level is the number of rows. Without rows a collector cannot be upgraded.', 'Put the rows back.'],
+    UP_ULT_MISSING: ['A line of Ultimate_UltimateWeapon.txt is missing, so that chance is 0 (or, for an ULTIMATE_ENCHANT level, the window cancels).', 'Put the line back.'],
+    UP_ULT_DUP: ['The Ultimate file keeps the FIRST row of a level (map::insert): a second row for the same level is ignored.', 'Remove the extra row, or change the first one.'],
+    UP_TRANS_OWN: ['A weapon with its own dwReferTarget2 in Spec_Item.txt uses that number as its transform chance, not GENERAL2UNIQUE / UNIQUE2ULTIMATE.', 'Nothing to do; edit that weapon\'s dwReferTarget2 to change its chance.'],
+    UP_RARITY_DUP: ['Two Add_Weapon_Rarity blocks have the same tier number; the later block replaces the earlier one.', 'Give each block its own tier number.'],
+    UP_RARITY_INHERIT: ['The server reuses one record for every Add_Weapon_Rarity block, so a line a block leaves out keeps the value of the block above it.', 'Write every line in every block if that is not meant.'],
+    UP_RARITY_DROP: ['The Drop block gives each tier its chance in %. It must list exactly one "tier chance" pair per tier block above it, each for a tier that exists.', 'Fix the pairs in Drop.'],
+    UP_RARITY_SUM: ['The Drop chances must add up to 100. Below 100 the rest of the scrolls change nothing (and are used up); above 100 the last tiers get less than written.', 'Make the chances add up to 100.'],
+    UP_STALE_COMMENT: ['The line\'s number changed, but its comment (after -- or //) may still describe the old number.', 'Update or remove the comment by hand if you want the file to stay clear.'],
   };
 })(globalThis.FRE = globalThis.FRE || {});
 
@@ -9115,6 +9135,88 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "62+", "when
     SEX_NAME, MAX_NUM, MAX_MINUTES };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- edit/upgrade-ops.js ----
+// Upgrade Rates edits (task K) as minimal splices: only the number (or the name / colour) token changes; comments, spacing and line
+// ends stay. ItemUpgrade.lua (ASCII, CRLF), s.txt (UTF-8, CRLF; the game's LF copy follows), Ultimate_UltimateWeapon.txt (CP949, CRLF;
+// ASCII inserts only), WeaponRarity.inc (UTF-16LE: a tier name may hold any character but a quote or a line break).
+(function (FRE) {
+  'use strict';
+  const T = FRE.textOps;
+  const U = () => FRE.upgrade;
+
+  function setNumber(span, v, min, max, what) {
+    if (!span) throw new Error(`There is no ${what} to change`);
+    T.checkAmount(v, min, max, what);
+    return T.replaceSpan(span, v);
+  }
+  // a level's chance typed as the REAL chance in percent -> the file value that gives it
+  function setChance(model, sys, level, pct) {
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) throw new Error('Type a chance from 0 to 100 %');
+    const row = U().ladder(model, sys).find(r => r.level === level);
+    if (!row) throw new Error(`${U().SYSTEMS[sys].label}: there is no row for +${level} → +${level + 1}`);
+    const { value } = U().valueForPercent(sys, level, pct);
+    return { splices: T.replaceSpan(row.span, value), value, was: row.value };
+  }
+  // AddAttribute( level, chance, damage, defense, attribute ): field 2-4 (0-based), numbers out of 10,000
+  function setAttrField(call, idx, v, what) {
+    const a = call.args[idx];
+    if (!a) throw new Error(`AddAttribute has no ${what}`);
+    return setNumber(a, v, 0, 2147483647, what);
+  }
+  // Ultimate_UltimateWeapon.txt: SET_GEM / REMOVE_GEM / GENERAL2UNIQUE / UNIQUE2ULTIMATE, out of 1,000,000 (r < p)
+  function setSingle(model, key, pct) {
+    const sp = model.ult.single[key];
+    if (!sp) throw new Error(`Ultimate_UltimateWeapon.txt has no ${key} line`);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) throw new Error('Type a chance from 0 to 100 %');
+    const v = Math.round(pct / 100 * 1000000);
+    return { splices: T.replaceSpan(sp, v), value: v, was: sp.value };
+  }
+  // MAKE_GEM row: gProb / uProb (percent, out of 1,000,000), gNum / uNum (a count)
+  function setMakeGem(row, field, v) {
+    if (field === 'gProb' || field === 'uProb') {
+      if (!Number.isFinite(v) || v < 0 || v > 100) throw new Error('Type a chance from 0 to 100 %');
+      const n = Math.round(v / 100 * 1000000);
+      return { splices: T.replaceSpan(row[field], n), value: n };
+    }
+    T.checkAmount(v, 1, 32767, 'The number of gems');
+    return { splices: T.replaceSpan(row[field], v), value: v };
+  }
+
+  // ---------------------------------------------------------------- WeaponRarity.inc
+  function setRarityNumber(blk, key, v) {
+    const sp = blk.spans[key];
+    if (!sp) throw new Error(`This tier has no ${key} line of its own`);
+    const lim = { pct: [0, 1000, 'The % bonus'], flat: [0, 100000, 'The flat bonus'], level: [1, 1000, 'The tier number'] }[key];
+    T.checkAmount(v, lim[0], lim[1], lim[2]);
+    return T.replaceSpan(sp, v);
+  }
+  function setRarityName(blk, name) {
+    const v = String(name).trim();
+    if (!v) throw new Error('A tier needs a name');
+    if (/["\r\n\t]/.test(v)) throw new Error('A tier name cannot hold a quote, a tab or a line break');
+    if (v.length > 63) throw new Error('At most 63 characters');
+    const sp = blk.spans.name;
+    if (!sp) throw new Error('This tier has no szName line');
+    // the token is "…" (type string: start/end take in the quotes) or a bare word
+    return [{ start: sp.start, end: sp.end, insert: `"${v}"` }];
+  }
+  // #RRGGBB (or RRGGBB) -> 0xFFRRGGBB in the file's case (0xFF… upper case, the 3168003d style)
+  function setRarityColor(blk, rgb) {
+    const m = /^#?([0-9a-fA-F]{6})$/.exec(String(rgb).trim());
+    if (!m) throw new Error('A colour is 6 hex digits, e.g. #FF8800');
+    const sp = blk.spans.color;
+    if (!sp) throw new Error('This tier has no dwColor line of its own');
+    return T.replaceSpan(sp, '0xFF' + m[1].toUpperCase());
+  }
+  const colorHex = v => '#' + ((v >>> 0) & 0xFFFFFF).toString(16).toUpperCase().padStart(6, '0');
+  function setDropLuck(row, v) {
+    T.checkAmount(v, 0, 100, 'The chance (%)');
+    return T.replaceSpan(row.luck, v);
+  }
+
+  FRE.upgradeOps = { setNumber, setChance, setAttrField, setSingle, setMakeGem, setRarityNumber, setRarityName, setRarityColor, setDropLuck, colorHex };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- validate/newnpc.js ----
 // Rules for a new NPC (docs/HANDOFF-ADD-NPC.md §6). They judge only the new NPC against the
 // loaded data; old quirks in the files never block it. BLOCK = the form cannot be saved.
@@ -11414,6 +11516,618 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "62+", "when
   FRE.coupleChecks.textLine = textLine;
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/upgrade.js ----
+// Upgrade Rates (task K): the upgrade chance tables, read the way the server reads them, with the offsets the edits need. No DOM.
+//   ItemUpgrade.lua   real Lua run by CItemUpgrade::LoadScript (WORLDSERVER/ItemUpgrade.cpp:56-122; the constructor :31, WorldServer
+//                     only). Globals read after the run: tSuitProb, tWeaponProb (piercing: slot n = key n, GetSizeProb :309), tGeneral
+//                     (normal +N: key = level + 1, GetGeneralEnchantProb :1285), tAttribute (filled by AddAttribute( n, prob, dmg, def,
+//                     addAtk ): element +N, GetAttributeEnchantProb :1911), nItemTransyLowLevel / HighLevel (:118). Every value goes
+//                     through static_cast<int>( lua_tonumber ): decimals are cut. A script that fails to run (RunScript != 0, :59) only
+//                     logs "ItemUpgrade.lua Run Failed": the tables stay empty, and GetMax…EnchantSize() = 0 refuses every upgrade.
+//                     5208bb88 / 0cdedeec: the rounds of in-game tuning (each old value kept in a comment).
+//   s.txt             CProject::LoadServerScript (Project.cpp:5684, WorldServer :994): Accessory_Probability fills
+//                     m_adwProbability[MAX_AAO = 20] with no bound check (accessory.h:27; a 21st row writes past the table),
+//                     Collecting_Enchant one int per collector level (out of 1,000; GetMaxCollectorLevel = the row count, collecting.h:27).
+//                     The game reads its own LF copy (Client/s.txt) for the Collector Details window: only the collecting blocks
+//                     (LoadCollectingInfo, Project.cpp:5785; 15091d5f).
+//   Ultimate_UltimateWeapon.txt  CUltimateWeapon::Load_UltimateWeapon (_Common/UltimateWeapon.cpp:116, #ifdef __WORLDSERVER), a bare
+//                     CScanner: SET_GEM, REMOVE_GEM, GENERAL2UNIQUE, UNIQUE2ULTIMATE (one number each, out of 1,000,000), MAKE_GEM
+//                     { level gProb gNum uProb uNum }, ULTIMATE_ENCHANT { level prob }; both maps keep the FIRST row of a level
+//                     (map::insert). A weapon's own dwReferTarget2 replaces the transform chance (:591).
+//   WeaponRarity.inc  CProject::LoadWeaponRarity (Project.cpp:494, both the WorldServer and the game: Project.cpp:971), a CScript:
+//                     Add_Weapon_Rarity { nRarityLevel = n; szName = "…"; dwColor = 0x…; nStatsPctBonus = n; nStatsFlatBonus = n; }
+//                     (one struct reused: a field a block leaves out keeps the block above's value), then Drop { level luck … } with
+//                     exactly as many pairs as blocks before it; the lucks must add up to 100 (else Error, :576). 3168003d.
+// Not modelled: Baruna.lua (the user left Baruna out, 2026-10-09); PiercingSize.txt (nothing loads it).
+(function (FRE) {
+  'use strict';
+  const MAX_AAO = 20;                                   // accessory.h:4
+  const span = r => ({ start: r.start, end: r.end, value: r.value });
+
+  // ---------------------------------------------------------------- ItemUpgrade.lua
+  const LUA_KNOWN = new Set('print tonumber tostring pairs ipairs type math string table'.split(' '));
+  const LUA_KEYWORDS = new Set('and break do else elseif end false for function goto if in local nil not or repeat return then true until while'.split(' '));
+  const luaNum = t => /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(t) ? Number(t) : NaN;
+
+  // -> { tables: { name: { open, close, items: [{ value, start, end }] } }, numbers: { name: span }, attr: [{ args, stmt }],
+  //      fns: Set, errors: [{ start, end, message }], failed }
+  function loadLua(file) {
+    const res = { file: file ? file.name : 'ItemUpgrade.lua', tables: {}, numbers: {}, attr: [], fns: new Set(), errors: [], failed: false, missing: !file };
+    if (!file) return res;
+    const text = file.text;
+    const bl = FRE.rates.blankLua(text), bt = bl.text;
+    for (const b of bl.bad) res.errors.push({ start: b.start, end: b.end, message: `ItemUpgrade.lua has ${b.what}` });
+    // brackets
+    const stack = [], PAIR = { ')': '(', ']': '[', '}': '{' };
+    for (let i = 0; i < bt.length; i++) {
+      const c = bt[i];
+      if (c === '(' || c === '[' || c === '{') stack.push(i);
+      else if (PAIR[c]) {
+        if (!stack.length || bt[stack[stack.length - 1]] !== PAIR[c]) { res.errors.push({ start: i, end: i + 1, message: `ItemUpgrade.lua has a "${c}" with nothing to close` }); break; }
+        stack.pop();
+      }
+    }
+    if (stack.length) { const i = stack[stack.length - 1]; res.errors.push({ start: i, end: i + 1, message: `ItemUpgrade.lua has a "${bt[i]}" that is never closed` }); }
+    // function blocks: function NAME( … ) … end (blocks: function / if / do open, end closes)
+    const fnSpans = [];
+    const reFn = /\bfunction\s+([A-Za-z_]\w*)\s*\(/g;
+    let m;
+    while ((m = reFn.exec(bt))) {
+      let depth = 0, end = -1;
+      const reKw = /\b(function|if|do|end)\b/g;
+      reKw.lastIndex = m.index;
+      let k;
+      while ((k = reKw.exec(bt))) {
+        if (k[1] === 'end') { depth--; if (!depth) { end = k.index + 3; break; } } else depth++;
+      }
+      if (end < 0) { res.errors.push({ start: m.index, end: m.index + m[0].length, message: `function ${m[1]} has no closing "end"` }); end = bt.length; }
+      fnSpans.push({ name: m[1], start: m.index, end });
+      reFn.lastIndex = end;
+    }
+    const inFn = i => fnSpans.some(f => i >= f.start && i < f.end);
+    // top-level statements: NAME = { … } / NAME = number / NAME = {} and calls NAME( … ); in file order (a call before its function fails)
+    const defined = new Set();
+    const reSt = /\b([A-Za-z_]\w*)\s*(=\s*(\{[^{}]*\}|[^\s;]+)|\(((?:[^()]|\([^()]*\))*)\))/g;
+    let fi = 0;
+    while ((m = reSt.exec(bt))) {
+      while (fi < fnSpans.length && fnSpans[fi].end <= m.index) { defined.add(fnSpans[fi].name); fi++; }
+      if (inFn(m.index)) { const f = fnSpans.find(x => m.index >= x.start && m.index < x.end); reSt.lastIndex = f.end; continue; }
+      const name = m[1];
+      if (LUA_KEYWORDS.has(name)) { reSt.lastIndex = m.index + name.length; continue; }
+      const before = bt.slice(Math.max(0, m.index - 1), m.index);
+      if (before === '.' || before === ':') continue;
+      if (m[2].startsWith('=')) {
+        if (bt[m.index + m[0].indexOf('=') + 1] === '=') continue;          // ==
+        const valStart = m.index + m[0].indexOf(m[3]);
+        const v = m[3];
+        if (v.startsWith('{')) {
+          const items = [];
+          const inner = bt.slice(valStart + 1, valStart + v.length - 1);
+          const reN = /[^,;\s]+/g;
+          let n;
+          while ((n = reN.exec(inner))) {
+            const s = valStart + 1 + n.index, t = text.slice(s, s + n[0].length), val = luaNum(t);
+            if (!Number.isFinite(val)) res.errors.push({ start: s, end: s + n[0].length, message: `${name} holds "${t}", not a number: the server reads it as 0`, warn: true });
+            items.push({ value: Number.isFinite(val) ? Math.trunc(val) : 0, raw: t, start: s, end: s + n[0].length });
+          }
+          res.tables[name] = { open: { start: valStart, end: valStart + 1 }, close: { start: valStart + v.length - 1, end: valStart + v.length }, items, stmt: { start: m.index, end: valStart + v.length } };
+        } else {
+          const t = text.slice(valStart, valStart + v.length), val = luaNum(t);
+          res.numbers[name] = { value: Number.isFinite(val) ? Math.trunc(val) : NaN, raw: t, start: valStart, end: valStart + v.length, stmt: { start: m.index, end: valStart + v.length } };
+        }
+        continue;
+      }
+      // a call
+      const open = m.index + m[0].indexOf('(') + 1, close = m.index + m[0].length - 1;
+      if (!defined.has(name) && !LUA_KNOWN.has(name)) {
+        res.errors.push({ start: m.index, end: m.index + m[0].length, message: fnSpans.some(f => f.name === name)
+          ? `${name}() is called before "function ${name}" is defined (Lua: attempt to call a nil value)`
+          : `ItemUpgrade.lua calls ${name}(), which nothing defines (Lua: attempt to call a nil value)` });
+        continue;
+      }
+      if (name === 'AddAttribute') {
+        const args = FRE.rates.argSpans(text, open, close).map(a => ({ value: Math.trunc(luaNum(a.text)), raw: a.text, start: a.start, end: a.end }));
+        res.attr.push({ args, stmt: { start: m.index, end: m.index + m[0].length } });
+        if (args.length !== 5 || args.some(a => !Number.isFinite(a.value))) res.errors.push({ start: m.index, end: m.index + m[0].length, message: 'AddAttribute( level, chance, damage, defense, attribute ) needs 5 numbers', warn: true });
+      }
+    }
+    if (res.attr.length && !(res.tables.tAttribute && res.tables.tAttribute.stmt.start < res.attr[0].stmt.start))
+      res.errors.push({ start: res.attr[0].stmt.start, end: res.attr[0].stmt.end, message: 'AddAttribute runs before "tAttribute = {}" (Lua: attempt to index a nil value)' });
+    res.failed = res.errors.some(e => !e.warn);
+    for (const f of fnSpans) res.fns.add(f.name);
+    return res;
+  }
+
+  // the tables as the server holds them after the run (lua_next order does not matter: maps by key)
+  function luaTables(L) {
+    if (L.failed) return { general: [], suit: [], weapon: [], attr: [], transy: { low: 1000000, high: 2000000 } };
+    const t = n => (L.tables[n] ? L.tables[n].items : []);
+    // tAttribute[n] = …: a level written twice keeps the LAST call (a Lua table, not a map::insert)
+    const byLevel = new Map();
+    for (const a of L.attr) if (a.args.length >= 2) byLevel.set(a.args[0].value, a);
+    const attr = [...byLevel.keys()].sort((a, b) => a - b).map(k => ({ level: k, call: byLevel.get(k) }));
+    const num = (n, d) => (L.numbers[n] && Number.isFinite(L.numbers[n].value) ? L.numbers[n].value : d);
+    return { general: t('tGeneral'), suit: t('tSuitProb'), weapon: t('tWeaponProb'), attr,
+      // GetGlobalNumber of a missing global = lua_tonumber( nil ) = 0
+      transy: { low: L.numbers.nItemTransyLowLevel ? num('nItemTransyLowLevel', 0) : 0, high: L.numbers.nItemTransyHighLevel ? num('nItemTransyHighLevel', 0) : 0 } };
+  }
+
+  // ---------------------------------------------------------------- s.txt
+  function loadS(file, defines) {
+    const res = { file: file ? file.name : 's.txt', acc: [], accBlock: null, coll: [], collBlock: null, missing: !file };
+    if (!file) return res;
+    const s = new FRE.lexer.Script(file.text, { file: file.name, defines, diags: [] });
+    const block = into => {
+      const open = s.getToken();
+      let n = s.getNumber();
+      while (s.token.text[0] !== '}' && !s.eof) { into.push(span(n)); n = s.getNumber(); }
+      return { open: { start: open.start, end: open.end }, close: s.token.text[0] === '}' ? { start: s.token.start, end: s.token.end } : null };
+    };
+    s.getToken();
+    while (!s.eof) {
+      const t = s.token.text;
+      if (t === 'Accessory_Probability') res.accBlock = block(res.acc);
+      else if (t === 'Collecting_Enchant') res.collBlock = block(res.coll);
+      s.getToken();
+    }
+    return res;
+  }
+
+  // ---------------------------------------------------------------- Ultimate_UltimateWeapon.txt (bare CScanner: no defines)
+  function loadUltimate(file) {
+    const res = { file: file ? file.name : 'Ultimate_UltimateWeapon.txt', single: {}, makeGem: [], makeBlock: null, enchant: [], enchantBlock: null, missing: !file };
+    if (!file) return res;
+    const s = new FRE.lexer.Script(file.text, { file: file.name, diags: [] });
+    s.getToken();
+    while (!s.eof) {
+      const t = s.token.text;
+      if (['SET_GEM', 'REMOVE_GEM', 'GENERAL2UNIQUE', 'UNIQUE2ULTIMATE'].includes(t)) res.single[t] = { ...span(s.getNumber()), key: t };
+      else if (t === 'MAKE_GEM' || t === 'ULTIMATE_ENCHANT') {
+        const open = s.getToken();
+        let tok = s.getToken();
+        while (tok.text[0] !== '}' && !s.eof) {
+          const lv = { value: FRE.lexer.atoi(tok.text).value, start: tok.start, end: tok.end };
+          if (t === 'MAKE_GEM') {
+            const gp = s.getNumber(), gn = s.getNumber(), up = s.getNumber(), un = s.getNumber();
+            res.makeGem.push({ level: lv, gProb: span(gp), gNum: span(gn), uProb: span(up), uNum: span(un), start: lv.start, end: un.end });
+          } else {
+            const p = s.getNumber();
+            res.enchant.push({ level: lv, prob: span(p), start: lv.start, end: p.end });
+          }
+          tok = s.getToken();
+        }
+        const blk = { open: { start: open.start, end: open.end }, close: tok.text[0] === '}' ? { start: tok.start, end: tok.end } : null };
+        if (t === 'MAKE_GEM') res.makeBlock = blk; else res.enchantBlock = blk;
+      }
+      s.getToken();
+    }
+    return res;
+  }
+  // map::insert keeps the first row of a level
+  function firstByLevel(rows) {
+    const m = new Map();
+    for (const r of rows) if (!m.has(r.level.value)) m.set(r.level.value, r);
+    return m;
+  }
+
+  // ---------------------------------------------------------------- WeaponRarity.inc
+  function loadRarity(file, defines) {
+    const res = { file: file ? file.name : 'WeaponRarity.inc', blocks: [], tiers: new Map(), high: 0, drop: [], dropBlock: null, dropTotal: 0, dropErrors: [], missing: !file };
+    if (!file) return res;
+    const s = new FRE.lexer.Script(file.text, { file: file.name, defines, diags: [] });
+    const cur = { level: 0, name: null, color: 0, pct: 0, flat: 0, luck: 0 };   // ZeroMemory once, then reused
+    s.getToken();
+    while (!s.eof) {
+      const t = s.token.text;
+      if (t === 'Add_Weapon_Rarity') {
+        const open = s.getToken();
+        const blk = { start: open.start, open: { start: open.start, end: open.end }, close: null, spans: {} };
+        let tok = s.token;
+        while (tok.text !== '}' && !s.eof) {
+          const f = tok.text;
+          if (f === 'nRarityLevel' || f === 'nStatsPctBonus' || f === 'nStatsFlatBonus' || f === 'dwColor') {
+            s.getToken();                                      // =
+            const n = s.getNumber();
+            const key = { nRarityLevel: 'level', nStatsPctBonus: 'pct', nStatsFlatBonus: 'flat', dwColor: 'color' }[f];
+            cur[key] = f === 'dwColor' ? n.value >>> 0 : n.value;
+            blk.spans[key] = { start: n.start, end: n.end, value: cur[key], hex: f === 'dwColor' };
+            if (key === 'level' && cur.level > res.high) res.high = cur.level;
+            s.getToken();                                      // ;
+          } else if (f === 'szName') {
+            s.getToken();                                      // =
+            const n = s.getToken();
+            cur.name = n.text;
+            blk.spans.name = { start: n.start, end: n.end, value: n.text, quoted: n.type === 'string' };
+            s.getToken();                                      // ;
+          }
+          tok = s.getToken();
+        }
+        blk.close = tok.text === '}' ? { start: tok.start, end: tok.end } : null;
+        blk.end = blk.close ? blk.close.end : tok.end;
+        blk.value = { level: cur.level, name: cur.name, color: cur.color, pct: cur.pct, flat: cur.flat };
+        res.blocks.push(blk);
+        res.tiers.set(cur.level, { ...blk.value, luck: 0, block: blk });       // SetAtGrow: a level written twice keeps the last
+      } else if (t === 'Drop') {
+        const open = s.getToken();
+        let total = 0;
+        for (let i = 0; i < res.blocks.length; i++) {
+          const lv = s.getNumber(), luck = s.getNumber();
+          const tier = res.tiers.get(lv.value);
+          res.drop.push({ level: span(lv), luck: span(luck), start: lv.start, end: luck.end, found: !!tier });
+          if (tier) { tier.luck = luck.value; total += luck.value; }
+          else res.dropErrors.push({ start: lv.start, end: lv.end, level: lv.value });
+        }
+        const close = s.getToken();
+        res.dropBlock = { open: { start: open.start, end: open.end }, close: close.text === '}' ? { start: close.start, end: close.end } : null, closeTok: { start: close.start, end: close.end, text: close.text } };
+        res.dropTotal = total;
+      }
+      s.getToken();
+    }
+    return res;
+  }
+  // CItemElem::SetRandomWeaponRarity (Item.cpp:724): r = xRandom( 100 ), the first tier 1..high whose running luck total passes r.
+  // -> [{ level, chance (0..1) }] + the chance that nothing changes (the total stays below 100)
+  function rarityChances(R) {
+    const out = [];
+    let total = 0;
+    for (let i = 1; i <= R.high; i++) {
+      const t = R.tiers.get(i);
+      if (!t) continue;
+      const a = Math.min(100, Math.max(0, total)), b = Math.min(100, Math.max(0, total + t.luck));
+      total += t.luck;
+      out.push({ level: i, chance: Math.max(0, b - a) / 100 });
+    }
+    const nothing = 1 - out.reduce((x, y) => x + y.chance, 0);
+    return { tiers: out, nothing: Math.max(0, Math.round(nothing * 100) / 100) };
+  }
+
+  // ---------------------------------------------------------------- real chances
+  // Every roll is xRandom( n ) = 0 .. n-1. "count" = how many of the n results succeed.
+  //   le: success when r <= p   (fail if r > p:  EnchantGeneral :1229, SmeltSafetyGeneral :667, EnchantAttribute :1788,
+  //                                              OnPiercingSize :262 / SmeltSafetyPiercingSize :838 (p < r fails),
+  //                                              SmeltSafetyAccessory :743, SmeltSafetyUltimate UltimateWeapon.cpp:814)
+  //   lt: success when r < p    (RefineAccessory :900, RefineCollector :963, EnchantWeapon UltimateWeapon.cpp:733,
+  //                                              transforms :632, SetGem :333, RemoveGem :391, MakeGem :258)
+  const countOf = (mode, p, n) => Math.max(0, Math.min(n, mode === 'le' ? p + 1 : p));
+  const valueFor = (mode, count) => (mode === 'le' ? count - 1 : count);
+  // the overseas cut (GetGeneralEnchantProb :1293): not LANG_KOR (the WorldServer is LANG_USA, WorldServer.rc:137) and level >= 3
+  const f32 = Math.fround;
+  const cut90 = (p, level) => (level >= 3 ? Math.trunc(f32(f32(p) * f32(0.9))) : p);
+  // the file value that gives `count` after the cut (the smallest one)
+  function uncut90(count, level, mode) {
+    const want = valueFor(mode, count);
+    if (level < 3 || want < 0) return want;
+    let p = Math.max(0, Math.floor(want / 0.9) - 2);
+    while (cut90(p, level) < want) p++;
+    return p;
+  }
+
+  // the systems: { id, file, n (out of), mode, cut } and how a level's file value is found
+  const SYSTEMS = {
+    general: { label: 'Normal upgrade', n: 10000, mode: 'le', cut: true },
+    attr: { label: 'Element upgrade', n: 10000, mode: 'le' },
+    weapon: { label: 'Weapon piercing', n: 10000, mode: 'le' },
+    suit: { label: 'Armor piercing', n: 10000, mode: 'le' },
+    acc: { label: 'Accessory upgrade', n: 10000, mode: 'lt', safeMode: 'le' },
+    coll: { label: 'Collector upgrade', n: 1000, mode: 'lt' },
+    ult: { label: 'Ultimate upgrade', n: 1000000, mode: 'lt', safeMode: 'le' },
+  };
+  // the ladder of one system: [{ level (from), value (file), eff (after the cut), count, chance, safeCount, safeChance, span }]
+  function ladder(model, sys) {
+    const S = SYSTEMS[sys], t = model.t;
+    let rows;
+    if (sys === 'general') rows = t.general.map((x, i) => ({ level: i, span: x, value: x.value }));
+    else if (sys === 'weapon' || sys === 'suit') rows = t[sys].map((x, i) => ({ level: i, span: x, value: x.value }));
+    else if (sys === 'attr') rows = t.attr.map(a => ({ level: a.level - 1, span: a.call.args[1], value: a.call.args[1].value, call: a.call }));
+    else if (sys === 'acc') rows = model.s.acc.slice(0, MAX_AAO).map((x, i) => ({ level: i, span: x, value: x.value }));
+    else if (sys === 'coll') rows = model.s.coll.map((x, i) => ({ level: i, span: x, value: x.value }));
+    else if (sys === 'ult') { const m = firstByLevel(model.ult.enchant); rows = [...m.keys()].sort((a, b) => a - b).map(k => ({ level: k - 1, span: m.get(k).prob, value: m.get(k).prob.value, row: m.get(k) })); }
+    return rows.map(r => {
+      const eff = S.cut ? cut90(r.value, r.level) : r.value;
+      const count = countOf(S.mode, eff, S.n);
+      const o = { ...r, eff, count, chance: count / S.n };
+      if (S.safeMode) { o.safeCount = countOf(S.safeMode, eff, S.n); o.safeChance = o.safeCount / S.n; }
+      return o;
+    });
+  }
+  // a typed real % -> the file value (rounded to the system's unit); -> { value, count }
+  function valueForPercent(sys, level, pct) {
+    const S = SYSTEMS[sys];
+    const count = Math.max(0, Math.min(S.n, Math.round(pct / 100 * S.n)));
+    const value = S.cut ? uncut90(count, level, S.mode) : valueFor(S.mode, count);
+    return { value, count };
+  }
+  // a single-roll chance (Ultimate file): r < p out of 1,000,000
+  const singleChance = p => countOf('lt', p, 1000000) / 1000000;
+
+  // ---------------------------------------------------------------- the workspace model
+  function fromWorkspace(ws) {
+    const D = ws.defines.defines;
+    const lua = loadLua(ws.files.get('itemupgrade.lua'));
+    const m = { lua, t: luaTables(lua), s: loadS(ws.files.get('s.txt'), D), ult: loadUltimate(ws.files.get('ultimate_ultimateweapon.txt')),
+      rarity: loadRarity(ws.files.get('weaponrarity.inc'), D) };
+    m.scrolls = rateScrolls(ws);
+    return m;
+  }
+  // the success-rate scrolls in Spec_Item (IK3_… _ENCHANT_RATE / _UPGRADE_RATE): nEffectValue in the enchant range
+  function rateScrolls(ws) {
+    const D = ws.defines.defines, out = [];
+    const kinds = { IK3_GENERAL_ENCHANT_RATE: 'general', IK3_GENERAL_WEAPON_ENCHANT_RATE: 'generalWeapon', IK3_GEN_ATT_ENCHANT_RATE: 'attr', IK3_ULTIMATE_UPGRADE_RATE: 'transform' };
+    const ik = new Map(Object.keys(kinds).filter(k => D.has(k)).map(k => [D.get(k), kinds[k]]));
+    for (const it of ws.items.items.values()) {
+      const k = ik.get(FRE.specItem.get(it, 'dwItemKind3'));
+      if (!k) continue;
+      out.push({ id: it.id, define: it.define, name: it.name || it.define, kind: k, value: FRE.specItem.get(it, 'nEffectValue') | 0,
+        min: FRE.specItem.get(it, 'nTargetMinEnchant') | 0, max: FRE.specItem.get(it, 'nTargetMaxEnchant') | 0 });
+    }
+    return out.sort((a, b) => a.id - b.id);
+  }
+
+  FRE.upgrade = { MAX_AAO, SYSTEMS, loadLua, luaTables, loadS, loadUltimate, firstByLevel, loadRarity, rarityChances, ladder, valueForPercent,
+    countOf, cut90, uncut90, singleChance, fromWorkspace, rateScrolls };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/upgrade-sim.js ----
+// Upgrading in game (task K): one try, many tries with the server's rolls, and the exact averages. Ports (WORLDSERVER/ItemUpgrade.cpp
+// unless noted; __UPGRADE_SUCCESS_SCROLL is ON and __SM_ITEM_2ND_EX / __15_5TH_ELEMENTAL_SMELT_SAFETY are OFF, VersionCommon.h):
+//   general  normal window CItemUpgrade::EnchantGeneral :1098: chance GetGeneralEnchantProb( level ) (×0.9 from +3, :1293), SMELPROT
+//            buff = keep the item (:1149), rate buffs IK3_GENERAL_WEAPON_ENCHANT_RATE (weapons only) then IK3_GENERAL_ENCHANT_RATE:
+//            + nEffectValue when nTargetMinEnchant <= level <= nTargetMaxEnchant, the buff used up only then (:1193-1226);
+//            fail if xRandom( 10000 ) > chance (:1229); a fail from +3 without SMELPROT destroys the item (:1239-1256).
+//            safe window SmeltSafetyGeneral :589: a SMELPROT scroll used up every try, fail = nothing lost (:667); the scroll slot
+//            takes only II_SYS_SYS_SCR_SMELTING: +1000 below +7 (:623-643).
+//   attr     EnchantAttribute :1659: GetAttributeEnchantProb (no cut), SMELPROT buff, II_SYS_SYS_SCR_SMELTING2 buff +1000 below +10
+//            (:1723), IK3_GEN_ATT_ENCHANT_RATE buff (:1769); fail if xRandom( 10000 ) > chance; from +3 without SMELPROT: destroyed.
+//   weapon / suit  piercing: OnPiercingSize :181: 100,000 Penya every try (:231), chance GetSizeProb (slot = size + 1, :309),
+//            fail if chance < xRandom( 10000 ) (:262); a fail without the II_SYS_SYS_SCR_PIEPROT item destroys the item (:274);
+//            safe window SmeltSafetyPiercingSize :771: PIEPROT used up every try, 100,000 Penya, fail = nothing lost (:838).
+//   acc      RefineAccessory :866: success if xRandom( 10000 ) < chance (:900); fail from +3 without the SMELPROT4 buff: destroyed (:920);
+//            safe SmeltSafetyAccessory :699: SMELPROT4 used up, fail if xRandom( 10000 ) > chance (:743), nothing lost. Max +20 (MAX_AAO).
+//   coll     RefineCollector :935: success if xRandom( 1000 ) < chance (:963), a fail loses only the moonstone; max = the row count.
+//   ult      CUltimateWeapon::EnchantWeapon (_Common/UltimateWeapon.cpp:681): success if xRandom( 1000000 ) < chance (:733); a fail
+//            without the SMELPROT3 buff destroys the weapon at any level (:753); safe SmeltSafetyUltimate (:795-840): SMELPROT3 used
+//            up, fail if xRandom( 1000000 ) > chance (:814), nothing lost. Max +10 (:701).
+//   transform  CUltimateWeapon::TransWeapon (UltimateWeapon.cpp:548-678): General -> Unique GENERAL2UNIQUE, a fail destroys the weapon;
+//            Unique (+10 only) -> Ultimate UNIQUE2ULTIMATE with a SMELPROT3 scroll always used up (aaadddff), a fail keeps it; the
+//            weapon's own dwReferTarget2 replaces the chance (:591); an IK3_ULTIMATE_UPGRADE_RATE buff adds (WORD)nEffectValue × 100
+//            in its level range (:595-611); success if xRandom( 1000000 ) < chance (:632).
+// Materials per try: orichalcum (general), the element card (attr), a moonstone (piercing, accessory, collector), shining orichalcum
+// (ult), the gems (transform). Not modelled: which items may be upgraded or pierced at all (IsDiceRefineryAble, IsPierceAble and the
+// item's own slot limit), the element-card level check (WhatEleCard), equipped / trading refusals, the 15.5 safe element window
+// (compiled out), Baruna.
+(function (FRE) {
+  'use strict';
+  const U = () => FRE.upgrade;
+  const PIERCE_PENYA = 100000;                                    // ItemUpgrade.cpp:231 / :797 (compiled)
+
+  // the chance of one try at `level` (before the roll), the roll size and how it compares
+  //   opts: { window: 'normal'|'safe', protect: bool, scrolls: [scroll], smelting: bool (safe general / SMELTING2 for attr), weapon: bool }
+  // -> { n, mode, chance (the number compared), used: [scroll ids used up], fail: 'keep'|'break', max }
+  function plan(model, sys, level, opts = {}) {
+    const S = U().SYSTEMS[sys] || {}, safe = opts.window === 'safe';
+    const lad = sys === 'transform' ? null : U().ladder(model, sys);
+    const row = lad ? lad.find(r => r.level === level) : null;
+    const used = [];
+    let chance = row ? row.eff : 0, n = S.n, mode = safe && S.safeMode ? S.safeMode : S.mode, fail = 'keep';
+    const max = lad ? maxLevel(model, sys, lad) : 1;
+    const addRate = kind => {
+      for (const s of opts.scrolls || []) if (s.kind === kind && level >= s.min && level <= s.max) { chance += s.value; used.push(s.id); break; }
+    };
+    if (sys === 'general') {
+      if (safe) { if (opts.smelting && level < 7) { chance += 1000; used.push('smelting'); } }
+      else {
+        if (opts.weapon) addRate('generalWeapon');
+        addRate('general');
+        if (level >= 3 && !opts.protect) fail = 'break';
+      }
+    } else if (sys === 'attr') {
+      if (opts.smelting && level < 10) { chance += 1000; used.push('smelting2'); }
+      addRate('attr');
+      if (level >= 3 && !opts.protect) fail = 'break';
+    } else if (sys === 'weapon' || sys === 'suit') {
+      if (!safe && !opts.protect) fail = 'break';
+    } else if (sys === 'acc') {
+      if (!safe && !opts.protect && level >= 3) fail = 'break';
+    } else if (sys === 'ult') {
+      if (!safe && !opts.protect) fail = 'break';
+    } else if (sys === 'transform') {
+      const s = model.ult.single, uni = opts.to === 'ultimate';
+      chance = opts.override != null ? opts.override : (s[uni ? 'UNIQUE2ULTIMATE' : 'GENERAL2UNIQUE'] || { value: 0 }).value;
+      n = 1000000; mode = 'lt';
+      if (uni) {
+        for (const sc of opts.scrolls || []) if (sc.kind === 'transform' && 10 >= sc.min && 10 <= sc.max) { chance += (sc.value & 0xFFFF) * 100; used.push(sc.id); break; }
+      }
+      fail = uni ? 'keep' : 'break';
+    }
+    return { n, mode, chance, used, fail, max, have: !!row || sys === 'transform' };
+  }
+  // the highest level a system can reach: the table size (GetMax…EnchantSize = map size; MAX_AAO; collector row count; Ultimate +10)
+  function maxLevel(model, sys, lad) {
+    if (sys === 'acc') return U().MAX_AAO;
+    if (sys === 'ult') return 10;
+    if (sys === 'weapon' || sys === 'suit') return (lad || U().ladder(model, sys)).length;
+    return (lad || U().ladder(model, sys)).length;
+  }
+  const succeeds = (p, r) => (p.mode === 'le' ? r <= p.chance : r < p.chance);
+  const chanceOf = p => U().countOf(p.mode, p.chance, p.n) / p.n;
+
+  // one try with a roll from rng -> { level, roll, ok, result: 'up'|'keep'|'break', used, penya }
+  function attempt(model, sys, level, opts, rng) {
+    const p = plan(model, sys, level, opts);
+    const penya = (sys === 'weapon' || sys === 'suit') ? PIERCE_PENYA : 0;
+    const r = rng.random(p.n);
+    const ok = succeeds(p, r);
+    return { level, roll: r, ok, result: ok ? 'up' : p.fail, used: p.used, penya, protect: protectUsed(sys, opts, level) };
+  }
+  // the protect item / buff used up on this try
+  function protectUsed(sys, opts, level) {
+    if (sys === 'transform') return opts.to === 'ultimate' ? 1 : 0;        // Unique -> Ultimate always takes a SMELPROT3 (aaadddff)
+    if (sys === 'coll') return 0;
+    if (opts.window === 'safe') return 1;                                   // the safe windows always take the scroll
+    if (!opts.protect) return 0;
+    return 1;                                                                // SMELPROT / SMELPROT4 / SMELPROT3 buff, PIEPROT item
+  }
+
+  // many items from `from` to `to`, each until it gets there or breaks; at most `cap` tries per item
+  // -> { items: [{ tries, reached, broke, end }], totals: { tries, material, protect, scrolls, penya, reached, broke }, log: [first 40 tries] }
+  function run(model, sys, from, to, opts, seed, count = 1, cap = 100000) {
+    const rng = FRE.xRandom.rng(seed);
+    const items = [], log = [];
+    const totals = { tries: 0, material: 0, protect: 0, scrolls: 0, penya: 0, reached: 0, broke: 0 };
+    for (let i = 0; i < count; i++) {
+      let level = from, tries = 0, broke = false;
+      while (level < to && tries < cap) {
+        const a = attempt(model, sys, level, opts, rng);
+        tries++; totals.material++; totals.protect += a.protect; totals.scrolls += a.used.length; totals.penya += a.penya;
+        if (log.length < 40) log.push([i, a.level, a.roll, a.result]);
+        if (a.result === 'up') level++;
+        else if (a.result === 'break') { broke = true; break; }
+      }
+      totals.tries += tries;
+      if (level >= to) totals.reached++;
+      if (broke) totals.broke++;
+      items.push({ tries, reached: level >= to, broke, end: level });
+    }
+    return { items, totals, log };
+  }
+
+  // the exact averages from `from` to `to` (a Markov chain: fail = stay or break)
+  // -> { rows: [{ level, chance, fail, reach, tries }], reach (one item gets there), triesPerItem, per: { tries, items, protect, scrolls, penya } (per finished item,
+  //      starting again with a new item after a break), never (a level that can never pass) }
+  function expect(model, sys, from, to, opts) {
+    const rows = [];
+    let reach = 1, tries = 0, protect = 0, scrolls = 0, penya = 0, never = null;
+    for (let L = from; L < to; L++) {
+      const p = plan(model, sys, L, opts), c = chanceOf(p);
+      let t;
+      if (p.fail === 'keep') t = c > 0 ? 1 / c : Infinity;
+      else t = 1;
+      const here = reach * t;
+      rows.push({ level: L, chance: c, fail: p.fail, reach, tries: here });
+      tries += here;
+      protect += here * protectUsed(sys, opts, L);
+      scrolls += here * p.used.length;
+      if (sys === 'weapon' || sys === 'suit') penya += here * PIERCE_PENYA;
+      if (c <= 0) { never = L; reach = 0; break; }
+      if (p.fail === 'break') reach *= c;
+    }
+    const per = reach > 0 ? { tries: tries / reach, items: 1 / reach, protect: protect / reach, scrolls: scrolls / reach, penya: penya / reach } : null;
+    return { rows, reach, triesPerItem: tries, per, never };
+  }
+
+  FRE.upgradeSim = { PIERCE_PENYA, plan, maxLevel, attempt, run, expect, chanceOf };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- validate/upgrade.js ----
+// Upgrade Rates checks (task K). Each one cites the C++ it comes from (loaders/upgrade.js has the readers, loaders/upgrade-sim.js the tries).
+(function (FRE) {
+  'use strict';
+  const LUA = 'ItemUpgrade.lua', ST = 's.txt', ULT = 'Ultimate_UltimateWeapon.txt', WR = 'WeaponRarity.inc';
+  const pct = c => `${(Math.round(c * 1e6) / 1e4).toString()}%`;
+
+  function upgradeChecks(model, opts) {
+    const out = [], ws = opts.ws, U = FRE.upgrade;
+    const push = (file, code, severity, sp, message, k) => out.push({ module: 'upgrade', file, code, severity, start: sp ? sp.start : 0, end: sp ? sp.end : 0, key: `${code}|${k}`, message });
+    const L = model.lua;
+    // ---- ItemUpgrade.lua runs (CItemUpgrade::LoadScript :59)
+    if (!L.missing) {
+      for (const e of L.errors) push(LUA, e.warn ? 'UP_LUA_VALUE' : 'UP_LUA_ERROR', e.warn ? 'WARN' : 'BLOCK', e,
+        e.warn ? e.message : `${e.message}. The script stops: the server logs "ItemUpgrade.lua Run Failed", its upgrade tables stay empty, and every normal upgrade, element upgrade and piercing is refused ("max level reached").`, e.message);
+      if (!L.failed) {
+        for (const [n, what] of [['tGeneral', 'normal upgrade'], ['tSuitProb', 'armor piercing'], ['tWeaponProb', 'weapon piercing'], ['tAttribute', 'element upgrade']])
+          if (!L.tables[n]) push(LUA, 'UP_TABLE_MISSING', 'BLOCK', null, `ItemUpgrade.lua has no "${n} = { … }": the server walks a table that is not there (LoadScript :66-108) and the ${what} has no chances.`, n);
+        for (const n of ['nItemTransyLowLevel', 'nItemTransyHighLevel'])
+          if (!L.numbers[n]) push(LUA, 'UP_TRANSY_MISSING', 'WARN', null, `ItemUpgrade.lua has no "${n} = …": the gender change (Transy) then costs 0 Penya (GetGlobalNumber of nothing = 0, :118).`, n);
+      }
+    }
+    // ---- every ladder: rising chances, never-passing levels, values above 100 %
+    for (const sys of ['general', 'attr', 'weapon', 'suit', 'acc', 'coll', 'ult']) {
+      if ((sys === 'acc' || sys === 'coll') && model.s.missing) continue;
+      if (sys === 'ult' && model.ult.missing) continue;
+      if (['general', 'attr', 'weapon', 'suit'].includes(sys) && (L.missing || L.failed)) continue;
+      const S = U.SYSTEMS[sys], lad = U.ladder(model, sys), file = sys === 'acc' || sys === 'coll' ? ST : sys === 'ult' ? ULT : LUA;
+      const word = r => (sys === 'weapon' || sys === 'suit') ? `slot ${r.level + 1}` : `+${r.level} → +${r.level + 1}`;
+      lad.forEach((r, i) => {
+        if (r.count === 0) push(file, 'UP_ZERO', 'WARN', r.span, `${S.label} ${word(r)}: the chance is 0 (file ${r.value}): no try ever passes, so nothing gets past +${r.level}${sys === 'weapon' || sys === 'suit' ? ` slots` : ''}.`, `${sys}|${r.level}`);
+        const prev = lad[i - 1];
+        if (prev && r.count > prev.count) push(file, 'UP_RISE', 'WARN', r.span, `${S.label} ${word(r)} (${pct(r.chance)}) is easier than ${word(prev)} (${pct(prev.chance)}). Usually each step is harder; check the number.`, `${sys}|${r.level}`);
+        const need = S.mode === 'le' ? S.n - 1 : S.n;
+        if (r.eff > need) push(file, 'UP_CAPPED', 'INFO', r.span, `${S.label} ${word(r)}: ${r.value}${S.cut && r.level >= 3 ? ` (×0.9 = ${r.eff})` : ''} is more than 100% needs (${need}${S.cut && r.level >= 3 ? ' after the cut' : ''}): every try passes.`, `${sys}|${r.level}`);
+      });
+    }
+    // element levels must be 1..n with no gap: GetAttributeEnchantProb finds level + 1, GetMaxAttributeEnchantSize = how many (:1913, ItemUpgrade.h:66)
+    if (!L.failed) {
+      const lv = model.t.attr.map(a => a.level);
+      lv.forEach((v, i) => { if (v !== i + 1) push(LUA, 'UP_ATTR_GAP', 'WARN', model.t.attr[i].call.stmt, `AddAttribute levels must be 1, 2, 3, … with no gap: level ${v} sits where ${i + 1} should be. A missing level has chance 0 and the top level is never reached.`, v); });
+      const seen = new Set();
+      for (const a of L.attr) { const v = a.args[0] && a.args[0].value; if (seen.has(v)) push(LUA, 'UP_ATTR_DUP', 'WARN', a.stmt, `AddAttribute( ${v}, … ) is written twice: the later line wins (tAttribute[${v}] is replaced).`, v); seen.add(v); }
+    }
+    // ---- s.txt (LoadServerScript, Project.cpp:5684)
+    if (!model.s.missing) {
+      const acc = model.s.acc;
+      if (!model.s.accBlock) push(ST, 'UP_ACC_ROWS', 'WARN', null, 's.txt has no Accessory_Probability block: every accessory upgrade has chance 0.', 'none');
+      else if (acc.length > U.MAX_AAO) push(ST, 'UP_ACC_ROWS', 'BLOCK', acc[U.MAX_AAO], `Accessory_Probability has ${acc.length} rows; the server keeps 20 (+0 → +20, m_adwProbability[MAX_AAO]) and writes the rest past the end of its table (memory damage).`, 'over');
+      else if (acc.length < U.MAX_AAO) push(ST, 'UP_ACC_ROWS', 'WARN', model.s.accBlock.open, `Accessory_Probability has ${acc.length} rows: +${acc.length} → +${acc.length + 1} and above have chance 0 (accessories go up to +20).`, 'few');
+      if (!model.s.collBlock || !model.s.coll.length) push(ST, 'UP_COLL_EMPTY', 'WARN', null, 's.txt has no Collecting_Enchant rows: collectors cannot be upgraded (max level = the row count).', 'coll');
+    }
+    // ---- Ultimate_UltimateWeapon.txt (Load_UltimateWeapon, UltimateWeapon.cpp:116)
+    if (!model.ult.missing) {
+      for (const [k, what] of [['SET_GEM', 'putting a gem into an Ultimate weapon'], ['REMOVE_GEM', 'taking a gem out'], ['GENERAL2UNIQUE', 'General → Unique'], ['UNIQUE2ULTIMATE', 'Unique → Ultimate']])
+        if (!model.ult.single[k]) push(ULT, 'UP_ULT_MISSING', 'WARN', null, `Ultimate_UltimateWeapon.txt has no ${k} line: ${what} always fails (chance 0).`, k);
+      const dup = (rows, what) => { const s = new Set(); for (const r of rows) { if (s.has(r.level.value)) push(ULT, 'UP_ULT_DUP', 'WARN', r.level, `${what}: level ${r.level.value} is written twice; the server keeps the FIRST row (map::insert).`, `${what}|${r.level.value}`); s.add(r.level.value); } };
+      dup(model.ult.enchant, 'ULTIMATE_ENCHANT'); dup(model.ult.makeGem, 'MAKE_GEM');
+      const m = U.firstByLevel(model.ult.enchant);
+      for (let l = 1; l <= 10; l++) if (!m.has(l)) push(ULT, 'UP_ULT_MISSING', 'WARN', model.ult.enchantBlock && model.ult.enchantBlock.open, `ULTIMATE_ENCHANT has no row ${l}: an Ultimate weapon at +${l - 1} cannot be upgraded (the window cancels, EnchantWeapon :729).`, `enchant|${l}`);
+      // weapons whose own dwReferTarget2 replaces the transform chance (:591)
+      if (ws) {
+        const D = ws.defines.defines, gen = D.get('WEAPON_GENERAL'), uni = D.get('WEAPON_UNIQUE');
+        let n = 0;
+        for (const it of ws.items.items.values()) {
+          const rs = FRE.specItem.get(it, 'dwReferStat1'), t2 = FRE.specItem.get(it, 'dwReferTarget2');
+          if ((rs === gen || rs === uni) && t2 !== -1 && t2 !== 0xFFFFFFFF && t2 !== undefined) n++;
+        }
+        if (n) push(ULT, 'UP_TRANS_OWN', 'INFO', null, `${n} General / Unique weapon(s) have their own transform chance (dwReferTarget2 in Spec_Item.txt): for them GENERAL2UNIQUE / UNIQUE2ULTIMATE is not used.`, 'own');
+      }
+    }
+    // ---- WeaponRarity.inc (LoadWeaponRarity, Project.cpp:494; SetRandomWeaponRarity, Item.cpp:724)
+    const R = model.rarity;
+    if (!R.missing) {
+      const lv = new Set();
+      for (const b of R.blocks) {
+        const v = b.value.level;
+        if (lv.has(v)) push(WR, 'UP_RARITY_DUP', 'WARN', b.spans.level || b.open, `Tier ${v} is written twice: the later block replaces the first (SetAtGrow).`, v);
+        lv.add(v);
+        const miss = ['level', 'name', 'color', 'pct', 'flat'].filter(k => !b.spans[k]);
+        if (miss.length && R.blocks.indexOf(b) > 0) push(WR, 'UP_RARITY_INHERIT', 'INFO', b.open, `Tier ${v} has no ${miss.join(', ')} line: it keeps the value of the tier above (one record is reused, Project.cpp:503).`, v);
+      }
+      if (!R.dropBlock) push(WR, 'UP_RARITY_DROP', 'WARN', null, 'WeaponRarity.inc has no Drop block: every tier has chance 0, so the Weapon Rarity Scroll never changes a weapon (and is used up).', 'none');
+      else {
+        for (const e of R.dropErrors) push(WR, 'UP_RARITY_DROP', 'WARN', e, `Drop lists tier ${e.level}, which no Add_Weapon_Rarity block has (the server logs "rarity ${e.level} doesn't exist").`, `lvl|${e.level}`);
+        if (R.dropBlock.closeTok.text !== '}') push(WR, 'UP_RARITY_DROP', 'BLOCK', R.dropBlock.closeTok, `Drop must have exactly ${R.blocks.length} "tier chance" pairs (one per Add_Weapon_Rarity block above it); the server reads that many and then expects "}".`, 'count');
+        if (R.dropTotal !== 100) {
+          const ch = FRE.upgrade.rarityChances(R);
+          push(WR, 'UP_RARITY_SUM', 'WARN', R.dropBlock.open, `The Drop chances add up to ${R.dropTotal}, not 100 (the server logs an error). ${R.dropTotal < 100 ? `${Math.round(ch.nothing * 100)}% of scrolls change nothing.` : 'The tiers at the end get less than written (the roll is 0-99).'}`, 'sum');
+        }
+      }
+    }
+    // ---- comments that still hold the old number (INFO): an edited line with a -- / // comment
+    if (ws) for (const [key, file, re] of [['itemupgrade.lua', LUA, /--/], ['s.txt', ST, /\/\//], ['ultimate_ultimateweapon.txt', ULT, /\/\//]]) {
+      const f = ws.files.get(key);
+      if (!f || f.text === f.originalText) continue;
+      const a = f.originalText.split(/\r?\n/), b = f.text.split(/\r?\n/);
+      if (a.length !== b.length) continue;
+      for (let i = 0; i < a.length; i++) if (a[i] !== b[i] && re.test(b[i])) {
+        let at = 0;
+        for (let j = 0; j < i; j++) at = f.text.indexOf('\n', at) + 1;
+        push(file, 'UP_STALE_COMMENT', 'INFO', { start: at, end: at + b[i].length },`${file} line ${i + 1}: the number changed, but the comment on that line may still describe the old one.`, `${file}|${i}`);
+      }
+    }
+    return out;
+  }
+
+  FRE.upgradeChecks = upgradeChecks;
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- core/workspace.js ----
 // Workspace: the loaded Resource folder as the editor sees it. No DOM here,
 // so it can be tested outside the browser (tests/run-tests.js under gjs).
@@ -11567,6 +12281,18 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "62+", "when
       uses: ['drops'],
       parse(ws) { return FRE.rates.fromWorkspace(ws); },
       validate(ws, model) { return FRE.rates.validate(model, { defines: ws.defines, ws }); },
+    },
+    {
+      // Upgrade Rates (task K, loaders/upgrade.js): ItemUpgrade.lua (CItemUpgrade::LoadScript, WorldServer only), s.txt (accessory /
+      // collector chances: LoadServerScript, WorldServer; the game reads the collecting blocks of its LF copy, 15091d5f),
+      // Ultimate_UltimateWeapon.txt (WorldServer only), WeaponRarity.inc (both, 3168003d). Spec_Item is read for the rate scrolls.
+      id: 'upgrade', label: 'Upgrade Rates',
+      required: ['ItemUpgrade.lua'], optional: ['s.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc'],
+      editable: ['ItemUpgrade.lua', 's.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc'],
+      client: ['s.txt', 'WeaponRarity.inc'],
+      deps: ['s.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc'],
+      parse(ws) { return FRE.upgrade.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.upgradeChecks(model, { ws }); },
     },
     {
       // Where is this item from? (task H, loaders/where.js): every model above parsed read-only, nothing editable.
@@ -12087,6 +12813,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "62+", "when
     'guildbuff.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:891 loadGuildBuffFile' },
     // rebirth tiers: both load it (Project.cpp:928, #ifdef __REBIRTH_SYSTEM only); the game discards the numbers but reads the file
     '1rebirth.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:928 LoadRebirthProp' },
+    // Upgrade Rates (task K): ItemUpgrade.lua (CItemUpgrade's constructor -> LoadScript, WORLDSERVER/ItemUpgrade.cpp:31 / :59, WorldServer
+    // only), s.txt (LoadServerScript Project.cpp:994, WorldServer; the game reads its own copy for the Collector Details window :937),
+    // Ultimate_UltimateWeapon.txt (Project.cpp:967 LoadUltimateWeapon -> UltimateWeapon.cpp:116, #ifdef __WORLDSERVER),
+    // WeaponRarity.inc (Project.cpp:971 LoadWeaponRarity, both)
+    'itemupgrade.lua': { server: STARTUP, client: null, cite: 'ItemUpgrade.cpp:31 CItemUpgrade() -> LoadScript :59 (WorldServer only)' },
+    's.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:994 LoadServerScript (+ the game: :937 LoadCollectingInfo)' },
+    'ultimate_ultimateweapon.txt': { server: STARTUP, client: null, cite: 'Project.cpp:967 LoadUltimateWeapon -> UltimateWeapon.cpp:116 (#ifdef __WORLDSERVER)' },
+    'weaponrarity.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:971 LoadWeaponRarity' },
     // couple: the WorldServer, the DatabaseServer and the game each load it (couplehelper.cpp Initialize); the game's couple window
     // draws its level bar from its own copy (WndField.cpp:26910 GetExperienceRate)
     'couple.inc': { server: STARTUP, client: STARTUP, cite: 'WORLDSERVER/couplehelper.cpp:44, databaseserver/couplehelper.cpp:158, Neuz/couplehelper.cpp:33 CCoupleProperty::Initialize' },
@@ -18567,6 +19301,353 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "62+", "when
   FRE.ui.rates = { tierForm, giftForm, rebGiftForm, coupleGiftForm };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- ui/upgrade.js ----
+// Upgrade Rates (task K part 1): every upgrade chance as the REAL chance players get (the rolls' off-by-one and the overseas ×0.9
+// from +3 included, loaders/upgrade.js), typed in %, with what a fail costs; Weapon Rarity tiers; 🧮 an upgrade calculator
+// (loaders/upgrade-sim.js). Edits: edit/upgrade-ops.js. User decisions (2026-10-09): core ladders + Ultimate + Weapon Rarity, no Baruna.
+(function (FRE) {
+  'use strict';
+  const { h, fmt, numInput, pctInput, toast, keepFocus } = FRE.dom;
+  const { diagTags, diagRow } = FRE.ui;
+  const LUA = 'itemupgrade.lua', ST = 's.txt', ULT = 'ultimate_ultimateweapon.txt', WR = 'weaponrarity.inc';
+  const st = { sel: 'general', calc: null };
+  const U = () => FRE.upgrade, O = () => FRE.upgradeOps, Sim = () => FRE.upgradeSim;
+  const model = ctx => ctx.ws.models.upgrade;
+  const can = (ctx, f) => ctx.ws.isEditable(f);
+  const uDiags = ctx => ctx.ws.diags.filter(d => d.module === 'upgrade');
+  const spanDiags = (ctx, file, a, b) => uDiags(ctx).filter(d => d.file.toLowerCase() === file && d.start !== undefined && d.start >= a && d.start < Math.max(b, a + 1));
+  // a count that may be astronomical (an item that almost never gets there): plain digits up to 10^15, else "about 9.3 × 10^22"
+  const big = n => { if (!Number.isFinite(n)) return '∞'; if (n < 1e15) return fmt(Math.round(n)); const e = Math.floor(Math.log10(n)); return `about ${(n / 10 ** e).toFixed(1)} × 10^${e}`; };
+  const pc = c => `${Number((c * 100).toFixed(4))}%`;
+  const keyOf = (sec, x) => `upgrade|${sec}|${x}`;
+  const itemName = (ctx, define) => { const id = ctx.ws.defines.defines.get(define); const it = id !== undefined && ctx.ws.items.items.get(id >>> 0); return it ? it.name || define : define; };
+  const fileOf = sys => (sys === 'acc' || sys === 'coll' ? ST : sys === 'ult' ? ULT : LUA);
+
+  const SECTIONS = [
+    { id: 'general', label: 'Normal upgrade', sub: ctx => ladderSub(ctx, 'general', 'orichalcum, +0 → +') },
+    { id: 'attr', label: 'Element upgrade', sub: ctx => ladderSub(ctx, 'attr', 'element card, +0 → +') },
+    { id: 'pierce', label: 'Piercing', sub: ctx => { const m = model(ctx); return `weapons ${m.t.weapon.length} slots · armor ${m.t.suit.length} slots`; } },
+    { id: 'acc', label: 'Accessory upgrade', sub: ctx => (model(ctx).s.missing ? 's.txt not found' : ladderSub(ctx, 'acc', 'moonstone, +0 → +')) },
+    { id: 'coll', label: 'Collector upgrade', sub: ctx => (model(ctx).s.missing ? 's.txt not found' : ladderSub(ctx, 'coll', 'moonstone, +0 → +')) },
+    { id: 'ult', label: 'Ultimate weapons', sub: ctx => (model(ctx).ult.missing ? 'Ultimate_UltimateWeapon.txt not found' : 'transforms, +1 → +10, gems') },
+    { id: 'rarity', label: 'Weapon Rarity', sub: ctx => (model(ctx).rarity.missing ? 'WeaponRarity.inc not found' : `${model(ctx).rarity.tiers.size} tiers (Weapon Rarity Scroll)`) },
+    { id: 'calc', label: '🧮 Upgrade calculator', sub: () => 'Tries, scrolls and Penya to reach +N' },
+  ];
+  function ladderSub(ctx, sys, what) {
+    const lad = U().ladder(model(ctx), sys);
+    if (!lad.length) return 'no chances';
+    return `${what}${lad.length}; last step ${pc(lad[lad.length - 1].chance)}`;
+  }
+  const sectionFiles = { general: [LUA], attr: [LUA], pierce: [LUA], acc: [ST], coll: [ST], ult: [ULT], rarity: [WR] };
+  const SEC_CODES = { attr: /^UP_ATTR_/ };
+  function sectionDiags(ctx, id) {
+    const fs = sectionFiles[id];
+    if (!fs) return [];
+    return uDiags(ctx).filter(d => fs.includes(d.file.toLowerCase()) && sectionOf(d) === id);
+  }
+  // which section a problem belongs to (ItemUpgrade.lua and s.txt hold several)
+  function sectionOf(d) {
+    const f = d.file.toLowerCase(), k = String(d.key || '');
+    if (f === ST) return /coll|COLL/.test(k) || d.code === 'UP_COLL_EMPTY' ? 'coll' : 'acc';
+    if (f === ULT) return 'ult';
+    if (f === WR) return 'rarity';
+    if (SEC_CODES.attr.test(d.code) || /\|attr\|/.test('|' + k) || /tAttribute/.test(k)) return 'attr';
+    if (/\|(weapon|suit)\||tSuitProb|tWeaponProb/.test('|' + k)) return 'pierce';
+    return 'general';
+  }
+
+  const mod = {
+    id: 'upgrade', label: 'Upgrade Rates', searchPlaceholder: 'Search sections', noItems: true,
+    help: 'Upgrade Rates: every upgrade chance as players really get it, Weapon Rarity tiers, and what reaching +N costs',
+    st,
+    onLoad() { st.sel = 'general'; st.calc = null; },
+
+    renderList(el, ctx) {
+      const q = ctx.query.toLowerCase();
+      for (const s of SECTIONS) {
+        if (q && !s.label.toLowerCase().includes(q)) continue;
+        const ds = sectionDiags(ctx, s.id);
+        const b = ds.filter(d => d.severity === 'BLOCK').length, w = ds.filter(d => d.severity === 'WARN').length;
+        el.appendChild(h('div.npc' + (st.sel === s.id ? '.sel' : ''), { 'data-sec': s.id, on: { click: () => { st.sel = s.id; ctx.renderAll(false); } } },
+          h('div.n', h('span', s.label), h('span', [...ctx.edited].some(k => k.startsWith(`upgrade|${s.id}|`)) ? h('span.tag.edit', 'edited') : null,
+            b ? h('span.tag.bad', '⛔' + b) : w ? h('span.tag.warn', '⚠' + w) : null)),
+          h('div.k', s.sub(ctx))));
+      }
+    },
+
+    renderEditor(el, ctx) {
+      keepFocus(el, () => {
+        const m = model(ctx);
+        if (m.lua.failed) el.appendChild(h('div.banner.bad', 'ItemUpgrade.lua would not run: the server then refuses every normal upgrade, element upgrade and piercing. See the problems below.'));
+        if (st.sel === 'pierce') pierceView(el, ctx);
+        else if (st.sel === 'ult') ultView(el, ctx);
+        else if (st.sel === 'rarity') rarityView(el, ctx);
+        else if (st.sel === 'calc') calcView(el, ctx);
+        else ladderView(el, ctx, st.sel);
+      });
+    },
+
+    addTarget() { return { ok: false, title: 'Items are not added in this task' }; },
+
+    locate(d) {
+      if (d.module !== 'upgrade') return false;
+      st.sel = sectionOf(d);
+      return true;
+    },
+  };
+
+  function problems(el, ctx, sec) {
+    const ds = sectionDiags(ctx, sec);
+    if (ds.length) { el.appendChild(h('h3', 'Problems')); for (const d of ds) el.appendChild(diagRow(d)); }
+  }
+  function title(el, ctx, text, file, label) {
+    el.appendChild(h('div.npc-title', h('h2', text), h('span.def', label), can(ctx, file) ? null : h('span.tag.bad', 'read-only')));
+  }
+  // a typed field: pauses while typing one value fold into one undo step
+  function typed(ctx, file, field, make, label, key) {
+    ctx.editGroup(() => [{ file, splices: make(ctx.ws.files.get(file).text) }], label, [key], `up|${field}`);
+  }
+
+  // the real-chance box of a ladder row: shows / takes the REAL chance, writes the file value that gives it
+  function chanceBox(ctx, sys, r, key, label) {
+    const S = U().SYSTEMS[sys];
+    const conv = {
+      toPct: u => U().countOf(S.mode, S.cut ? U().cut90(u, r.level) : u, S.n) / S.n * 100,
+      fromPct: p => U().valueForPercent(sys, r.level, p).value,
+      maxPct: 100,
+      tip: u => `In the file: ${u}${S.cut && r.level >= 3 ? ` (× 0.9 = ${U().cut90(u, r.level)})` : ''} of ${fmt(S.n)}`,
+    };
+    return pctInput({ value: r.value, key: `up|${sys}|${r.level}`, disabled: !can(ctx, fileOf(sys)), conv,
+      onCommit: u => typed(ctx, fileOf(sys), `${sys}|${r.level}`, () => O().setNumber(r.span, u, -1, 2147483647, 'The chance'),
+        `${label}: ${S.label} +${r.level} → +${r.level + 1} ${pc(conv.toPct(u) / 100)} (was ${pc(r.chance)})`, key) });
+  }
+  // what a failed try costs, in words
+  function failText(ctx, sys, level) {
+    const P = n => itemName(ctx, n);
+    if (sys === 'general' || sys === 'attr') return level < 3 ? 'nothing lost (the material is used)' : `the item is destroyed, unless a ${P('II_SYS_SYS_SCR_SMELPROT')} is active${sys === 'general' ? ' (the safe window never loses it)' : ''}`;
+    if (sys === 'weapon' || sys === 'suit') return `the item is destroyed, unless a ${P('II_SYS_SYS_SCR_PIEPROT')} is put in (it is used up)`;
+    if (sys === 'acc') return level < 3 ? 'nothing lost (the moonstone is used)' : `the accessory is destroyed, unless a ${P('II_SYS_SYS_SCR_SMELPROT4')} is active (the safe window never loses it)`;
+    if (sys === 'coll') return 'nothing lost (the moonstone is used)';
+    if (sys === 'ult') return `the weapon is destroyed, unless a ${P('II_SYS_SYS_SCR_SMELPROT3')} is active (the safe window never loses it)`;
+    return '';
+  }
+
+  // ------------------------------------------------------------- a ladder (normal, element, accessory, collector)
+  const INTRO = {
+    general: 'Weapons and armor, with orichalcum. From +3 the server cuts every chance by 10% (overseas servers, GetGeneralEnchantProb): the chance below is what players really get. Success-rate scrolls add to it (see the calculator).',
+    attr: 'Element upgrade with element cards, +1 to +20. The other columns are the growth per level (out of 10,000).',
+    acc: 'Rings, earrings and necklaces, with moonstones, +1 to +20. The normal window and the safe window roll a little differently (below the chance < vs ≤), so each has its own chance.',
+    coll: 'Collectors, with moonstones. The number of rows is the highest level. The game shows these in the Collector Details window too (Client/s.txt).',
+  };
+  function ladderView(el, ctx, sys) {
+    const m = model(ctx), S = U().SYSTEMS[sys], file = fileOf(sys);
+    title(el, ctx, S.label, file, sys === 'acc' ? 's.txt · Accessory_Probability' : sys === 'coll' ? 's.txt · Collecting_Enchant' : sys === 'attr' ? 'ItemUpgrade.lua · AddAttribute' : 'ItemUpgrade.lua · tGeneral');
+    if ((sys === 'acc' || sys === 'coll') && m.s.missing) { el.appendChild(h('p.empty-state', 's.txt is not in Server/Resource.')); return; }
+    el.appendChild(h('p.muted.small', INTRO[sys]));
+    const lad = U().ladder(m, sys), f = ctx.ws.files.get(file);
+    const head = [h('th', 'Step'), h('th', 'Chance'), S.safeMode ? h('th', 'Safe window') : null, h('th', 'Tries on average'), sys === 'attr' ? h('th', 'Damage / Defense / Attribute growth') : null, h('th', 'If it fails'), h('th', '')];
+    const tb = h('table.items.up', h('tr', ...head));
+    for (const r of lad) {
+      const key = keyOf(sys, r.level);
+      const growth = sys === 'attr' ? h('td', ...[2, 3, 4].map((i, j) => numInput({ value: r.call.args[i] ? r.call.args[i].value : null, min: 0, max: 2147483647, disabled: !can(ctx, file), key: `up|attr|${r.level}|${i}`,
+        onCommit: v => { if (v === null) return; typed(ctx, file, `attr|${r.level}|${i}`, () => O().setAttrField(r.call, i, v, ['damage growth', 'defense growth', 'attribute growth'][j]),
+          `Element +${r.level + 1}: ${['damage', 'defense', 'attribute'][j]} growth ${v} (was ${r.call.args[i].value})`, key); } }))) : null;
+      tb.appendChild(h('tr', h('td', h('b', `+${r.level} → +${r.level + 1}`)), h('td', chanceBox(ctx, sys, r, key, 'Chance')),
+        S.safeMode ? h('td.small', pc(r.safeChance)) : null,
+        h('td.small', r.count ? fmt(Math.round(S.n / r.count * 10) / 10) : 'never'),
+        growth, h('td.small.muted', failText(ctx, sys, r.level)),
+        h('td', diagTags(spanDiags(ctx, file, r.span.start, r.span.end)), h('span.line', `L${f.lineOf(r.span.start) + 1}`))));
+    }
+    el.appendChild(tb);
+    if (!lad.length) el.appendChild(h('p.empty-state', 'No chances in the file.'));
+    if (sys === 'general' || sys === 'attr') {
+      const sc = m.scrolls.filter(s => (sys === 'general' ? s.kind === 'general' || s.kind === 'generalWeapon' : s.kind === 'attr'));
+      if (sc.length) el.appendChild(h('p.muted.small', 'Success-rate scrolls (Spec_Item.txt nEffectValue, out of 10,000): ',
+        sc.map(s => `${s.name} +${Number((s.value / 100).toFixed(2))}% at +${s.min}-+${s.max}${s.kind === 'generalWeapon' ? ' (weapons)' : ''}`).join(' · '),
+        sys === 'attr' ? ` · ${itemName(ctx, 'II_SYS_SYS_SCR_SMELTING2')} +10% below +10` : ''));
+    }
+    problems(el, ctx, sys);
+  }
+
+  // ------------------------------------------------------------- piercing
+  function pierceView(el, ctx) {
+    const m = model(ctx), f = ctx.ws.files.get(LUA);
+    title(el, ctx, 'Piercing', LUA, 'ItemUpgrade.lua · tWeaponProb / tSuitProb');
+    el.appendChild(h('p.muted.small', `Adding a card slot, with a moonstone and ${fmt(Sim().PIERCE_PENYA)} Penya every try (compiled). Slot n is the chance to add the n-th slot. The item's own slot limit is not in this file.`));
+    for (const sys of ['weapon', 'suit']) {
+      el.appendChild(h('h3', U().SYSTEMS[sys].label));
+      const tb = h('table.items.up', h('tr', h('th', 'Slot'), h('th', 'Chance'), h('th', 'Tries on average'), h('th', 'If it fails'), h('th', '')));
+      for (const r of U().ladder(m, sys)) {
+        const key = keyOf('pierce', `${sys}|${r.level}`);
+        tb.appendChild(h('tr', h('td', h('b', `slot ${r.level + 1}`)), h('td', chanceBox(ctx, sys, r, key, 'Piercing')),
+          h('td.small', r.count ? fmt(Math.round(10000 / r.count * 10) / 10) : 'never'), h('td.small.muted', failText(ctx, sys, r.level)),
+          h('td', diagTags(spanDiags(ctx, LUA, r.span.start, r.span.end)), h('span.line', `L${f.lineOf(r.span.start) + 1}`))));
+      }
+      el.appendChild(tb);
+    }
+    problems(el, ctx, 'pierce');
+  }
+
+  // ------------------------------------------------------------- Ultimate weapons
+  function ultView(el, ctx) {
+    const m = model(ctx), u = m.ult, edit_ = can(ctx, ULT);
+    title(el, ctx, 'Ultimate weapons', ULT, 'Ultimate_UltimateWeapon.txt');
+    if (u.missing) { el.appendChild(h('p.empty-state', 'Ultimate_UltimateWeapon.txt is not in Server/Resource.')); return; }
+    const f = ctx.ws.files.get(ULT);
+    const own = ownTransform(ctx);
+    const singles = [
+      ['GENERAL2UNIQUE', 'General → Unique', `the weapon is destroyed on a fail. ${own.gen.total ? `Every General weapon that can change (${own.gen.total}) has its own chance in Spec_Item.txt (dwReferTarget2: ${own.gen.list}), so this line is used by ${own.gen.file} of them.` : ''}`],
+      ['UNIQUE2ULTIMATE', 'Unique (+10) → Ultimate', `needs a ${itemName(ctx, 'II_SYS_SYS_SCR_SMELPROT3')}, used up every try (aaadddff); a fail keeps the weapon. ${own.uni.total - own.uni.file ? `${own.uni.total - own.uni.file} Unique weapon(s) have their own chance.` : `All ${own.uni.total} Unique weapons that can change use this line.`}`],
+      ['SET_GEM', 'Put a gem into an Ultimate weapon', 'a fail loses the gem.'],
+      ['REMOVE_GEM', 'Take a gem out', 'a fail loses the gem.'],
+    ];
+    const tb = h('table.items.up', h('tr', h('th', 'What'), h('th', 'Chance'), h('th', 'Tries on average'), h('th', 'Notes'), h('th', '')));
+    for (const [k, label, note] of singles) {
+      const sp = u.single[k], key = keyOf('ult', k);
+      tb.appendChild(h('tr', h('td', h('b', label)),
+        h('td', sp ? pctInput({ value: sp.value, key: `up|ult|${k}`, disabled: !edit_, conv: { toPct: v => U().singleChance(v) * 100, fromPct: p => Math.round(p * 10000), maxPct: 100, tip: v => `In the file: ${v} of 1,000,000` },
+          onCommit: v => typed(ctx, ULT, `ult|${k}`, () => FRE.textOps.replaceSpan(sp, v), `${label}: ${pc(U().singleChance(v))} (was ${pc(U().singleChance(sp.value))})`, key) }) : h('span.tag.warn', 'missing')),
+        h('td.small', sp && U().singleChance(sp.value) ? fmt(Math.round(1 / U().singleChance(sp.value) * 10) / 10) : 'never'),
+        h('td.small.muted', note), h('td', sp ? diagTags(spanDiags(ctx, ULT, sp.start, sp.end)) : null)));
+    }
+    el.appendChild(tb);
+    el.appendChild(h('h3', 'Ultimate weapon +1 → +10 (shining orichalcum)'));
+    ladderInto(el, ctx, 'ult');
+    el.appendChild(h('h3', 'Gems from a weapon (MAKE_GEM)'));
+    el.appendChild(h('p.muted.small', 'Breaking a weapon into gems: the chance and how many, by the weapon\'s own +N. General and Unique weapons have their own columns. The weapon is used up either way.'));
+    const g = h('table.items.up', h('tr', h('th', 'Weapon at'), h('th', 'General: chance'), h('th', 'gems'), h('th', 'Unique: chance'), h('th', 'gems'), h('th', '')));
+    for (const r of u.makeGem) {
+      const key = keyOf('ult', `gem${r.level.value}`);
+      const pbox = field => pctInput({ value: r[field].value, key: `up|gem|${r.level.value}|${field}`, disabled: !edit_,
+        conv: { toPct: v => U().singleChance(v) * 100, fromPct: p => Math.round(p * 10000), maxPct: 100, tip: v => `In the file: ${v} of 1,000,000` },
+        onCommit: v => typed(ctx, ULT, `gem|${r.level.value}|${field}`, () => FRE.textOps.replaceSpan(r[field], v), `Gems from a +${r.level.value} weapon: ${field === 'gProb' ? 'General' : 'Unique'} chance ${pc(U().singleChance(v))}`, key) });
+      const nbox = field => numInput({ value: r[field].value, min: 1, max: 32767, disabled: !edit_, key: `up|gem|${r.level.value}|${field}`,
+        onCommit: v => { if (v === null) return; typed(ctx, ULT, `gem|${r.level.value}|${field}`, () => O().setMakeGem(r, field, v).splices, `Gems from a +${r.level.value} weapon: ${field === 'gNum' ? 'General' : 'Unique'} ${v} gems`, key); } });
+      g.appendChild(h('tr', h('td', h('b', `+${r.level.value}`)), h('td', pbox('gProb')), h('td', nbox('gNum')), h('td', pbox('uProb')), h('td', nbox('uNum')),
+        h('td', diagTags(spanDiags(ctx, ULT, r.start, r.end)), h('span.line', `L${f.lineOf(r.start) + 1}`))));
+    }
+    el.appendChild(g);
+    problems(el, ctx, 'ult');
+  }
+  function ladderInto(el, ctx, sys) {
+    const m = model(ctx), S = U().SYSTEMS[sys], file = fileOf(sys), f = ctx.ws.files.get(file);
+    const tb = h('table.items.up', h('tr', h('th', 'Step'), h('th', 'Chance'), h('th', 'Safe window'), h('th', 'Tries on average'), h('th', 'If it fails'), h('th', '')));
+    for (const r of U().ladder(m, sys)) {
+      const key = keyOf(sys, r.level);
+      tb.appendChild(h('tr', h('td', h('b', `+${r.level} → +${r.level + 1}`)), h('td', chanceBox(ctx, sys, r, key, 'Chance')), h('td.small', pc(r.safeChance)),
+        h('td.small', r.count ? fmt(Math.round(S.n / r.count * 10) / 10) : 'never'), h('td.small.muted', failText(ctx, sys, r.level)),
+        h('td', diagTags(spanDiags(ctx, file, r.span.start, r.span.end)), h('span.line', `L${f.lineOf(r.span.start) + 1}`))));
+    }
+    el.appendChild(tb);
+  }
+  // General / Unique weapons that can change (dwReferTarget1 set) and how many carry their own chance (dwReferTarget2, :591)
+  function ownTransform(ctx) {
+    const D = ctx.ws.defines.defines, gen = D.get('WEAPON_GENERAL'), uni = D.get('WEAPON_UNIQUE');
+    const res = { gen: { total: 0, file: 0, by: new Map() }, uni: { total: 0, file: 0, by: new Map() } };
+    for (const it of ctx.ws.items.items.values()) {
+      const rs = FRE.specItem.get(it, 'dwReferStat1');
+      const k = rs === gen ? 'gen' : rs === uni ? 'uni' : null;
+      if (!k) continue;
+      const t1 = FRE.specItem.get(it, 'dwReferTarget1'), t2 = FRE.specItem.get(it, 'dwReferTarget2');
+      if (t1 === -1 || t1 === undefined) continue;
+      res[k].total++;
+      if (t2 === -1 || t2 === undefined) res[k].file++;
+      else res[k].by.set(t2, (res[k].by.get(t2) || 0) + 1);
+    }
+    for (const k of ['gen', 'uni']) res[k].list = [...res[k].by].sort((a, b) => a[0] - b[0]).map(([v, n]) => `${n} at ${pc(U().singleChance(v))}`).join(', ');
+    return res;
+  }
+
+  // ------------------------------------------------------------- Weapon Rarity
+  function rarityView(el, ctx) {
+    const R = model(ctx).rarity, edit_ = can(ctx, WR);
+    title(el, ctx, 'Weapon Rarity', WR, 'WeaponRarity.inc');
+    if (R.missing) { el.appendChild(h('p.empty-state', 'WeaponRarity.inc is not in Server/Resource.')); return; }
+    el.appendChild(h('p.muted.small', `Each use of the ${itemName(ctx, 'II_SYS_SYS_SCR_WPNRARITY')} on a weapon rolls a tier (0-99 against the chances below, in tier order). `,
+      'Every stat line of the weapon gets the tier\'s bonus: a % stat gets the % bonus added, any other stat the flat bonus (e.g. Attack +11% becomes +41% at +30). Both the server and the game read this file.'));
+    const ch = U().rarityChances(R), f = ctx.ws.files.get(WR);
+    for (const b of R.blocks) {
+      const v = b.value, key = keyOf('rarity', v.level), sp = b.spans;
+      const real = ch.tiers.find(t => t.level === v.level), drop = R.drop.find(d => d.level.value === v.level);
+      const colour = h('input', { type: 'color', value: O().colorHex(v.color), disabled: !edit_ || !sp.color,
+        on: { change: e => ctx.edit(WR, () => O().setRarityColor(b, e.target.value), `Weapon Rarity tier ${v.level}: colour ${e.target.value.toUpperCase()}`, key) } });
+      const name = h('input', { type: 'text', value: v.name || '', disabled: !edit_ || !sp.name, maxLength: 63, style: 'width:12em' });
+      name.dataset.key = `up|wr|${v.level}|name`;
+      FRE.dom.liveCommit(name, () => { if (!name.isConnected || name.value === (v.name || '')) return; typed(ctx, WR, `wr|${v.level}|name`, () => O().setRarityName(b, name.value), `Weapon Rarity tier ${v.level}: name "${name.value}"`, key); });
+      const n = (k, label) => sp[k] ? numInput({ value: sp[k].value, min: 0, max: k === 'pct' ? 1000 : 100000, disabled: !edit_, key: `up|wr|${v.level}|${k}`,
+        onCommit: x => { if (x === null) return; typed(ctx, WR, `wr|${v.level}|${k}`, () => O().setRarityNumber(b, k, x), `Weapon Rarity tier ${v.level}: ${label} ${x} (was ${sp[k].value})`, key); } }) : h('span.muted', `${v[k]} (from the tier above)`);
+      const luck = drop ? numInput({ value: drop.luck.value, min: 0, max: 100, disabled: !edit_, key: `up|wr|${v.level}|luck`,
+        onCommit: x => { if (x === null) return; typed(ctx, WR, `wr|${v.level}|luck`, () => O().setDropLuck(drop, x), `Weapon Rarity tier ${v.level}: chance ${x}% (was ${drop.luck.value}%)`, key); } }) : h('span.tag.warn', 'not in Drop');
+      el.appendChild(h('div.rt-card', h('div.dr-line', h('h3', { style: `margin:0;color:${O().colorHex(v.color)}` }, `Tier ${v.level}`), name, colour,
+          h('span.line', `L${f.lineOf(b.start) + 1}`), diagTags(spanDiags(ctx, WR, b.start, b.end))),
+        h('div.dr-line', h('span', '% stats +'), n('pct', '% bonus'), h('span', 'other stats +'), n('flat', 'flat bonus'),
+          h('span', 'chance'), luck, h('span.muted', '%'), real ? h('span.small.muted', `players get ${pc(real.chance)}`) : null)));
+    }
+    el.appendChild(h('p', `Total: ${R.dropTotal}%`, R.dropTotal !== 100 ? h('span.tag.warn', ` ⚠ not 100: ${ch.nothing > 0 ? `${Math.round(ch.nothing * 100)}% of scrolls change nothing` : 'the last tiers get less'}`) : h('span.tag.ok', ' ✓')));
+    problems(el, ctx, 'rarity');
+  }
+
+  // ------------------------------------------------------------- calculator
+  const CALC_SYS = [['general', 'Normal upgrade'], ['attr', 'Element upgrade'], ['weapon', 'Weapon piercing'], ['suit', 'Armor piercing'], ['acc', 'Accessory upgrade'],
+    ['coll', 'Collector upgrade'], ['ult', 'Ultimate weapon +N'], ['transform', 'Transform (General → Unique / Unique → Ultimate)']];
+  const HAS_SAFE = new Set(['general', 'weapon', 'suit', 'acc', 'ult']);
+  function calcView(el, ctx) {
+    const m = model(ctx);
+    if (!st.calc) st.calc = { sys: 'general', from: 0, to: 10, window: 'normal', protect: false, weapon: true, smelting: false, scrolls: [], to2: 'unique', n: 1000, seed: 1, result: null };
+    const c = st.calc;
+    el.appendChild(h('div.npc-title', h('h2', '🧮 Upgrade calculator'), h('span.def', 'what reaching +N costs')));
+    el.appendChild(h('p.muted.small', 'Works on the chances above as they are now (edits included, nothing is written). "Per finished item" counts starting again with a new item each time one is destroyed.'));
+    const redo = () => { c.result = null; ctx.renderAll(false); };
+    const sel = h('select', { on: { change: e => { c.sys = e.target.value; const max = c.sys === 'transform' ? 1 : Sim().maxLevel(m, c.sys); c.from = 0; c.to = max; if (!HAS_SAFE.has(c.sys)) c.window = 'normal'; redo(); } } },
+      CALC_SYS.map(([v, l]) => h('option', { value: v, selected: v === c.sys }, l)));
+    const max = c.sys === 'transform' ? 1 : Sim().maxLevel(m, c.sys);
+    const line = h('div.dr-line', h('span', 'Upgrade'), sel);
+    if (c.sys !== 'transform') line.append(h('span', 'from +'), numInput({ value: c.from, min: 0, max: Math.max(0, max - 1), onCommit: v => { c.from = v || 0; redo(); } }),
+      h('span', 'to +'), numInput({ value: c.to, min: 1, max, onCommit: v => { c.to = v || max; redo(); } }));
+    else line.append(h('select', { on: { change: e => { c.to2 = e.target.value; redo(); } } }, h('option', { value: 'unique', selected: c.to2 === 'unique' }, 'General → Unique'), h('option', { value: 'ultimate', selected: c.to2 === 'ultimate' }, 'Unique (+10) → Ultimate')));
+    el.appendChild(line);
+    const opts = h('div.dr-line');
+    const tick = (label, k, title_) => h('label', { title: title_ || '' }, h('input', { type: 'checkbox', checked: !!c[k], on: { change: e => { c[k] = e.target.checked; redo(); } } }), ' ', label);
+    if (HAS_SAFE.has(c.sys)) opts.append(h('select', { on: { change: e => { c.window = e.target.value; redo(); } } },
+      h('option', { value: 'normal', selected: c.window === 'normal' }, 'normal window'), h('option', { value: 'safe', selected: c.window === 'safe' }, 'safe window (a protect scroll every try)')));
+    const protectName = { general: 'II_SYS_SYS_SCR_SMELPROT', attr: 'II_SYS_SYS_SCR_SMELPROT', weapon: 'II_SYS_SYS_SCR_PIEPROT', suit: 'II_SYS_SYS_SCR_PIEPROT', acc: 'II_SYS_SYS_SCR_SMELPROT4', ult: 'II_SYS_SYS_SCR_SMELPROT3' }[c.sys];
+    if (protectName && c.window !== 'safe') opts.append(tick(`${itemName(ctx, protectName)} every try`, 'protect'));
+    if (c.sys === 'general') opts.append(tick('it is a weapon', 'weapon', 'Weapon-only success scrolls count only on weapons'));
+    if ((c.sys === 'general' && c.window === 'safe') || c.sys === 'attr') opts.append(tick(`${itemName(ctx, c.sys === 'attr' ? 'II_SYS_SYS_SCR_SMELTING2' : 'II_SYS_SYS_SCR_SMELTING')} (+10% below +${c.sys === 'attr' ? 10 : 7})`, 'smelting'));
+    el.appendChild(opts);
+    const kinds = c.sys === 'general' && c.window !== 'safe' ? ['general', 'generalWeapon'] : c.sys === 'attr' ? ['attr'] : c.sys === 'transform' && c.to2 === 'ultimate' ? ['transform'] : [];
+    const sc = m.scrolls.filter(s => kinds.includes(s.kind));
+    if (sc.length) el.appendChild(h('div.dr-line', h('span', 'Success scrolls every try:'), ...sc.map(s => h('label', h('input', { type: 'checkbox', checked: c.scrolls.includes(s.id),
+      on: { change: e => { c.scrolls = e.target.checked ? [...c.scrolls, s.id] : c.scrolls.filter(x => x !== s.id); redo(); } } }), ` ${s.name} (+${Number((s.value / (s.kind === 'transform' ? 1 : 100)).toFixed(2))}% at +${s.min}-+${s.max})`))));
+    const o = { window: c.window, protect: c.protect, weapon: c.weapon, smelting: c.smelting, scrolls: m.scrolls.filter(s => c.scrolls.includes(s.id) && kinds.includes(s.kind)), to: c.to2 };
+    const from = c.sys === 'transform' ? 0 : Math.min(c.from, max - 1), to = c.sys === 'transform' ? 1 : Math.max(from + 1, Math.min(c.to, max));
+    const e = Sim().expect(m, c.sys, from, to, o);
+    const tb = h('table.items.up', h('tr', h('th', 'Step'), h('th', 'Chance'), h('th', 'If it fails'), h('th', 'Items that get here'), h('th', 'Tries here (per item)')));
+    for (const r of e.rows) tb.appendChild(h('tr', h('td', c.sys === 'transform' ? 'transform' : `+${r.level} → +${r.level + 1}`), h('td', pc(r.chance)),
+      h('td.small', r.fail === 'break' ? 'destroyed' : 'kept'), h('td.small', pc(r.reach)), h('td.small', Number.isFinite(r.tries) ? r.tries.toFixed(2) : '∞')));
+    el.appendChild(tb);
+    el.appendChild(e.per
+      ? h('div.banner', h('b', 'Per finished item: '), `${big(e.per.tries)} tries (materials), ${e.per.items < 1000 ? e.per.items.toFixed(2) : big(e.per.items)} items, `,
+        `${big(e.per.protect)} protect scrolls, ${big(e.per.scrolls)} success scrolls${e.per.penya ? `, ${big(e.per.penya)} Penya` : ''}. `,
+        `One item reaches the end ${pc(e.reach)} of the time.`)
+      : h('div.banner.bad', `Never: +${e.never} → +${e.never + 1} has a 0% chance.`));
+    // 🎲 run with the server's rolls
+    el.appendChild(h('div.dr-line', h('span', '🎲 Try it with'), numInput({ value: c.n, min: 1, max: 100000, onCommit: v => { c.n = v || 1; } }), h('span', 'items, seed'),
+      numInput({ value: c.seed, min: 0, max: 2147483647, onCommit: v => { c.seed = v || 0; } }),
+      h('button.primary', { on: { click: () => {
+        try { c.result = Sim().run(m, c.sys, from, to, o, c.seed, c.n); ctx.renderAll(false); } catch (err) { toast(err.message, 'bad'); }
+      } } }, 'Run')));
+    if (c.result) {
+      const t = c.result.totals;
+      el.appendChild(h('p', `${fmt(c.result.items.length)} items: ${fmt(t.reached)} reached +${to}, ${fmt(t.broke)} destroyed. `,
+        `${fmt(t.tries)} tries, ${fmt(t.protect)} protect scrolls, ${fmt(t.scrolls)} success scrolls${t.penya ? `, ${fmt(t.penya)} Penya` : ''}. `,
+        t.reached ? `Per finished item: ${(t.tries / t.reached).toFixed(1)} tries.` : ''));
+    }
+  }
+
+  FRE.ui.modules.push(mod);
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- ui/app.js ----
 // App shell: toolbar (mode switch, load, save, backup, undo), the left list and
 // centre editor of the active module, the shared item database, the problems
@@ -18667,7 +19748,17 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "62+", "when
         const before = S.ws.history[S.ws.history.length - 1];
         S.ws.applyGroup(make(), label);
         const last = S.ws.history[S.ws.history.length - 1], now = Date.now();
-        if (mergeKey && before && before !== last && before.mergeKey === mergeKey && now - (before.at || 0) < 2000 && S.ws.mergeLast()) { before.at = now; return; }
+        if (mergeKey && before && before !== last && before.mergeKey === mergeKey && now - (before.at || 0) < 2000 && S.ws.mergeLast()) {
+          // one undo step for the whole typed value: its label (and the toast) say the final value, "was" keeps the value before typing
+          before.at = now;
+          const files = S.ws.history[S.ws.history.length - 1];
+          const u0 = files && files.length ? S.ws.files.get(files[0])._undo : null, first = u0 && u0.length ? u0[u0.length - 1].label : null;
+          const was = first && /\(was [^)]*\)\s*$/.exec(first);
+          const merged = was ? label.replace(/\(was [^)]*\)\s*$/, was[0]) : label;
+          for (const n of files || []) { const u = S.ws.files.get(n)._undo; if (u.length) u[u.length - 1].label = merged; }
+          done(merged, said);
+          return;
+        }
         tagLast(keys, label);
         if (last && last !== before) { last.at = now; last.mergeKey = mergeKey; }
         done(label, said);

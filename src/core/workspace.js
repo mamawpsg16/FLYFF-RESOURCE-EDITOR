@@ -152,6 +152,18 @@
       validate(ws, model) { return FRE.rates.validate(model, { defines: ws.defines, ws }); },
     },
     {
+      // Upgrade Rates (task K, loaders/upgrade.js): ItemUpgrade.lua (CItemUpgrade::LoadScript, WorldServer only), s.txt (accessory /
+      // collector chances: LoadServerScript, WorldServer; the game reads the collecting blocks of its LF copy, 15091d5f),
+      // Ultimate_UltimateWeapon.txt (WorldServer only), WeaponRarity.inc (both, 3168003d). Spec_Item is read for the rate scrolls.
+      id: 'upgrade', label: 'Upgrade Rates',
+      required: ['ItemUpgrade.lua'], optional: ['s.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc'],
+      editable: ['ItemUpgrade.lua', 's.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc'],
+      client: ['s.txt', 'WeaponRarity.inc'],
+      deps: ['s.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc'],
+      parse(ws) { return FRE.upgrade.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.upgradeChecks(model, { ws }); },
+    },
+    {
       // Where is this item from? (task H, loaders/where.js): every model above parsed read-only, nothing editable.
       // Last, so its parse sees the other models. maps: towns of the NPCs, and whether they stand in the game.
       id: 'where', label: 'Item Sources & Uses',

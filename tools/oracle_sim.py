@@ -8406,6 +8406,639 @@ def cp_run_all(root):
         out['edits'].append({'base': base, 'ops': ops, 'text': t})
     return out
 
+
+# ============================================================ Upgrade Rates (task K)
+# From the C++ (WORLDSERVER/ItemUpgrade.cpp, _Common/UltimateWeapon.cpp, _Common/Project.cpp, _Common/Item.cpp):
+#   ItemUpgrade.lua: real Lua; after the run the server reads tSuitProb / tWeaponProb / tGeneral (key -> value) and tAttribute[n].nProb…
+#     (LoadScript :56-122). A run error leaves every table empty (only an Error log).
+#   GetGeneralEnchantProb(L) = tGeneral[L+1], and for a non-Korean server from L >= 3: (int)((float)p * 0.9f) (:1285-1296).
+#   GetAttributeEnchantProb(L) = tAttribute[L+1].nProb (:1911). GetSizeProb = tSuitProb / tWeaponProb [size+1] (:309).
+#   s.txt Accessory_Probability: ptr[i++] (20 slots), Collecting_Enchant: push_back (LoadServerScript, Project.cpp:5684).
+#   Ultimate: SET_GEM … single numbers; MAKE_GEM / ULTIMATE_ENCHANT rows into a std::map (insert: the first row of a level stays).
+#   WeaponRarity.inc: one struct reused over the blocks, SetAtGrow(level); Drop: nCount pairs; SetRandomWeaponRarity: xRandom(100).
+# The tries: see each up_try_* below (one xRandom per try).
+
+UP_N = {'general': 10000, 'attr': 10000, 'weapon': 10000, 'suit': 10000, 'acc': 10000, 'coll': 1000, 'ult': 1000000}
+UP_PIERCE_PENYA = 100000          # ItemUpgrade.cpp:231, :797
+
+
+def up_f32(x):
+    return struct.unpack('<f', struct.pack('<f', x))[0]
+
+
+def up_cut(p, level):
+    """(int)((float)p * 0.9f) from level 3 (LANG_USA)"""
+    if level < 3:
+        return p
+    return int(up_f32(up_f32(float(p)) * up_f32(0.9)))
+
+
+def up_lua_tokens(t):
+    """Lua tokens with offsets; comments and strings skipped -> [(kind, text, start, end)], errors"""
+    out, errs, i, n = [], [], 0, len(t)
+    while i < n:
+        c = t[i]
+        if c in ' \t\r\n':
+            i += 1; continue
+        if t.startswith('--[[', i):
+            j = t.find(']]', i + 4)
+            if j < 0:
+                errs.append(i); i = n
+            else:
+                i = j + 2
+            continue
+        if t.startswith('--', i):
+            j = t.find('\n', i)
+            i = n if j < 0 else j
+            continue
+        if c in '"\'':
+            j = i + 1
+            while j < n and t[j] != c and t[j] != '\n':
+                j += 2 if t[j] == '\\' else 1
+            if j >= n or t[j] != c:
+                errs.append(i)
+            out.append(('s', t[i:j + 1], i, j + 1)); i = j + 1
+            continue
+        m = re.match(r'(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?', t[i:])
+        if m:
+            out.append(('n', m.group(0), i, i + len(m.group(0)))); i += len(m.group(0)); continue
+        m = re.match(r'[A-Za-z_]\w*', t[i:])
+        if m:
+            out.append(('w', m.group(0), i, i + len(m.group(0)))); i += len(m.group(0)); continue
+        if t.startswith('==', i) or t.startswith('~=', i) or t.startswith('<=', i) or t.startswith('>=', i) or t.startswith('..', i):
+            out.append(('d', t[i:i + 2], i, i + 2)); i += 2; continue
+        out.append(('d', c, i, i + 1)); i += 1
+    return out, errs
+
+
+def up_lua(t):
+    """run ItemUpgrade.lua the way it is written: -> {'ok', 'tables': {name: [(value, s, e)]}, 'nums': {name: (v, s, e)}, 'attr': [[(v,s,e)×5]]}"""
+    tk, errs = up_lua_tokens(t)
+    R = {'ok': not errs, 'tables': {}, 'nums': {}, 'attr': [], 'attr_seen_table': False}
+    depth = 0
+    for k in tk:
+        if k[1] in '({[':
+            depth += 1
+        elif k[1] in ')}]':
+            depth -= 1
+            if depth < 0:
+                R['ok'] = False
+    if depth != 0:
+        R['ok'] = False
+    fns = set()
+    i = 0
+    def number_at(j):
+        neg = tk[j][1] == '-'
+        if neg:
+            j += 1
+        if j < len(tk) and tk[j][0] == 'n':
+            v = int(float(tk[j][1]))      # static_cast<int>( lua_tonumber )
+            return (-v if neg else v), tk[j - 1 if neg else j][2], tk[j][3], j + 1
+        return None
+    while i < len(tk):
+        kind, w, s, e = tk[i]
+        if w == 'function' and i + 1 < len(tk):
+            name = tk[i + 1][1]
+            d = 0
+            while i < len(tk):
+                x = tk[i][1]
+                if tk[i][0] == 'w' and x in ('function', 'if', 'do'):
+                    d += 1
+                elif tk[i][0] == 'w' and x == 'end':
+                    d -= 1
+                    if d == 0:
+                        break
+                i += 1
+            if d != 0:
+                R['ok'] = False
+            fns.add(name)
+            i += 1
+            continue
+        if kind == 'w' and i + 1 < len(tk) and tk[i + 1][1] == '=':
+            j = i + 2
+            if j < len(tk) and tk[j][1] == '{':
+                items, j = [], j + 1
+                while j < len(tk) and tk[j][1] != '}':
+                    if tk[j][1] in (',', ';'):
+                        j += 1; continue
+                    nm = number_at(j)
+                    if nm:
+                        items.append((nm[0], nm[1], nm[2])); j = nm[3]
+                    else:
+                        items.append((0, tk[j][2], tk[j][3])); j += 1
+                R['tables'][w] = items
+                if w == 'tAttribute':
+                    R['attr_seen_table'] = True
+                i = j + 1
+                continue
+            nm = number_at(j)
+            if nm:
+                R['nums'][w] = (nm[0], nm[1], nm[2]); i = nm[3]; continue
+            i = j + 1
+            continue
+        if kind == 'w' and i + 1 < len(tk) and tk[i + 1][1] == '(':
+            if w not in fns:
+                R['ok'] = False        # attempt to call a nil value
+            j, args = i + 2, []
+            while j < len(tk) and tk[j][1] != ')':
+                if tk[j][1] == ',':
+                    j += 1; continue
+                nm = number_at(j)
+                if nm:
+                    args.append((nm[0], nm[1], nm[2])); j = nm[3]
+                else:
+                    args.append((0, tk[j][2], tk[j][3])); j += 1
+            if w == 'AddAttribute':
+                if not R['attr_seen_table']:
+                    R['ok'] = False    # tAttribute[n] on nil
+                R['attr'].append(args)
+            i = j + 1
+            continue
+        i += 1
+    return R
+
+
+def up_tables(L):
+    """what the server holds after LoadScript: lists by key 1..n (a Lua array) and tAttribute by level (the last call wins)"""
+    if not L['ok']:
+        return {'general': [], 'suit': [], 'weapon': [], 'attr': {}}
+    attr = {}
+    for a in L['attr']:
+        if len(a) >= 2:
+            attr[a[0][0]] = a
+    return {'general': L['tables'].get('tGeneral', []), 'suit': L['tables'].get('tSuitProb', []), 'weapon': L['tables'].get('tWeaponProb', []), 'attr': attr}
+
+
+def up_s(t, D):
+    tk = rt_scan(t)
+    R = {'acc': [], 'coll': []}
+    k = 0
+    def num(k):
+        x = tk[k]
+        if x[1] in ('-', '+'):
+            v = atoi(tk[k + 1][1]); return (-v if x[1] == '-' else v), x[2], tk[k + 1][3], k + 2
+        if x[1] in D:
+            return D[x[1]], x[2], x[3], k + 1
+        return atoi(x[1]), x[2], x[3], k + 1
+    while k < len(tk):
+        w = tk[k][1]
+        if w in ('Accessory_Probability', 'Collecting_Enchant'):
+            k += 2              # the name, {
+            into = R['acc'] if w == 'Accessory_Probability' else R['coll']
+            while k < len(tk) and tk[k][1] != '}':
+                v, s, e, k = num(k)
+                into.append((v, s, e))
+        k += 1
+    return R
+
+
+def up_ult(t):
+    tk = rt_scan(t)
+    R = {'single': {}, 'make': [], 'ench': []}
+    k = 0
+    def num(k):
+        x = tk[k]
+        if x[1] in ('-', '+'):
+            v = atoi(tk[k + 1][1]); return (-v if x[1] == '-' else v), x[2], tk[k + 1][3], k + 2
+        return atoi(x[1]), x[2], x[3], k + 1
+    while k < len(tk):
+        w = tk[k][1]
+        if w in ('SET_GEM', 'REMOVE_GEM', 'GENERAL2UNIQUE', 'UNIQUE2ULTIMATE'):
+            v, s, e, k = num(k + 1)
+            R['single'][w] = (v, s, e)
+            continue
+        if w in ('MAKE_GEM', 'ULTIMATE_ENCHANT'):
+            k += 2
+            while k < len(tk) and tk[k][1] != '}':
+                lv = (atoi(tk[k][1]), tk[k][2], tk[k][3]); k += 1
+                vals = []
+                for _ in range(4 if w == 'MAKE_GEM' else 1):
+                    v, s, e, k = num(k); vals.append((v, s, e))
+                (R['make'] if w == 'MAKE_GEM' else R['ench']).append([lv] + vals)
+        k += 1
+    return R
+
+
+def up_first(rows):
+    m = {}
+    for r in rows:
+        m.setdefault(r[0][0], r)
+    return m
+
+
+def up_rarity(t, D):
+    tk = rt_scan(t)
+    R = {'blocks': [], 'tiers': {}, 'high': 0, 'drop': [], 'total': 0, 'closed': True}
+    cur = {'level': 0, 'name': None, 'color': 0, 'pct': 0, 'flat': 0}
+    k = 0
+    def num(k):
+        x = tk[k]
+        if x[1].lower().startswith('0x'):
+            return int(x[1][2:], 16) & 0xFFFFFFFF, x[2], x[3], k + 1
+        if x[1] in ('-', '+'):
+            v = atoi(tk[k + 1][1]); return (-v if x[1] == '-' else v), x[2], tk[k + 1][3], k + 2
+        if x[1] in D:
+            return D[x[1]], x[2], x[3], k + 1
+        return atoi(x[1]), x[2], x[3], k + 1
+    while k < len(tk):
+        w = tk[k][1]
+        if w == 'Add_Weapon_Rarity':
+            k += 1
+            sp = {}
+            while k < len(tk) and tk[k][1] != '}':
+                f = tk[k][1]
+                key = {'nRarityLevel': 'level', 'nStatsPctBonus': 'pct', 'nStatsFlatBonus': 'flat', 'dwColor': 'color'}.get(f)
+                if key:
+                    v, s, e, k = num(k + 2)
+                    cur[key] = v
+                    sp[key] = (v, s, e)
+                    if key == 'level' and v > R['high']:
+                        R['high'] = v
+                    k += 1          # ;
+                    continue
+                if f == 'szName':
+                    x = tk[k + 2]
+                    cur['name'] = x[1]
+                    sp['name'] = (x[1], x[2], x[3])
+                    k += 4
+                    continue
+                k += 1
+            R['blocks'].append({'v': dict(cur), 'sp': sp})
+            R['tiers'][cur['level']] = dict(cur, luck=0)
+            k += 1
+            continue
+        if w == 'Drop':
+            k += 2
+            total = 0
+            for _ in range(len(R['blocks'])):
+                lv, ls, le, k = num(k)
+                lu, us, ue, k = num(k)
+                R['drop'].append({'level': lv, 'luck': (lu, us, ue)})
+                if lv in R['tiers']:
+                    R['tiers'][lv]['luck'] = lu
+                    total += lu
+            R['closed'] = k < len(tk) and tk[k][1] == '}'
+            R['total'] = total
+            k += 1
+            continue
+        k += 1
+    return R
+
+
+def up_rarity_roll(R, r):
+    """SetRandomWeaponRarity: the first tier 1..high whose running luck total is above r; 0 = unchanged"""
+    tot = 0
+    for i in range(1, R['high'] + 1):
+        if i not in R['tiers']:
+            continue
+        tot += R['tiers'][i]['luck']
+        if r < tot:
+            return i
+    return 0
+
+
+# ------------------------------------------------------------ one try, as the C++ does it
+def up_value(M, sys, L):
+    """the file value used for the try from +L (None = no row)"""
+    T = M['t']
+    if sys == 'general':
+        lst = T['general']
+        return up_cut(lst[L][0], L) if L < len(lst) else None
+    if sys in ('weapon', 'suit'):
+        lst = T[sys]
+        return lst[L][0] if L < len(lst) else None
+    if sys == 'attr':
+        a = T['attr'].get(L + 1)
+        return a[1][0] if a else None
+    if sys == 'acc':
+        lst = M['s']['acc'][:20]
+        return lst[L][0] if L < len(lst) else None
+    if sys == 'coll':
+        lst = M['s']['coll']
+        return lst[L][0] if L < len(lst) else None
+    if sys == 'ult':
+        r = up_first(M['u']['ench']).get(L + 1)
+        return r[1][0] if r else None
+
+
+def up_try(M, sys, L, o, rnd):
+    """-> (roll, result 'up' / 'keep' / 'break', scrolls used, protect used, penya)"""
+    safe = o.get('window') == 'safe'
+    p = up_value(M, sys, L)
+    if p is None:
+        p = 0
+    used, prot, penya = 0, 0, 0
+    sc = o.get('scrolls', [])
+    def rate(kind):
+        nonlocal p, used
+        for s in sc:
+            if s['kind'] == kind and s['min'] <= L <= s['max']:
+                p += s['value']; used += 1
+                return
+    if sys == 'general':
+        if safe:                                   # SmeltSafetyGeneral
+            prot = 1
+            if o.get('smelting') and L < 7:
+                p += 1000; used += 1
+            r = rnd(10000)
+            return r, ('keep' if r > p else 'up'), used, prot, 0
+        prot = 1 if o.get('protect') else 0         # EnchantGeneral
+        if o.get('weapon'):
+            rate('generalWeapon')
+        rate('general')
+        r = rnd(10000)
+        if r > p:
+            return r, ('break' if L >= 3 and not prot else 'keep'), used, prot, 0
+        return r, 'up', used, prot, 0
+    if sys == 'attr':                               # EnchantAttribute
+        prot = 1 if o.get('protect') else 0
+        if o.get('smelting') and L < 10:
+            p += 1000; used += 1
+        rate('attr')
+        r = rnd(10000)
+        if r > p:
+            return r, ('break' if L >= 3 and not prot else 'keep'), used, prot, 0
+        return r, 'up', used, prot, 0
+    if sys in ('weapon', 'suit'):                  # OnPiercingSize / SmeltSafetyPiercingSize
+        prot = 1 if (safe or o.get('protect')) else 0
+        r = rnd(10000)
+        if p < r:
+            return r, ('keep' if prot else 'break'), 0, prot, UP_PIERCE_PENYA
+        return r, 'up', 0, prot, UP_PIERCE_PENYA
+    if sys == 'acc':
+        if safe:                                   # SmeltSafetyAccessory
+            r = rnd(10000)
+            return r, ('keep' if r > p else 'up'), 0, 1, 0
+        prot = 1 if o.get('protect') else 0         # RefineAccessory
+        r = rnd(10000)
+        if r < p:
+            return r, 'up', 0, prot, 0
+        return r, ('break' if L >= 3 and not prot else 'keep'), 0, prot, 0
+    if sys == 'coll':                               # RefineCollector
+        r = rnd(1000)
+        return r, ('up' if r < p else 'keep'), 0, 0, 0
+    if sys == 'ult':
+        if safe:                                   # SmeltSafetyUltimate
+            r = rnd(1000000)
+            return r, ('keep' if r > p else 'up'), 0, 1, 0
+        prot = 1 if o.get('protect') else 0         # EnchantWeapon
+        r = rnd(1000000)
+        if r < p:
+            return r, 'up', 0, prot, 0
+        return r, ('keep' if prot else 'break'), 0, prot, 0
+    if sys == 'transform':                          # TransWeapon
+        uni = o.get('to') == 'ultimate'
+        p = M['u']['single'].get('UNIQUE2ULTIMATE' if uni else 'GENERAL2UNIQUE', (0,))[0]
+        if uni:
+            for s in sc:
+                if s['kind'] == 'transform' and s['min'] <= 10 <= s['max']:
+                    p += (s['value'] & 0xFFFF) * 100; used += 1
+                    break
+        r = rnd(1000000)
+        if r < p:
+            return r, 'up', used, (1 if uni else 0), 0
+        return r, ('keep' if uni else 'break'), used, (1 if uni else 0), 0
+
+
+def up_top(M, sys):
+    if sys == 'acc':
+        return 20
+    if sys == 'ult':
+        return 10
+    if sys == 'transform':
+        return 1
+    if sys == 'attr':
+        return len(M['t']['attr'])
+    if sys == 'coll':
+        return len(M['s']['coll'])
+    return len(M['t'][sys])
+
+
+def up_run(M, sys, a, b, o, seed, count, cap=2000):
+    rnd = Rand(seed)
+    log, items = [], []
+    tot = {'tries': 0, 'material': 0, 'protect': 0, 'scrolls': 0, 'penya': 0, 'reached': 0, 'broke': 0}
+    for i in range(count):
+        L, n, broke = a, 0, False
+        while L < b and n < cap:
+            r, res, used, prot, pen = up_try(M, sys, L, o, rnd)
+            n += 1
+            tot['material'] += 1; tot['protect'] += prot; tot['scrolls'] += used; tot['penya'] += pen
+            if len(log) < 40:
+                log.append([i, L, r, res])
+            if res == 'up':
+                L += 1
+            elif res == 'break':
+                broke = True
+                break
+        tot['tries'] += n
+        tot['reached'] += 1 if L >= b else 0
+        tot['broke'] += 1 if broke else 0
+        items.append([n, L >= b, broke, L])
+    return {'totals': tot, 'log': log, 'items': items}
+
+
+def up_success_count(M, sys, L, o):
+    """how many of the n rolls pass, worked out from the try itself: run every roll value through the same comparison"""
+    # the roll is the only random input: count r in 0..n-1 that give 'up' (a stand-in rng returning each r once)
+    n = 1000000 if sys in ('ult', 'transform') else UP_N[sys]
+    # binary search on r: 'up' holds for r below a bound (r < p) or up to p (r <= p)
+    class Fixed:
+        def __init__(self, r): self.r = r
+        def __call__(self, m): return self.r
+    lo, hi = 0, n          # first r that fails
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if up_try(M, sys, L, o, Fixed(mid))[1] == 'up':
+            lo = mid + 1
+        else:
+            hi = mid
+    fail = up_try(M, sys, L, o, Fixed(n - 1))[1] if lo < n else 'keep'
+    if lo < n:
+        fail = up_try(M, sys, L, o, Fixed(lo))[1]
+    return lo, n, fail
+
+
+def up_expect(M, sys, a, b, o):
+    rows, reach, tries, prot, scr, pen, never = [], 1.0, 0.0, 0.0, 0.0, 0.0, None
+    for L in range(a, b):
+        cnt, n, fail = up_success_count(M, sys, L, o)
+        c = cnt / n
+        t = (1 / c if c > 0 else float('inf')) if fail == 'keep' else 1
+        here = reach * t
+        rows.append([L, c, fail, reach, None if math.isinf(here) else here])
+        tries += here
+        _, _, _, pu, _ = up_try(M, sys, L, o, lambda m: m - 1)
+        _, _, uu, _, _ = up_try(M, sys, L, o, lambda m: m - 1)
+        prot += here * pu
+        scr += here * uu
+        if sys in ('weapon', 'suit'):
+            pen += here * UP_PIERCE_PENYA
+        if c <= 0:
+            never, reach = L, 0.0
+            break
+        if fail == 'break':
+            reach *= c
+    per = None if reach <= 0 or math.isinf(tries) else [tries / reach, 1 / reach, prot / reach, scr / reach, pen / reach]
+    return {'rows': rows, 'reach': reach, 'per': per, 'never': never}
+
+
+# ------------------------------------------------------------ edits (only the number / name / colour token changes)
+def up_pct_value(sys, L, pct):
+    """the file value whose REAL chance is pct (rounded to the roll's unit); the smallest one"""
+    n = UP_N[sys]
+    want = max(0, min(n, round(pct / 100 * n)))
+    le = sys in ('general', 'attr', 'weapon', 'suit')          # fail if r > p  -> want passes = p + 1
+    if not le:
+        return want                                            # r < p
+    v = want - 1
+    if sys == 'general' and L >= 3 and v >= 0:
+        p = 0
+        while up_cut(p, L) < v:
+            p += 1
+        return p
+    return v
+
+
+def up_splice(t, s, e, ins):
+    return t[:s] + str(ins) + t[e:]
+
+
+def up_model(texts, D):
+    L = up_lua(texts['lua'])
+    return {'lua': L, 't': up_tables(L), 's': up_s(texts['s'], D), 'u': up_ult(texts['ult']), 'r': up_rarity(texts['wr'], D)}
+
+
+def up_edit(texts, op, D):
+    M = up_model(texts, D)
+    T = dict(texts)
+    k = op[0]
+    if k == 'chance':
+        _, sys, L, pct = op
+        v = up_pct_value(sys, L, pct)
+        if sys == 'general':
+            x = M['lua']['tables']['tGeneral'][L]; T['lua'] = up_splice(T['lua'], x[1], x[2], v)
+        elif sys in ('weapon', 'suit'):
+            x = M['lua']['tables']['tWeaponProb' if sys == 'weapon' else 'tSuitProb'][L]; T['lua'] = up_splice(T['lua'], x[1], x[2], v)
+        elif sys == 'attr':
+            x = M['t']['attr'][L + 1][1]; T['lua'] = up_splice(T['lua'], x[1], x[2], v)
+        elif sys in ('acc', 'coll'):
+            x = M['s'][sys][L]; T['s'] = up_splice(T['s'], x[1], x[2], v)
+        elif sys == 'ult':
+            x = up_first(M['u']['ench'])[L + 1][1]; T['ult'] = up_splice(T['ult'], x[1], x[2], round(pct / 100 * 1000000))
+    elif k == 'attrfield':
+        _, L, idx, v = op
+        x = M['t']['attr'][L + 1][idx]; T['lua'] = up_splice(T['lua'], x[1], x[2], v)
+    elif k == 'single':
+        _, key, pct = op
+        x = M['u']['single'][key]; T['ult'] = up_splice(T['ult'], x[1], x[2], round(pct / 100 * 1000000))
+    elif k == 'gem':
+        _, lv, field, v = op
+        row = up_first(M['u']['make'])[lv]
+        x = row[{'gProb': 1, 'gNum': 2, 'uProb': 3, 'uNum': 4}[field]]
+        T['ult'] = up_splice(T['ult'], x[1], x[2], round(v / 100 * 1000000) if field in ('gProb', 'uProb') else v)
+    elif k == 'rnum':
+        _, bi, key, v = op
+        x = M['r']['blocks'][bi]['sp'][key]; T['wr'] = up_splice(T['wr'], x[1], x[2], v)
+    elif k == 'rname':
+        _, bi, name = op
+        x = M['r']['blocks'][bi]['sp']['name']; T['wr'] = up_splice(T['wr'], x[1], x[2], '"%s"' % name)
+    elif k == 'rcolor':
+        _, bi, rgb = op
+        x = M['r']['blocks'][bi]['sp']['color']; T['wr'] = up_splice(T['wr'], x[1], x[2], '0xFF' + rgb.lstrip('#').upper())
+    elif k == 'luck':
+        _, lv, v = op
+        d = [x for x in M['r']['drop'] if x['level'] == lv][0]['luck']
+        T['wr'] = up_splice(T['wr'], d[1], d[2], v)
+    return T
+
+
+UP_LUA_SHORT = ('tSuitProb = { 5000, 2500 }\r\ntWeaponProb = { 4000, 2000, 1000.9 }\r\n-- a comment\r\n'
+                'tGeneral = { 10000; 9000, 3333, 0, 50 }\r\n'
+                'tAttribute = {}\r\nfunction AddAttribute( nNum, nProb, a, b, c )\r\n\ttAttribute[nNum] = {}\r\n\ttAttribute[nNum].nProb = nProb\r\nend\r\n'
+                'AddAttribute( 1, 9000, 1, 2, 3 )\r\nAddAttribute( 2, 8000, 4, 5, 6 )\r\nAddAttribute( 2, 7000, 7, 8, 9 )\r\nAddAttribute( 4, 100, 1, 1, 1 )\r\n'
+                'nItemTransyLowLevel = 1\r\n')
+UP_LUA_LATE = ('tGeneral = { 10000, 10000 }\r\ntSuitProb = { 1 }\r\ntWeaponProb = { 1 }\r\ntAttribute = {}\r\nAddAttribute( 1, 100, 1, 1, 1 )\r\n'
+               'function AddAttribute( n, p, a, b, c )\r\n\ttAttribute[n] = { nProb = p }\r\nend\r\n')
+UP_LUA_BROKEN = 'tGeneral = { 10000, 10000\r\ntSuitProb = { 1 }\r\n'
+UP_S_ODD = 'Accessory_Probability\r\n{\r\n' + ''.join('\t%d\t// %d\r\n' % (10000 - i * 450, i) for i in range(22)) + '}\r\nCollecting_Enchant\r\n{\r\n\t500\r\n\t-1\r\n}\r\n'
+UP_ULT_ODD = ('SET_GEM 500000\r\nGENERAL2UNIQUE\t10\r\nUNIQUE2ULTIMATE 999999 // x\r\nMAKE_GEM\r\n{\r\n\t0 1 1 2 2\r\n\t0 3 3 4 4\r\n\t5 1000000 9 0 1\r\n}\r\n'
+              'ULTIMATE_ENCHANT\r\n{\r\n\t1 500000\r\n\t2 0\r\n\t2 100\r\n\t3 1000000\r\n}\r\n')
+UP_WR_ODD = ('Add_Weapon_Rarity\r\n{\r\n\tnRarityLevel = 1;\r\n\tszName = "One";\r\n\tdwColor = 0xFF00FF00;\r\n\tnStatsPctBonus = 3;\r\n\tnStatsFlatBonus = 4;\r\n}\r\n'
+             'Add_Weapon_Rarity\r\n{\r\n\tnRarityLevel = 3;\r\n\tszName = "Three";\r\n\tnStatsPctBonus = 9;\r\n}\r\n'
+             'Add_Weapon_Rarity\r\n{\r\n\tnRarityLevel = 3;\r\n\tszName = "Three again";\r\n\tnStatsFlatBonus = 7;\r\n}\r\n'
+             'Drop\r\n{\r\n\t1 50\r\n\t3 20\r\n\t2 10\r\n}\r\n')
+
+
+def up_run_all(root):
+    D = defines(root)
+    rd = lambda n: open(os.path.join(root, n), 'rb').read()
+    real = {'lua': rd('ItemUpgrade.lua').decode('latin-1'), 's': rd('s.txt').decode('latin-1'), 'ult': rd('Ultimate_UltimateWeapon.txt').decode('latin-1'),
+            'wr': rd('WeaponRarity.inc')[2:].decode('utf-16-le')}
+    sets = {'real': real,
+            'short': dict(real, lua=UP_LUA_SHORT, s=UP_S_ODD, ult=UP_ULT_ODD, wr=UP_WR_ODD),
+            'late': dict(real, lua=UP_LUA_LATE),
+            'broken': dict(real, lua=UP_LUA_BROKEN)}
+    scrolls = [{'id': 1, 'kind': 'general', 'value': 500, 'min': 0, 'max': 6}, {'id': 2, 'kind': 'generalWeapon', 'value': 1000, 'min': 3, 'max': 9},
+               {'id': 3, 'kind': 'attr', 'value': 700, 'min': 0, 'max': 19}, {'id': 4, 'kind': 'transform', 'value': 70000 + 5, 'min': 10, 'max': 10}]
+    OPTS = {
+        'general': [{}, {'protect': True}, {'window': 'safe'}, {'window': 'safe', 'smelting': True}, {'protect': True, 'weapon': True, 'scrolls': scrolls}, {'scrolls': scrolls}],
+        'attr': [{}, {'protect': True, 'smelting': True}, {'protect': True, 'scrolls': scrolls}],
+        'weapon': [{}, {'protect': True}, {'window': 'safe'}],
+        'suit': [{'protect': True}, {}],
+        'acc': [{}, {'protect': True}, {'window': 'safe'}],
+        'coll': [{}],
+        'ult': [{}, {'protect': True}, {'window': 'safe'}],
+        'transform': [{'to': 'unique'}, {'to': 'ultimate'}, {'to': 'ultimate', 'scrolls': scrolls}],
+    }
+    out = {'files': sets, 'scrolls': scrolls, 'facts': [], 'edits': []}
+    for name, T in sets.items():
+        M = up_model(T, D)
+        f = {'name': name, 'ok': M['lua']['ok'], 'ladders': {}, 'single': {k: v[0] for k, v in M['u']['single'].items()},
+             'make': [[r[0][0]] + [x[0] for x in r[1:]] for r in sorted(up_first(M['u']['make']).values(), key=lambda r: r[0][0])],
+             'rarity': {'high': M['r']['high'], 'total': M['r']['total'], 'closed': M['r']['closed'],
+                        'tiers': [[lv, t['name'], t['color'], t['pct'], t['flat'], t['luck']] for lv, t in sorted(M['r']['tiers'].items())],
+                        'rolls': [up_rarity_roll(M['r'], r) for r in range(100)]},
+             'cases': []}
+        for sys in ('general', 'attr', 'weapon', 'suit', 'acc', 'coll', 'ult'):
+            rows = []
+            for L in range(up_top(M, sys)):
+                v = up_value(M, sys, L)
+                if v is None:
+                    rows.append([L, None]); continue
+                cnt, n, _ = up_success_count(M, sys, L, {})
+                safe = up_success_count(M, sys, L, {'window': 'safe'})[0] if sys in ('acc', 'ult') else None
+                rows.append([L, v, cnt, safe])
+            f['ladders'][sys] = rows
+        for sys, opts in OPTS.items():
+            top = up_top(M, sys)
+            if top <= 0:
+                continue
+            spans = [(0, top)] if sys == 'transform' else [(0, top), (max(0, top - 3), top), (0, min(top, 4))]
+            for oi, o in enumerate(opts):
+                for (a, b) in spans:
+                    for seed in (1, 77):
+                        f['cases'].append({'sys': sys, 'o': oi, 'a': a, 'b': b, 'seed': seed, 'run': up_run(M, sys, a, b, o, seed, 25),
+                                           'expect': up_expect(M, sys, a, b, o)})
+        f['opts'] = OPTS
+        out['facts'].append(f)
+    scripts = [
+        ('real', [['chance', 'general', 0, 50], ['chance', 'general', 3, 20], ['chance', 'general', 9, 0.01]]),
+        ('real', [['chance', 'general', 4, 100], ['chance', 'general', 5, 0]]),
+        ('real', [['chance', 'attr', 0, 99.99], ['attrfield', 5, 2, 999], ['attrfield', 19, 4, 1]]),
+        ('real', [['chance', 'weapon', 2, 10], ['chance', 'suit', 3, 1.5], ['chance', 'suit', 0, 100]]),
+        ('real', [['chance', 'acc', 2, 70], ['chance', 'acc', 19, 0.5], ['chance', 'coll', 4, 12.3]]),
+        ('real', [['chance', 'ult', 0, 12.5], ['single', 'UNIQUE2ULTIMATE', 1.5], ['single', 'SET_GEM', 80], ['gem', 3, 'gProb', 25], ['gem', 10, 'uNum', 50]]),
+        ('real', [['rnum', 0, 'pct', 4], ['rname', 5, 'Mythic Ω'], ['rcolor', 2, '#12ab9f'], ['luck', 1, 30], ['luck', 6, 5], ['rnum', 3, 'flat', 0]]),
+        ('short', [['chance', 'general', 1, 42], ['chance', 'attr', 1, 33], ['rnum', 1, 'pct', 11], ['luck', 3, 30]]),
+    ]
+    for base, ops in scripts:
+        T = dict(sets[base])
+        for op in ops:
+            T = up_edit(T, op, D)
+        out['edits'].append({'base': base, 'ops': ops, 'texts': T})
+    return out
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -8447,6 +9080,8 @@ if __name__ == '__main__':
         print(json.dumps(rt_run(root)))
     elif what == 'couple':
         print(json.dumps(cp_run_all(root)))
+    elif what == 'upgrade':
+        print(json.dumps(up_run_all(root)))
     elif what == 'dds':                         # a folder of .dds icons -> {file: [w, h, sha256 of the RGBA]}
         print(json.dumps(dds_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model
