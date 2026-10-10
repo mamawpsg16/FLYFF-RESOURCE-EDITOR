@@ -61,6 +61,8 @@
   clientDir.children.set('defineNeuz.h', new FakeFile('defineNeuz.h', lfOnly(original.get('defineNeuz.h'))));
   for (const n of ['etc.inc', 'etc.txt.txt']) clientDir.children.set(n, new FakeFile(n, original.get(n).slice()));
   if (original.has('GuildBuff.txt')) clientDir.children.set('GuildBuff.txt', new FakeFile('GuildBuff.txt', original.get('GuildBuff.txt').slice()));
+  // Set Effects: the game's identical copy of propItemEtc.inc (no loose propItemEtc.txt.txt: the game reads the old one in data.res)
+  if (original.has("propItemEtc.inc")) clientDir.children.set('propItemEtc.inc', new FakeFile('propItemEtc.inc', original.get('propItemEtc.inc').slice()));
   for (const n of ['WeaponRarity.inc']) if (original.has(n)) clientDir.children.set(n, new FakeFile(n, original.get(n).slice()));
   if (original.has('s.txt')) clientDir.children.set('s.txt', new FakeFile('s.txt', lfOnly(original.get('s.txt'))));
   // a new exchange menu's files: defineText.h is LF in Client, textClient.* identical
@@ -160,7 +162,7 @@
     // the cards are drawn after the patch check (io/patch-state.js reads one C++ file per patch)
     await waitFor(() => document.querySelector('.task-card:not(:disabled)'), 'task cards enabled');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
-    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 8 && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 8 tasks to pick (exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 9 && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 9 tasks to pick (Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
@@ -1549,6 +1551,72 @@
       ok(!S.client || (clientDir.children.get('UpgradeFees.lua') && FRE.bytes.bytesEqual(clientDir.children.get('UpgradeFees.lua').bytes, nf.bytes)), '… and its Client copy (ticked by default)');
       const bk = [...backups.children.values()].pop(), man = JSON.parse(new TextDecoder().decode(bk.children.get('manifest.json').bytes));
       ok(!bk.children.has('UpgradeFees.lua') && man.files.some(x => x.name === 'UpgradeFees.lua' && x.created), 'backup: no old copy (it is new), the manifest says created');
+      ok(S.ws.dirtyFiles().length === 0, 'clean after save');
+      for (const m of [...document.querySelectorAll('.modal')]) { const b = btnByText(m, 'Close'); if (b) click(b); }
+    }
+
+    // ---- Set Effects (G part 1)
+    {
+      await openTask('sets');
+      const ed = () => $('editor'), items = () => [...document.querySelectorAll('#list .npc')];
+      ok(S.mode === 'sets' && items().length === 158 && /\+N armor bonus/.test(items()[0].textContent), 'Set Effects: +N armor bonus + 157 sets in the list');
+      click(items().find(x => /^Leaf Set/.test(x.querySelector('.n').textContent)));
+      ok(/Leaf Set/.test(ed().querySelector('h2').textContent) && /Pieces \(4 of 8\)/.test(ed().textContent) && /Bonuses \(5 of 32 rows\)/.test(ed().textContent), 'Leaf Set: 4 pieces, 5 bonus rows');
+      ok(/Leaf Set \(4\/4\)/.test(ed().querySelector('.se-tt').textContent) && /Set Effect \(4pc\):/.test(ed().querySelector('.se-tt').textContent), 'the tooltip with all 4 worn: "Leaf Set (4/4)", every tier');
+      const adj = ed().querySelector('input[data-key$="|adj"]');
+      adj.value = '60'; adj.dispatchEvent(new Event('change'));
+      ok(/DST_HP_MAX\t\t60\t2/.test(S.ws.files.get('propitemetc.inc').text) && /\(was 50\)/.test([...$('toasts').children].pop().textContent), 'Max HP +50 → +60 (2 pieces): written, the toast says (was 50)');
+      click(btnByText(ed(), '+ Add bonus'));
+      const mf = () => document.querySelector('.modal');
+      ok(mf() && /Add a bonus: Leaf Set/.test(mf().textContent) && /Still needs: the stat/.test(mf().textContent), '+ Add bonus: the form asks for the stat');
+      if (STOP === 'sets') { $('toasts').textContent = ''; return; }
+      click(btnByText(mf(), 'Cancel'));
+      click(btnByText(ed(), '+ Add piece'));
+      ok(/Add a piece: Leaf Set/.test(mf().textContent), '+ Add piece: the form');
+      click(btnByText(mf(), 'Cancel'));
+      click(items()[0]);
+      ok(/\+N armor bonus/.test(ed().querySelector('h2').textContent) && ed().querySelectorAll('input[data-key^="se|plus|"]').length === 50 && /STR, DEX, INT, STA \+3/.test(ed().textContent), '+N armor bonus: 10 rows × 5, +10 gives STR, DEX, INT, STA +3');
+      const hp = ed().querySelector('input[data-key="se|plus|9|hp"]'); hp.value = '25'; hp.dispatchEvent(new Event('change'));
+      ok(/\t45\t15\t25\t10\t3/.test(S.ws.files.get('exptable.inc').text), '+10 Max HP 20 → 25% written in expTable.inc');
+      if (STOP === 'setsplus') { $('toasts').textContent = ''; return; }
+      click(btnByText(document, '+ New set'));
+      await waitFor(() => lastModalAny() && /New set/.test(lastModalAny().querySelector('header').textContent), 'new set form');
+      {
+        const fm = lastModalAny();
+        ok(/Still needs: the name/.test(fm.textContent), '+ New set: the form asks for the name');
+        const nm = fm.querySelector('input[placeholder^="e.g."]'); nm.value = 'Harness Set'; nm.dispatchEvent(new Event('input'));
+        const pickIn = (k, text, re) => { const ci = fm.querySelectorAll('.combo input')[k]; ci.dispatchEvent(new Event('focus')); ci.value = text; ci.dispatchEvent(new Event('input'));
+          [...fm.querySelectorAll('.combo-opt')].find(o => re.test(o.textContent)).dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); };
+        pickIn(0, 'II_ARM_M_VAG_HELMET02', /\(II_ARM_M_VAG_HELMET02\)/);
+        pickIn(1, 'II_ARM_M_VAG_SUIT02', /\(II_ARM_M_VAG_SUIT02\)/);
+        pickIn(2, 'DST_STR', /— DST_STR$/);
+        const adj0 = fm.querySelector('input[data-key="se|new|adj0"]'); adj0.value = '7'; adj0.dispatchEvent(new Event('input')); adj0.dispatchEvent(new Event('change'));
+        await waitFor(() => !fm.querySelector('#se-new-btn').disabled, 'new set ready');
+        ok(/SetItem\t\t206\tIDS_PROPITEMETC_INC_000230/.test(fm.textContent) && /Harness Set \(2\/2\)/.test(fm.textContent), 'preview: SetItem 206 with a new key, and its tooltip "Harness Set (2/2)"');
+        if (STOP === 'newset') { $('toasts').textContent = ''; return; }
+        click(fm.querySelector('#se-new-btn'));
+      }
+      const ns = S.ws.models.sets.byId.get(206);
+      ok(ns && ns.name === 'Harness Set' && ns.elems.length === 2 && ns.avail.length === 1 && /IDS_PROPITEMETC_INC_000230\tHarness Set$/.test(S.ws.files.get('propitemetc.txt.txt').text), 'Create: set 206 "Harness Set", 2 pieces, STR +7 (2 pieces); its name line appended');
+      ok(/^Harness Set/.test(document.querySelector('#list .npc.sel .n').textContent), '… selected in the list');
+      if (STOP === 'newsetmade') { $('toasts').textContent = ''; return; }
+      click($('btn-save'));
+      await waitFor(() => btnByText(document, 'Back up and write'), 'review dialog (sets)');
+      const rv = lastModalAny();
+      if (STOP === 'setsreview') { const c = [...rv.querySelectorAll('h3')].find(x => /^Client\//.test(x.textContent)); if (c) c.scrollIntoView(); return; }
+      const tick = [...rv.querySelectorAll('label.check')].find(l => /propItemEtc\.txt\.txt/.test(l.textContent));
+      ok(tick && tick.querySelector('input').checked, 'review: "create Client/propItemEtc.txt.txt" is ticked (the game would show the new key otherwise)');
+      const tickExp = [...rv.querySelectorAll('label.check')].find(l => /expTable\.inc/.test(l.textContent));
+      ok(tickExp && tickExp.querySelector('input').checked, 'review: "create Client/expTable.inc" is offered and ticked (the game\'s armor tooltip lists the +N bonus from its own copy)');
+      ok(/Stop Server\.bat/.test(rv.textContent), 'review: After saving = Stop / Start Server.bat');
+      click(btnByText(rv, 'Back up and write'));
+      await waitFor(() => [...document.querySelectorAll('.modal header')].some(h => /^Saved|failed/.test(h.textContent)), 'save finished (sets)');
+      const u16 = b => new TextDecoder('utf-16le').decode(b.subarray(2));
+      ok(/IDS_PROPITEMETC_INC_000230\tHarness Set/.test(u16(res.children.get('propItemEtc.txt.txt').bytes)) && /SetItem\t\t206\t/.test(u16(res.children.get('propItemEtc.inc').bytes)), 'Saved: Server/Resource propItemEtc.inc + propItemEtc.txt.txt (UTF-16)');
+      ok(clientDir.children.get('expTable.inc') && FRE.bytes.bytesEqual(clientDir.children.get('expTable.inc').bytes, res.children.get('expTable.inc').bytes), '… Client/expTable.inc created');
+      ok(clientDir.children.get('propItemEtc.txt.txt') && FRE.bytes.bytesEqual(clientDir.children.get('propItemEtc.txt.txt').bytes, res.children.get('propItemEtc.txt.txt').bytes)
+        && FRE.bytes.bytesEqual(clientDir.children.get('propItemEtc.inc').bytes, res.children.get('propItemEtc.inc').bytes), '… and the Client copies (propItemEtc.txt.txt created)');
+      ok(/\t45\t15\t25\t10\t3/.test(new TextDecoder('latin1').decode(res.children.get('expTable.inc').bytes)), '… and expTable.inc (+10 Max HP 25%)');
       ok(S.ws.dirtyFiles().length === 0, 'clean after save');
       for (const m of [...document.querySelectorAll('.modal')]) { const b = btnByText(m, 'Close'); if (b) click(b); }
     }

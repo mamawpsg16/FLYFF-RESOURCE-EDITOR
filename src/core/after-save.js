@@ -70,6 +70,11 @@
     // couple: the WorldServer, the DatabaseServer and the game each load it (couplehelper.cpp Initialize); the game's couple window
     // draws its level bar from its own copy (WndField.cpp:26910 GetExperienceRate)
     'couple.inc': { server: STARTUP, client: STARTUP, cite: 'WORLDSERVER/couplehelper.cpp:44, databaseserver/couplehelper.cpp:158, Neuz/couplehelper.cpp:33 CCoupleProperty::Initialize' },
+    // Set Effects (task G part 1): the sets (both: bonuses on the server, the tooltip in the game), their names (LoadStrings' list),
+    // the +N armor table (the "expTable" line of Masquerade.prj, both)
+    'propitemetc.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:861 LoadPiercingAvail' },
+    'propitemetc.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1262 LoadStrings' },
+    'exptable.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:741 LoadExpTable (the "expTable" line of Masquerade.prj)' },
     'client/donationshoptree.inc': { server: null, client: WINDOW, cite: 'WndDonationShop.cpp:346 (409 with donation-tree.diff) LoadTreeScript' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };

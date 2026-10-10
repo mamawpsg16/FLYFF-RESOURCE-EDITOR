@@ -167,6 +167,22 @@
       validate(ws, model) { return FRE.upgradeChecks(model, { ws }); },
     },
     {
+      // Set Effects (task G part 1, loaders/sets.js): propItemEtc.inc SetItem blocks (LoadPiercingAvail, Project.cpp:4542; read by
+      // the WorldServer and the game: the tooltip lists the pieces and bonuses, 70f8c863), their names in propItemEtc.txt.txt
+      // (no loose Client copy yet: the game reads the old one in data.res, so Save offers to create one), and the +N armor
+      // bonus in expTable.inc (LoadExpTable `Setitem`, Project.cpp:3829; server and game, no loose Client copy).
+      id: 'sets', label: 'Set Effects',
+      required: ['propItemEtc.inc'], optional: ['propItemEtc.txt.txt', 'expTable.inc'],
+      editable: ['propItemEtc.inc', 'propItemEtc.txt.txt', 'expTable.inc'],
+      // expTable.inc: the game lists the +N bonus in an equipped armor piece's tooltip from its own copy (WndManager.cpp:5520
+      // GetSetItemAvail). No loose propItemEtc.txt.txt / expTable.inc today: like every missing copy, Save offers to create them
+      // (ticked, app.js loadClient); without them the game shows a new set's key and the old +N numbers.
+      client: ['propItemEtc.inc', 'propItemEtc.txt.txt', 'expTable.inc'],
+      deps: ['propItemEtc.txt.txt', 'expTable.inc'],
+      parse(ws) { return FRE.sets.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.setChecks(model, { ws }); },
+    },
+    {
       // Where is this item from? (task H, loaders/where.js): every model above parsed read-only, nothing editable.
       // Last, so its parse sees the other models. maps: towns of the NPCs, and whether they stand in the game.
       id: 'where', label: 'Item Sources & Uses',

@@ -1,8 +1,25 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-10 (K part 3, a fee for every upgrade and remove, built; waiting for the user's Brave test; then G part 1, Set effects)._
+_Last updated 2026-10-10 (G part 1, Set effects, built on the Windows PC; waiting for the user's Brave test. C, L and M skipped (the user, 2026-10-10); next: the user tests everything)._
 
 
+
+> **Handoff (2026-10-10) — G part 1. Set Effects: built on the Windows PC, NOT committed (the user tests first). After the test: commit + push; then the user's test session of everything (the user, 2026-10-10: "when we're done in this I'd like to test everything"). C (GM Commands list), L (Monster Hunt + Badges + Collecting) and M (Teleporter) are SKIPPED (the user, 2026-10-10). G part 2 (weapon effects) is still open, plan first, after the tests.**
+> - **New task card "Set Effects"** (`MODULES` id `sets`): left = +N armor bonus + the 157 sets (filter: armor / fashion / jewelry / problems / edited; search by set or piece). A set: name ✎ (propItemEtc.txt.txt), pieces (✎ / ✕ / + Add piece, the slot from the item's dwParts), bonuses by piece count (stat picker, amount, pieces needed, ✕, + Add bonus), "What players see" (the piece tooltip with a 0..N worn slider), 🧍 Try it (tick pieces, +N, expired, slot → totals putting them on vs after a relog). +N armor bonus: 10 rows × 5 (expTable.inc). **+ New set** (name, 1-8 pieces, bonuses; preview of both files + the tooltip; one undo step). Plan: `docs/plans/G-set-effects.md`; INVESTIGATION §1.25.
+> - **Found:** the plan's "set 1 written twice" was wrong (the first `SetItem 1` is inside the header `/* */`); the real file has no problem. Bonuses are added two ways (put on: listed-slot count, exact rows; login: any slot, every row up to the count); the jewelry sets list one ring in Ring 1 AND Ring 2 on purpose. +11 and up armor gets no +N bonus. The game has no loose `propItemEtc.txt.txt`: Save offers "create Client/propItemEtc.txt.txt" (ticked, like every missing copy), else a new set shows its key in game; the same for `Client/expTable.inc` (the game's armor tooltip lists the +N bonus from its own copy, `WndManager.cpp:5520`).
+> - Python copy `oracle_sim.py sets` (+ `aftersave` knows the 3 files): every case agrees (CLAUDE.md table); 26 of 26 planted bugs caught. Core suite: the new section 75 checks; UI harness 515/515 (stages `sets`, `setsplus`, `newset`, `newsetmade`: Create + Save, Client copies).
+> - **Windows PC tooling (2026-10-10):** the tests run under Node (`tests/node-shim/`) and screenshots come from headless Brave (`tests/ui-shot.mjs`, used by `run-ui.sh` when Firefox is missing); Ubuntu is unchanged (gjs, Firefox). On this PC every LF file of V19 is CRLF on disk (Git for Windows `core.autocrlf=true`), and the game needs that: switching V19 to LF crashed the game on entering the world (`Client/propSkillAdd.csv`'s CSV reader needs the CR); V19 was put back to CRLF the same day (nothing else changed). `refresh-fixtures.sh` now gives the test copies git's LF (`tools/fixture_eol.py`) and also copies the two `.o3d` samples, propItemEtc.txt.txt and Client/propItemEtc.inc.
+>
+> **User's test:** `python3 build.py`, reload, pick `test-data` (run `tools/refresh-fixtures.sh test-data` first: new propItemEtc.txt.txt + Client/propItemEtc.inc), card **Set Effects**.
+> 1. The list: "+N armor bonus" first, then 157 sets; no problems (⚠ 0). Filter "Jewelry": the ring sets.
+> 2. Leaf Set: 4 pieces, bonuses 2 / 3 / 4 pieces; the tooltip "Leaf Set (4/4)"; the slider at 2: only "Set Effect (2pc)" bright.
+> 3. Max HP +50 (2 pieces) → 60: toast "(was 50)"; Ctrl+Z undoes it. + Add bonus: DEX 6 with 3 pieces → the row lands under the 3-piece rows.
+> 4. 🧍 Try it: untick the boots → no 4-piece row; set Helmet's slot (or a ring to the other ring slot on a jewelry set) → "differs" shows when a piece is not in its listed slot.
+> 5. +N armor bonus: +10 Max HP 20 → 25; "Players get" changes.
+> 6. ✎ the name of a set → "Edit name: …", Apply changes. + New set: a name, 2 pieces (e.g. Pike Helmet, Pike Suit), STR 7 with 2 pieces → the preview shows `SetItem 206 IDS_PROPITEMETC_INC_000230` and the tooltip; Create.
+> 7. Save: propItemEtc.inc + propItemEtc.txt.txt (+ expTable.inc); "create Client/propItemEtc.txt.txt" ticked; After saving = Stop / Start Server.bat.
+> 8. By hand: `node --import ./tests/node-shim/register.mjs tools/sets-sim.js 1 worn=cap,suit,hand plus=5` (or `gjs -m tools/sets-sim.js …` on Ubuntu), `… tools/sets-sim.js plus`.
+> In game later (guides `RESOURCE-EDITOR-IN-GAME-TEST.md` item 17): wear 2 / 3 / 4 pieces of an edited set; the character window and the tooltip match the editor; a new set's name shows (not its key).
 
 > **Handoff (2026-10-10) — NEXT: G part 1, Set effects. The approved plan is `docs/plans/G-set-effects.md`** (piece sets in propItemEtc.inc + the +N armor bonus in expTable.inc; edit + "+ New set"; simulator + Python copy). User decisions: both kinds of set bonus, edit existing + new sets, weapon effects = G part 2 later. The user is also running the in-game test session (guides repo `RESOURCE-EDITOR-IN-GAME-TEST.md`, items 4-16; upgrade-fees.diff applied in V19, not committed until item 16 passes).
 
@@ -557,7 +574,7 @@ _Last updated 2026-10-10 (K part 3, a fee for every upgrade and remove, built; w
 
 ## Next (in this order, agreed with the user)
 
-**What's left, in this order (the user, 2026-10-09; FLYFF TODOS.md has the same list):** H part 2 (done) → **Boxes: filter by what's inside** (Fashion, Armor, Weapons, Pets, Scrolls…, from `loaders/item-category.js`) → **I. Rates & Buffs** → **K. Upgrade rates** → **G. Item set and weapon effects** → **C. GM Commands list** → L → M. Add NPC step 3 is covered by + Menu → Rules text (`376f694`, tested in game). Quest rewards and collecting in "Where is this item from?": later.
+**What's left, in this order (the user, 2026-10-09; FLYFF TODOS.md has the same list):** H part 2 (done) → **Boxes: filter by what's inside** (Fashion, Armor, Weapons, Pets, Scrolls…, from `loaders/item-category.js`) → **I. Rates & Buffs** → **K. Upgrade rates** → **G. Item set and weapon effects** → ~~C. GM Commands list → L → M~~ (C, L and M skipped by the user, 2026-10-10: after G part 1 the user tests everything; G part 2, weapon effects, after that). Add NPC step 3 is covered by + Menu → Rules text (`376f694`, tested in game). Quest rewards and collecting in "Where is this item from?": later.
 
 **Order (agreed 2026-10-06; tasks S, V, D-sim, C and H–M added that day; kept as history, see the line above):**
 1. Add New NPC step 1: committed (`7cbb9c9`), **not tested in game yet**. Do the in-game test (handoff §8) before calling it done; fix what it finds before starting S.
@@ -637,7 +654,7 @@ Mushpang (lv 15, Flaris)   drops up to 2 items per kill
 
 Python copy, as for every task.
 
-### G. Item set effects and weapon effects (asked 2026-10-06)
+### G. Item set effects and weapon effects (asked 2026-10-06; part 1, set effects, built 2026-10-10; part 2, weapon effects, later)
 - What the bonuses of an item set (wearing N pieces) and a weapon's effects give a character, edited in the app.
 - First find in the C++ and the commits which files and loaders hold them. Leads: the `SetItem` blocks of `propItemEtc.inc` (`_Common/Project.cpp:4567`, the same file as `LoadPiercingAvail`), the item's own stat values in `Spec_Item.txt`, and `randomoption.inc` / `ItemMergeRandomOption.txt`.
 - Simulator: a character wears / wields the items, and the simulator applies the bonuses the way the server does, giving the stats the game would show. Plus the independent Python copy, as for every task.
@@ -736,7 +753,7 @@ Also built in part 1: the item list's own categories (Pets › Raised / Pickup /
 
 **Tests:** cases for exact chips, one chip short, a full bag, a stack that fits, max quantity, an item not in the list. Python copy in `tools/oracle_sim.py donation`; planted bugs must be caught. Then update CLAUDE.md's simulator status table (Donation Shop: done).
 
-### C. GM Commands list (asked 2026-10-06)
+### C. GM Commands list (asked 2026-10-06; SKIPPED by the user 2026-10-10, kept here only as a reference)
 **For players' words:** every GM command in one searchable page (and whether it really works on this server), grouped by category (Item & Inventory, Guild Siege, Monster / NPC, Teleport, Server, Moderation, Events, Custom…). Each command shows:
 - the name and short alias, e.g. `/createitem` (`/ci`);
 - who can use it: Player / GM 1 / GM 2 / GM 3 / Admin (`AUTH_GENERAL`, `AUTH_GAMEMASTER`, `AUTH_GAMEMASTER2`, `AUTH_GAMEMASTER3`, `AUTH_ADMINISTRATOR`);
@@ -997,7 +1014,7 @@ Python copy in `tools/oracle_sim.py boxes`; planted bugs (e.g. `<=` vs `<` on th
 - Show the success / fail / break chance per level.
 - Simulator: "average tries and Penya / materials to reach +N", plus the Python copy.
 
-### L. Monster Hunt + Badges + Collecting (asked 2026-10-06)
+### L. Monster Hunt + Badges + Collecting (asked 2026-10-06; SKIPPED by the user 2026-10-10, kept here only as a reference)
 - Files:
   - `MonsterHunt.inc` (`_Common/MonsterHunt.cpp:49`);
   - `Badge.inc` (`_Common/Badge.cpp:93`; the badge right of the name, `__BADGE_SYSTEM`);
@@ -1008,7 +1025,7 @@ Python copy in `tools/oracle_sim.py boxes`; planted bugs (e.g. `<=` vs `<` on th
 - Rules: every hunt's badge exists; every badge has a way to be earned; no badge is given by two systems by mistake.
 - Simulator: a player kills the listed monsters / collects, and which badge they get and when. Plus the Python copy.
 
-### M. Teleporter (asked 2026-10-06)
+### M. Teleporter (asked 2026-10-06; SKIPPED by the user 2026-10-10, kept here only as a reference)
 - File: `Teleporter.inc` (`CTeleporter::ReadConfig`, `Project.cpp:955`). Each entry is `TELEPORT_CASE <world> <x> <y> <z> <type> "<name>" "<picture>"`.
 - Add, move or rename spots; show each spot's area name with `loaders/area.js`; check the picture exists in the client.
 - Simulator: the teleport window's list and where the player lands, plus the Python copy.

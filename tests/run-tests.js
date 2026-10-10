@@ -3493,5 +3493,120 @@ section('upgrade fees (K part 2): UpgradeFees.lua read like CUpgradeFees, charge
   for (const k of ['UP_FEE_LUA', 'UP_FEE_BAD', 'UP_FEE_DUP', 'UP_FEE_TEXT']) ok(FRE.diagHelp[k], `help text for ${k}`);
 }
 
+section('set effects (G part 1): propItemEtc.inc sets, the +N table, wearing by both paths, tooltip, edits (JS and Python copies agree)');
+{
+  const J = JSON.stringify;
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} sets ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py sets) gave no readable result', e.message); }
+  const fresh = () => { const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e)); return new FRE.Workspace(fs, { only: 'sets' }).load(); };
+  const ws = fresh(), D = ws.defines.defines, M = ws.models.sets, Sim = FRE.setsSim, O = FRE.setsOps;
+  const u16 = t => new Uint8Array([0xff, 0xfe, ...[...t].flatMap(ch => [ch.charCodeAt(0) & 255, ch.charCodeAt(0) >> 8])]);
+  const loadText = t => FRE.sets.load(new FRE.SourceFile('propItemEtc.inc', u16(t)), { defines: D, strings: M.strings.map });
+  const plusText = t => FRE.sets.loadPlus(new FRE.SourceFile('expTable.inc', B.binaryStringToBytes(t)));
+  const factOf = m => ({ sets: m.sets.map(s => [s.id, s.nameKey, s.name, s.elems.map(p => [p.id, p.part]), s.avail.map(r => [r.dst, r.adj, r.need]), s.pieces.length, s.rows.length]),
+    by_id: [...m.byId].map(([k, s]) => [k, m.sets.indexOf(s)]).sort((a, b) => a[0] - b[0]), by_item: [...m.byItem].map(([k, s]) => [k, m.sets.indexOf(s)]).sort((a, b) => a[0] - b[0]),
+    hang: m.hang ? m.hang.set.id : null });
+  const plusOf = p => ({ found: p.found, rows: p.rows.map(r => FRE.sets.PLUS_COLS.map(c => r[c])), over: p.over, shifted: p.shifted });
+  eq(M.sets.length, 157, 'propItemEtc.inc: 157 sets (the SetItem 1 in the header /* */ comment is not one: no duplicate id)');
+  eq(ws.diags.length, 0, 'the real file has no problem (the jewelry sets list the same ring in Ring 1 and Ring 2 on purpose)');
+  eq(J(plusOf(M.plus).rows[9]), J([45, 15, 20, 10, 3]), 'expTable.inc Setitem: +10 = HitRate 45, Block 15, Max HP 20%, AddMagic 10, Added 3');
+  if (py) {
+    const models = { real: M };
+    for (const [k, f] of Object.entries(py.facts)) {
+      const m = k === 'real' ? M : (models[k] = loadText(py.files[k]));
+      eq(J(factOf(m)), J(f), `${k}: every set, piece, sorted bonus row, the first-wins maps${f.hang ? ', the hang' : ''}`);
+    }
+    const pluses = { real: M.plus };
+    for (const [k, p] of Object.entries(py.plus)) {
+      if (k !== 'real') pluses[k] = plusText(py.files['plus_' + k]);
+      eq(J(plusOf(pluses[k])), J(p), `+N table ${k}: rows, too many, a short row`);
+    }
+    // wearing: put on / take off step by step, then a relog on what is worn; the tooltip of a hovered piece
+    let agree = 0; const bad = [];
+    for (const c of py.wears) {
+      const model = Object.assign({}, models[c.world], { plus: pluses[c.plus] });
+      const env = Sim.envFor(ws, model);
+      const ch = Sim.wear(env, c.steps.map(([slot, id, plus, expired]) => [slot, id === null ? null : { id, plus, expired }]));
+      const lg = Sim.login(env, ch.worn);
+      const bag = new Map(c.bag);
+      const tt = Sim.tooltip(env, ch, c.hover, bag).map(l => l.head !== undefined ? ['head', l.color, l.head] : l.dst !== undefined ? ['row', l.color, l.dst, l.adj, l.rate]
+        : l.id !== undefined ? ['piece', l.color, l.id] : ['name', (/^\n\n(.*) \((\d+)\/(\d+)\)$/.exec(l.text) || [])[1], ...(/\((\d+)\/(\d+)\)$/.exec(l.text) || []).slice(1).map(Number)]);
+      const j = J({ wear: Sim.statList(ch), login: Sim.statList(lg), n: Sim.getSetItem(env, ch, null), tooltip: tt });
+      const p = J({ wear: c.wear, login: c.login, n: c.n, tooltip: c.tooltip });
+      if (j === p) agree++; else if (bad.length < 3) bad.push(`${c.world} set ${c.set} ${c.kind}: js ${j.slice(0, 260)} py ${p.slice(0, 260)}`);
+    }
+    eq(agree, py.wears.length, `wearing: every case agrees (${py.wears.length}: all pieces, some, a swap, expired, the other ring / earring slot, take-offs; +N; tooltip)`);
+    bad.forEach(x => print('   ' + x));
+    ok(py.wears.some(c => J(c.wear) !== J(c.login)), `… and putting pieces on differs from a relog in ${py.wears.filter(c => J(c.wear) !== J(c.login)).length} cases (wrong slots, rows needing 0)`);
+    // edit scripts: whole files byte-identical
+    let same = 0;
+    for (const sc of py.edits) {
+      const W = sc.base === 'real' ? fresh() : (() => { const X = fresh(); const f = X.files.get('propitemetc.inc'); f.applySplices([{ start: 0, end: f.text.length, insert: py.files[sc.base] }], 'b'); X.reparse('propitemetc.inc'); return X; })();
+      const etc0 = W.files.get('propitemetc.inc'), txt0 = W.files.get('propitemetc.txt.txt'), exp0 = W.files.get('exptable.inc');
+      const base = { etc: etc0.serialize(), txt: txt0.serialize(), exp: exp0.serialize() };
+      try {
+        let lastNew = null;
+        for (const op0 of sc.ops) {
+          const op = op0.map(v => (v === 'new' ? lastNew : v));
+          const m = W.models.sets, set = m.byId.get(op[1]), dn = n => ({ dst: D.get(n), dstName: n });
+          const map = { dst: 'dst', adj: 'adj', need: 'need', define: 'define', part: 'partName' };
+          const vals = o => { const v = {}; for (const [k, x] of Object.entries(o || {})) { if (k === 'dst') Object.assign(v, dn(x)); else v[map[k]] = x; } return v; };
+          const t = etc0.text;
+          if (op[0] === 'row') W.apply('propitemetc.inc', O.setRow(set.rows[op[2]], vals(op[3])), 'x');
+          else if (op[0] === 'rmrow') W.apply('propitemetc.inc', O.removeRow(t, set.rows[op[2]]), 'x');
+          else if (op[0] === 'addrow') W.apply('propitemetc.inc', O.addRow(t, set, Object.assign(dn(op[2]), { adj: op[3], need: op[4] })), 'x');
+          else if (op[0] === 'addpiece') W.apply('propitemetc.inc', O.addPiece(t, set, { define: op[2], partName: op[3] }), 'x');
+          else if (op[0] === 'piece') W.apply('propitemetc.inc', O.setPiece(set.pieces[op[2]], vals(op[3])), 'x');
+          else if (op[0] === 'rmpiece') W.apply('propitemetc.inc', O.removePiece(t, set.pieces[op[2]]), 'x');
+          else if (op[0] === 'rename') W.applyGroup(O.renamePlan(m, t, txt0.text, set, op[2]), 'x');
+          else if (op[0] === 'plus') W.apply('exptable.inc', O.setPlus(m.plus, op[1], op[2], op[3]), 'x');
+          else if (op[0] === 'newset') {
+            const plan = O.newSetPlan(m, t, txt0.text, { name: op[1], pieces: op[2].map(([define, partName]) => ({ define, partName })), rows: op[3].map(([n, adj, need]) => Object.assign(dn(n), { adj, need })) });
+            W.applyGroup(plan.parts, 'x'); lastNew = plan.id;
+          }
+        }
+        const sha = b => [GLib.compute_checksum_for_bytes(GLib.ChecksumType.SHA256, new GLib.Bytes(b)), b.length];
+        const got = { etc: sha(etc0.serialize()), txt: sha(txt0.serialize()), exp: sha(exp0.serialize()) };
+        if (J(got) === J({ etc: sc.etc, txt: sc.txt, exp: sc.exp })) same++;
+        else print(`   edit script on ${sc.base} ${J(sc.ops).slice(0, 160)}: js ${J(got).slice(0, 200)} py ${J({ etc: sc.etc, txt: sc.txt, exp: sc.exp }).slice(0, 200)}`);
+      } catch (e) { print(`   edit script on ${sc.base} ${J(sc.ops).slice(0, 160)}: ${e.message}`); }
+      while (W.undo());
+      ok(B.bytesEqual(etc0.serialize(), base.etc) && B.bytesEqual(txt0.serialize(), base.txt) && B.bytesEqual(exp0.serialize(), base.exp), `undo after ${J(sc.ops).slice(0, 70)}: the original bytes back`);
+    }
+    eq(same, py.edits.length, `edit scripts: byte-identical files (${py.edits.length}: rows, pieces, rename (in place / new key), + New set, the +N table, made-up files)`);
+    // checks on the made-up files
+    const cd = t => { const X = fresh(); const f = X.files.get('propitemetc.inc'); f.applySplices([{ start: 0, end: f.text.length, insert: t }], 'b'); X.reparse('propitemetc.inc'); return X.diags.map(d => d.code); };
+    const want = { dup: ['SE_ID_DUP'], two: ['SE_ITEM_TWO'], nine: ['SE_PARTS_FULL', 'SE_PIECES_RANGE'], rows33: ['SE_ROWS_FULL'], wrong: ['SE_PART_WRONG'],
+      range: ['SE_PIECES_RANGE', 'SE_NAME_KEY'], unsorted: ['SE_DST_UNKNOWN', 'E_UNDEF'], hang: ['SE_HANG'], empty: ['SE_EMPTY'] };
+    for (const [k, codes] of Object.entries(want)) { const got = cd(py.files[k]); for (const c of codes) ok(got.includes(c), `made-up file ${k}: ${c}`); }
+    eq(cd(py.files.wrong).filter(c => c === 'SE_PART_WRONG').length, 1, '… only the helmet listed as gauntlets; the ring in Ring 2 is fine');
+    const pd = t => { const X = fresh(); const f = X.files.get('exptable.inc'); f.applySplices([{ start: 0, end: f.text.length, insert: t }], 'b'); X.reparse('exptable.inc'); return X.diags.map(d => d.code); };
+    ok(pd(py.files.plus_twelve).includes('SE_PLUS_ROWS') && pd(py.files.plus_short).includes('SE_PLUS_SHIFT') && pd(py.files.plus_none).includes('SE_PLUS_MISSING') && pd(py.files.plus_nine).includes('SE_PLUS_ROWS'),
+      '+N table checks: 12 rows, a short row, none, 9 rows');
+  }
+  // what the edits do in game: Leaf Set 4 pieces +5 by both paths; the tooltip
+  {
+    const env = Sim.envFor(ws), s1 = M.byId.get(1);
+    const ch = Sim.wear(env, s1.elems.map(p => [p.part, { id: p.id, plus: 5, expired: false }]));
+    const get = n => ch.stats.get(D.get(n)) || 0;
+    eq(J([get('DST_HP_MAX'), get('DST_STR'), get('DST_SPEED'), get('DST_ADJDEF'), get('DST_ADJ_HITRATE'), get('DST_HP_MAX_RATE')]), J([200, 4, 20, 23, 10, 5]),
+      'Leaf Set, 4 pieces at +5: Max HP 50 + 150, STR 3 + 1 (+5 Added), Speed 20, DEF 23, +5 bonus Hit 10, Max HP 5%');
+    eq(J(Sim.statList(Sim.login(env, ch.worn))), J(Sim.statList(ch)), '… a relog gives the same');
+    const tt = Sim.tooltip(env, ch, s1.elems[0].id, new Map()).map(l => l.text.replace(/\n/g, ''));
+    eq(tt[0], 'Leaf Set (4/4)', 'tooltip: "Leaf Set (4/4)"');
+    ok(tt.includes('Set Effect (2pc):') && tt.includes('Speed +20%'), '… every tier listed, rate stats with % (70f8c863)');
+    const W = fresh(), set = W.models.sets.byId.get(1);
+    W.apply('propitemetc.inc', O.addRow(W.files.get('propitemetc.inc').text, set, { dst: D.get('DST_DEX'), dstName: 'DST_DEX', adj: 6, need: 3 }), 'x');
+    const ch2 = Sim.wear(Sim.envFor(W), set.elems.slice(0, 3).map(p => [p.part, { id: p.id, plus: 0, expired: false }]));
+    eq(ch2.stats.get(D.get('DST_DEX')), 6, 'a new 3-piece DEX +6 row: 3 pieces worn give DEX +6');
+    ok(['propItemEtc.inc', 'propItemEtc.txt.txt', 'expTable.inc'].every(n => W.clientFileNames().includes(n)), 'propItemEtc.inc, propItemEtc.txt.txt and expTable.inc go to Client/ too (the names file created when missing; expTable.inc offered: the game\'s armor tooltip lists the +N bonus, WndManager.cpp:5520)');
+    throws(() => O.addPiece(W.files.get('propitemetc.inc').text, W.models.sets.byId.get(205), { define: 'II_ARM_F_VAG_HELMET04', partName: 'PARTS_CAP' }), 'a 9th piece is refused');
+    throws(() => O.renamePlan(W.models.sets, W.files.get('propitemetc.inc').text, W.files.get('propitemetc.txt.txt').text, set, 'x'.repeat(64)), 'a 64-character name is refused');
+  }
+  for (const k of ['SE_HANG', 'SE_NAME_LONG', 'SE_NAME_KEY', 'SE_ID_DUP', 'SE_PARTS_FULL', 'SE_ROWS_FULL', 'SE_EMPTY', 'SE_ITEM_UNKNOWN', 'SE_ITEM_TWO', 'SE_PART_WRONG',
+    'SE_PIECES_RANGE', 'SE_DST_UNKNOWN', 'SE_PLUS_MISSING', 'SE_PLUS_SHIFT', 'SE_PLUS_ROWS']) ok(FRE.diagHelp[k], `help text for ${k}`);
+}
+
 print(`\n${pass} passed, ${fail} failed`);
 if (fail) System.exit(1);

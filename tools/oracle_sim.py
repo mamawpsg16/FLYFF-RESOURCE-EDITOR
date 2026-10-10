@@ -4132,6 +4132,9 @@ AS_CITES = [
     ('_Common/Project.cpp', 893, 'ServerBuffManage::loadServerBuffFile()'),
     ('_Common/Project.cpp', 892, '#ifdef __WORLDSERVER'),
     ('_Common/Project.cpp', 928, 'LoadRebirthProp()'),
+    ('_Common/Project.cpp', 861, 'LoadPiercingAvail( "propItemEtc.inc" )'),
+    ('_Common/ProjectCmn.cpp', 1262, '"propItemEtc.txt.txt"'),
+    ('_Common/Project.cpp', 741, 'LoadExpTable( scanner.token )'),
     # upgrade-fees.diff: the 8 compiled fee lines it replaces (one line lower once its #include is in)
     ('WORLDSERVER/ItemUpgrade.cpp', (231, 232), 'int nCost = '),
     ('WORLDSERVER/ItemUpgrade.cpp', (447, 448), 'int nPayPenya = '),
@@ -4169,6 +4172,8 @@ def as_who(key):
     if key == '1rebirth.inc':             # Project.cpp:928, outside any __WORLDSERVER #ifdef: the game parses its own copy
         return True, 'start'
     if key == 'couple.inc':               # CCoupleProperty::Initialize in WORLDSERVER / databaseserver / Neuz couplehelper.cpp
+        return True, 'start'
+    if key in ('propitemetc.inc', 'propitemetc.txt.txt', 'exptable.inc'):   # Project.cpp:861 / ProjectCmn.cpp:1262 / Project.cpp:741, no #ifdef
         return True, 'start'
     return True, 'start'          # unknown file: both, at startup
 
@@ -4218,7 +4223,7 @@ def as_run(root):
     rnd = random.Random(1019)
     keys = AS_SHARED + [AS_TREE, 'client/npcboard_282.inc', 'client/npcboard_300.inc', 'world/wdmadrigal/wdmadrigal.dyo',
                         'world/wdvolcane/wdvolcane.dyo', 'propmoverex.inc', 'propgiftbox.inc', 'propskill.txt',
-                        'event.lua', 'serverbuff.txt', 'guildbuff.txt', '1rebirth.inc', 'couple.inc', AS_FEES]
+                        'event.lua', 'serverbuff.txt', 'guildbuff.txt', '1rebirth.inc', 'couple.inc', 'propitemetc.inc', 'propitemetc.txt.txt', 'exptable.inc', AS_FEES]
     states = ['written', 'created', 'datares', 'different', 'none']
     pstates = ['in-source', 'missing', 'unknown', 'built']
     codesets = [[], ['DT_PATCH'], ['DT_ORDER'], ['NN_RULES_PATCH']]
@@ -9247,6 +9252,656 @@ def up_run_all(root):
         out['edits'].append({'base': base, 'ops': ops, 'texts': T})
     return out
 
+# ---------------------------------------------------------------- sets: set effects (task G part 1)
+# Written from the C++: CProject::LoadPiercingAvail (_Common/Project.cpp:4542-4611), AddSetItemElem (:4697, MAX_SETITEM_ELEM 8),
+# AddItemAvail (:4719, MAX_ITEMAVAIL 32), SortItemAvail (:4736), GetItemAvail (:4760), CSetItemFinder::AddSetItem (:4806);
+# LoadExpTable "Setitem" (:3829) + GetSetItemAvail (:4535); CMover::GetSetItem (Mover.cpp:9562), SetSetItemAvail (:9654),
+# SetDestParamSetItem (:9850), ResetDestParamSetItem (:9896), GetEquipedSetItemNumber (:9913), GetEquipedSetItem (:9925);
+# RedoEquip (MoverEquip.cpp:2186), SetDestParamEquip (:2355, 2452), ResetDestParamEquip (:2469, 2578), DoEquip's
+# take-off-first (:589); CWndMgr::PutSetItemOpt (_Interface/WndManager.cpp:5553) with IsDst_Rate (:4975).
+import hashlib
+
+SE_ARMOR = ['PARTS_UPPER_BODY', 'PARTS_HAND', 'PARTS_FOOT', 'PARTS_CAP']
+# IsDst_Rate's table (WndManager.cpp:4975; __NEWWPN1024 is not defined, __VER 19): three 0 entries included
+SE_RATE = ['DST_SKILL_DMG_RATE', 'DST_ADJ_HITRATE', 'DST_ATKPOWER_RATE', 'DST_ADJDEF_RATE', 'DST_DEFHITRATE_DOWN', 'DST_HP_MAX_RATE',
+           'DST_MP_MAX_RATE', 'DST_FP_MAX_RATE', 'DST_HP_RECOVERY_RATE', 'DST_MP_RECOVERY_RATE', 'DST_FP_RECOVERY_RATE',
+           'DST_CHR_CHANCECRITICAL', 'DST_MASTRY_EARTH', 'DST_MASTRY_FIRE', 'DST_MASTRY_WATER', 'DST_MASTRY_ELECTRICITY',
+           'DST_MASTRY_WIND', 'DST_ATTACKSPEED', 'DST_MP_DEC_RATE', 'DST_FP_DEC_RATE', 'DST_SPELL_RATE', 'DST_CAST_CRITICAL_RATE',
+           'DST_CRITICAL_BONUS', 'DST_ALL_RECOVERY_RATE', 'DST_KILL_HP_RATE', 'DST_KILL_MP_RATE', 'DST_KILL_FP_RATE',
+           'DST_KILL_ALL_RATE', 'DST_ALL_DEC_RATE', 'DST_BLOCK_MELEE', 'DST_BLOCK_RANGE', 'DST_ATTACKSPEED_RATE', 'DST_CHR_STEALHP',
+           'DST_EXPERIENCE', 'DST_HAWKEYE_RATE', 'DST_RESIST_MAGIC_RATE', 'DST_SPEED', 'DST_REFLECT_DAMAGE', 'DST_RESTPOINT_RATE',
+           'DST_MONSTER_DMG', 'DST_PVP_DMG', 'DST_TAKE_PVP_DMG_PHYSICAL_RATE', 'DST_TAKE_PVP_DMG_MAGIC_RATE',
+           'DST_TAKE_PVE_DMG_PHYSICAL_RATE', 'DST_TAKE_PVE_DMG_MAGIC_RATE', 'DST_DROP_ITEM_ALLGRADE_RATE',
+           'DST_GIVE_PVE_DMG_ELEMENT_FIRE_RATE', 'DST_GIVE_PVE_DMG_ELEMENT_WATER_RATE', 'DST_GIVE_PVE_DMG_ELEMENT_ELECT_RATE',
+           'DST_GIVE_PVE_DMG_ELEMENT_WIND_RATE', 'DST_GIVE_PVE_DMG_ELEMENT_EARTH_RATE', 'DST_GIVE_DMG_RATE_ENEMY_STUN',
+           'DST_GIVE_DMG_RATE_ENEMY_DARK', 'DST_GIVE_DMG_RATE_ENEMY_POISON', 'DST_GIVE_DMG_RATE_ENEMY_SLOW',
+           'DST_GIVE_DMG_RATE_ENEMY_BLEEDING', 'DST_GIVE_DMG_RATE_ENEMY_SILENT', 'DST_GIVE_DMG_RATE_ENEMY_LOOT',
+           'DST_GIVE_DMG_RATE_ENEMY_SETSTONE', 'DST_GIVE_DMG_RATE_ENEMY_SLEEPING', 'DST_PENYA_RATE']
+
+
+def se_text(b):
+    return b[2:].decode('utf-16-le', 'surrogatepass') if b[:2] == b'\xff\xfe' else b.decode('latin-1')
+
+
+def se_bytes16(t):
+    return b'\xff\xfe' + t.encode('utf-16-le', 'surrogatepass')
+
+
+class SeScan:
+    """CScript: GetToken puts a string-table text in place of an IDS key, else a #define's value; GetNumber reads one."""
+    def __init__(self, text, D, S):
+        self.t = [x.decode('cp949', 'replace') for x in tokens(text.encode('cp949', 'replace'))]
+        self.k, self.D, self.S, self.tok, self.raw = 0, D, S, None, None
+
+    def token(self):
+        self.raw = self.t[self.k] if self.k < len(self.t) else None
+        self.k += 1
+        self.tok = self.raw
+        if self.raw is not None:
+            if self.raw in self.S:
+                self.tok = self.S[self.raw]
+            elif self.raw in self.D:
+                self.tok = str(self.D[self.raw])
+        return self.tok
+
+    def number(self):
+        x = self.token()
+        if x is None:
+            return 0
+        if x.lower().startswith('0x'):
+            return s32(int(x[2:] or '0', 16))
+        if x == '=':
+            return -1
+        if x in ('-', '+'):
+            y = self.token() or ''
+            return s32(-atoi(y)) if x == '-' else atoi(y)
+        return atoi(x)
+
+    def brace(self):
+        return self.tok is not None and self.tok[:1] == '}'
+
+
+def se_load(text, D, S):
+    s = SeScan(text, D, S)
+    sets, by_id, by_item, hang = [], {}, {}, None
+    s.token()
+    while s.tok is not None:
+        w = s.tok
+        if w == 'Piercing':
+            s.number(); s.token()
+            dst = s.number()
+            while s.tok is not None and not s.brace():
+                s.number(); dst = s.number()
+        elif w == 'SetItem':
+            sid = s.number()
+            s.token()
+            st = {'id': sid, 'key': s.raw, 'name': s.tok, 'elems': [], 'avail': [], 'npieces': 0, 'nrows': 0}
+            s.token()          # {
+            s.token()
+            while s.tok is not None and not s.brace():
+                if s.tok == 'Elem':
+                    s.token()
+                    it = s.number()
+                    while s.tok is not None and not s.brace():
+                        part = s.number()
+                        st['npieces'] += 1
+                        if len(st['elems']) < 8:
+                            st['elems'].append([it & 0xFFFFFFFF, part])
+                        it = s.number()
+                    s.token()
+                elif s.tok == 'Avail':
+                    s.token()
+                    dst = s.number()
+                    while s.tok is not None and not s.brace():
+                        adj = s.number()
+                        need = s.number()
+                        st['nrows'] += 1
+                        if len(st['avail']) < 32:
+                            st['avail'].append([dst, adj, need])
+                        dst = s.number()
+                    s.token()
+                else:
+                    hang = sid
+                    break
+            a = st['avail']
+            for i in range(len(a) - 1):
+                for j in range(i + 1, len(a)):
+                    if a[i][2] > a[j][2]:
+                        a[i], a[j] = a[j], a[i]
+            idx = len(sets)
+            sets.append(st)
+            by_id.setdefault(sid, idx)
+            for it, _ in st['elems']:
+                by_item.setdefault(it, idx)
+            if hang is not None:
+                break
+        elif w == 'RandomOptItem':
+            s.number(); s.token(); s.number(); s.number(); s.token()
+            dst = s.number()
+            while s.tok is not None and not s.brace():
+                s.number(); dst = s.number()
+        s.token()
+    return {'sets': sets, 'by_id': by_id, 'by_item': by_item, 'hang': hang}
+
+
+def se_plus(data):
+    """expTable.inc Setitem: rows of 5 until a row starts with }"""
+    s = SeScan(se_text(data) if data else '', {}, {})
+    s.token()
+    while s.tok is not None and s.tok != 'Setitem':
+        s.token()
+    if s.tok is None:
+        return {'found': False, 'rows': [], 'over': False, 'shifted': False}
+    s.token()
+    rows, shifted = [], False
+    v = s.number()
+    while s.tok is not None and not s.brace():
+        row = [v]
+        for _ in range(4):
+            row.append(s.number())
+            if s.brace():
+                shifted = True
+        rows.append(row)
+        v = s.number()
+    return {'found': True, 'rows': rows, 'over': len(rows) > 11, 'shifted': shifted}
+
+
+def se_items(root, D, S):
+    """Spec_Item.txt: id -> [dwParts, name] (szName through the string table, trailing blanks cut); later rows win"""
+    lines = open(os.path.join(root, 'Spec_Item.txt'), 'rb').read().decode('latin-1').split('\r\n')
+    col = {h.lstrip('/'): i for i, h in enumerate(lines[1].split('\t'))}
+    def v(x):
+        x = x.strip().strip('"')
+        if x == '=': return -1
+        if x in D: return D[x]
+        return atoi(x)
+    out = {}
+    for l in lines:
+        if not l.strip() or l.lstrip().startswith('//'):
+            continue
+        c = l.split('\t')
+        if v(c[0]) > 19:
+            continue
+        key = c[col['szName']].strip().strip('"')
+        out[v(c[col['dwID']]) & 0xFFFFFFFF] = [v(c[col['dwParts']]), S.get(key, key).rstrip()]
+    return out
+
+
+class SeChar:
+    def __init__(self, M, P, plus, D):
+        self.M, self.P, self.plus, self.D = M, P, plus, D
+        self.worn, self.stats = {}, {}
+
+    def add(self, dst, adj, sign):
+        v = s32(self.stats.get(dst, 0) + sign * adj)
+        if v:
+            self.stats[dst] = v
+        else:
+            self.stats.pop(dst, None)
+
+    def part(self, iid):
+        p = self.P.get(iid & 0xFFFFFFFF)
+        return p[0] if p else None
+
+    def set_of(self, iid):
+        k = self.M['by_item'].get(iid & 0xFFFFFFFF)
+        return None if k is None else self.M['sets'][k]
+
+    def get_set_item(self, item):       # CMover::GetSetItem
+        parts = [self.D[n] for n in SE_ARMOR]
+        if item is None:
+            item = self.worn.get(parts[0])
+        elif self.part(item[0]) not in parts:
+            return 0
+        if item is None or item[2]:
+            return 0
+        n = item[1]
+        own = self.part(item[0])
+        for p in parts:
+            if own != p:
+                o = self.worn.get(p)
+                if o is not None and not o[2]:
+                    n = min(n, o[1])
+                    continue
+                return 0
+        return n
+
+    def plus_stats(self, n):            # GetSetItemAvail + SetSetItemAvail
+        if n < 1 or n > 10:
+            return []
+        r = self.plus['rows'][n - 1] if n - 1 < len(self.plus['rows']) else [0, 0, 0, 0, 0]
+        D, out = self.D, []
+        if r[0]: out.append((D['DST_ADJ_HITRATE'], r[0]))
+        if r[1]: out += [(D['DST_BLOCK_RANGE'], r[1]), (D['DST_BLOCK_MELEE'], r[1])]
+        if r[2]: out.append((D['DST_HP_MAX_RATE'], r[2]))
+        if r[3]: out.append((D['DST_ADDMAGIC'], r[3]))
+        if r[4]: out += [(D[x], r[4]) for x in ('DST_STR', 'DST_DEX', 'DST_INT', 'DST_STA')]
+        return out
+
+    def listed(self, st):               # GetEquipedSetItemNumber
+        n = 0
+        for iid, part in st['elems']:
+            o = self.worn.get(part)
+            if o is not None and o[0] & 0xFFFFFFFF == iid and not o[2]:
+                n += 1
+        return n
+
+    @staticmethod
+    def avail(st, n, all_rows, acc):    # CSetItem::GetItemAvail
+        for dst, adj, need in st['avail']:
+            if need > n:
+                break
+            if not all_rows and need != n:
+                continue
+            for x in acc:
+                if x[0] == dst:
+                    x[1] = s32(x[1] + adj)
+                    break
+            else:
+                acc.append([dst, adj])
+        return acc
+
+    def login(self):                    # RedoEquip: GetSetItem() + SetDestParamSetItem( NULL )
+        n = self.get_set_item(None)
+        if n > 0:
+            for d, a in self.plus_stats(n):
+                self.add(d, a, 1)
+        count, order = {}, []
+        for slot in range(PARTS):
+            o = self.worn.get(slot)
+            if o is None or o[2]:
+                continue
+            st = self.set_of(o[0])
+            if st is not None:
+                if id(st) not in count:
+                    order.append(st)
+                count[id(st)] = count.get(id(st), 0) + 1
+        acc = []
+        for st in order:
+            self.avail(st, count[id(st)], True, acc)
+        for d, a in acc:
+            self.add(d, a, 1)
+
+    def off(self, slot):
+        o = self.worn.pop(slot, None)
+        if o is None or o[2]:
+            return
+        n = self.get_set_item(o)
+        if n > 0:
+            for d, a in self.plus_stats(n):
+                self.add(d, a, -1)
+        st = self.set_of(o[0])
+        if st is not None:
+            for d, a in self.avail(st, self.listed(st) + 1, False, []):
+                self.add(d, a, -1)
+
+    def on(self, slot, item):
+        if slot in self.worn:
+            self.off(slot)
+        self.worn[slot] = item
+        if item[2]:
+            return
+        n = self.get_set_item(item)
+        if n > 0:
+            for d, a in self.plus_stats(n):
+                self.add(d, a, 1)
+        st = self.set_of(item[0])
+        if st is not None:
+            for d, a in self.avail(st, self.listed(st), False, []):
+                self.add(d, a, 1)
+
+    def tooltip(self, iid, bag):        # PutSetItemOpt: [kind, colour, value...]
+        st = self.set_of(iid)
+        if st is None:
+            return []
+        k = self.M['by_id'].get(st['id'])
+        first = self.M['sets'][k]
+        flags = []
+        for e_id, part in first['elems']:
+            o = self.worn.get(part)
+            flags.append(o is not None and o[0] & 0xFFFFFFFF == e_id and not o[2])
+        n = sum(1 for f in flags if f)
+        out = [['name', st['name'], self.listed(st), len(st['elems'])]]
+        for i, (e_id, part) in enumerate(st['elems']):
+            if e_id not in self.P:
+                continue
+            out.append(['piece', 'worn' if i < len(flags) and flags[i] else ('bag' if bag.get(e_id, 0) > 0 else 'none'), e_id])
+        last = -1
+        rate = set(self.D[x] for x in SE_RATE if x in self.D) | {0}
+        for dst, adj, need in st['avail']:
+            c = 'active' if n >= need else 'inactive'
+            if need != last:
+                out.append(['head', c, need])
+                last = need
+            out.append(['row', c, dst, adj, dst in rate])
+        return out
+
+
+def se_stats(ch):
+    return sorted([d, a] for d, a in ch.stats.items())
+
+
+# ---- edits, done line by line on the text with the comments blanked out (an independent way to find the rows)
+def se_mask(t):
+    out, i, n = list(t), 0, len(t)
+    while i < n:
+        if t.startswith('//', i):
+            while i < n and t[i] not in '\r\n':
+                out[i] = ' '; i += 1
+        elif t.startswith('/*', i):
+            j = t.find('*/', i + 2)
+            j = n if j < 0 else j + 2
+            for q in range(i, j):
+                if t[q] not in '\r\n':
+                    out[q] = ' '
+            i = j
+        else:
+            i += 1
+    return ''.join(out)
+
+
+def se_lines(t):
+    """[(start, content end, end incl. EOL)] of every line"""
+    out, i = [], 0
+    for m in re.finditer(r'[^\r\n]*(\r\n|\r|\n|$)', t):
+        if m.start() == len(t) and not m.group(0):
+            break
+        out.append((m.start(), m.start() + len(m.group(0)) - len(m.group(1)), m.end()))
+    return out
+
+
+def se_block(t, sid):
+    """the line ranges of set `sid` (first SetItem with that id): {'Elem': [row lines], 'Avail': [...], open lines, close}"""
+    mk = se_mask(t)
+    L = se_lines(t)
+    start = None
+    for k, (a, b, _) in enumerate(L):
+        f = mk[a:b].split()
+        if len(f) >= 2 and f[0] == 'SetItem' and atoi(f[1]) == sid:
+            start = k
+            break
+    res = {'start': start, 'Elem': [], 'Avail': [], 'open': {}, 'close': None}
+    depth, cur = 0, None
+    for k in range(start + 1, len(L)):
+        a, b, _ = L[k]
+        f = mk[a:b].split()
+        if not f:
+            continue
+        if f[0] in ('Elem', 'Avail') and depth == 1:
+            cur = f[0]
+            continue
+        if f[0] == '{':
+            depth += 1
+            if depth == 2:
+                res['open'][cur] = k
+            continue
+        if f[0] == '}':
+            depth -= 1
+            if depth == 0:
+                res['close'] = k
+                break
+            continue
+        if depth == 2:
+            res[cur].append(k)
+    return res, L, mk
+
+
+def se_indent(t, a):
+    m = re.match(r'[ \t]*', t[a:])
+    return m.group(0)
+
+
+def se_eol(t, L, k):
+    a, b, e = L[k]
+    return t[b:e] or '\r\n'
+
+
+def se_field(t, mk, line, k, value):
+    """replace the k-th word of a line"""
+    a, b, _ = line
+    ms = list(re.finditer(r'\S+', mk[a:b]))
+    m = ms[k]
+    return t[:a + m.start()] + str(value) + t[a + m.end():]
+
+
+def se_max_key(*texts):
+    hi = -1
+    for t in texts:
+        for m in re.finditer(r'IDS_PROPITEMETC_INC_(\d+)', t):
+            hi = max(hi, int(m.group(1)))
+    return 'IDS_PROPITEMETC_INC_%06d' % (hi + 1)
+
+
+def se_append(txt, line):
+    if not txt:
+        return line
+    if re.search(r'(\r\n|\n|\r)$', txt):
+        return txt + line + '\r\n'
+    return txt + '\r\n' + line
+
+
+def se_edit(etc, txt, exp, op, D, S):
+    """one edit op -> (etc, txt, exp)"""
+    kind = op[0]
+    if kind == 'plus':
+        _, row, col, value = op
+        L = se_lines(exp)
+        k0 = next(k for k, (a, b, _) in enumerate(L) if se_mask(exp[a:b]).split()[:1] == ['Setitem'])
+        rows = [k for k in range(k0 + 1, len(L)) if se_mask(exp[L[k][0]:L[k][1]]).split()]
+        rows = [k for k in rows if se_mask(exp[L[k][0]:L[k][1]]).split()[0] not in ('{',)]
+        line = L[rows[row]]
+        return etc, txt, se_field(exp, se_mask(exp), line, ['hit', 'block', 'hp', 'magic', 'added'].index(col), value)
+    if kind == 'newset':
+        _, name, pieces, rows = op
+        M = se_load(etc, D, S)
+        sid = max(s['id'] for s in M['sets']) + 1
+        key = se_max_key(etc, txt)
+        last = M['sets'][-1]['id']
+        blk, L, mk = se_block(etc, last)
+        a, b, e = L[blk['close']]
+        eol = etc[b:e] or '\r\n'
+        rows = sorted(rows, key=lambda r: -r[2])            # stable: most pieces first
+        body = ['SetItem\t\t%d\t%s' % (sid, key), '{', '\tElem', '\t{'] + ['\t\t%s\t\t%s' % (p[0], p[1]) for p in pieces] + \
+               ['\t}', '\tAvail', '\t{'] + ['\t\t%s\t\t%d\t%d' % (r[0], r[1], r[2]) for r in rows] + ['\t}', '}']
+        ins = ('' if etc[b:e] else eol) + eol + eol.join(body) + eol
+        return etc[:e] + ins + etc[e:], se_append(txt, '%s\t%s' % (key, name)), exp
+    sid = op[1]
+    blk, L, mk = se_block(etc, sid)
+    if kind == 'rename':
+        name = op[2]
+        a, b, _ = L[blk['start']]
+        key = mk[a:b].split()[2]
+        uses = len(re.findall(r'(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])' % key, mk))
+        m = re.search(r'^[ \t]*%s[ \t]+([^\r\n]*?)[ \t]*(?=\r|\n|\Z)' % re.escape(key), txt, re.M) if re.match(r'IDS_PROPITEMETC_INC_\d+$', key) else None
+        if m and uses == 1:
+            return etc, txt[:m.start(1)] + name + txt[m.end(1):], exp
+        nk = se_max_key(etc, txt)
+        return se_field(etc, mk, L[blk['start']], 2, nk), se_append(txt, '%s\t%s' % (nk, name)), exp
+    if kind in ('row', 'rmrow', 'piece', 'rmpiece'):
+        lines = blk['Avail' if kind in ('row', 'rmrow') else 'Elem']
+        line = L[lines[op[2]]]
+        if kind in ('rmrow', 'rmpiece'):
+            return etc[:line[0]] + etc[line[2]:], txt, exp
+        names = ['dst', 'adj', 'need'] if kind == 'row' else ['define', 'part']
+        for f, v in sorted(op[3].items(), key=lambda x: -names.index(x[0])):    # right to left: positions stay valid
+            etc = se_field(etc, se_mask(etc), line, names.index(f), v)
+        return etc, txt, exp
+    if kind == 'addrow':
+        _, _, dst, adj, need = op
+        row = '%s\t\t%d\t%d' % (dst, adj, need)
+        rows = blk['Avail']
+        needs = [atoi(mk[L[k][0]:L[k][1]].split()[2]) for k in rows]
+        after = [k for k, n in zip(rows, needs) if n >= need]
+        if after:
+            k = after[-1]
+            return etc[:L[k][2]] + se_indent(etc, L[k][0]) + row + se_eol(etc, L, k) + etc[L[k][2]:], txt, exp
+        if rows:
+            k = rows[0]
+            return etc[:L[k][0]] + se_indent(etc, L[k][0]) + row + se_eol(etc, L, k) + etc[L[k][0]:], txt, exp
+        k = blk['open']['Avail']
+        return etc[:L[k][2]] + se_indent(etc, L[k][0]) + '\t' + row + se_eol(etc, L, k) + etc[L[k][2]:], txt, exp
+    if kind == 'addpiece':
+        _, _, define, part = op
+        row = '%s\t\t%s' % (define, part)
+        rows = blk['Elem']
+        if rows:
+            k = rows[-1]
+            return etc[:L[k][2]] + se_indent(etc, L[k][0]) + row + se_eol(etc, L, k) + etc[L[k][2]:], txt, exp
+        k = blk['open']['Elem']
+        return etc[:L[k][2]] + se_indent(etc, L[k][0]) + '\t' + row + se_eol(etc, L, k) + etc[L[k][2]:], txt, exp
+    raise ValueError(kind)
+
+
+def se_sha(t, kind):
+    b = se_bytes16(t) if kind == 'w' else t.encode('latin-1')
+    return [hashlib.sha256(b).hexdigest(), len(b)]
+
+
+def se_run(root):
+    D = defines(root)
+    rd = lambda n: open(os.path.join(root, n), 'rb').read() if os.path.exists(os.path.join(root, n)) else None
+    S = {}
+    for n in ['propItem.txt.txt', 'textClient.txt.txt', 'propItemEtc.txt.txt']:
+        b = rd(n)
+        if b is not None:
+            nn_strings_add(S, nn_text16(b))
+    P = se_items(root, D, S)
+    etc, txt, exp = se_text(rd('propItemEtc.inc')), se_text(rd('propItemEtc.txt.txt')), se_text(rd('expTable.inc'))
+    real = se_load(etc, D, S)
+    plus = se_plus(rd('expTable.inc'))
+    out = {'facts': {}, 'files': {}, 'plus': {}, 'wears': [], 'edits': []}
+
+    def fact(M):
+        return {'sets': [[s['id'], s['key'], s['name'], s['elems'], s['avail'], s['npieces'], s['nrows']] for s in M['sets']],
+                'by_id': sorted([k, v] for k, v in M['by_id'].items()), 'by_item': sorted([k, v] for k, v in M['by_item'].items()), 'hang': M['hang']}
+    out['facts']['real'] = fact(real)
+    out['plus']['real'] = plus
+    # ---- made-up files (UTF-16 in the JS test): every edge of the loader
+    one = lambda sid, key, elems, rows: 'SetItem\t%d\t%s\r\n{\r\n\tElem\r\n\t{\r\n%s\t}\r\n\tAvail\r\n\t{\r\n%s\t}\r\n}\r\n' % (
+        sid, key, ''.join('\t\t%s\t%s\r\n' % e for e in elems), ''.join('\t\t%s\t%s\t%s\r\n' % r for r in rows))
+    leaf = [('II_ARM_F_VAG_HELMET04', 'PARTS_CAP'), ('II_ARM_F_VAG_SUIT04', 'PARTS_UPPER_BODY'), ('II_ARM_F_VAG_GAUNTLET04', 'PARTS_HAND'), ('II_ARM_F_VAG_BOOTS04', 'PARTS_FOOT')]
+    parm = [('II_ARM_M_VAG_HELMET04', 'PARTS_CAP'), ('II_ARM_M_VAG_SUIT04', 'PARTS_UPPER_BODY'), ('II_ARM_M_VAG_GAUNTLET04', 'PARTS_HAND'), ('II_ARM_M_VAG_BOOTS04', 'PARTS_FOOT')]
+    rings = [('II_GEN_JEW_RIN_FIRERING', 'PARTS_RING1'), ('II_GEN_JEW_RIN_FIRERING', 'PARTS_RING2'), ('II_GEN_JEW_EAR_ATTEARRINGEST', 'PARTS_EARRING1'), ('II_GEN_JEW_NEC_HPNECKLACEMR', 'PARTS_NECKLACE1')]
+    base_rows = [('DST_HP_MAX', 150, 4), ('DST_SPEED', 20, 3), ('DST_ADJDEF', 23, 3), ('DST_HP_MAX', 50, 2), ('DST_STR', 3, 2)]
+    files = {
+        'dup': one(1, 'IDS_PROPITEMETC_INC_000001', leaf, base_rows) + one(1, 'IDS_PROPITEMETC_INC_000002', parm, [('DST_DEX', 5, 2)]),
+        'two': one(7, 'IDS_PROPITEMETC_INC_000003', leaf, base_rows) + one(8, 'IDS_PROPITEMETC_INC_000004', leaf[:2] + parm[2:], [('DST_INT', 4, 2), ('DST_STA', 2, 4)]),
+        'nine': one(9, 'IDS_PROPITEMETC_INC_000005', leaf + parm + [rings[0]], [('DST_STR', 1, 1), ('DST_STR', 2, 8), ('DST_DEX', 9, 9)]),
+        'rows33': one(10, 'IDS_PROPITEMETC_INC_000006', leaf, [('DST_STR', i, 1 + i % 4) for i in range(1, 36)]),
+        'wrong': one(11, 'IDS_PROPITEMETC_INC_000007', [(leaf[0][0], 'PARTS_HAND'), leaf[1], leaf[2], leaf[3]], base_rows) + one(12, 'IDS_PROPITEMETC_INC_000008', rings, [('DST_HP_MAX_RATE', 20, 2), ('DST_REFLECT_DAMAGE', 5, 4), ('DST_ATTACKSPEED', 30, 3)]),
+        'range': one(13, 'IDS_PROPITEMETC_INC_999999', leaf, [('DST_STR', 7, 0), ('DST_DEX', 2, 5), ('DST_STR', '-', 4), ('DST_INT', 3, -1)]).replace("DST_STR\t-\t4", "DST_STR\t-3\t4"),
+        'unsorted': one(14, 'IDS_PROPITEMETC_INC_000009', leaf, [('DST_STR', 1, 3), ('DST_DEX', 2, 2), ('DST_INT', 3, 3), ('DST_STA', 4, 1), ('DST_STR', 5, 2), ('DST_UNKNOWN_X', 6, 2)]),
+        'hang': one(15, 'IDS_PROPITEMETC_INC_000010', leaf, base_rows).replace('\tAvail', '\tFoo\r\n\tAvail') + one(16, 'IDS_PROPITEMETC_INC_000011', parm, base_rows),
+        'shared': one(21, 'IDS_PROPITEMETC_INC_000003', leaf, base_rows) + one(22, 'IDS_PROPITEMETC_INC_000003', parm, [('DST_DEX', 5, 2)]),
+        'empty': 'SetItem\t17\tIDS_PROPITEMETC_INC_000012\r\n{\r\n\tElem\r\n\t{\r\n\t}\r\n}\r\n' + one(18, 'IDS_PROPITEMETC_INC_000013', parm, base_rows) + '// tail\r\nSetItem\t19\tNO_KEY_HERE\r\n{\r\n\tAvail\r\n\t{\r\n\t\tDST_STR\t1\t1\r\n\t}\r\n}\r\n',
+    }
+    for k, t in files.items():
+        out['files'][k] = t
+        out['facts'][k] = fact(se_load(t, D, S))
+    plus_files = {
+        'nine': 'Setitem\r\n{\r\n' + ''.join('\t%d\t%d\t%d\t%d\t%d\r\n' % (i, i, i, i, i % 3) for i in range(1, 10)) + '}\r\n',
+        'twelve': 'X\r\nSetitem\r\n{\r\n' + ''.join('\t%d\t%d\t%d\t%d\t%d\r\n' % (i * 5, i, i * 2, i, 1) for i in range(1, 13)) + '}\r\nexpUpitem\r\n{\r\n1 2 3\r\n}\r\n',
+        'short': 'Setitem\r\n{\r\n\t1\t2\t3\t4\t5\r\n\t6\t7\t8\r\n\t9\t10\t11\t12\t13\r\n}\r\nRestExpFactorTable\r\n{\r\n\t1\t2\r\n}\r\n',
+        'none': 'expDropLuck\r\n{\r\n1\r\n}\r\n',
+    }
+    for k, t in plus_files.items():
+        out['files']['plus_' + k] = t
+        out['plus'][k] = se_plus(t.encode('latin-1'))
+    # ---- wears: every real set (and the made-up ones), seeded
+    rnd = random.Random(1907)
+    worlds = [('real', real, plus)] + [(k, se_load(files[k], D, S), plus) for k in ('dup', 'two', 'wrong', 'unsorted', 'range')] + \
+             [('real', real, out['plus'][k]) for k in ('nine', 'twelve', 'short')]
+    plus_name = {id(plus): 'real', id(out['plus']['nine']): 'nine', id(out['plus']['twelve']): 'twelve', id(out['plus']['short']): 'short'}
+    other = {D['PARTS_RING1']: D['PARTS_RING2'], D['PARTS_RING2']: D['PARTS_RING1'], D['PARTS_EARRING1']: D['PARTS_EARRING2'], D['PARTS_EARRING2']: D['PARTS_EARRING1']}
+    for wname, M, pl in worlds:
+        sets = M['sets'] if wname != 'real' or pl is plus else M['sets'][:12]
+        for st in sets:
+            el = st['elems']
+            if not el:
+                continue
+            for kind in ('all', 'some', 'swap', 'expired', 'wrongslot', 'off'):
+                steps = []
+                order = el[:]
+                rnd.shuffle(order)
+                pick = order if kind in ('all', 'swap', 'expired', 'wrongslot', 'off') else order[:rnd.randint(1, len(order))]
+                for iid, part in pick:
+                    plusv = rnd.choice([0, 0, 1, 3, 5, 7, 10, 11]) if kind != 'all' else rnd.randint(0, 10)
+                    slot = part
+                    if kind == 'wrongslot' and part in other and rnd.random() < 0.7:
+                        slot = other[part]
+                    steps.append([slot, iid, plusv, kind == 'expired' and rnd.random() < 0.4])
+                if kind == 'swap':
+                    s0 = steps[rnd.randrange(len(steps))]
+                    steps.append([s0[0], s0[1], rnd.randint(0, 10), False])
+                if kind == 'off':
+                    for s0 in rnd.sample(steps, max(1, len(steps) // 2)):
+                        steps.append([s0[0], None, 0, False])
+                # a full armor set of another set too, sometimes (several sets at once at login)
+                if rnd.random() < 0.15:
+                    for iid, part in leaf:
+                        if part not in [x[0] for x in steps]:
+                            steps.append([D[part], D[iid], rnd.randint(1, 10), False])
+                ch = SeChar(M, P, pl, D)
+                for slot, iid, pv, ex in steps:
+                    if iid is None:
+                        ch.off(slot)
+                    else:
+                        ch.on(slot, [iid & 0xFFFFFFFF, pv, ex])
+                lg = SeChar(M, P, pl, D)
+                lg.worn = dict(ch.worn)
+                lg.login()
+                bag = {}
+                for iid, _ in el:
+                    if rnd.random() < 0.3:
+                        bag[iid] = rnd.randint(1, 3)
+                hover = el[rnd.randrange(len(el))][0]
+                out['wears'].append({'world': wname, 'plus': plus_name[id(pl)], 'set': st['id'], 'kind': kind, 'steps': steps,
+                                     'bag': sorted([k, v] for k, v in bag.items()), 'hover': hover,
+                                     'wear': se_stats(ch), 'login': se_stats(lg), 'n': ch.get_set_item(None), 'tooltip': ch.tooltip(hover, bag)})
+    # ---- the +N edges: a full Leaf Set at one +N, every table (+0, +1, +10, +11 and +12 with a 12-row table: only +1..+10 count)
+    for pk in ('real', 'nine', 'twelve', 'short'):
+        for pv in (0, 1, 5, 10, 11, 12, 20):
+            steps = [[D[part], D[iid], pv, False] for iid, part in leaf]
+            ch = SeChar(real, P, out['plus'][pk], D)
+            for slot, iid, v, ex in steps:
+                ch.on(slot, [iid & 0xFFFFFFFF, v, ex])
+            lg = SeChar(real, P, out['plus'][pk], D)
+            lg.worn = dict(ch.worn)
+            lg.login()
+            out['wears'].append({'world': 'real', 'plus': pk, 'set': 1, 'kind': 'plus%d' % pv, 'steps': steps, 'bag': [], 'hover': D[leaf[0][0]],
+                                 'wear': se_stats(ch), 'login': se_stats(lg), 'n': ch.get_set_item(None), 'tooltip': ch.tooltip(D[leaf[0][0]], {})})
+    # ---- edit scripts (real file + made-up): the files byte-identical after each script
+    R = lambda *ops: list(ops)
+    scripts = [
+        ('real', R(['row', 1, 0, {'adj': 175}])),
+        ('real', R(['row', 1, 3, {'dst': 'DST_INT', 'need': 3}], ['row', 2, 4, {'adj': -4}])),
+        ('real', R(['addrow', 1, 'DST_DEX', 6, 3])),
+        ('real', R(['addrow', 3, 'DST_STA', 9, 1], ['addrow', 3, 'DST_STR', 2, 4], ['addrow', 3, 'DST_HP_MAX', 1, 8])),
+        ('real', R(['rmrow', 4, 0], ['rmrow', 4, 0])),
+        ('real', R(['addpiece', 1, 'II_ARM_F_VAG_HELMET04', 'PARTS_CAP'])),
+        ('real', R(['rmpiece', 2, 3], ['addpiece', 2, 'II_ARM_M_VAG_BOOTS04', 'PARTS_FOOT'])),
+        ('real', R(['piece', 3, 0, {'define': 'II_ARM_F_VAG_HELMET04'}], ['piece', 3, 1, {'part': 'PARTS_HAND'}])),
+        ('real', R(['rename', 1, 'Leaf Set of the Woods'])),
+        ('real', R(['rename', 2, 'Parmil'], ['rename', 2, 'Parmil Set'])),
+        ('real', R(['newset', 'Test Wings', [['II_ARM_F_VAG_HELMET04', 'PARTS_CAP'], ['II_ARM_F_VAG_SUIT04', 'PARTS_UPPER_BODY']], [['DST_STR', 5, 2], ['DST_HP_MAX_RATE', 3, 1], ['DST_SPEED', 4, 2]]])),
+        ('real', R(['newset', 'One', [['II_ARM_M_VAG_SUIT04', 'PARTS_UPPER_BODY']], []], ['addrow', 'new', 'DST_DEX', 1, 1], ['rename', 'new', 'Two'])),
+        ('real', R(['plus', 4, 'hp', 7], ['plus', 9, 'added', 5], ['plus', 0, 'hit', 1])),
+        ('empty', R(['addpiece', 17, 'II_ARM_F_VAG_HELMET04', 'PARTS_CAP'], ['rename', 19, 'Named'])),
+        ('unsorted', R(['addrow', 14, 'DST_SPEED', 8, 2], ['rmrow', 14, 5], ['row', 14, 0, {'need': 4}])),
+        ('shared', R(['rename', 21, 'Shared One'], ['rename', 22, 'Shared Two'])),
+    ]
+    txt0 = txt
+    for base, ops in scripts:
+        e, t, x = (etc if base == 'real' else files[base]), (txt0 if base == 'real' else txt0), exp
+        last_new = None
+        for op in ops:
+            op = [last_new if v == 'new' else v for v in op]
+            if op[0] == 'newset':
+                last_new = max(s['id'] for s in se_load(e, D, S)['sets']) + 1
+            e, t, x = se_edit(e, t, x, op, D, S)
+        out['edits'].append({'base': base, 'ops': ops, 'etc': se_sha(e, 'w'), 'txt': se_sha(t, 'w'), 'exp': se_sha(x, 'b')})
+    return out
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -9292,6 +9947,8 @@ if __name__ == '__main__':
         print(json.dumps(up_run_all(root)))
     elif what == 'fees':                        # the upgrade fees (upgrade-fees.diff): reads, charges, the game, edits
         print(json.dumps(fees_run()))
+    elif what == 'sets':                        # set effects: propItemEtc.inc SetItem, the +N table, wearing, tooltip, edits
+        print(json.dumps(se_run(root)))
     elif what == 'dds':                         # a folder of .dds icons -> {file: [w, h, sha256 of the RGBA]}
         print(json.dumps(dds_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model
