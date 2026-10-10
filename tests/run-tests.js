@@ -3412,13 +3412,14 @@ section('upgrade fees (K part 2): UpgradeFees.lua read like CUpgradeFees, charge
   try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py fees) gave no readable result', e.message); }
   const F = FRE.upgradeFees, S = FRE.upgradeSim, O = FRE.upgradeOps;
   const sf = t => new FRE.SourceFile('UpgradeFees.lua', new TextEncoder().encode(t));
-  const feesOf = M => Object.fromEntries(M.rows.map(r => [r.key, F.feeOf(M, r.key)]));
+  const feesOf = M => Object.fromEntries(M.rows.map(r => [r.key, F.feeOf(M, r.key)]).sort((x, y) => (x[0] < y[0] ? -1 : 1)));
+  const sorted = o => Object.fromEntries(Object.entries(o).sort((x, y) => (x[0] < y[0] ? -1 : 1)));
   if (py) {
     let same = 0, n = 0;
     for (const r of py.reads) {
       const M = F.load(r.text === null ? null : sf(r.text)), got = feesOf(M);
-      n++; if (J(got) === J(r.fees)) same++; else ok(false, `fees of ${JSON.stringify(r.text)}`, `${J(got)} vs ${J(r.fees)}`);
-      for (const c of r.charges) { n++; const x = S.charge(M, c[0], c[1], { cards: c[2] }); if (J([x.ok, x.paid, x.gold]) === J(c.slice(3))) same++; else ok(false, `charge ${c[0]} gold ${c[1]} cards ${c[2]} (${JSON.stringify(r.text)})`, `${J([x.ok, x.paid, x.gold])} vs ${J(c.slice(3))}`); }
+      n++; if (J(got) === J(sorted(r.fees))) same++; else ok(false, `fees of ${JSON.stringify(r.text)}`, `${J(got)} vs ${J(r.fees)}`);
+      for (const c of r.charges) { n++; const x = S.charge(M, c[0], c[1], c[2] === 'expired' ? { expired: true } : { cards: c[2] }); if (J([x.ok, x.paid, x.gold]) === J(c.slice(3))) same++; else ok(false, `charge ${c[0]} gold ${c[1]} cards ${c[2]} (${JSON.stringify(r.text)})`, `${J([x.ok, x.paid, x.gold])} vs ${J(c.slice(3))}`); }
       for (const c of r.unpatched) { n++; const x = S.charge(M, c[0], c[1], { patched: false }); if (J([x.ok, x.paid, x.gold]) === J(c.slice(2))) same++; else ok(false, `without the patch: ${c[0]} gold ${c[1]}`, J([x, c])); }
       for (const g of r.game) { n++; const v = S.gameView(M, g[0]); if (v.piercePrice === g[1] && v.safeGoes === g[2]) same++; else ok(false, `the game with ${g[0]} Penya`, J([v, g])); }
     }
@@ -3430,7 +3431,7 @@ section('upgrade fees (K part 2): UpgradeFees.lua read like CUpgradeFees, charge
         f.applySplices(O.setFee(F.load(f.text.trim() ? f : null), f.text, key, v), 'x');
         en++; if (f.text === e.steps[i]) es++; else ok(false, `edit ${key} = ${v} on ${JSON.stringify(e.start)}`, JSON.stringify([f.text, e.steps[i]]));
       });
-      en++; if (J(feesOf(F.load(f))) === J(e.fees)) es++; else ok(false, 'fees after the edits', J([feesOf(F.load(f)), e.fees]));
+      en++; if (J(feesOf(F.load(f))) === J(sorted(e.fees))) es++; else ok(false, 'fees after the edits', J([feesOf(F.load(f)), e.fees]));
     }
     for (const x of py.texts) {
       let got = null;
@@ -3474,6 +3475,21 @@ section('upgrade fees (K part 2): UpgradeFees.lua read like CUpgradeFees, charge
   ok(r1.steps[0].id === 'patch:upgrade-fees' && /WorldServer project and the Neuz project/.test(r1.steps[0].text) && r1.steps.some(s => s.id === 'servers'), 'After saving: build the WorldServer and Neuz with upgrade-fees.diff, then Stop / Start Server.bat');
   const r2 = FRE.afterSave.compute({ changes: [{ label: 'fee', files: ['upgradefees.lua'] }], client: { 'upgradefees.lua': 'written' }, patches: { 'upgrade-fees': 'built' } });
   ok(!r2.steps.some(s => s.id.startsWith('patch:')) && J(r2.built) === J(['upgrade-fees']), '… marked as built: only the restart');
+  // part 3: every upgrade's per-try fee in the calculator (0 = free by default)
+  {
+    const X = fresh(), fx = X.files.get('upgradefees.lua');
+    const g0 = S.expect(X.models.upgrade, 'general', 0, 5, { protect: true });
+    ok(g0.per && g0.per.penya === 0, 'normal upgrade: no fee by default (0 Penya)');
+    for (const [k, v] of [['nEnchantGeneralPenya', 1000], ['nUltimateToUltimatePenya', 2000000], ['nSafeAccessoryPenya', 500]])
+      X.apply('upgradefees.lua', O.setFee(X.models.upgrade.fees, fx.text, k, v), 'fee');
+    const M = X.models.upgrade, g1 = S.expect(M, 'general', 0, 5, { protect: true }), tr = S.expect(M, 'transform', 0, 1, { to: 'ultimate' }), ac = S.expect(M, 'acc', 0, 5, { window: 'safe' });
+    ok(Math.abs(g1.per.penya - g1.per.tries * 1000) < 1e-6, 'normal upgrade 1,000 a try: Penya = tries × 1,000');
+    ok(!tr.per || Math.abs(tr.per.penya - tr.per.tries * 2000000) < 1e-3, 'Unique → Ultimate 2,000,000 a try');
+    ok(Math.abs(ac.per.penya - ac.per.tries * 500) < 1e-6 && S.expect(M, 'acc', 0, 5, {}).per.penya === 0, 'accessory: the safe window has its own fee (500), the normal one is still free');
+    ok(S.expect(M, 'general', 0, 5, { protect: true, patched: false }).per.penya === 0, 'without the patch: free again');
+    eq(J([S.charge(M.fees, 'nEnchantGeneralPenya', 999), S.charge(M.fees, 'nEnchantGeneralPenya', 1000), S.charge(M.fees, 'nSwapVisPenya', 0)]),
+      J([{ ok: false, paid: 0, gold: 999 }, { ok: true, paid: 1000, gold: 0 }, { ok: true, paid: 0, gold: 0 }]), 'charge: short refused, exact paid, free fee never checks');
+  }
   for (const k of ['UP_FEE_LUA', 'UP_FEE_BAD', 'UP_FEE_DUP', 'UP_FEE_TEXT']) ok(FRE.diagHelp[k], `help text for ${k}`);
 }
 

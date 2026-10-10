@@ -1,10 +1,11 @@
 --- a/Source/Source/_Common/UpgradeFees.h
 +++ b/Source/Source/_Common/UpgradeFees.h
-@@ -0,0 +1,58 @@
-+// UpgradeFees.h: the Penya fees of the upgrade windows, read from UpgradeFees.lua (resource editor patch upgrade-fees.diff).
-+// The WorldServer charges them (Server/Resource/UpgradeFees.lua); Neuz shows them and checks the player's Penya before
-+// sending (Client/UpgradeFees.lua). Keep both copies the same.
-+// No file, a script error, or a missing / non-number / negative / too large value keeps the old compiled fee.
+@@ -0,0 +1,134 @@
++// UpgradeFees.h: the Penya fees of the upgrade / remove actions, read from UpgradeFees.lua (resource editor patch upgrade-fees.diff).
++// The WorldServer charges them (Server/Resource/UpgradeFees.lua); Neuz shows the piercing price and checks the player's Penya in
++// the safe piercing window (Client/UpgradeFees.lua). Keep both copies the same.
++// No file, a script error, or a missing / non-number / negative / too large value keeps the default below
++// (the old compiled fee; 0 = free for the actions that had no fee).
 +#ifndef __UPGRADEFEES_H__
 +#define __UPGRADEFEES_H__
 +
@@ -13,11 +14,35 @@
 +class CUpgradeFees
 +{
 +public:
-+	int		nAwakening;			// OnAwakening (DPSrvr.cpp), was 100000
++	int		nAwakening;	// OnAwakening (DPSrvr.cpp), was 100000
 +	int		nRemoveAttribute;	// OnRemoveAttribute (DPSrvr.cpp), was 100000
-+	int		nPiercing;			// OnPiercingSize (ItemUpgrade.cpp) + WndPiercing, was 100000
-+	int		nSafePiercing;		// SmeltSafetyPiercingSize (ItemUpgrade.cpp) + CWndSmeltSafety, was 100000
++	int		nPiercing;	// OnPiercingSize (ItemUpgrade.cpp) + WndPiercing, was 100000
++	int		nSafePiercing;	// SmeltSafetyPiercingSize (ItemUpgrade.cpp) + CWndSmeltSafety, was 100000
 +	int		nRemovePiercing;	// OnPiercingRemove (ItemUpgrade.cpp), was 1000000
++	int		nEnchantGeneral;	// EnchantGeneral: normal upgrade, was 0
++	int		nEnchantAttribute;	// EnchantAttribute: element upgrade, was 0
++	int		nEnchantAccessory;	// RefineAccessory, was 0
++	int		nEnchantCollector;	// RefineCollector, was 0
++	int		nSafeGeneral;	// SmeltSafetyGeneral: safe window, normal, was 0
++	int		nSafeAccessory;	// SmeltSafetyAccessory, was 0
++	int		nSafeUltimate;	// SmeltSafetyUltimate, was 0
++	int		nChangeAttribute;	// ChangeAttribute: change element, was 0
++	int		nPiercingCard;	// OnPiercing: put a card in, was 0
++	int		nUltimateMakeItem;	// CUltimateWeapon::MakeItem, was 0
++	int		nUltimateMakeGem;	// MakeGem, was 0
++	int		nUltimateToUnique;	// TransWeapon General -> Unique, was 0
++	int		nUltimateToUltimate;	// TransWeapon Unique -> Ultimate, was 0
++	int		nUltimateSetGem;	// SetGem, was 0
++	int		nUltimateRemoveGem;	// RemoveGem, was 0
++	int		nUltimateEnchant;	// EnchantWeapon: Ultimate +1..+10, was 0
++	int		nBlessingCancel;	// OnBlessednessCancel, was 0
++	int		nRemoveLevelDown;	// OnRemoveItemLevelDown, was 0
++	int		nFastAwakeRoll;	// OnFastAwakeRoll: each roll, was 0
++	int		nPetAwakeningCancel;	// OnPickupPetAwakeningCancel, was 0
++	int		nRemoveVis;	// RemovePetVisItem (not when a vis expires), was 0
++	int		nSwapVis;	// SwapVis, was 0
++	int		nRemoveAura;	// OnRemoveAura, was 0
++	int		nLookChange;	// OnLookChange: transmute or revert, was 0
 +
 +	static CUpgradeFees* GetInstance( void )
 +	{
@@ -25,9 +50,36 @@
 +		return &sUpgradeFees;
 +	}
 +
++#ifdef __WORLDSERVER
++	// one action's fee: 0 = free (no check); not enough Penya -> TID_GAME_LACKMONEY and FALSE (nothing taken); else taken
++	BOOL	CanPay( CUser* pUser, int nFee )
++	{
++		if( nFee <= 0 )
++			return TRUE;
++		if( pUser->GetGold() < nFee )
++		{
++			pUser->AddDefinedText( TID_GAME_LACKMONEY );
++			return FALSE;
++		}
++		return TRUE;
++	}
++	void	Pay( CUser* pUser, int nFee )
++	{
++		if( nFee > 0 )
++			pUser->AddGold( -nFee );
++	}
++	BOOL	Charge( CUser* pUser, int nFee )
++	{
++		if( !CanPay( pUser, nFee ) )
++			return FALSE;
++		Pay( pUser, nFee );
++		return TRUE;
++	}
++#endif // __WORLDSERVER
++
 +private:
 +	CUpgradeFees( void )
-+	: nAwakening( 100000 ), nRemoveAttribute( 100000 ), nPiercing( 100000 ), nSafePiercing( 100000 ), nRemovePiercing( 1000000 )
++	: nAwakening( 100000 ), nRemoveAttribute( 100000 ), nPiercing( 100000 ), nSafePiercing( 100000 ), nRemovePiercing( 1000000 ), nEnchantGeneral( 0 ), nEnchantAttribute( 0 ), nEnchantAccessory( 0 ), nEnchantCollector( 0 ), nSafeGeneral( 0 ), nSafeAccessory( 0 ), nSafeUltimate( 0 ), nChangeAttribute( 0 ), nPiercingCard( 0 ), nUltimateMakeItem( 0 ), nUltimateMakeGem( 0 ), nUltimateToUnique( 0 ), nUltimateToUltimate( 0 ), nUltimateSetGem( 0 ), nUltimateRemoveGem( 0 ), nUltimateEnchant( 0 ), nBlessingCancel( 0 ), nRemoveLevelDown( 0 ), nFastAwakeRoll( 0 ), nPetAwakeningCancel( 0 ), nRemoveVis( 0 ), nSwapVis( 0 ), nRemoveAura( 0 ), nLookChange( 0 )
 +	{
 +		FILE* f = fopen( "UpgradeFees.lua", "r" );
 +		if( f == NULL )
@@ -44,6 +96,30 @@
 +		Read( lua, "nPiercingPenya", nPiercing );
 +		Read( lua, "nSafePiercingPenya", nSafePiercing );
 +		Read( lua, "nRemovePiercingPenya", nRemovePiercing );
++		Read( lua, "nEnchantGeneralPenya", nEnchantGeneral );
++		Read( lua, "nEnchantAttributePenya", nEnchantAttribute );
++		Read( lua, "nEnchantAccessoryPenya", nEnchantAccessory );
++		Read( lua, "nEnchantCollectorPenya", nEnchantCollector );
++		Read( lua, "nSafeGeneralPenya", nSafeGeneral );
++		Read( lua, "nSafeAccessoryPenya", nSafeAccessory );
++		Read( lua, "nSafeUltimatePenya", nSafeUltimate );
++		Read( lua, "nChangeAttributePenya", nChangeAttribute );
++		Read( lua, "nPiercingCardPenya", nPiercingCard );
++		Read( lua, "nUltimateMakeItemPenya", nUltimateMakeItem );
++		Read( lua, "nUltimateMakeGemPenya", nUltimateMakeGem );
++		Read( lua, "nUltimateToUniquePenya", nUltimateToUnique );
++		Read( lua, "nUltimateToUltimatePenya", nUltimateToUltimate );
++		Read( lua, "nUltimateSetGemPenya", nUltimateSetGem );
++		Read( lua, "nUltimateRemoveGemPenya", nUltimateRemoveGem );
++		Read( lua, "nUltimateEnchantPenya", nUltimateEnchant );
++		Read( lua, "nBlessingCancelPenya", nBlessingCancel );
++		Read( lua, "nRemoveLevelDownPenya", nRemoveLevelDown );
++		Read( lua, "nFastAwakeRollPenya", nFastAwakeRoll );
++		Read( lua, "nPetAwakeningCancelPenya", nPetAwakeningCancel );
++		Read( lua, "nRemoveVisPenya", nRemoveVis );
++		Read( lua, "nSwapVisPenya", nSwapVis );
++		Read( lua, "nRemoveAuraPenya", nRemoveAura );
++		Read( lua, "nLookChangePenya", nLookChange );
 +	}
 +	static void Read( CLuaBase& lua, char* szName, int& nValue )
 +	{
@@ -61,13 +137,14 @@
 +#endif // __UPGRADEFEES_H__
 --- a/Source/Source/WORLDSERVER/ItemUpgrade.cpp
 +++ b/Source/Source/WORLDSERVER/ItemUpgrade.cpp
-@@ -1,5 +1,6 @@
- #include "stdafx.h"
- #include ".\itemupgrade.h"
+@@ -17,6 +17,7 @@
+ #include "DPSrvr.h"
+ extern CDPSrvr g_DPSrvr;
+ #include "DPDatabaseClient.h"
 +#include "..\_Common\UpgradeFees.h"	// upgrade-fees.diff
+ extern CDPDatabaseClient g_dpDBClient;
  
- #if __VER >= 12 // __EXT_PIERCING
- #include "defineObj.h"
+ #if __VER >= 15 // __PETVIS
 @@ -228,7 +229,7 @@
  	aLogItem.RecvName = "PIERCING";
  	aLogItem.WorldId = pUser->GetWorld()->GetID();
@@ -77,7 +154,16 @@
  
  	if( 0 < nCost )
  	{
-@@ -444,7 +445,7 @@
+@@ -388,6 +389,8 @@
+ 	if( pUser->m_vtInfo.VendorIsVendor() )		// ³»°¡ ÆÈ°í ÀÖÀ¸¸é?
+ 		return;
+ 
++	if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nPiercingCard ) )	// upgrade-fees.diff
++		return;
+ 	LogItemInfo aLogItem;
+ 	aLogItem.SendName = pUser->GetName();
+ 	aLogItem.RecvName = "PIERCING";
+@@ -444,7 +447,7 @@
  	}
  #endif // __NEW_ITEM_VARUNA
  
@@ -86,7 +172,25 @@
  	if( pUser->GetGold() < nPayPenya )	// Æä³Ä°¡ ºÎÁ·ÇÏ´Ù.
  	{
  		pUser->AddDefinedText( TID_GAME_LACKMONEY );
-@@ -794,7 +795,7 @@
+@@ -617,6 +620,8 @@
+ 	}
+ 	
+ 	// 1000´ÜÀ§ÀÇ ¼º°ø ÆÛ¼¾Æ®
++	if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nSafeGeneral ) )	// upgrade-fees.diff
++		return 0;
+ 	int nPercent = GetGeneralEnchantProb( pItemMain->GetAbilityOption() );
+ 	
+ 	//	Á¦·ÃÀÇ µÎ·ç¸¶¸®¸¦ »ç¿ëÇß´Ù¸é
+@@ -718,6 +723,8 @@
+ 	}
+ 
+ 	// log
++	if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nSafeAccessory ) )	// upgrade-fees.diff
++		return 0;
+ 	LogItemInfo aLogItem;
+ 	aLogItem.SendName	= pUser->GetName();
+ 	aLogItem.RecvName	= "UPGRADEITEM_SMELTSAFETY";
+@@ -794,7 +801,7 @@
  	aLogItem.RecvName = "PIERCING_SMELTSAFETY";
  	aLogItem.WorldId = pUser->GetWorld()->GetID();
  
@@ -95,6 +199,69 @@
  
  	if( 0 < nCost )
  	{
+@@ -878,6 +885,8 @@
+ 	}
+ 
+ 	// log
++	if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nEnchantAccessory ) )	// upgrade-fees.diff
++		return;
+ 	LogItemInfo aLogItem;
+ 	aLogItem.SendName	= pUser->GetName();
+ 	aLogItem.RecvName	= "UPGRADEITEM";
+@@ -953,6 +962,8 @@
+ 		return;
+ 
+ 	// log
++	if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nEnchantCollector ) )	// upgrade-fees.diff
++		return;
+ 	LogItemInfo aLogItem;
+ 	aLogItem.SendName	= pUser->GetName();
+ 	aLogItem.RecvName	= "UPGRADEITEM";
+@@ -1138,6 +1149,8 @@
+ 	// 1000´ÜÀ§ÀÇ ¼º°ø ÆÛ¼¾Æ® 
+ 	int nPercent = GetGeneralEnchantProb( *pAbilityOption );
+ 
++	if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nEnchantGeneral ) )	// upgrade-fees.diff
++		return;
+ 	LogItemInfo aLogItem;
+ 	aLogItem.SendName = pUser->GetName();
+ 	aLogItem.RecvName = "UPGRADEITEM";
+@@ -1700,6 +1713,8 @@
+ 	// 10000´ÜÀ§ÀÇ ¼º°ø ÆÛ¼¾Æ® 
+ 	int nPercent = GetAttributeEnchantProb( *pAbilityOption );
+ 
++	if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nEnchantAttribute ) )	// upgrade-fees.diff
++		return;
+ 	LogItemInfo aLogItem;
+ 	aLogItem.SendName = pUser->GetName();
+ 	aLogItem.RecvName = "UPGRADEITEM";
+@@ -1885,6 +1900,8 @@
+ 	
+ 	if( (pTargetItemElem->m_bItemResist != SAI79::NO_PROP) && (pTargetItemElem->m_nResistAbilityOption > 0) )
+ 	{
++		if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nChangeAttribute ) )	// upgrade-fees.diff
++			return;
+ 		pUser->AddPlaySound( SND_INF_UPGRADESUCCESS );
+ 		if( ( pUser->IsMode( TRANSPARENT_MODE ) ) == 0 )
+ 			g_UserMng.AddCreateSfxObj((CMover *)pUser, XI_INT_SUCCESS, pUser->GetPos().x, pUser->GetPos().y, pUser->GetPos().z);
+@@ -2205,6 +2222,8 @@
+ 	if( dwItemId  == 0 )	// ÀÌ¹Ì ºñ¾îÀÖ´Â ½½·Ô
+ 		return;
+ 
++	if( !bExpired && !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nRemoveVis ) )	// upgrade-fees.diff
++		return;
+ 	pUser->ResetPetVisDST( pItemElemPet );
+ 	if( bExpired )
+ 		PutPetVisItemLog( pUser, "$", "VIS_REMOVE_EXPIRED", pItemElemPet, nPosition );
+@@ -2239,6 +2258,8 @@
+ 	if( !IsUsableItem( pItemElemPet ) )
+ 		return;
+ 	
++	if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nSwapVis ) )	// upgrade-fees.diff
++		return;
+ 	pUser->UpdateItem( (WORD)( pItemElemPet->m_dwObjId ), UI_PETVIS_ITEMSWAP, MAKELONG( nPos1, nPos2 ) );
+ }
+ 
 --- a/Source/Source/WORLDSERVER/DPSrvr.cpp
 +++ b/Source/Source/WORLDSERVER/DPSrvr.cpp
 @@ -36,6 +36,7 @@
@@ -105,7 +272,16 @@
  #endif	// __SYS_IDENTIFY
  
  #if __VER >= 11 // __SYS_PLAYER_DATA
-@@ -6846,7 +6847,7 @@
+@@ -6288,6 +6289,8 @@
+ 			pUser->AddDefinedText( TID_GAME_INVALID_TARGET_ITEM );
+ 			return;
+ 		}
++		if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nRemoveLevelDown ) )	// upgrade-fees.diff
++			return;
+ 		PutItemLog( pUser, "v", "OnRemoveItemLevelDown", pItemElem );
+ 		pItemElem->SetLevelDown();
+ 		pUser->UpdateItemEx( (WORD)( pItemElem->m_dwObjId ), UI_RANDOMOPTITEMID, pItemElem->GetRandomOptItemId() );
+@@ -6846,7 +6849,7 @@
  #if __VER >= 10 // __REMOVE_ATTRIBUTE
  void CDPSrvr::OnRemoveAttribute( CAr & ar, DPID dpidCache, DPID dpidUser, LPBYTE lpBuf, u_long uBufSize)
  {
@@ -114,7 +290,16 @@
  
  	CUser* pUser	= g_UserMng.GetUser( dpidCache, dpidUser );
  	if( !IsValidObj( pUser ) )
-@@ -12495,7 +12496,7 @@
+@@ -12466,6 +12469,8 @@
+ 			if( g_xRandomOptionProperty->GetRandomOptionKind( pItem ) == CRandomOptionProperty::eBlessing
+ 				&& g_xRandomOptionProperty->GetRandomOptionSize( pItem->GetRandomOptItemId() ) > 0 )
+ 			{
++				if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nBlessingCancel ) )	// upgrade-fees.diff
++					return;
+ 				g_xRandomOptionProperty->InitializeRandomOption( pItem->GetRandomOptItemIdPtr() );
+ 				pUser->UpdateItemEx( (WORD)( pItem->m_dwObjId ), UI_RANDOMOPTITEMID, pItem->GetRandomOptItemId() );
+ 				pUser->AddDiagText( prj.GetText( TID_GAME_BLESSEDNESS_CANCEL_INFO ) );
+@@ -12495,7 +12500,7 @@
  		if( !CNpcChecker::GetInstance()->IsCloseNpc( MMI_ITEM_AWAKENING, pUser->GetWorld(), pUser->GetPos() ) )
  			return;
  
@@ -123,6 +308,140 @@
  		if( pUser->GetGold() < nCost )
  		{
  			pUser->AddDefinedText( TID_GAME_LACKMONEY, "" );
+@@ -13283,10 +13288,13 @@
+ 	if( !IsUsableItem( pItem ) )
+ 		return;
+ 
++	if( !CUpgradeFees::GetInstance()->CanPay( pUser, CUpgradeFees::GetInstance()->nPetAwakeningCancel ) )	// upgrade-fees.diff: paid only when the cancel works
++		return;
+ 	if( DoUseItemTarget_InitializeRandomOption( pUser, pItem, CRandomOptionProperty::eEatPet,
+ 					TID_GAME_PICKUP_PET_AWAKENING_CANCEL_S001, TID_GAME_PICKUP_PET_AWAKENING_CANCEL_E001,
+ 					"k", "PPAC" ) )
+ 	{
++		CUpgradeFees::GetInstance()->Pay( pUser, CUpgradeFees::GetInstance()->nPetAwakeningCancel );	// upgrade-fees.diff
+ 		pUser->AddPlaySound( SND_INF_UPGRADESUCCESS );
+ 		if( pUser->IsMode( TRANSPARENT_MODE ) == 0 )
+ 			g_UserMng.AddCreateSfxObj( pUser, XI_INT_SUCCESS, pUser->GetPos().x, pUser->GetPos().y, pUser->GetPos().z );
+@@ -13516,6 +13524,8 @@
+ 	CUser* pUser	=	g_UserMng.GetUser( dpidCache, dpidUser );
+ 	if( IsValidObj( pUser ) && pUser->HasBuffByIk3( IK3_ARMOREFFECTCHANGE ) )
+ 	{
++		if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nRemoveAura ) )	// upgrade-fees.diff
++			return;
+ 		pUser->RemoveIk3Buffs( IK3_ARMOREFFECTCHANGE );
+ 		pUser->AddText( "Aura effect removed." );
+ 	}
+@@ -14343,6 +14353,11 @@
+ 		return;
+ 	}
+ 
++	if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nFastAwakeRoll ) )	// upgrade-fees.diff
++	{
++		pUser->AddFastAwake( FASTAWAKE_NO_PENYA, dwObjId, pItemElem->GetRandomOptItemId() );
++		return;
++	}
+ 	// all checks passed - roll exactly like the two scrolls by hand
+ 	g_xRandomOptionProperty->InitializeRandomOption( pItemElem->GetRandomOptItemIdPtr() );
+ 	g_xRandomOptionProperty->GenRandomOption( pItemElem->GetRandomOptItemIdPtr(), CRandomOptionProperty::eAwakening, pItemElem->GetProp()->dwParts );
+@@ -14865,6 +14880,8 @@
+ 			pUser->AddText( "That item doesn't have a changed appearance." );
+ 			return;
+ 		}
++		if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nLookChange ) )	// upgrade-fees.diff
++			return;
+ 		pDest->SetLook( NULL_ID );
+ 		pUser->RemoveItem( (WORD)pSrc->m_dwObjId, 1 );
+ 		pUser->AddLookChange( pDest->m_dwObjId, pDest->GetLook() );
+@@ -14962,6 +14979,8 @@
+ 		return;
+ 	}
+ 
++	if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nLookChange ) )	// upgrade-fees.diff
++		return;
+ 	pDest->SetLook( pSrc->m_dwItemId );
+ 	pUser->RemoveItem( (WORD)pSrc->m_dwObjId, 1 );
+ 	pUser->AddLookChange( pDest->m_dwObjId, pDest->GetLook() );
+--- a/Source/Source/_Common/UltimateWeapon.cpp
++++ b/Source/Source/_Common/UltimateWeapon.cpp
+@@ -9,6 +9,7 @@
+ 
+ #include "DPSrvr.h"
+ #include "dpdatabaseclient.h"
++#include "..\_Common\UpgradeFees.h"	// upgrade-fees.diff
+ #include "definetext.h"
+ #if __VER >= 14 // __SMELT_SAFETY
+ extern CUserMng g_UserMng;
+@@ -244,6 +245,8 @@
+ 		&& pUser->m_Inventory.IsFull( &itemElemTemp, pItemprop, (short)( nItemNum - pItemprop->dwPackMax ) ) )
+ 		return ULTIMATE_INVENTORY;
+ 	
++	if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nUltimateMakeGem ) )	// upgrade-fees.diff
++		return ULTIMATE_CANCEL;
+ 	LogItemInfo aLogItem;
+ 	aLogItem.Action = "-";
+ 	aLogItem.SendName = pUser->GetName();
+@@ -320,6 +323,8 @@
+ 		return ULTIMATE_CANCEL;
+ 	
+ 	// ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
++	if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nUltimateSetGem ) )	// upgrade-fees.diff
++		return ULTIMATE_CANCEL;
+ 	LogItemInfo aLogItem;
+ 	aLogItem.Action = "-";
+ 	aLogItem.SendName = pUser->GetName();
+@@ -378,6 +383,8 @@
+ 	}	
+ 
+ 	// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½
++	if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nUltimateRemoveGem ) )	// upgrade-fees.diff
++		return ULTIMATE_CANCEL;
+ 	LogItemInfo aLogItem;
+ 	aLogItem.Action = "-";
+ 	aLogItem.SendName = pUser->GetName();
+@@ -481,6 +488,8 @@
+ 	if( !itemElemTemp.GetProp() || pUser->m_Inventory.IsFull( &itemElemTemp, itemElemTemp.GetProp(), 1 ) )
+ 		return ULTIMATE_INVENTORY;
+ 	
++	if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nUltimateMakeItem ) )	// upgrade-fees.diff
++		return ULTIMATE_CANCEL;
+ 	LogItemInfo aLogItem;
+ 	aLogItem.Action = "-";
+ 	aLogItem.SendName = pUser->GetName();
+@@ -591,6 +600,8 @@
+ 	if( pItemElemWeapon->GetProp()->dwReferTarget2 != NULL_ID )
+ 		nProb = pItemElemWeapon->GetProp()->dwReferTarget2;
+ 
++if( !CUpgradeFees::GetInstance()->Charge( pUser, pItemElemWeapon->GetProp()->dwReferStat1 == WEAPON_UNIQUE ? CUpgradeFees::GetInstance()->nUltimateToUltimate : CUpgradeFees::GetInstance()->nUltimateToUnique ) )	// upgrade-fees.diff
++	return ULTIMATE_CANCEL;
+ #ifdef __UPGRADE_SUCCESS_SCROLL
+ 	if( pUser->HasBuffByIk3( IK3_ULTIMATE_UPGRADE_RATE ))
+ 	{
+@@ -705,6 +716,8 @@
+ 	}
+ 
+ 	BOOL bSmelprot3	= FALSE;
++	if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nUltimateEnchant ) )	// upgrade-fees.diff
++		return ULTIMATE_CANCEL;
+ 	if( pUser->HasBuff( BUFF_ITEM, II_SYS_SYS_SCR_SMELPROT3 ) )
+ 	{
+ 		bSmelprot3	= TRUE;
+@@ -786,6 +799,8 @@
+ 	}
+ 
+ 
++	if( !CUpgradeFees::GetInstance()->Charge( pUser, CUpgradeFees::GetInstance()->nSafeUltimate ) )	// upgrade-fees.diff
++		return 0;
+ 	LogItemInfo aLogItem;
+ 	aLogItem.Action = "-";
+ 	aLogItem.SendName = pUser->GetName();
+--- a/Source/Source/_Common/CustomCommon.h
++++ b/Source/Source/_Common/CustomCommon.h
+@@ -134,4 +134,5 @@
+ #define FASTAWAKE_PROTECTED				8		// not rolled: a Protection-scroll choice is pending on the item
+ #define FASTAWAKE_BUSY					9		// not rolled: trading / vendor open
+ #define FASTAWAKE_TOO_FAST				10		// not rolled: closer than FASTAWAKE_MIN_INTERVAL to the last request
++#define FASTAWAKE_NO_PENYA				11		// not rolled: not enough Penya for the fast awakening fee (upgrade-fees.diff)
+ #endif	// __FAST_AWAKE
 --- a/Source/Source/_Interface/WndPiercing.cpp
 +++ b/Source/Source/_Interface/WndPiercing.cpp
 @@ -1,4 +1,5 @@

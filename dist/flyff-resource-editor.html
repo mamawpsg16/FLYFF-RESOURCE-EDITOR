@@ -487,7 +487,7 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when": "Sat 10 Oct 2026, 07:49", "rev": "fa08436", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "66+", "when": "Sat 10 Oct 2026, 12:39", "rev": "90e39f4", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -11912,23 +11912,46 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when
 //   per global: lua_isnumber (a number, or a string Lua can read as one) and 0 <= d <= 2147483647 -> (int)d (cut toward 0);
 //                anything else (missing, nil, text, negative, too large) keeps the old value. A name written twice: the last wins.
 // Without the patch built, the server ignores this file and charges the compiled values below.
-// Transy (gender change) is not here: ItemUpgrade.lua already holds nItemTransyLowLevel / HighLevel (ItemUpgrade.cpp:118).
+// Part 3 (the same patch): 24 more fees (default 0 = free) for every upgrade / remove; the server takes them only (no window
+// shows them). Transy (gender change) is not here: ItemUpgrade.lua already holds nItemTransyLowLevel / HighLevel (ItemUpgrade.cpp:118).
 (function (FRE) {
   'use strict';
   const INT_MAX = 2147483647;
   // key: the Lua global; def: the value compiled in the C++ (and kept when the file does not set it)
+  // group: the screen's sections. The first five had a compiled fee; the rest were free (def 0) until upgrade-fees.diff part 3.
+  const F = (key, group, label, what, def, server, game = null, text = null) => ({ key, group, label, what, def, server, game, text });
   const FEES = [
-    { key: 'nAwakeningPenya', label: 'Awakening', what: 'random stats on an item (the Awakening NPC menu)', def: 100000,
-      server: 'DPSrvr.cpp:12498 OnAwakening', game: null },
-    { key: 'nRemoveAttributePenya', label: 'Remove an element upgrade', what: 'takes the element and its +N off a weapon or armor', def: 100000,
-      server: 'DPSrvr.cpp:6849 OnRemoveAttribute', game: null, text: 'IDS_TEXTCLIENT_INC_001814' },
-    { key: 'nPiercingPenya', label: 'Piercing: add a card slot', what: 'every try in the piercing window', def: 100000,
-      server: 'ItemUpgrade.cpp:231 OnPiercingSize', game: 'WndPiercing.cpp:111 (the price shown)' },
-    { key: 'nSafePiercingPenya', label: 'Piercing in the safe upgrade window', what: 'every try, with a piercing protection scroll', def: 100000,
-      server: 'ItemUpgrade.cpp:797 SmeltSafetyPiercingSize', game: 'WndField.cpp:28195 / 28245 (stops when the player has less)' },
-    { key: 'nRemovePiercingPenya', label: 'Remove a card from a slot', what: 'each card taken out (the last filled slot first)', def: 1000000,
-      server: 'ItemUpgrade.cpp:447 OnPiercingRemove', game: null },
+    F('nEnchantGeneralPenya', 'gear', 'Normal upgrade', 'every try, normal window (orichalcum)', 0, 'ItemUpgrade.cpp EnchantGeneral'),
+    F('nSafeGeneralPenya', 'gear', 'Normal upgrade, safe window', 'every try in the safe upgrade window', 0, 'ItemUpgrade.cpp SmeltSafetyGeneral'),
+    F('nEnchantAttributePenya', 'gear', 'Element upgrade', 'every try (element card)', 0, 'ItemUpgrade.cpp EnchantAttribute'),
+    F('nChangeAttributePenya', 'gear', 'Change the element', 'keeps the +N, swaps the element', 0, 'ItemUpgrade.cpp ChangeAttribute'),
+    F('nEnchantAccessoryPenya', 'gear', 'Accessory upgrade', 'every try, normal window (moonstone)', 0, 'ItemUpgrade.cpp RefineAccessory'),
+    F('nSafeAccessoryPenya', 'gear', 'Accessory upgrade, safe window', 'every try in the safe upgrade window', 0, 'ItemUpgrade.cpp SmeltSafetyAccessory'),
+    F('nEnchantCollectorPenya', 'gear', 'Collector upgrade', 'every try (moonstone)', 0, 'ItemUpgrade.cpp RefineCollector'),
+    F('nPiercingPenya', 'gear', 'Piercing: add a card slot', 'every try in the piercing window', 100000, 'ItemUpgrade.cpp:231 OnPiercingSize', 'WndPiercing.cpp:111 (the price shown)'),
+    F('nSafePiercingPenya', 'gear', 'Piercing in the safe upgrade window', 'every try, with a piercing protection scroll', 100000, 'ItemUpgrade.cpp:797 SmeltSafetyPiercingSize', 'WndField.cpp:28195 / 28245 (stops when the player has less)'),
+    F('nPiercingCardPenya', 'gear', 'Put a card in a slot', 'each card put in', 0, 'ItemUpgrade.cpp OnPiercing'),
+    F('nAwakeningPenya', 'gear', 'Awakening', 'random stats on an item (the Awakening NPC menu)', 100000, 'DPSrvr.cpp:12498 OnAwakening'),
+    F('nFastAwakeRollPenya', 'gear', 'Fast awakening', 'each roll of the Fast Awake window (stops when short)', 0, 'DPSrvr.cpp OnFastAwakeRoll'),
+    F('nUltimateMakeItemPenya', 'ultimate', 'Make an Ultimate weapon', 'the Ultimate making window', 0, 'UltimateWeapon.cpp MakeItem'),
+    F('nUltimateMakeGemPenya', 'ultimate', 'Make a gem', 'each gem made from a weapon', 0, 'UltimateWeapon.cpp MakeGem'),
+    F('nUltimateToUniquePenya', 'ultimate', 'General → Unique', 'each try', 0, 'UltimateWeapon.cpp TransWeapon'),
+    F('nUltimateToUltimatePenya', 'ultimate', 'Unique → Ultimate', 'each try (+10 Unique)', 0, 'UltimateWeapon.cpp TransWeapon'),
+    F('nUltimateEnchantPenya', 'ultimate', 'Ultimate upgrade', 'every try, normal window (+1 → +10)', 0, 'UltimateWeapon.cpp EnchantWeapon'),
+    F('nSafeUltimatePenya', 'ultimate', 'Ultimate upgrade, safe window', 'every try in the safe upgrade window', 0, 'UltimateWeapon.cpp SmeltSafetyUltimate'),
+    F('nUltimateSetGemPenya', 'ultimate', 'Put a gem in', 'each try', 0, 'UltimateWeapon.cpp SetGem'),
+    F('nUltimateRemoveGemPenya', 'ultimate', 'Take a gem out', 'each try', 0, 'UltimateWeapon.cpp RemoveGem'),
+    F('nRemoveAttributePenya', 'remove', 'Remove an element upgrade', 'takes the element and its +N off a weapon or armor', 100000, 'DPSrvr.cpp:6849 OnRemoveAttribute', null, 'IDS_TEXTCLIENT_INC_001814'),
+    F('nRemovePiercingPenya', 'remove', 'Remove a card from a slot', 'each card taken out (the last filled slot first)', 1000000, 'ItemUpgrade.cpp:447 OnPiercingRemove'),
+    F('nBlessingCancelPenya', 'remove', 'Remove a blessing', 'the Blessing cancel NPC menu', 0, 'DPSrvr.cpp OnBlessednessCancel'),
+    F('nRemoveLevelDownPenya', 'remove', 'Remove a level-down', 'clears the item level-down', 0, 'DPSrvr.cpp OnRemoveItemLevelDown'),
+    F('nPetAwakeningCancelPenya', 'pets', 'Cancel a pet awakening', 'paid only when the cancel works', 0, 'DPSrvr.cpp OnPickupPetAwakeningCancel'),
+    F('nRemoveVisPenya', 'pets', 'Remove a vis', 'taken off the buff pet by hand (an expired vis is free)', 0, 'ItemUpgrade.cpp RemovePetVisItem'),
+    F('nSwapVisPenya', 'pets', 'Swap two vis', 'each swap', 0, 'ItemUpgrade.cpp SwapVis'),
+    F('nRemoveAuraPenya', 'pets', 'Remove the aura', 'the aura / glow change on armor', 0, 'DPSrvr.cpp OnRemoveAura'),
+    F('nLookChangePenya', 'pets', 'Change an item\'s look', 'transmute or revert', 0, 'DPSrvr.cpp OnLookChange'),
   ];
+  const GROUPS = [['gear', 'Gear upgrades'], ['ultimate', 'Ultimate weapons'], ['remove', 'Removes and cancels'], ['pets', 'Pets, vis, aura and looks']];
   const BY_KEY = new Map(FEES.map(f => [f.key, f]));
 
   // lua_isnumber + lua_tonumber of a literal: decimal / hex numbers, or a string holding one (Lua 5.3 string coercion)
@@ -11982,7 +12005,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when
     return m ? { start: m.index, end: m.index + m[1].length, value: Number(m[1].replace(/,/g, '')) } : null;
   }
 
-  FRE.upgradeFees = { FEES, BY_KEY, INT_MAX, luaNumber, usable, load, feeOf, textNumber };
+  FRE.upgradeFees = { FEES, GROUPS, BY_KEY, INT_MAX, luaNumber, usable, load, feeOf, textNumber };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- loaders/upgrade-sim.js ----
@@ -12007,6 +12030,13 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when
 //            the item has no card; OnRemoveAttribute DPSrvr.cpp:6849 / :6863: refuse below the fee, paid when the element is removed;
 //            OnAwakening DPSrvr.cpp:12498: refuse below the fee, paid on a valid awakening item). `gameView`: what the game shows
 //            (WndPiercing.cpp:111 the piercing price) and when the safe window stops by itself (WndField.cpp:28195 / 28245).
+//            Part 3 (the same patch): every other upgrade / remove calls CUpgradeFees::Charge after the server's own checks and
+//            before the roll or the change (0 = free, no check; short = TID_GAME_LACKMONEY, nothing happens): EnchantGeneral,
+//            EnchantAttribute, RefineAccessory, RefineCollector, SmeltSafetyGeneral / Accessory / Ultimate, ChangeAttribute,
+//            OnPiercing, MakeItem, MakeGem, TransWeapon (by step), SetGem, RemoveGem, EnchantWeapon, OnBlessednessCancel,
+//            OnRemoveItemLevelDown, OnFastAwakeRoll (FASTAWAKE_NO_PENYA), OnPickupPetAwakeningCancel (paid on success),
+//            RemovePetVisItem (not for an expired vis), SwapVis, OnRemoveAura, OnLookChange. `penyaPerTry` (feeKeyOf) adds
+//            the per-try fee of every system to the calculator.
 //   acc      RefineAccessory :866: success if xRandom( 10000 ) < chance (:900); fail from +3 without the SMELPROT4 buff: destroyed (:920);
 //            safe SmeltSafetyAccessory :699: SMELPROT4 used up, fail if xRandom( 10000 ) > chance (:743), nothing lost. Max +20 (MAX_AAO).
 //   coll     RefineCollector :935: success if xRandom( 1000 ) < chance (:963), a fail loses only the moonstone; max = the row count.
@@ -12026,15 +12056,31 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when
   const U = () => FRE.upgrade;
   const PIERCE_PENYA = 100000;                                    // ItemUpgrade.cpp:231 / :797 (compiled; the fees without the patch)
   // the Penya one try costs: piercing only. opts.patched === false: the compiled fees (no upgrade-fees.diff)
+  // the fee key of one try of a system in a window (upgrade-fees.diff part 3: every upgrade has one, 0 = free)
+  function feeKeyOf(sys, opts = {}) {
+    const safe = opts.window === 'safe';
+    return { general: safe ? 'nSafeGeneralPenya' : 'nEnchantGeneralPenya', attr: 'nEnchantAttributePenya',
+      weapon: safe ? 'nSafePiercingPenya' : 'nPiercingPenya', suit: safe ? 'nSafePiercingPenya' : 'nPiercingPenya',
+      acc: safe ? 'nSafeAccessoryPenya' : 'nEnchantAccessoryPenya', coll: 'nEnchantCollectorPenya',
+      ult: safe ? 'nSafeUltimatePenya' : 'nUltimateEnchantPenya',
+      transform: opts.to === 'ultimate' ? 'nUltimateToUltimatePenya' : 'nUltimateToUniquePenya' }[sys] || null;
+  }
   function penyaPerTry(model, sys, opts = {}) {
-    if (sys !== 'weapon' && sys !== 'suit') return 0;
-    return FRE.upgradeFees.feeOf(model.fees, opts.window === 'safe' ? 'nSafePiercingPenya' : 'nPiercingPenya', opts.patched !== false);
+    const k = feeKeyOf(sys, opts);
+    return k ? FRE.upgradeFees.feeOf(model.fees, k, opts.patched !== false) : 0;
   }
   // one action on the server -> { ok, paid, gold (after) }. action: 'pierce' | 'safePierce' | 'removePiercing' | 'removeAttribute' | 'awaken';
   // cards: how many filled card slots (removePiercing). A refusal = TID_GAME_LACKMONEY, nothing changes.
+  // the five fees the C++ already took before the patch (their own checks); every other fee goes through CUpgradeFees::Charge
+  const OLD = { nPiercingPenya: 1, nSafePiercingPenya: 1, nRemovePiercingPenya: 1, nRemoveAttributePenya: 1, nAwakeningPenya: 1 };
   const ACTION_KEY = { pierce: 'nPiercingPenya', safePierce: 'nSafePiercingPenya', removePiercing: 'nRemovePiercingPenya', removeAttribute: 'nRemoveAttributePenya', awaken: 'nAwakeningPenya' };
-  function charge(fees, action, gold, { patched = true, cards = 1 } = {}) {
-    const fee = FRE.upgradeFees.feeOf(fees, ACTION_KEY[action], patched);
+  // action: one of ACTION_KEY's names or any fee key (part 3: CUpgradeFees::Charge = 0 -> free, short -> refused);
+  // expired: a vis taken off because it expired (RemovePetVisItem bExpired: free)
+  function charge(fees, action, gold, { patched = true, cards = 1, expired = false } = {}) {
+    const key = ACTION_KEY[action] || action;
+    const fee = FRE.upgradeFees.feeOf(fees, key, patched);
+    if (key === 'nRemoveVisPenya' && expired) return { ok: true, paid: 0, gold };
+    if (!(key in OLD) && !(0 < fee)) return { ok: true, paid: 0, gold };
     if ((action === 'pierce' || action === 'safePierce') && !(0 < fee)) return { ok: true, paid: 0, gold };
     if (gold < fee) return { ok: false, paid: 0, gold };
     if (action === 'removePiercing' && cards <= 0) return { ok: true, paid: 0, gold };
@@ -12161,7 +12207,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when
     return { rows, reach, triesPerItem: tries, per, never };
   }
 
-  FRE.upgradeSim = { PIERCE_PENYA, ACTION_KEY, penyaPerTry, charge, gameView, plan, maxLevel, attempt, run, expect, chanceOf };
+  FRE.upgradeSim = { PIERCE_PENYA, ACTION_KEY, feeKeyOf, penyaPerTry, charge, gameView, plan, maxLevel, attempt, run, expect, chanceOf };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- validate/upgrade.js ----
@@ -19874,23 +19920,26 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when
   function feesView(el, ctx) {
     const m = model(ctx), F = m.fees, f = ctx.ws.files.get(FEE), on = patched(ctx);
     title(el, ctx, 'Upgrade fees', FEE, F.empty ? 'UpgradeFees.lua · made on the first change' : 'UpgradeFees.lua');
-    el.appendChild(h('p.muted.small', 'The Penya each upgrade action costs. The WorldServer takes it; the game shows the piercing price and stops the safe piercing window when a player has less (it reads its own Client/UpgradeFees.lua, made when you save). A fee left out keeps the value compiled in the C++. 0 = free.'));
+    el.appendChild(h('p.muted.small', 'The Penya each upgrade and remove costs, taken by the WorldServer before the try (not enough Penya: the server says so and nothing happens). The game windows show only the piercing price (it reads its own Client/UpgradeFees.lua, made when you save); the other windows show no price. A fee left out keeps its default: the old compiled fee, or 0 = free.'));
     patchBanner(el, ctx);
     if (F.failed) el.appendChild(h('div.banner.bad', 'UpgradeFees.lua would not run: the server and the game keep every compiled fee. See the problems below.'));
+    for (const [gid, glabel] of FRE.upgradeFees.GROUPS) {
+    el.appendChild(h('h3', glabel));
     const tb = h('table.items.up', h('tr', h('th', 'Action'), h('th', 'Fee (Penya)'), h('th', 'In game now'), h('th', 'Where it is charged'), h('th', '')));
-    for (const r of F.rows) {
+    for (const r of F.rows.filter(x => x.group === gid)) {
       const key = keyOf('fees', r.key), fee = FRE.upgradeFees.feeOf(F, r.key, on);
       const box = numInput({ value: r.value, min: 0, max: FRE.upgradeFees.INT_MAX, key: `up|fee|${r.key}`, disabled: !can(ctx, FEE) || F.failed,
         onCommit: v => { if (v === null || v === r.value) return; setFee(ctx, r, v, key); } });
       const back = r.present && r.value !== r.def && can(ctx, FEE) && !F.failed
-        ? h('button.small', { title: `Back to the compiled ${fmt(r.def)}`, on: { click: () => setFee(ctx, r, r.def, key) } }, `↺ ${fmt(r.def)}`) : null;
+        ? h('button.small', { title: r.def ? `Back to the compiled ${fmt(r.def)}` : 'Back to free (0)', on: { click: () => setFee(ctx, r, r.def, key) } }, r.def ? `↺ ${fmt(r.def)}` : '↺ free') : null;
       tb.appendChild(h('tr', h('td', h('b', r.label), h('div.muted.small', r.what)), h('td', box, ' ', back,
-        h('div.muted.small', r.present ? (r.ignored ? `file: ${r.raw} (ignored)` : `UpgradeFees.lua L${f.lineOf(r.span.start) + 1}`) : `not in the file: compiled ${fmt(r.def)}`)),
-        h('td.small', on ? `${fmt(fee)}` : `${fmt(r.def)} (compiled; the patch is not applied)`),
+        h('div.muted.small', r.present ? (r.ignored ? `file: ${r.raw} (ignored)` : `UpgradeFees.lua L${f.lineOf(r.span.start) + 1}`) : r.def ? `not in the file: compiled ${fmt(r.def)}` : 'not in the file: free')),
+        h('td.small', on ? (fee ? fmt(fee) : 'free') : r.def ? `${fmt(r.def)} (compiled; the patch is not applied)` : 'free (the patch is not applied)'),
         h('td.small.muted', `${r.server}${r.game ? ` · game: ${r.game}` : ''}`),
         h('td', r.span ? diagTags(spanDiags(ctx, FEE, r.span.start, r.span.end)) : null)));
     }
     el.appendChild(tb);
+    }
     if (m.feeText) {
       const n = FRE.upgradeFees.textNumber(m.feeText.text);
       el.appendChild(h('p.muted.small', 'The remove-element window says: ', h('i', `"${m.feeText.text}"`), n ? ' — changing that fee rewrites the number in this text (textClient.txt.txt, Server + Client) in the same step.' : ' (no "<number> Penya" in it to keep in step).'));

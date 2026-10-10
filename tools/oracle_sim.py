@@ -4281,6 +4281,14 @@ def as_run(root):
 # ===================================================================================================
 FEE_DEF = [('nAwakeningPenya', 100000), ('nRemoveAttributePenya', 100000), ('nPiercingPenya', 100000),
            ('nSafePiercingPenya', 100000), ('nRemovePiercingPenya', 1000000)]
+# part 3 (UpgradeFees.h): every other upgrade / remove, default 0, taken by CUpgradeFees::Charge (0 -> free, no check;
+# GetGold() < fee -> LACKMONEY, nothing taken; else AddGold(-fee)); RemovePetVisItem charges only when !bExpired;
+# OnPickupPetAwakeningCancel: CanPay before, Pay after a success (same result when it works)
+FEE_NEW = ['nEnchantGeneral', 'nEnchantAttribute', 'nEnchantAccessory', 'nEnchantCollector', 'nSafeGeneral', 'nSafeAccessory',
+           'nSafeUltimate', 'nChangeAttribute', 'nPiercingCard', 'nUltimateMakeItem', 'nUltimateMakeGem', 'nUltimateToUnique',
+           'nUltimateToUltimate', 'nUltimateSetGem', 'nUltimateRemoveGem', 'nUltimateEnchant', 'nBlessingCancel', 'nRemoveLevelDown',
+           'nFastAwakeRoll', 'nPetAwakeningCancel', 'nRemoveVis', 'nSwapVis', 'nRemoveAura', 'nLookChange']
+FEE_DEF += [(n + 'Penya', 0) for n in FEE_NEW]
 FEE_HEAD = ['-- UpgradeFees.lua: the Penya fees of the upgrade windows (FLYFF-RESOURCE-EDITOR docs/patches/upgrade-fees.diff).',
             '-- Read once at startup by the WorldServer (Server/Resource) and by the game (Client): keep both copies the same.',
             '-- A missing line keeps the fee compiled in the C++. Whole numbers from 0 to 2147483647.']
@@ -4347,8 +4355,17 @@ def fee_read(t):
     return {'fees': fees, 'ran': True, 'used': used}
 
 
-def fee_charge(fees, action, gold, cards):
-    fee = fees[FEE_ACTION[action]]
+def fee_charge(fees, action, gold, cards, expired=False):
+    key = FEE_ACTION.get(action, action)
+    fee = fees[key]
+    if key not in FEE_ACTION.values():                 # CUpgradeFees::Charge
+        if key == 'nRemoveVisPenya' and expired:
+            return [True, 0, gold]
+        if fee <= 0:
+            return [True, 0, gold]
+        if gold < fee:
+            return [False, 0, gold]
+        return [True, fee, gold - fee]
     if action in ('pierce', 'safePierce'):
         if not (0 < fee):
             return [True, 0, gold]
@@ -4397,12 +4414,16 @@ def fees_run():
         'nPiercingPenya = \'  777  \'\nnSafePiercingPenya = "-1"\nnRemovePiercingPenya = "0x20"\n',
         'local x = 1\nnAwakeningPenya=4000;nPiercingPenya = 8000;\n',
         'nPiercingPenya = 5000',
+        'nEnchantGeneralPenya = 1000\r\nnBlessingCancelPenya = 5000\r\nnRemoveVisPenya = 777\r\nnUltimateToUltimatePenya = 2000000\r\nnLookChangePenya = -3\r\nnFastAwakeRollPenya = "250"\r\n',
+        'nSafeGeneralPenya = 0\nnSafeAccessoryPenya = 1.9\nnSafeUltimatePenya = 2147483647\nnUltimateMakeItemPenya = 0x100\nnSwapVisPenya = 2147483648\n',
     ]
     reads = []
     for t in files:
         r = fee_read(t)
         golds = sorted({0, 1, 99999, 100000, 100001, 2147483647} | {max(0, f + d) for f in r['fees'].values() for d in (-1, 0, 1)})
         ch = [[a, g, c] + fee_charge(r['fees'], a, g, c) for a in sorted(FEE_ACTION) for g in golds for c in ((0, 1) if a == 'removePiercing' else (1,))]
+        ch += [[k + 'Penya', g, 1] + fee_charge(r['fees'], k + 'Penya', g, 1) for k in FEE_NEW for g in golds]
+        ch += [['nRemoveVisPenya', g, 'expired'] + fee_charge(r['fees'], 'nRemoveVisPenya', g, 1, True) for g in golds]
         un = [[a, g] + fee_charge(dict(FEE_DEF), a, g, 1) for a in sorted(FEE_ACTION) for g in (0, 99999, 100000, 1000000)]
         game = [[g, r['fees']['nPiercingPenya'], not (g < r['fees']['nSafePiercingPenya'])] for g in golds]
         reads.append({'text': t, 'fees': r['fees'], 'charges': ch, 'unpatched': un, 'game': game})
@@ -4415,6 +4436,8 @@ def fees_run():
         ('nRemovePiercingPenya = "500000"\r\n', [['nRemovePiercingPenya', 600000]]),
         ('-- nPiercingPenya = 1\r\nnAwakeningPenya = 2 -- note\r\n', [['nPiercingPenya', 3], ['nAwakeningPenya', 4]]),
         ('a = 1\nb = 2\r\nc = 3\r\n', [['nRemoveAttributePenya', 2147483647]]),
+        ('', [['nEnchantGeneralPenya', 1000], ['nBlessingCancelPenya', 5000], ['nEnchantGeneralPenya', 0]]),
+        ('nPiercingPenya = 250000\r\n', [['nUltimateToUltimatePenya', 2000000], ['nPetAwakeningCancelPenya', 1]]),
     ]
     edits = []
     for start, ops in scripts:

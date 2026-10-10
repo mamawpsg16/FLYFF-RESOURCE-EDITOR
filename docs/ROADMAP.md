@@ -1,6 +1,20 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-10 (K part 2, Upgrade fees, user-tested in Brave and committed; next: G, plan first)._
+_Last updated 2026-10-10 (K part 3, a fee for every upgrade and remove, built; waiting for the user's Brave test; then G part 1, Set effects)._
+
+
+> **Handoff (2026-10-10) — K. Upgrade fees part 3: a fee for every upgrade and remove. User-tested in Brave (all 4 steps + calculator) and committed + pushed. Then G part 1 (Set effects), plan `/home/kevin/.claude/plans/nested-drifting-crescent.md`.**
+> - User decisions: every upgrade, remove / cancel and pet / vis / aura / look action gets a fee; server only (no window shows them); default 0 = free.
+> - `docs/patches/upgrade-fees.diff` extended (still one patch, still NOT applied in V19, `git apply --check` OK): `CUpgradeFees::Charge / CanPay / Pay` (`#ifdef __WORLDSERVER`), 24 new fields, 27 call sites in ItemUpgrade.cpp, UltimateWeapon.cpp, DPSrvr.cpp; `FASTAWAKE_NO_PENYA 11` in CustomCommon.h. INVESTIGATION §1.24 "Fees part 3".
+> - Editor: Upgrade fees in 4 groups (Gear upgrades, Ultimate weapons, Removes and cancels, Pets / vis / aura / looks) + Gender change; "free" for 0; ↺ back to free / the compiled fee. Calculator: every system's per-try fee (`feeKeyOf`).
+> - Python `oracle_sim.py fees` + the new keys / Charge rules / made-up files / edit scripts: every case agrees; 5 of 6 new planted bugs caught (the 6th cannot change a result). Core 1528, UI harness 496.
+>
+> **User's test:** `python3 build.py`, reload, test-data, Upgrade Rates → Upgrade fees.
+> 1. Four groups; every new row says "not in the file: free" and In game now "free".
+> 2. Normal upgrade 0 → 1000: toast; ↺ free appears. Remove a blessing → 5000.
+> 3. 🧮 calculator: Normal upgrade +0 → +5 with the protect scroll: Penya = tries × 1,000. Accessory, safe window: still 0.
+> 4. Save: UpgradeFees.lua gets the two lines; After saving = build WorldServer + Neuz with upgrade-fees.diff, then Stop / Start Server.bat.
+> Then commit + push; TODOS → Waiting; in-game guide item 16 covers it. Next: G part 1 (Set effects).
 
 > **Handoff (2026-10-10) — K. Upgrade Rates part 2 (Upgrade fees): user-tested in Brave (all 6 steps + Save) and committed + pushed. START HERE next session: G. Item set and weapon effects, plan first.** After the test: the review window no longer shows an empty "1 -" line for a new file (`renderDiff`). Plan: `/home/kevin/.claude/plans/tingly-frolicking-adleman.md` part 2, with three changes found while building:
 > - **The fee patch was never applied in V19** (the plan / memory said "applied + pushed"; no commit, no file). It is now `docs/patches/upgrade-fees.diff` (checked with `git apply --check`). Claude did NOT apply it: the user applies it (or says so), then builds the WorldServer AND Neuz. NOT YET TESTED IN GAME.

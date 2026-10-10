@@ -6,23 +6,46 @@
 //   per global: lua_isnumber (a number, or a string Lua can read as one) and 0 <= d <= 2147483647 -> (int)d (cut toward 0);
 //                anything else (missing, nil, text, negative, too large) keeps the old value. A name written twice: the last wins.
 // Without the patch built, the server ignores this file and charges the compiled values below.
-// Transy (gender change) is not here: ItemUpgrade.lua already holds nItemTransyLowLevel / HighLevel (ItemUpgrade.cpp:118).
+// Part 3 (the same patch): 24 more fees (default 0 = free) for every upgrade / remove; the server takes them only (no window
+// shows them). Transy (gender change) is not here: ItemUpgrade.lua already holds nItemTransyLowLevel / HighLevel (ItemUpgrade.cpp:118).
 (function (FRE) {
   'use strict';
   const INT_MAX = 2147483647;
   // key: the Lua global; def: the value compiled in the C++ (and kept when the file does not set it)
+  // group: the screen's sections. The first five had a compiled fee; the rest were free (def 0) until upgrade-fees.diff part 3.
+  const F = (key, group, label, what, def, server, game = null, text = null) => ({ key, group, label, what, def, server, game, text });
   const FEES = [
-    { key: 'nAwakeningPenya', label: 'Awakening', what: 'random stats on an item (the Awakening NPC menu)', def: 100000,
-      server: 'DPSrvr.cpp:12498 OnAwakening', game: null },
-    { key: 'nRemoveAttributePenya', label: 'Remove an element upgrade', what: 'takes the element and its +N off a weapon or armor', def: 100000,
-      server: 'DPSrvr.cpp:6849 OnRemoveAttribute', game: null, text: 'IDS_TEXTCLIENT_INC_001814' },
-    { key: 'nPiercingPenya', label: 'Piercing: add a card slot', what: 'every try in the piercing window', def: 100000,
-      server: 'ItemUpgrade.cpp:231 OnPiercingSize', game: 'WndPiercing.cpp:111 (the price shown)' },
-    { key: 'nSafePiercingPenya', label: 'Piercing in the safe upgrade window', what: 'every try, with a piercing protection scroll', def: 100000,
-      server: 'ItemUpgrade.cpp:797 SmeltSafetyPiercingSize', game: 'WndField.cpp:28195 / 28245 (stops when the player has less)' },
-    { key: 'nRemovePiercingPenya', label: 'Remove a card from a slot', what: 'each card taken out (the last filled slot first)', def: 1000000,
-      server: 'ItemUpgrade.cpp:447 OnPiercingRemove', game: null },
+    F('nEnchantGeneralPenya', 'gear', 'Normal upgrade', 'every try, normal window (orichalcum)', 0, 'ItemUpgrade.cpp EnchantGeneral'),
+    F('nSafeGeneralPenya', 'gear', 'Normal upgrade, safe window', 'every try in the safe upgrade window', 0, 'ItemUpgrade.cpp SmeltSafetyGeneral'),
+    F('nEnchantAttributePenya', 'gear', 'Element upgrade', 'every try (element card)', 0, 'ItemUpgrade.cpp EnchantAttribute'),
+    F('nChangeAttributePenya', 'gear', 'Change the element', 'keeps the +N, swaps the element', 0, 'ItemUpgrade.cpp ChangeAttribute'),
+    F('nEnchantAccessoryPenya', 'gear', 'Accessory upgrade', 'every try, normal window (moonstone)', 0, 'ItemUpgrade.cpp RefineAccessory'),
+    F('nSafeAccessoryPenya', 'gear', 'Accessory upgrade, safe window', 'every try in the safe upgrade window', 0, 'ItemUpgrade.cpp SmeltSafetyAccessory'),
+    F('nEnchantCollectorPenya', 'gear', 'Collector upgrade', 'every try (moonstone)', 0, 'ItemUpgrade.cpp RefineCollector'),
+    F('nPiercingPenya', 'gear', 'Piercing: add a card slot', 'every try in the piercing window', 100000, 'ItemUpgrade.cpp:231 OnPiercingSize', 'WndPiercing.cpp:111 (the price shown)'),
+    F('nSafePiercingPenya', 'gear', 'Piercing in the safe upgrade window', 'every try, with a piercing protection scroll', 100000, 'ItemUpgrade.cpp:797 SmeltSafetyPiercingSize', 'WndField.cpp:28195 / 28245 (stops when the player has less)'),
+    F('nPiercingCardPenya', 'gear', 'Put a card in a slot', 'each card put in', 0, 'ItemUpgrade.cpp OnPiercing'),
+    F('nAwakeningPenya', 'gear', 'Awakening', 'random stats on an item (the Awakening NPC menu)', 100000, 'DPSrvr.cpp:12498 OnAwakening'),
+    F('nFastAwakeRollPenya', 'gear', 'Fast awakening', 'each roll of the Fast Awake window (stops when short)', 0, 'DPSrvr.cpp OnFastAwakeRoll'),
+    F('nUltimateMakeItemPenya', 'ultimate', 'Make an Ultimate weapon', 'the Ultimate making window', 0, 'UltimateWeapon.cpp MakeItem'),
+    F('nUltimateMakeGemPenya', 'ultimate', 'Make a gem', 'each gem made from a weapon', 0, 'UltimateWeapon.cpp MakeGem'),
+    F('nUltimateToUniquePenya', 'ultimate', 'General → Unique', 'each try', 0, 'UltimateWeapon.cpp TransWeapon'),
+    F('nUltimateToUltimatePenya', 'ultimate', 'Unique → Ultimate', 'each try (+10 Unique)', 0, 'UltimateWeapon.cpp TransWeapon'),
+    F('nUltimateEnchantPenya', 'ultimate', 'Ultimate upgrade', 'every try, normal window (+1 → +10)', 0, 'UltimateWeapon.cpp EnchantWeapon'),
+    F('nSafeUltimatePenya', 'ultimate', 'Ultimate upgrade, safe window', 'every try in the safe upgrade window', 0, 'UltimateWeapon.cpp SmeltSafetyUltimate'),
+    F('nUltimateSetGemPenya', 'ultimate', 'Put a gem in', 'each try', 0, 'UltimateWeapon.cpp SetGem'),
+    F('nUltimateRemoveGemPenya', 'ultimate', 'Take a gem out', 'each try', 0, 'UltimateWeapon.cpp RemoveGem'),
+    F('nRemoveAttributePenya', 'remove', 'Remove an element upgrade', 'takes the element and its +N off a weapon or armor', 100000, 'DPSrvr.cpp:6849 OnRemoveAttribute', null, 'IDS_TEXTCLIENT_INC_001814'),
+    F('nRemovePiercingPenya', 'remove', 'Remove a card from a slot', 'each card taken out (the last filled slot first)', 1000000, 'ItemUpgrade.cpp:447 OnPiercingRemove'),
+    F('nBlessingCancelPenya', 'remove', 'Remove a blessing', 'the Blessing cancel NPC menu', 0, 'DPSrvr.cpp OnBlessednessCancel'),
+    F('nRemoveLevelDownPenya', 'remove', 'Remove a level-down', 'clears the item level-down', 0, 'DPSrvr.cpp OnRemoveItemLevelDown'),
+    F('nPetAwakeningCancelPenya', 'pets', 'Cancel a pet awakening', 'paid only when the cancel works', 0, 'DPSrvr.cpp OnPickupPetAwakeningCancel'),
+    F('nRemoveVisPenya', 'pets', 'Remove a vis', 'taken off the buff pet by hand (an expired vis is free)', 0, 'ItemUpgrade.cpp RemovePetVisItem'),
+    F('nSwapVisPenya', 'pets', 'Swap two vis', 'each swap', 0, 'ItemUpgrade.cpp SwapVis'),
+    F('nRemoveAuraPenya', 'pets', 'Remove the aura', 'the aura / glow change on armor', 0, 'DPSrvr.cpp OnRemoveAura'),
+    F('nLookChangePenya', 'pets', 'Change an item\'s look', 'transmute or revert', 0, 'DPSrvr.cpp OnLookChange'),
   ];
+  const GROUPS = [['gear', 'Gear upgrades'], ['ultimate', 'Ultimate weapons'], ['remove', 'Removes and cancels'], ['pets', 'Pets, vis, aura and looks']];
   const BY_KEY = new Map(FEES.map(f => [f.key, f]));
 
   // lua_isnumber + lua_tonumber of a literal: decimal / hex numbers, or a string holding one (Lua 5.3 string coercion)
@@ -76,5 +99,5 @@
     return m ? { start: m.index, end: m.index + m[1].length, value: Number(m[1].replace(/,/g, '')) } : null;
   }
 
-  FRE.upgradeFees = { FEES, BY_KEY, INT_MAX, luaNumber, usable, load, feeOf, textNumber };
+  FRE.upgradeFees = { FEES, GROUPS, BY_KEY, INT_MAX, luaNumber, usable, load, feeOf, textNumber };
 })(globalThis.FRE = globalThis.FRE || {});

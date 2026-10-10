@@ -369,23 +369,26 @@
   function feesView(el, ctx) {
     const m = model(ctx), F = m.fees, f = ctx.ws.files.get(FEE), on = patched(ctx);
     title(el, ctx, 'Upgrade fees', FEE, F.empty ? 'UpgradeFees.lua · made on the first change' : 'UpgradeFees.lua');
-    el.appendChild(h('p.muted.small', 'The Penya each upgrade action costs. The WorldServer takes it; the game shows the piercing price and stops the safe piercing window when a player has less (it reads its own Client/UpgradeFees.lua, made when you save). A fee left out keeps the value compiled in the C++. 0 = free.'));
+    el.appendChild(h('p.muted.small', 'The Penya each upgrade and remove costs, taken by the WorldServer before the try (not enough Penya: the server says so and nothing happens). The game windows show only the piercing price (it reads its own Client/UpgradeFees.lua, made when you save); the other windows show no price. A fee left out keeps its default: the old compiled fee, or 0 = free.'));
     patchBanner(el, ctx);
     if (F.failed) el.appendChild(h('div.banner.bad', 'UpgradeFees.lua would not run: the server and the game keep every compiled fee. See the problems below.'));
+    for (const [gid, glabel] of FRE.upgradeFees.GROUPS) {
+    el.appendChild(h('h3', glabel));
     const tb = h('table.items.up', h('tr', h('th', 'Action'), h('th', 'Fee (Penya)'), h('th', 'In game now'), h('th', 'Where it is charged'), h('th', '')));
-    for (const r of F.rows) {
+    for (const r of F.rows.filter(x => x.group === gid)) {
       const key = keyOf('fees', r.key), fee = FRE.upgradeFees.feeOf(F, r.key, on);
       const box = numInput({ value: r.value, min: 0, max: FRE.upgradeFees.INT_MAX, key: `up|fee|${r.key}`, disabled: !can(ctx, FEE) || F.failed,
         onCommit: v => { if (v === null || v === r.value) return; setFee(ctx, r, v, key); } });
       const back = r.present && r.value !== r.def && can(ctx, FEE) && !F.failed
-        ? h('button.small', { title: `Back to the compiled ${fmt(r.def)}`, on: { click: () => setFee(ctx, r, r.def, key) } }, `↺ ${fmt(r.def)}`) : null;
+        ? h('button.small', { title: r.def ? `Back to the compiled ${fmt(r.def)}` : 'Back to free (0)', on: { click: () => setFee(ctx, r, r.def, key) } }, r.def ? `↺ ${fmt(r.def)}` : '↺ free') : null;
       tb.appendChild(h('tr', h('td', h('b', r.label), h('div.muted.small', r.what)), h('td', box, ' ', back,
-        h('div.muted.small', r.present ? (r.ignored ? `file: ${r.raw} (ignored)` : `UpgradeFees.lua L${f.lineOf(r.span.start) + 1}`) : `not in the file: compiled ${fmt(r.def)}`)),
-        h('td.small', on ? `${fmt(fee)}` : `${fmt(r.def)} (compiled; the patch is not applied)`),
+        h('div.muted.small', r.present ? (r.ignored ? `file: ${r.raw} (ignored)` : `UpgradeFees.lua L${f.lineOf(r.span.start) + 1}`) : r.def ? `not in the file: compiled ${fmt(r.def)}` : 'not in the file: free')),
+        h('td.small', on ? (fee ? fmt(fee) : 'free') : r.def ? `${fmt(r.def)} (compiled; the patch is not applied)` : 'free (the patch is not applied)'),
         h('td.small.muted', `${r.server}${r.game ? ` · game: ${r.game}` : ''}`),
         h('td', r.span ? diagTags(spanDiags(ctx, FEE, r.span.start, r.span.end)) : null)));
     }
     el.appendChild(tb);
+    }
     if (m.feeText) {
       const n = FRE.upgradeFees.textNumber(m.feeText.text);
       el.appendChild(h('p.muted.small', 'The remove-element window says: ', h('i', `"${m.feeText.text}"`), n ? ' — changing that fee rewrites the number in this text (textClient.txt.txt, Server + Client) in the same step.' : ' (no "<number> Penya" in it to keep in step).'));

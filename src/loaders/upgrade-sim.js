@@ -19,6 +19,13 @@
 //            the item has no card; OnRemoveAttribute DPSrvr.cpp:6849 / :6863: refuse below the fee, paid when the element is removed;
 //            OnAwakening DPSrvr.cpp:12498: refuse below the fee, paid on a valid awakening item). `gameView`: what the game shows
 //            (WndPiercing.cpp:111 the piercing price) and when the safe window stops by itself (WndField.cpp:28195 / 28245).
+//            Part 3 (the same patch): every other upgrade / remove calls CUpgradeFees::Charge after the server's own checks and
+//            before the roll or the change (0 = free, no check; short = TID_GAME_LACKMONEY, nothing happens): EnchantGeneral,
+//            EnchantAttribute, RefineAccessory, RefineCollector, SmeltSafetyGeneral / Accessory / Ultimate, ChangeAttribute,
+//            OnPiercing, MakeItem, MakeGem, TransWeapon (by step), SetGem, RemoveGem, EnchantWeapon, OnBlessednessCancel,
+//            OnRemoveItemLevelDown, OnFastAwakeRoll (FASTAWAKE_NO_PENYA), OnPickupPetAwakeningCancel (paid on success),
+//            RemovePetVisItem (not for an expired vis), SwapVis, OnRemoveAura, OnLookChange. `penyaPerTry` (feeKeyOf) adds
+//            the per-try fee of every system to the calculator.
 //   acc      RefineAccessory :866: success if xRandom( 10000 ) < chance (:900); fail from +3 without the SMELPROT4 buff: destroyed (:920);
 //            safe SmeltSafetyAccessory :699: SMELPROT4 used up, fail if xRandom( 10000 ) > chance (:743), nothing lost. Max +20 (MAX_AAO).
 //   coll     RefineCollector :935: success if xRandom( 1000 ) < chance (:963), a fail loses only the moonstone; max = the row count.
@@ -38,15 +45,31 @@
   const U = () => FRE.upgrade;
   const PIERCE_PENYA = 100000;                                    // ItemUpgrade.cpp:231 / :797 (compiled; the fees without the patch)
   // the Penya one try costs: piercing only. opts.patched === false: the compiled fees (no upgrade-fees.diff)
+  // the fee key of one try of a system in a window (upgrade-fees.diff part 3: every upgrade has one, 0 = free)
+  function feeKeyOf(sys, opts = {}) {
+    const safe = opts.window === 'safe';
+    return { general: safe ? 'nSafeGeneralPenya' : 'nEnchantGeneralPenya', attr: 'nEnchantAttributePenya',
+      weapon: safe ? 'nSafePiercingPenya' : 'nPiercingPenya', suit: safe ? 'nSafePiercingPenya' : 'nPiercingPenya',
+      acc: safe ? 'nSafeAccessoryPenya' : 'nEnchantAccessoryPenya', coll: 'nEnchantCollectorPenya',
+      ult: safe ? 'nSafeUltimatePenya' : 'nUltimateEnchantPenya',
+      transform: opts.to === 'ultimate' ? 'nUltimateToUltimatePenya' : 'nUltimateToUniquePenya' }[sys] || null;
+  }
   function penyaPerTry(model, sys, opts = {}) {
-    if (sys !== 'weapon' && sys !== 'suit') return 0;
-    return FRE.upgradeFees.feeOf(model.fees, opts.window === 'safe' ? 'nSafePiercingPenya' : 'nPiercingPenya', opts.patched !== false);
+    const k = feeKeyOf(sys, opts);
+    return k ? FRE.upgradeFees.feeOf(model.fees, k, opts.patched !== false) : 0;
   }
   // one action on the server -> { ok, paid, gold (after) }. action: 'pierce' | 'safePierce' | 'removePiercing' | 'removeAttribute' | 'awaken';
   // cards: how many filled card slots (removePiercing). A refusal = TID_GAME_LACKMONEY, nothing changes.
+  // the five fees the C++ already took before the patch (their own checks); every other fee goes through CUpgradeFees::Charge
+  const OLD = { nPiercingPenya: 1, nSafePiercingPenya: 1, nRemovePiercingPenya: 1, nRemoveAttributePenya: 1, nAwakeningPenya: 1 };
   const ACTION_KEY = { pierce: 'nPiercingPenya', safePierce: 'nSafePiercingPenya', removePiercing: 'nRemovePiercingPenya', removeAttribute: 'nRemoveAttributePenya', awaken: 'nAwakeningPenya' };
-  function charge(fees, action, gold, { patched = true, cards = 1 } = {}) {
-    const fee = FRE.upgradeFees.feeOf(fees, ACTION_KEY[action], patched);
+  // action: one of ACTION_KEY's names or any fee key (part 3: CUpgradeFees::Charge = 0 -> free, short -> refused);
+  // expired: a vis taken off because it expired (RemovePetVisItem bExpired: free)
+  function charge(fees, action, gold, { patched = true, cards = 1, expired = false } = {}) {
+    const key = ACTION_KEY[action] || action;
+    const fee = FRE.upgradeFees.feeOf(fees, key, patched);
+    if (key === 'nRemoveVisPenya' && expired) return { ok: true, paid: 0, gold };
+    if (!(key in OLD) && !(0 < fee)) return { ok: true, paid: 0, gold };
     if ((action === 'pierce' || action === 'safePierce') && !(0 < fee)) return { ok: true, paid: 0, gold };
     if (gold < fee) return { ok: false, paid: 0, gold };
     if (action === 'removePiercing' && cards <= 0) return { ok: true, paid: 0, gold };
@@ -173,5 +196,5 @@
     return { rows, reach, triesPerItem: tries, per, never };
   }
 
-  FRE.upgradeSim = { PIERCE_PENYA, ACTION_KEY, penyaPerTry, charge, gameView, plan, maxLevel, attempt, run, expect, chanceOf };
+  FRE.upgradeSim = { PIERCE_PENYA, ACTION_KEY, feeKeyOf, penyaPerTry, charge, gameView, plan, maxLevel, attempt, run, expect, chanceOf };
 })(globalThis.FRE = globalThis.FRE || {});
