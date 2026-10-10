@@ -3,6 +3,9 @@
 _Last updated 2026-10-10 (K part 3, a fee for every upgrade and remove, built; waiting for the user's Brave test; then G part 1, Set effects)._
 
 
+
+> **Handoff (2026-10-10) — NEXT: G part 1, Set effects. The approved plan is `docs/plans/G-set-effects.md`** (piece sets in propItemEtc.inc + the +N armor bonus in expTable.inc; edit + "+ New set"; simulator + Python copy). User decisions: both kinds of set bonus, edit existing + new sets, weapon effects = G part 2 later. The user is also running the in-game test session (guides repo `RESOURCE-EDITOR-IN-GAME-TEST.md`, items 4-16; upgrade-fees.diff applied in V19, not committed until item 16 passes).
+
 > **Handoff (2026-10-10) — K. Upgrade fees part 3: a fee for every upgrade and remove. User-tested in Brave (all 4 steps + calculator) and committed + pushed. Then G part 1 (Set effects), plan `/home/kevin/.claude/plans/nested-drifting-crescent.md`.**
 > - User decisions: every upgrade, remove / cancel and pet / vis / aura / look action gets a fee; server only (no window shows them); default 0 = free.
 > - `docs/patches/upgrade-fees.diff` extended (still one patch, still NOT applied in V19, `git apply --check` OK): `CUpgradeFees::Charge / CanPay / Pay` (`#ifdef __WORLDSERVER`), 24 new fields, 27 call sites in ItemUpgrade.cpp, UltimateWeapon.cpp, DPSrvr.cpp; `FASTAWAKE_NO_PENYA 11` in CustomCommon.h. INVESTIGATION §1.24 "Fees part 3".
