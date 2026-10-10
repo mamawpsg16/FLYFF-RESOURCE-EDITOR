@@ -296,6 +296,11 @@
     SE_PLUS_MISSING: ['expTable.inc has no Setitem table, so wearing a full +N armor set (suit, gauntlets, boots, helmet) gives no extra bonus.', 'Nothing to do unless you want that bonus.'],
     SE_PLUS_SHIFT: ['A Setitem row has fewer than 5 numbers. The server reads 5 per row anyway, so it takes numbers from the next row (and past the }) and every value after is shifted.', 'Give each row exactly 5 numbers.'],
     SE_PLUS_ROWS: ['The Setitem table should have 10 rows (+1 to +10). Fewer: the missing levels give nothing. 11: the last is unused. More than 11: the server writes past its table at startup.', 'Keep exactly 10 rows.'],
+    WE_DST_ZERO: ['A weapon stat slot holds stat 0 (an unknown DST_ name becomes 0). The server applies it and nothing happens.', 'Pick a stat, or empty the slot.'],
+    WE_SLOT_DUP: ['The same stat is in two slots of one weapon. Both are added, so the weapon gives their sum (and the tooltip shows two lines).', 'Merge them into one slot.'],
+    WE_ASPD_SMALL: ['DST_ATTACKSPEED is counted in 1/20 % (the speed factor gets amount / 1000; the tooltip shows amount / 20), so a small number is almost nothing.', 'Use DST_ATTACKSPEED_RATE for a whole percent, or multiply the number by 20.'],
+    WE_RARITY_ASPD: ['A Weapon Rarity tier adds its % bonus to every rate stat, Attack Speed included, but Attack Speed is counted in 1/20 %: the bonus is tiny there, while the tooltip shows it as a whole %.', 'Nothing to fix in the file; it is how WeaponRarity_ScaleParam works.'],
+    WE_TIER_ASPD: ['A tier 2 (Legendary Golden) weapon has less raw Attack Speed than the tier 1 (Lusaka) weapon of the same type: players lose speed when they upgrade.', 'Raise tier 2, or lower tier 1.'],
     UP_STALE_COMMENT: ['The line\'s number changed, but its comment (after -- or //) may still describe the old number.', 'Update or remove the comment by hand if you want the file to stay clear.'],
   };
 })(globalThis.FRE = globalThis.FRE || {});

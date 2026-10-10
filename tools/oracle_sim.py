@@ -9902,6 +9902,210 @@ def se_run(root):
         out['edits'].append({'base': base, 'ops': ops, 'etc': se_sha(e, 'w'), 'txt': se_sha(t, 'w'), 'exp': se_sha(x, 'b')})
     return out
 
+# ---------------------------------------------------------------- weapons: weapon effects (task G part 2)
+# Written from the C++: CProject::LoadWeaponRarity (_Common/Project.cpp:494-575: one struct reused for every block, stored with
+# SetAtGrow( nRarityLevel ); CFixedArray::GetAt (data.h:268) = NULL past the end or for an unset level), CMover::SetDestParamEquip /
+# ResetDestParamEquip (_Common/MoverEquip.cpp:2355 / :2457: expired -> nothing; rarity > 0 and a tier found -> adj +
+# WeaponRarity_ScaleParam :2347 by WeaponRarity_IsDst_Rate :2257; slot used when dwDestParam != -1), the left hand giving
+# nothing (__BLADELWEAPON0608, MoverEquip.cpp:1843 / :2122, :1035 when it moves to the right hand), DST_STAT_ALLUP -> STR, DEX,
+# INT, STA (MoverParam.cpp:2588), CWndMgr::PutBaseItemOpt (_Interface/WndManager.cpp:5729) with FormatDstRateValue (:5070).
+
+def we_rarity(text):
+    """LoadWeaponRarity -> {level: {pct, flat, name}} (the same struct is filled again for each block)"""
+    if text is None:
+        return {}
+    t = [x.decode('cp949', 'replace') for x in tokens(text.encode('cp949', 'replace'))]
+    k, cur, out = 0, {'level': 0, 'name': '', 'pct': 0, 'flat': 0}, {}
+    def tok():
+        nonlocal k
+        v = t[k] if k < len(t) else None
+        k += 1
+        return v
+    def num(v):
+        if v is None: return 0
+        if v in ('-', '+'):
+            y = tok() or ''
+            return -atoi(y) if v == '-' else atoi(y)
+        return atoi(v)
+    w = tok()
+    while w is not None:
+        if w == 'Add_Weapon_Rarity':
+            tok()                       # {
+            w = tok()
+            while w is not None and w != '}':
+                if w in ('nRarityLevel', 'nStatsPctBonus', 'nStatsFlatBonus'):
+                    tok()               # =
+                    v = num(tok())
+                    cur[{'nRarityLevel': 'level', 'nStatsPctBonus': 'pct', 'nStatsFlatBonus': 'flat'}[w]] = v
+                    tok()               # ;
+                elif w in ('szName', 'dwColor'):
+                    tok(); v = tok(); tok()
+                    if w == 'szName':
+                        cur['name'] = v.strip('"')
+                w = tok()
+            out[cur['level']] = dict(cur)
+        elif w == 'Drop':
+            tok()
+            w = tok()
+            while w is not None and w != '}':
+                w = tok()
+        w = tok()
+    return out
+
+
+def we_spec(root, D, S):
+    """Spec_Item.txt weapon rows (IK2_WEAPON_DIRECT / MAGIC): id -> {define, slots [(dst, adj)] x6} by the header columns"""
+    lines = open(os.path.join(root, 'Spec_Item.txt'), 'rb').read().decode('latin-1').split('\r\n')
+    col = {h.lstrip('/'): i for i, h in enumerate(lines[1].split('\t'))}
+    def v(x):
+        x = x.strip().strip('"')
+        if x == '=': return -1
+        if x in D: return D[x]
+        if x[:1] == '-': return -atoi(x[1:])
+        return atoi(x)
+    kinds = {D['IK2_WEAPON_DIRECT'], D['IK2_WEAPON_MAGIC']}
+    out = {}
+    for n, l in enumerate(lines):
+        if not l.strip() or l.lstrip().startswith('//'):
+            continue
+        c = l.split('\t')
+        if len(c) <= col['nAdjParamVal6'] or v(c[0]) > 19:
+            continue
+        if v(c[col['dwItemKind2']]) not in kinds:
+            continue
+        iid = v(c[col['dwID']]) & 0xFFFFFFFF
+        out[iid] = {'define': c[col['dwID']].strip(), 'line': n,
+                    'slots': [(v(c[col['dwDestParam%d' % i]]) & 0xFFFFFFFF, s32(v(c[col['nAdjParamVal%d' % i]]))) for i in range(1, 7)]}
+    return out, col, lines
+
+
+def we_amounts(W, tiers, rate, D, held):
+    """what one held weapon adds (in the right hand): [(dst, amount)]"""
+    if held is None or held[2]:
+        return []
+    w = W.get(held[0])
+    if w is None:
+        return []
+    t = tiers.get(held[1]) if held[1] > 0 else None
+    out = []
+    for dst, adj in w['slots']:
+        if dst == 0xFFFFFFFF:
+            continue
+        a = adj + ((t['pct'] if dst in rate else t['flat']) if t else 0)
+        if dst == D['DST_STAT_ALLUP']:
+            out += [(D[x], a) for x in ('DST_STR', 'DST_DEX', 'DST_INT', 'DST_STA')]
+        else:
+            out.append((dst, a))
+    return out
+
+
+def we_run(W, tiers, rate, D, steps):
+    hands, stats = {'right': None, 'left': None}, {}
+    def add(lst, sign):
+        for d, a in lst:
+            v = s32(stats.get(d, 0) + sign * a)
+            if v: stats[d] = v
+            else: stats.pop(d, None)
+    def off(h):
+        old = hands[h]
+        hands[h] = None
+        if old is not None and h == 'right':
+            add(we_amounts(W, tiers, rate, D, old), -1)
+    for s in steps:
+        if s[0] == 'on':
+            off(s[1])
+            hands[s[1]] = s[2]
+            if s[1] == 'right':
+                add(we_amounts(W, tiers, rate, D, s[2]), 1)
+        elif s[0] == 'off':
+            off(s[1])
+        elif s[0] == 'promote' and hands['left'] is not None and hands['right'] is None:
+            hands['right'], hands['left'] = hands['left'], None
+            add(we_amounts(W, tiers, rate, D, hands['right']), 1)
+    return sorted([d, a] for d, a in stats.items())
+
+
+def we_tooltip(w, tiers, rate, D, rarity):
+    """PutBaseItemOpt as [dst, adj, bonus, rate?] lines"""
+    t = tiers.get(rarity) if rarity > 0 else None
+    out = []
+    for dst, adj in w['slots']:
+        if dst == 0xFFFFFFFF:
+            continue
+        if dst == D['DST_STAT_ALLUP']:
+            out += [[D[x], adj, t['flat'] if t else 0, False] for x in ('DST_STR', 'DST_DEX', 'DST_INT', 'DST_STA')]
+        elif dst in rate:
+            out.append([dst, adj, t['pct'] if t else 0, True])
+        else:
+            out.append([dst, adj, t['flat'] if t else 0, False])
+    return out
+
+
+def we_set_slot(lines, col, row, i, dst_name, adj):
+    """one slot of a row: the two fields replaced in place ("=" for an empty slot)"""
+    c = lines[row].split('\t')
+    c[col['dwDestParam%d' % i]] = dst_name if dst_name else '='
+    c[col['nAdjParamVal%d' % i]] = str(adj) if dst_name else '='
+    lines[row] = '\t'.join(c)
+
+
+def we_run_all(root):
+    D = defines(root)
+    S = {}
+    W, col, lines = we_spec(root, D, S)
+    rd = lambda n: open(os.path.join(root, n), 'rb').read() if os.path.exists(os.path.join(root, n)) else None
+    raw = rd('WeaponRarity.inc')
+    rtext = raw[2:].decode('utf-16-le') if raw and raw[:2] == b'\xff\xfe' else (raw.decode('latin-1') if raw else None)
+    rate = set(D[x] for x in SE_RATE if x in D) | {0}
+    out = {'tiers': {}, 'cases': [], 'files': {}, 'edits': []}
+    worlds = {'real': rtext,
+              'gaps': 'Add_Weapon_Rarity\r\n{\r\n\tnRarityLevel = 1;\r\n\tszName = "One";\r\n\tnStatsPctBonus = 3;\r\n\tnStatsFlatBonus = 2;\r\n}\r\nAdd_Weapon_Rarity\r\n{\r\n\tnRarityLevel = 4;\r\n\tnStatsPctBonus = 40;\r\n}\r\n',
+              'neg': 'Add_Weapon_Rarity\r\n{\r\n\tnRarityLevel = 2;\r\n\tnStatsPctBonus = -5;\r\n\tnStatsFlatBonus = - 3;\r\n}\r\n',
+              # a tier at level 0: never used (SetDestParamEquip wants GetWeaponRarity() > 0)
+              'zero': 'Add_Weapon_Rarity\r\n{\r\n\tnRarityLevel = 0;\r\n\tnStatsPctBonus = 50;\r\n\tnStatsFlatBonus = 40;\r\n}\r\nAdd_Weapon_Rarity\r\n{\r\n\tnRarityLevel = 1;\r\n\tnStatsPctBonus = 1;\r\n}\r\n'}
+    for k, t in worlds.items():
+        tiers = we_rarity(t)
+        out['tiers'][k] = sorted([lv, x['pct'], x['flat']] for lv, x in tiers.items())
+        if k != 'real':
+            out['files'][k] = t
+    rnd = random.Random(2610)
+    ids = sorted(i for i, w in W.items() if any(d != 0xFFFFFFFF for d, _ in w['slots']))
+    for k, t in worlds.items():
+        tiers = we_rarity(t)
+        pick = ids if k == 'real' else rnd.sample(ids, 60)
+        for iid in pick:
+            r = rnd.randint(0, 7)
+            steps = [['on', 'right', [iid, r, False]]]
+            kind = rnd.choice(['right', 'left', 'swap', 'expired', 'promote', 'off'])
+            if kind == 'left':
+                steps = [['on', 'left', [iid, r, False]]]
+            elif kind == 'swap':
+                steps.append(['on', 'right', [rnd.choice(ids), rnd.randint(0, 6), False]])
+            elif kind == 'expired':
+                steps = [['on', 'right', [iid, r, True]]]
+            elif kind == 'promote':
+                steps = [['on', 'left', [iid, r, False]], ['promote']]
+            elif kind == 'off':
+                steps.append(['off', 'right'])
+            out['cases'].append({'world': k, 'steps': steps, 'stats': we_run(W, tiers, rate, D, [tuple(x) if x[0] != 'on' else (x[0], x[1], tuple(x[2])) for x in steps]),
+                                 'tooltip': we_tooltip(W[iid], tiers, rate, D, r), 'id': iid, 'rarity': r})
+    # edit scripts on the real Spec_Item.txt: set / empty a slot, the same on a weapon and its Ultimate twin
+    base = os.path.join(root, 'Spec_Item.txt')
+    defs = {w['define']: (i, w) for i, w in W.items()}
+    scripts = [
+        [['II_WEA_SWO_LUZA', 1, 'DST_ATKPOWER_RATE', 12]],
+        [['II_WEA_SWO_LUZA', 6, 'DST_STR', 5], ['II_WEA_SWO_LUZA', 2, None, 0]],
+        [['II_WEA_SWT_ANGEL', 1, 'DST_HP_MAX_RATE', 40], ['II_WEA_SWT_ANGELUM', 1, 'DST_HP_MAX_RATE', 40]],
+        [['II_WEA_SWT_LUZAM', 3, 'DST_ATTACKSPEED', -20]],
+    ]
+    for sc in scripts:
+        L = list(lines)
+        for define, i, dn, adj in sc:
+            we_set_slot(L, col, defs[define][1]['line'], i, dn, adj)
+        b = '\r\n'.join(L).encode('latin-1')
+        out['edits'].append({'ops': sc, 'sha': hashlib.sha256(b).hexdigest(), 'size': len(b)})
+    return out
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -9949,6 +10153,8 @@ if __name__ == '__main__':
         print(json.dumps(fees_run()))
     elif what == 'sets':                        # set effects: propItemEtc.inc SetItem, the +N table, wearing, tooltip, edits
         print(json.dumps(se_run(root)))
+    elif what == 'weapons':                     # weapon effects: each weapon's own stats, rarity, hands, tooltip, edits
+        print(json.dumps(we_run_all(root)))
     elif what == 'dds':                         # a folder of .dds icons -> {file: [w, h, sha256 of the RGBA]}
         print(json.dumps(dds_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model

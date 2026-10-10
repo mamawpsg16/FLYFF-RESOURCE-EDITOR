@@ -66,6 +66,10 @@ loaders/sets.js
 loaders/sets-sim.js
 edit/sets-ops.js
 validate/sets.js
+loaders/weapons.js
+loaders/weapons-sim.js
+edit/weapons-ops.js
+validate/weapons.js
 core/workspace.js
 core/client-sync.js
 core/after-save.js
@@ -97,4 +101,5 @@ ui/where.js
 ui/rates.js
 ui/upgrade.js
 ui/sets.js
+ui/weapons.js
 ui/app.js

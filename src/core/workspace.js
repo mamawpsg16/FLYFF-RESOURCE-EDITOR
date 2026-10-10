@@ -183,6 +183,15 @@
       validate(ws, model) { return FRE.setChecks(model, { ws }); },
     },
     {
+      // Weapon Effects (task G part 2, loaders/weapons.js): each weapon's own 6 stat slots in Spec_Item.txt (editsSpec: the
+      // server copy and its LF Client copy, read at startup by both: SetDestParamEquip MoverEquip.cpp:2355, the tooltip
+      // PutBaseItemOpt WndManager.cpp:5729). WeaponRarity.inc is read for the rarity bonus (edited in Upgrade Rates).
+      id: 'weapons', label: 'Weapon Effects', editsSpec: true,
+      required: [], optional: ['WeaponRarity.inc'], editable: [], client: [], deps: ['WeaponRarity.inc'],
+      parse(ws) { return FRE.weapons.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.weaponChecks(model, { ws }); },
+    },
+    {
       // Where is this item from? (task H, loaders/where.js): every model above parsed read-only, nothing editable.
       // Last, so its parse sees the other models. maps: towns of the NPCs, and whether they stand in the game.
       id: 'where', label: 'Item Sources & Uses',

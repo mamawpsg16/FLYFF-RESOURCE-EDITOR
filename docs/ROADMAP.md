@@ -1,8 +1,23 @@
 # Roadmap and handoff
 
-_Last updated 2026-10-10 (G part 1, Set effects, built on the Windows PC; waiting for the user's Brave test. C, L and M skipped (the user, 2026-10-10); next: the user tests everything)._
+_Last updated 2026-10-10 (G part 1 pushed `372cbfb`; G part 2, Weapon Effects, built, waiting for the user's Brave test. C, L and M dropped (the user, 2026-10-10). Next after G: the "Next, after the resource editor" features in FLYFF TODOS.md, planned one at a time)._
 
 
+
+> **Handoff (2026-10-10) — G part 2. Weapon Effects: user-tested in Brave on test-data (all 6 steps) and committed + pushed. Plan: `/c/Users/Mensah/.claude/plans/read-the-claude-md-files-linear-dongarra.md`. G part 1 (Set Effects) was user-tested in Brave and pushed (`372cbfb`).**
+> - **New task card "Weapon Effects"** (`MODULES` id `weapons`, `editsSpec`): ▦ family tables first (Lusaka T1, Legendary Golden T2, Lusaka's Crystal T3, Angel / Vampire / Bloody: one tier across every class, every cell editable), then the 534 weapons with own stats (filters: with stats / all / tier families / problems / edited; weapon type). A weapon: its 6 slots (stat picker, amount, "Players get" with the real Attack Speed %), "Edit its Ultimate twin too" (off by default), the tooltip at a Weapon Rarity tier, 🧍 the character's totals in the right / left hand.
+> - **Found (INVESTIGATION §1.26):** Weapon Rarity ADDS (Legendary: crit 12 → 35%); an Attack Speed (raw) slot gets only +1.15% from Legendary though the tooltip says (+23%); the left-hand weapon gives nothing; the Ultimate rows are now a bit stronger than their base rows (the tier doc's "same line" rule is outdated, so not checked); one weapon (`IDS_PROPITEM_TXT_015819`) stacks Max HP ×3 and Max MP ×2. `WEAPONS-progression.md` (3 slots, cols 57-59) is stale: the real slots are 6, cols 54-65.
+> - Python copy `oracle_sim.py weapons`: every case agrees (714 cases); 10 of 11 planted bugs caught. Checks `WE_DST_ZERO`, `WE_SLOT_DUP`, `WE_ASPD_SMALL`, `WE_RARITY_ASPD` (INFO), `WE_TIER_ASPD` (INFO).
+>
+> **User's test (pick `FLYFF-RESOURCE-EDITOR/test-data`, NOT FLYFF-V19-SOURCE: the top tag must not say REAL SERVER FILES):** `python3 build.py`, reload, card **Weapon Effects**.
+> 1. The list starts with ▦ family tables, then weapons; the ⚠ counter shows 8 warnings (stats written twice in one weapon, `WE_SLOT_DUP`).
+> 2. Search `Lusaka's Sword`: 5 stats + 1 empty slot. Slot 1 Attack 10 → 12: toast "(was 10)"; Ctrl+Z undoes it.
+> 3. Weapon Rarity → Legendary: the tooltip lines end with (+23%); "The character gets" Critical Chance +35%. Held in → left hand: "Nothing".
+> 4. Slot 6: pick STR, amount 5 → a 6th line; ✕ empties it again.
+> 5. ▦ Angel: every Angel weapon with Increased HP / STA; change one cell; the Ultimate row sits under its base.
+> 6. Save: only Spec_Item.txt (+ the Client copy, LF kept); After saving = Stop / Start Server.bat.
+> 7. By hand: `node --import ./tests/node-shim/register.mjs tools/weapons-sim.js II_WEA_SWO_LUZA rarity=5` (gjs on Ubuntu).
+> Then commit + push; in game: in-game guide item 20.
 
 > **Handoff (2026-10-10) — G part 1. Set Effects: built on the Windows PC, NOT committed (the user tests first). After the test: commit + push; then the user's test session of everything (the user, 2026-10-10: "when we're done in this I'd like to test everything"). C (GM Commands list), L (Monster Hunt + Badges + Collecting) and M (Teleporter) are SKIPPED (the user, 2026-10-10). G part 2 (weapon effects) is still open, plan first, after the tests.**
 > - **New task card "Set Effects"** (`MODULES` id `sets`): left = +N armor bonus + the 157 sets (filter: armor / fashion / jewelry / problems / edited; search by set or piece). A set: name ✎ (propItemEtc.txt.txt), pieces (✎ / ✕ / + Add piece, the slot from the item's dwParts), bonuses by piece count (stat picker, amount, pieces needed, ✕, + Add bonus), "What players see" (the piece tooltip with a 0..N worn slider), 🧍 Try it (tick pieces, +N, expired, slot → totals putting them on vs after a relog). +N armor bonus: 10 rows × 5 (expTable.inc). **+ New set** (name, 1-8 pieces, bonuses; preview of both files + the tooltip; one undo step). Plan: `docs/plans/G-set-effects.md`; INVESTIGATION §1.25.

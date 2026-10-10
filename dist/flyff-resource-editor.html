@@ -487,7 +487,7 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "69+", "when": "Sat 10 Oct 2026, 15:47", "rev": "059ea44", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when": "Sat 10 Oct 2026, 16:18", "rev": "372cbfb", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -1586,7 +1586,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "69+", "when
     return out;
   }
 
-  FRE.itemTooltip = { build, cfmt, duration, dstWords };
+  FRE.itemTooltip = { build, cfmt, duration, dstWords, DST_RATE_NAMES: () => DST_RATE.slice() };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- loaders/item-category.js ----
@@ -6292,6 +6292,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "69+", "when
     SE_PLUS_MISSING: ['expTable.inc has no Setitem table, so wearing a full +N armor set (suit, gauntlets, boots, helmet) gives no extra bonus.', 'Nothing to do unless you want that bonus.'],
     SE_PLUS_SHIFT: ['A Setitem row has fewer than 5 numbers. The server reads 5 per row anyway, so it takes numbers from the next row (and past the }) and every value after is shifted.', 'Give each row exactly 5 numbers.'],
     SE_PLUS_ROWS: ['The Setitem table should have 10 rows (+1 to +10). Fewer: the missing levels give nothing. 11: the last is unused. More than 11: the server writes past its table at startup.', 'Keep exactly 10 rows.'],
+    WE_DST_ZERO: ['A weapon stat slot holds stat 0 (an unknown DST_ name becomes 0). The server applies it and nothing happens.', 'Pick a stat, or empty the slot.'],
+    WE_SLOT_DUP: ['The same stat is in two slots of one weapon. Both are added, so the weapon gives their sum (and the tooltip shows two lines).', 'Merge them into one slot.'],
+    WE_ASPD_SMALL: ['DST_ATTACKSPEED is counted in 1/20 % (the speed factor gets amount / 1000; the tooltip shows amount / 20), so a small number is almost nothing.', 'Use DST_ATTACKSPEED_RATE for a whole percent, or multiply the number by 20.'],
+    WE_RARITY_ASPD: ['A Weapon Rarity tier adds its % bonus to every rate stat, Attack Speed included, but Attack Speed is counted in 1/20 %: the bonus is tiny there, while the tooltip shows it as a whole %.', 'Nothing to fix in the file; it is how WeaponRarity_ScaleParam works.'],
+    WE_TIER_ASPD: ['A tier 2 (Legendary Golden) weapon has less raw Attack Speed than the tier 1 (Lusaka) weapon of the same type: players lose speed when they upgrade.', 'Raise tier 2, or lower tier 1.'],
     UP_STALE_COMMENT: ['The line\'s number changed, but its comment (after -- or //) may still describe the old number.', 'Update or remove the comment by hand if you want the file to stay clear.'],
   };
 })(globalThis.FRE = globalThis.FRE || {});
@@ -12943,6 +12948,237 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "69+", "when
   FRE.setChecks = setChecks;
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/weapons.js ----
+// Weapon effects (task G part 2): each weapon's own bonus stats, the 6 slots dwDestParam1-6 / nAdjParamVal1-6 (and
+// dwChgParamVal1-6) of its Spec_Item.txt row (cols 54-71). Read from the Spec model the workspace already loaded
+// (loaders/specitem.js); nothing else is parsed here. WeaponRarity.inc (the rarity bonus added to each slot) comes from
+// FRE.upgrade.loadRarity (CProject::LoadWeaponRarity, Project.cpp:494), read-only here: it is edited in Upgrade Rates.
+//   A slot counts when dwDestParam != -1 (MoverEquip.cpp:2368-2402: stat 0 is applied too, and does nothing).
+//   Families (the tier doc WEAPON-SET-EFFECTS/WEAPON_TIER_UPDATE_APPLIED.md) from the define's last part: LUZA = Lusaka
+//   (T1, Lv90), LEAGENDG = Legendary Golden (T2, Lv105), LUZAM = Lusaka's Crystal (T3, Lv121), ANGEL / VEMPIRE / BLOODY = the HP
+//   track T1-T3, LEAGENDG1 = the [EVENT] rows the doc leaves out. A define + "UM" is the Ultimate twin of its base row (the doc's
+//   rule: same stat line as the base).
+(function (FRE) {
+  'use strict';
+  const SLOTS = 6;
+  const NONE = 0xFFFFFFFF;
+  const FAMILY = {
+    LUZA: { name: 'Lusaka', track: 'ATK', tier: 1 }, LEAGENDG: { name: 'Legendary Golden', track: 'ATK', tier: 2 },
+    LUZAM: { name: "Lusaka's Crystal", track: 'ATK', tier: 3 }, ANGEL: { name: 'Angel', track: 'HP', tier: 1 },
+    VEMPIRE: { name: 'Vampire', track: 'HP', tier: 2 }, BLOODY: { name: 'Bloody', track: 'HP', tier: 3 },
+    LEAGENDG1: { name: 'Legendary Golden [EVENT]', track: 'event', tier: 0 },
+  };
+
+  // the define's family key and whether it is an Ultimate twin (base define + "UM" that exists)
+  function familyOf(define, defines) {
+    const m = /^II_WEA_[A-Z0-9]+_(\w+)$/.exec(define || '');
+    if (!m) return { key: null, twinOf: null };
+    let key = m[1], twinOf = null;
+    if (/UM$/.test(define) && defines.has(define.slice(0, -2))) { twinOf = define.slice(0, -2); key = key.slice(0, -2); }
+    return { key, twinOf };
+  }
+
+  function slotsOf(it) {
+    const g = f => FRE.specItem.get(it, f), out = [];
+    for (let i = 1; i <= SLOTS; i++) {
+      const dst = g('dwDestParam' + i) >>> 0;
+      out.push({ i, dst, on: dst !== NONE, adj: g('nAdjParamVal' + i) | 0, chg: g('dwChgParamVal' + i) | 0 });
+    }
+    return out;
+  }
+
+  // ws: a Workspace (items, defines) -> { weapons, byId, byDefine, rarity, families }
+  function fromWorkspace(ws) {
+    const D = ws.defines.defines, I = ws.items.items;
+    const kinds = new Set(['IK2_WEAPON_DIRECT', 'IK2_WEAPON_MAGIC'].map(n => D.get(n)).filter(v => v !== undefined));
+    const weapons = [], byId = new Map(), byDefine = new Map();
+    for (const it of I.values()) {
+      if (!kinds.has(FRE.specItem.get(it, 'dwItemKind2'))) continue;
+      const info = ws.itemInfo(it), fam = familyOf(it.define, D);
+      const w = { id: it.id, define: it.define, name: info.name || it.define, item: it, info, level: info.level, job: info.jobName,
+        type: FRE.itemCategory.of(info, ws.defines).sub, family: fam.key, familyInfo: FAMILY[fam.key] || null, twinOf: fam.twinOf, twin: null,
+        slots: slotsOf(it) };
+      weapons.push(w); byId.set(w.id, w); byDefine.set(w.define, w);
+    }
+    for (const w of weapons) if (w.twinOf && byDefine.has(w.twinOf)) byDefine.get(w.twinOf).twin = w;
+    weapons.sort((a, b) => (a.level - b.level) || a.name.localeCompare(b.name));
+    const rf = ws.files.get('weaponrarity.inc');
+    const rarity = rf && FRE.upgrade ? FRE.upgrade.loadRarity(rf, D) : null;
+    const families = new Map();
+    for (const w of weapons) if (w.family) { if (!families.has(w.family)) families.set(w.family, []); families.get(w.family).push(w); }
+    return { weapons, byId, byDefine, rarity, families };
+  }
+
+  FRE.weapons = { fromWorkspace, slotsOf, familyOf, FAMILY, SLOTS, NONE };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/weapons-sim.js ----
+// What a weapon's own stats give in game (task G part 2): a port of the code that USES them.
+//   Put on: CMover::SetDestParamEquip (_Common/MoverEquip.cpp:2355): an expired item gives nothing; with a Weapon Rarity tier
+//     (GetWeaponRarity() > 0 and prj.m_nWeaponRarity.GetAt( level ) found, :2365) every slot with dwDestParam != -1 gets
+//     WeaponRarity_ScaleParam (:2347): + nStatsPctBonus when WeaponRarity_IsDst_Rate (:2257, the client's IsDst_Rate list, three
+//     0 entries included), else + nStatsFlatBonus; without one, SetDestParam( i, prop ) (MoverParam.cpp:2490) adds nAdjParamVal.
+//   Take off: ResetDestParamEquip (:2457) takes the same amounts away.
+//   Hands (__BLADELWEAPON0608): a weapon in the left hand gives NO stats (equip gate MoverEquip.cpp:1843, login :2122); when it
+//     moves to the right hand its stats are added (:1035).
+//   DST_STAT_ALLUP fans out to STR, DEX, INT, STA (MoverParam.cpp:2588); DST_ATTACKSPEED is in 1/20 % (MoverAttack.cpp:177:
+//     GetParam / 1000 on the speed factor; the tooltip shows adj / 20, WndManager.cpp:5070).
+//   Tooltip: CWndMgr::PutBaseItemOpt (_Interface/WndManager.cpp:5729): 6 lines, ALLUP as 4 lines, the rarity bonus as " (+n%)"
+//     or " (+n)" after the base value, never added in.
+// Not modelled: dwChgParamVal (only the plain path passes it; no weapon here uses a changing stat), caps / clamps inside
+// SetDestParam, the other equip sources (resists, piercing, awakening, Ultimate gems, sets).
+(function (FRE) {
+  'use strict';
+  const W = () => FRE.weapons;
+
+  function envFor(ws, model) {
+    const D = ws.defines.defines, m = model || ws.models.weapons;
+    const rate = new Set(FRE.itemTooltip.DST_RATE_NAMES().map(n => D.get(n)).filter(v => v !== undefined)); rate.add(0);
+    return { D, m, rate, words: FRE.itemTooltip.dstWords(ws), tiers: m.rarity ? m.rarity.tiers : new Map(),
+      ALLUP: D.get('DST_STAT_ALLUP'), ASPD: D.get('DST_ATTACKSPEED'), FOUR: ['DST_STR', 'DST_DEX', 'DST_INT', 'DST_STA'].map(n => D.get(n)) };
+  }
+
+  // the amounts one held weapon adds: [[dst, amount], …] in slot order (ALLUP fanned out)
+  function amounts(env, w, held) {
+    if (!w || !held || held.expired) return [];
+    const t = held.rarity > 0 ? env.tiers.get(held.rarity) : null;
+    const out = [];
+    for (const s of w.slots) {
+      if (!s.on) continue;
+      const adj = t ? s.adj + (env.rate.has(s.dst) ? t.pct : t.flat) : s.adj;
+      if (s.dst === env.ALLUP) for (const d of env.FOUR) out.push([d, adj]); else out.push([s.dst, adj]);
+    }
+    return out;
+  }
+
+  // a character's hands: { right: held | null, left: held | null }, held = { id, rarity, expired }; stats Map dst -> total
+  function blank() { return { right: null, left: null, stats: new Map() }; }
+  const add = (ch, list, sign) => { for (const [d, a] of list) { const v = ((ch.stats.get(d) || 0) + sign * a) | 0; if (v) ch.stats.set(d, v); else ch.stats.delete(d); } };
+  // put a weapon in a hand (the old one there is taken off first); only the right hand counts
+  function putOn(env, ch, hand, held) {
+    takeOff(env, ch, hand);
+    ch[hand] = held;
+    if (hand === 'right') add(ch, amounts(env, env.m.byId.get(held.id), held), 1);
+  }
+  function takeOff(env, ch, hand) {
+    const old = ch[hand];
+    if (!old) return;
+    ch[hand] = null;
+    if (hand === 'right') add(ch, amounts(env, env.m.byId.get(old.id), old), -1);
+  }
+  // the left-hand weapon moves to the right hand (the right one was taken off): its stats are added (:1035)
+  function promote(env, ch) {
+    if (!ch.left || ch.right) return;
+    const h = ch.left; ch.left = null; ch.right = h;
+    add(ch, amounts(env, env.m.byId.get(h.id), h), 1);
+  }
+  function run(env, steps) {
+    const ch = blank();
+    for (const s of steps) {
+      if (s[0] === 'on') putOn(env, ch, s[1], s[2]);
+      else if (s[0] === 'off') takeOff(env, ch, s[1]);
+      else if (s[0] === 'promote') promote(env, ch);
+    }
+    return ch;
+  }
+  const statList = ch => [...ch.stats].sort((a, b) => a[0] - b[0]);
+  // the real attack-speed % of a DST_ATTACKSPEED amount (FormatDstRateValue: adj / 20)
+  const aspdPct = adj => adj / 20;
+
+  // PutBaseItemOpt for a weapon at a rarity level: [{ text, dst, adj, bonus }]
+  function tooltip(env, w, rarity) {
+    const t = rarity > 0 ? env.tiers.get(rarity) || null : null;
+    const word = d => (env.words.get(d) || { word: '' }).word;
+    const cf = FRE.itemTooltip.cfmt, out = [];
+    for (const s of w.slots) {
+      if (!s.on) continue;
+      if (s.dst === env.ALLUP) {
+        const b = t ? cf(' (%+d)', t.flat) : '';
+        for (const d of env.FOUR) out.push({ text: `${word(d)}${cf('%+d', s.adj)}${b}`, dst: d, adj: s.adj, bonus: t ? t.flat : 0 });
+      } else if (env.rate.has(s.dst)) {
+        const shown = s.dst === env.ASPD ? (s.adj % 20 === 0 ? cf('%+d', s.adj / 20) : cf('%+.1f', Math.fround(s.adj / 20))) : cf('%+d', s.adj);
+        out.push({ text: `${word(s.dst)}${shown}%${t ? cf(' (%+d%%)', t.pct) : ''}`, dst: s.dst, adj: s.adj, bonus: t ? t.pct : 0, rate: true });
+      } else out.push({ text: `${word(s.dst)}${cf('%+d', s.adj)}${t ? cf(' (%+d)', t.flat) : ''}`, dst: s.dst, adj: s.adj, bonus: t ? t.flat : 0 });
+    }
+    return out;
+  }
+
+  FRE.weaponsSim = { envFor, amounts, blank, putOn, takeOff, promote, run, statList, tooltip, aspdPct };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- edit/weapons-ops.js ----
+// Weapon effect edits (task G part 2): one stat slot of a weapon's Spec_Item.txt row = two tokens, dwDestParamN (written as
+// its DST_ name, the 62fb3b3e style) and nAdjParamValN; "=" in both for an empty slot. Spec_Item.txt is CRLF on the server and
+// LF in Client/ (the core client sync writes the same change there). Splices only; nothing else in the row moves.
+(function (FRE) {
+  'use strict';
+  const T = FRE.textOps;
+
+  // v: { dst, dstName, adj } (dst 0 / null = empty the slot)
+  function setSlot(text, w, i, v, defines) {
+    T.checkAmount(i, 1, FRE.weapons.SLOTS, 'The slot');
+    const empty = !v || !v.dst;
+    if (!empty) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(v.dstName || '')) throw new Error('Pick a stat');
+      if (!Number.isInteger(v.adj) || v.adj < -2147483647 || v.adj > 2147483647) throw new Error('The amount must be a whole number');
+    }
+    const it = w.item;
+    const d = FRE.itemOps.fieldSpan(text, it, 'dwDestParam' + i, defines), a = FRE.itemOps.fieldSpan(text, it, 'nAdjParamVal' + i, defines);
+    const di = empty ? '=' : v.dstName, ai = empty ? '=' : String(v.adj);
+    const out = [];
+    if (text.slice(d.start, d.end) !== di) out.push({ start: d.start, end: d.end, insert: di });
+    if (text.slice(a.start, a.end) !== ai) out.push({ start: a.start, end: a.end, insert: ai });
+    return out;
+  }
+  // the same slot change on the weapon and its Ultimate twin (one undo step: both rows are in Spec_Item.txt)
+  function setSlotBoth(text, ws, i, v, defines) {
+    const out = [];
+    for (const w of ws) if (w) out.push(...setSlot(text, w, i, v, defines));
+    return out.sort((x, y) => x.start - y.start);
+  }
+
+  FRE.weaponsOps = { setSlot, setSlotBoth };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- validate/weapons.js ----
+// Weapon effect checks (task G part 2). loaders/weapons.js reads the slots, loaders/weapons-sim.js what the server does.
+(function (FRE) {
+  'use strict';
+
+  function weaponChecks(model, opts) {
+    const ws = opts.ws, out = [], D = ws.defines.defines, F = 'Spec_Item.txt';
+    const env = FRE.weaponsSim.envFor(ws, model), ASPD = env.ASPD;
+    const push = (w, code, severity, message, k) => out.push({ module: 'weapons', file: F, code, severity, start: w.item.start, end: w.item.end,
+      key: `${code}|${w.define}|${k || ''}`, message });
+    const label = d => { const x = env.words.get(d); return x ? (x.word || x.define).replace(/[:\s]+$/, '') : `stat ${d}`; };
+    for (const w of model.weapons) {
+      const on = w.slots.filter(s => s.on), seen = new Map();
+      for (const s of on) {
+        if (s.dst === 0) push(w, 'WE_DST_ZERO', 'WARN', `${w.name}: slot ${s.i} is stat 0 (an unknown name becomes 0): it does nothing.`, s.i);
+        else if (seen.has(s.dst)) push(w, 'WE_SLOT_DUP', 'WARN', `${w.name}: ${label(s.dst)} is in slot ${seen.get(s.dst)} and slot ${s.i}: both are added (${s.adj} + ${on.find(x => x.i === seen.get(s.dst)).adj}).`, s.dst);
+        else seen.set(s.dst, s.i);
+        // DST_ATTACKSPEED is in 1/20 % (MoverAttack.cpp:177): a small number is almost nothing (the yoyo fix cfe2740e moved those to ATTACKSPEED_RATE)
+        if (s.dst === ASPD && s.adj > 0 && s.adj < 20) push(w, 'WE_ASPD_SMALL', 'WARN', `${w.name}: Attack Speed ${s.adj} is in 1/20 % units = +${s.adj / 20}% real. For a whole percent use DST_ATTACKSPEED_RATE (or ${s.adj * 20} here).`, s.i);
+      }
+      if (model.rarity && on.some(s => s.dst === ASPD)) {
+        const top = [...env.tiers.values()].sort((a, b) => b.level - a.level)[0];
+        if (top) push(w, 'WE_RARITY_ASPD', 'INFO', `${w.name}: a Weapon Rarity tier adds its % bonus to the Attack Speed slot in raw units: ${top.name} (+${top.pct}) = +${top.pct / 20}% real, though the tooltip says (+${top.pct}%).`);
+      }
+    }
+    // the doc's rule: raw Attack Speed must not drop from tier 1 to tier 2 of the ATK track (same weapon type and hands)
+    const key = w => `${w.type}|${FRE.specItem.get(w.item, 'dwHanded')}`;
+    const aspd = w => w.slots.filter(s => s.on && s.dst === ASPD).reduce((a, s) => a + s.adj, 0);
+    const t1 = new Map((model.families.get('LUZA') || []).filter(w => !w.twinOf).map(w => [key(w), w]));
+    for (const w of (model.families.get('LEAGENDG') || []).filter(x => !x.twinOf)) {
+      const a = t1.get(key(w));
+      if (a && aspd(a) > 0 && aspd(w) < aspd(a)) push(w, 'WE_TIER_ASPD', 'INFO', `${w.name} (tier 2) has less raw Attack Speed (${aspd(w)}) than ${a.name} (tier 1, ${aspd(a)}).`);
+    }
+    return out;
+  }
+
+  FRE.weaponChecks = weaponChecks;
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- core/workspace.js ----
 // Workspace: the loaded Resource folder as the editor sees it. No DOM here,
 // so it can be tested outside the browser (tests/run-tests.js under gjs).
@@ -13127,6 +13363,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "69+", "when
       deps: ['propItemEtc.txt.txt', 'expTable.inc'],
       parse(ws) { return FRE.sets.fromWorkspace(ws); },
       validate(ws, model) { return FRE.setChecks(model, { ws }); },
+    },
+    {
+      // Weapon Effects (task G part 2, loaders/weapons.js): each weapon's own 6 stat slots in Spec_Item.txt (editsSpec: the
+      // server copy and its LF Client copy, read at startup by both: SetDestParamEquip MoverEquip.cpp:2355, the tooltip
+      // PutBaseItemOpt WndManager.cpp:5729). WeaponRarity.inc is read for the rarity bonus (edited in Upgrade Rates).
+      id: 'weapons', label: 'Weapon Effects', editsSpec: true,
+      required: [], optional: ['WeaponRarity.inc'], editable: [], client: [], deps: ['WeaponRarity.inc'],
+      parse(ws) { return FRE.weapons.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.weaponChecks(model, { ws }); },
     },
     {
       // Where is this item from? (task H, loaders/where.js): every model above parsed read-only, nothing editable.
@@ -21065,6 +21310,191 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "69+", "when
 
   FRE.ui.modules.push(mod);
   FRE.ui.sets = { newSetForm, renameForm, pieceForm, bonusForm, tooltipLines };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- ui/weapons.js ----
+// Weapon Effects (task G part 2): each weapon's own 6 stat slots (Spec_Item.txt), what players see in its tooltip at each Weapon
+// Rarity tier, 🧍 Try it (right / left hand, rarity: loaders/weapons-sim.js), and a family table (one tier family across every
+// class, every cell editable: the way WEAPON_TIER_UPDATE_APPLIED.md was written). Edits: edit/weapons-ops.js.
+// The user, 2026-10-10: "why the resource editor only has for set nothing for weapon".
+(function (FRE) {
+  'use strict';
+  const { h, numInput, keepFocus } = FRE.dom;
+  const { diagTags, diagRow } = FRE.ui;
+  const SPEC = 'spec_item.txt';
+  const st = { sel: null, show: 'stats', type: '', rarity: 0, hand: 'right', twin: false };   // twin: off by default (the Ultimate rows are deliberately a bit stronger)
+  const Sim = () => FRE.weaponsSim, O = () => FRE.weaponsOps;
+  const model = ctx => ctx.ws.models.weapons;
+  const can = ctx => ctx.ws.isEditable(SPEC);
+  const wDiags = (ctx, w) => ctx.ws.diags.filter(d => d.module === 'weapons' && d.start === w.item.start);
+  const keyOf = id => `weapons|${id}`;
+  const iconOf = it => (it ? String(FRE.specItem.get(it, 'szIcon') || '').replace(/"/g, '').trim() : '');
+  const famLabel = k => { const f = FRE.weapons.FAMILY[k]; return f ? `${f.name}${f.tier ? ` (${f.track} T${f.tier})` : ''}` : k; };
+  const FAM_ORDER = ['LUZA', 'LEAGENDG', 'LUZAM', 'ANGEL', 'VEMPIRE', 'BLOODY'];
+
+  function dstOptions(ctx) {
+    const words = FRE.itemTooltip.dstWords(ctx.ws), opts = [{ v: 0, label: '(empty slot)', find: 'empty none' }];
+    for (const [v, w] of [...words].sort((a, b) => (a[1].word || a[1].define).localeCompare(b[1].word || b[1].define)))
+      opts.push({ v, label: `${(w.word || '').replace(/[:\s]+$/, '') || w.define}${w.rate ? ' (%)' : ''} — ${w.define}`, find: `${w.word} ${w.define}` });
+    return { opts, words };
+  }
+  const dstLabel = (words, v) => { const w = words.get(v); return w ? (w.word || w.define).replace(/[:\s]+$/, '') : `stat ${v}`; };
+  const valText = (ctx, words, d, a) => {
+    const w = words.get(d), aspd = d === ctx.ws.defines.defines.get('DST_ATTACKSPEED');
+    return aspd ? `${a >= 0 ? '+' : ''}${a / 20}% (raw ${a})` : `${a >= 0 ? '+' : ''}${a}${w && w.rate ? '%' : ''}`;
+  };
+
+  const SHOW = [
+    { v: 'stats', label: 'Weapons with own stats', test: w => w.slots.some(s => s.on) },
+    { v: 'all', label: 'All weapons', test: () => true },
+    { v: 'tiers', label: 'Tier families (Lusaka … Bloody)', test: w => w.familyInfo && w.familyInfo.tier > 0 },
+    { v: 'problems', label: 'With problems', test: (w, ctx) => wDiags(ctx, w).some(d => d.severity !== 'INFO') },
+    { v: 'edited', label: 'Edited', test: (w, ctx) => ctx.edited.has(keyOf(w.id)) },
+  ];
+
+  const mod = {
+    id: 'weapons', label: 'Weapon Effects', searchPlaceholder: 'Search weapons', noItems: true,
+    help: "Weapon Effects: each weapon's own bonus stats (Spec_Item.txt), with the Weapon Rarity bonus and a family table",
+    st,
+    onLoad() { st.sel = null; st.show = 'stats'; st.type = ''; st.rarity = 0; st.hand = 'right'; st.twin = false; },
+
+    listExtra(ctx) {
+      const m = model(ctx), types = [...new Set(m.weapons.map(w => w.type))].sort();
+      return h('div.bx-filters',
+        h('select.npc-filter', { title: 'Which weapons', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
+          SHOW.map(o => h('option', { value: o.v, selected: o.v === st.show }, `${o.label} (${m.weapons.filter(w => o.test(w, ctx)).length})`))),
+        h('select.npc-filter', { title: 'Weapon type', on: { change: e => { st.type = e.target.value; ctx.renderList(); } } },
+          [h('option', { value: '' }, 'Every type'), ...types.map(t => h('option', { value: t, selected: t === st.type }, t))]));
+    },
+
+    renderList(el, ctx) {
+      const m = model(ctx), q = ctx.query.toLowerCase(), test = SHOW.find(o => o.v === st.show).test;
+      // the family tables first
+      for (const k of FAM_ORDER) {
+        if (!m.families.has(k) || (q && !famLabel(k).toLowerCase().includes(q))) continue;
+        const sel = st.sel === 'fam:' + k;
+        el.appendChild(h('div.npc' + (sel ? '.sel' : ''), { on: { click: () => { st.sel = 'fam:' + k; ctx.renderAll(false); } } },
+          h('div.n', h('span', `▦ ${famLabel(k)}`)), h('div.k', `family table · ${m.families.get(k).length} weapons`)));
+      }
+      let shown = 0;
+      for (const w of m.weapons) {
+        if (!test(w, ctx) || (st.type && w.type !== st.type)) continue;
+        if (q && !w.name.toLowerCase().includes(q) && !w.define.toLowerCase().includes(q)) continue;
+        if (++shown > 600) continue;
+        const ds = wDiags(ctx, w), nw = ds.filter(d => d.severity === 'WARN').length, nb = ds.filter(d => d.severity === 'BLOCK').length;
+        el.appendChild(h('div.npc.bx-row' + (st.sel === w.id ? '.sel' : ''), { on: { click: () => { st.sel = w.id; ctx.renderAll(false); } } },
+          FRE.dds.picture(ctx, iconOf(w.item), { cls: '.bx-icon' }),
+          h('div.bx-text', h('div.n', h('span', w.name), h('span', ctx.edited.has(keyOf(w.id)) ? h('span.tag.edit', 'edited') : null,
+            nb ? h('span.tag.bad', '⛔' + nb) : nw ? h('span.tag.warn', '⚠' + nw) : null)),
+          h('div.k', `${w.type}${w.level > 0 && w.level < 1000 ? ` · Lv ${w.level}` : ''}${w.job ? ` · ${FRE.ui.pretty(w.job)}` : ''} · ${w.slots.filter(s => s.on).length} stats`))));
+      }
+      if (shown > 600) el.appendChild(h('div.pad.muted', `${shown - 600} more: search to narrow the list.`));
+      if (!shown) el.appendChild(h('div.pad.muted', 'No weapons match.'));
+    },
+
+    renderEditor(el, ctx) {
+      keepFocus(el, () => {
+        if (typeof st.sel === 'string' && st.sel.startsWith('fam:')) return familyView(el, ctx, st.sel.slice(4));
+        const w = st.sel === null ? null : model(ctx).byId.get(st.sel);
+        if (!w) { el.appendChild(h('p.empty-state', 'Select a weapon on the left, or a ▦ family table.')); return; }
+        weaponView(el, ctx, w);
+      });
+    },
+
+    addTarget() { return { ok: false, title: 'Items are not added in this task' }; },
+    locate(d, ctx) {
+      if (d.module !== 'weapons') return false;
+      const w = model(ctx).weapons.find(x => x.item.start === d.start);
+      if (w) st.sel = w.id;
+      return true;
+    },
+  };
+
+  // one slot edit; with the twin box ticked the Ultimate twin (or its base) gets the same change in the same undo step
+  function editSlot(ctx, w, i, v, label, mergeKey) {
+    const m = model(ctx), other = st.twin ? (w.twin || (w.twinOf ? m.byDefine.get(w.twinOf) : null)) : null;
+    const D = ctx.ws.defines.defines;
+    ctx.editGroup(() => [{ file: SPEC, splices: O().setSlotBoth(ctx.ws.files.get(SPEC).text, [w, other], i, v, D) }],
+      other ? `${label} (and ${other.name})` : label, [keyOf(w.id), ...(other ? [keyOf(other.id)] : [])], mergeKey);
+  }
+
+  function weaponView(el, ctx, w) {
+    const m = model(ctx), edit_ = can(ctx), { opts, words } = dstOptions(ctx), D = ctx.ws.defines.defines;
+    const f = ctx.ws.files.get(SPEC);
+    el.appendChild(h('div.npc-title', FRE.dds.picture(ctx, iconOf(w.item), { cls: '.bx-icon' }), h('h2', w.name), h('span.def', `${w.define} · ${w.id}`),
+      edit_ ? null : h('span.tag.bad', 'read-only'), h('span.line', `Spec_Item.txt L${f.lineOf(w.item.start) + 1}`)));
+    el.appendChild(h('p.muted.small', `${w.type}${w.level > 0 && w.level < 1000 ? ` · Lv ${w.level}` : ''}${w.job ? ` · ${FRE.ui.pretty(w.job)}` : ''}${w.familyInfo ? ` · ${famLabel(w.family)}` : ''}. `,
+      'A weapon gives its stats only in the right hand (a weapon in the left hand gives none). A Weapon Rarity tier adds its % bonus to every % stat and its flat bonus to the others, slot by slot. After saving: Stop / Start Server.bat.'));
+    const other = w.twin || (w.twinOf ? m.byDefine.get(w.twinOf) : null);
+    if (other) el.appendChild(h('div.dr-line', h('label', h('input', { type: 'checkbox', checked: st.twin, on: { change: e => { st.twin = e.target.checked; } } }),
+      ` Edit ${w.twin ? 'its Ultimate twin' : 'its base weapon'} too: ${other.name}`), h('span.muted.small', ` (now: ${other.slots.filter(s => s.on).map(s => `${dstLabel(words, s.dst)} ${valText(ctx, words, s.dst, s.adj)}`).join(', ') || 'no stats'})`)));
+    el.appendChild(h('h3', 'Stats (6 slots)'));
+    const tb = h('table.items.rt', h('tr', h('th', 'Slot'), h('th', 'Stat'), h('th', 'Amount'), h('th', 'Players get'), h('th', '')));
+    for (const s of w.slots) {
+      const label = `${w.name}: slot ${s.i}`;
+      tb.appendChild(h('tr', h('td', h('b', String(s.i))),
+        h('td', edit_ ? FRE.ui.combo({ options: opts, value: s.on ? s.dst : 0, placeholder: 'Pick a stat', wordStart: true,
+          onPick: v => { if (v === (s.on ? s.dst : 0)) return; editSlot(ctx, w, s.i, v ? { dst: v, dstName: ctx.ws.defines.byValue('DST_', v), adj: s.on ? s.adj : 1 } : null,
+            v ? `${label} ${dstLabel(words, v)}${s.on ? ` (was ${dstLabel(words, s.dst)})` : ''}` : `${label} emptied (was ${dstLabel(words, s.dst)})`); } }) : (s.on ? dstLabel(words, s.dst) : '—')),
+        h('td', s.on ? numInput({ value: s.adj, min: -2147483647, max: 2147483647, disabled: !edit_, key: `we|${w.id}|${s.i}`,
+          onCommit: v => { if (v === null || v === s.adj) return; editSlot(ctx, w, s.i, { dst: s.dst, dstName: ctx.ws.defines.byValue('DST_', s.dst), adj: v }, `${label} ${dstLabel(words, s.dst)} ${v} (was ${s.adj})`, `we|${w.id}|${s.i}`); } }) : ''),
+        h('td', s.on ? valText(ctx, words, s.dst, s.adj) : h('span.muted', 'empty')),
+        h('td', edit_ && s.on ? h('button.icon.danger', { title: 'Empty this slot', on: { click: () => editSlot(ctx, w, s.i, null, `${label} emptied (was ${dstLabel(words, s.dst)})`) } }, '✕') : null)));
+    }
+    el.appendChild(tb);
+
+    // what players see, at a rarity tier
+    const env = Sim().envFor(ctx.ws), tiers = m.rarity ? [...m.rarity.tiers.values()].sort((a, b) => a.level - b.level) : [];
+    el.appendChild(h('h3', 'What players see (the weapon tooltip) and 🧍 Try it'));
+    el.appendChild(h('div.dr-line', h('span', 'Weapon Rarity:'), h('select', { on: { change: e => { st.rarity = Number(e.target.value); ctx.renderAll(false); } } },
+      [h('option', { value: 0 }, 'none'), ...tiers.map(t => h('option', { value: t.level, selected: t.level === st.rarity }, `${t.name} (+${t.pct}% / +${t.flat})`))]),
+      h('span', 'Held in:'), h('select', { on: { change: e => { st.hand = e.target.value; ctx.renderAll(false); } } },
+        [['right', 'right hand (main)'], ['left', 'left hand (dual wield)']].map(([v, l]) => h('option', { value: v, selected: v === st.hand }, l)))));
+    const box = h('div.bx-tt.se-tt');
+    box.appendChild(h('div', { style: 'color:#62cbe9' }, w.name));
+    for (const l of Sim().tooltip(env, w, st.rarity)) box.appendChild(h('div', { style: 'color:#ffeaa1' }, l.text));
+    el.appendChild(box);
+    const ch = Sim().run(env, [['on', st.hand, { id: w.id, rarity: st.rarity, expired: false }]]);
+    const res = h('table.items.rt', h('tr', h('th', 'Stat'), h('th', 'The character gets')));
+    for (const [d, a] of Sim().statList(ch)) res.appendChild(h('tr', h('td', dstLabel(words, d)), h('td', valText(ctx, words, d, a))));
+    if (!ch.stats.size) res.appendChild(h('tr', h('td', { colspan: 2 }, h('span.muted', st.hand === 'left' ? 'Nothing: a weapon in the left hand gives no stats.' : 'Nothing.'))));
+    el.appendChild(res);
+    if (st.rarity && w.slots.some(s => s.on && s.dst === D.get('DST_ATTACKSPEED'))) {
+      const t = m.rarity.tiers.get(st.rarity);
+      if (t) el.appendChild(h('p.small.warn-text', `⚠ The Attack Speed slot is in raw units: the tooltip says (+${t.pct}%), but the rarity adds only +${t.pct / 20}%.`));
+    }
+    const ds = wDiags(ctx, w);
+    if (ds.length) { el.appendChild(h('h3', 'Problems')); for (const d of ds) el.appendChild(diagRow(d)); }
+  }
+
+  // ▦ one family across every class: rows = weapons, columns = every stat the family uses
+  function familyView(el, ctx, k) {
+    const m = model(ctx);
+    const baseName = w => (w.twinOf && m.byDefine.get(w.twinOf) ? m.byDefine.get(w.twinOf).name : w.name);     // a twin sorts right under its base
+    const list = (m.families.get(k) || []).slice().sort((a, b) => a.type.localeCompare(b.type) || baseName(a).localeCompare(baseName(b)) || (a.twinOf ? 1 : 0) - (b.twinOf ? 1 : 0));
+    const { words } = dstOptions(ctx), edit_ = can(ctx);
+    el.appendChild(h('div.npc-title', h('h2', `▦ ${famLabel(k)}`), h('span.def', `${list.length} weapons`)));
+    el.appendChild(h('p.muted.small', 'Every cell is one stat of one weapon: type a number to change it (one undo step per cell). A "–" cell is a stat this weapon does not have: add it on the weapon\'s own page. Ultimate (@) rows are listed under their base weapon.'));
+    const cols = [];
+    for (const w of list) for (const s of w.slots) if (s.on && !cols.includes(s.dst)) cols.push(s.dst);
+    const tb = h('table.items.rt', h('tr', h('th', 'Weapon'), h('th', 'Lv'), ...cols.map(d => h('th', dstLabel(words, d)))));
+    for (const w of list) {
+      tb.appendChild(h('tr', h('td', h('a', { href: '#', on: { click: e => { e.preventDefault(); st.sel = w.id; ctx.renderAll(false); } } }, w.name), h('span.def.block', w.type)),
+        h('td', w.level > 0 && w.level < 1000 ? String(w.level) : ''),
+        ...cols.map(d => {
+          const s = w.slots.find(x => x.on && x.dst === d);
+          if (!s) return h('td.muted', '–');
+          return h('td', numInput({ value: s.adj, min: -2147483647, max: 2147483647, disabled: !edit_, key: `wf|${w.id}|${s.i}`,
+            onCommit: v => { if (v === null || v === s.adj) return;
+              ctx.editGroup(() => [{ file: SPEC, splices: O().setSlot(ctx.ws.files.get(SPEC).text, w, s.i, { dst: d, dstName: ctx.ws.defines.byValue('DST_', d), adj: v }, ctx.ws.defines.defines) }],
+                `${w.name}: ${dstLabel(words, d)} ${v} (was ${s.adj})`, [keyOf(w.id)], `wf|${w.id}|${s.i}`); } }), diagTags([]));
+        })));
+    }
+    el.appendChild(tb);
+  }
+
+  FRE.ui.modules.push(mod);
+  FRE.ui.weapons = { weaponView, familyView };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/app.js ----

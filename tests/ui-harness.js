@@ -162,7 +162,7 @@
     // the cards are drawn after the patch check (io/patch-state.js reads one C++ file per patch)
     await waitFor(() => document.querySelector('.task-card:not(:disabled)'), 'task cards enabled');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
-    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 9 && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 9 tasks to pick (Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 10 && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 10 tasks to pick (Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
@@ -1619,6 +1619,36 @@
       ok(/\t45\t15\t25\t10\t3/.test(new TextDecoder('latin1').decode(res.children.get('expTable.inc').bytes)), '… and expTable.inc (+10 Max HP 25%)');
       ok(S.ws.dirtyFiles().length === 0, 'clean after save');
       for (const m of [...document.querySelectorAll('.modal')]) { const b = btnByText(m, 'Close'); if (b) click(b); }
+    }
+
+    // ---- Weapon Effects (G part 2)
+    {
+      await openTask('weapons');
+      const ed = () => $('editor'), items = () => [...document.querySelectorAll('#list .npc')];
+      ok(S.mode === 'weapons' && /▦ Lusaka/.test(items()[0].textContent), 'Weapon Effects: the family tables first (▦ Lusaka …)');
+      const search = $('list-search');
+      if (search) { search.value = 'II_WEA_SWO_LUZA'; search.dispatchEvent(new Event('input')); }
+      click(items().find(x => /^Lusaka's Sword/.test((x.querySelector('.n') || x).textContent)));
+      ok(/Lusaka's Sword/.test(ed().querySelector('h2').textContent) && ed().querySelectorAll('input[data-key^="we|"]').length === 5, "Lusaka's Sword: 5 stats in its 6 slots");
+      const box = ed().querySelector('input[data-key$="|1"][data-key^="we|"]');
+      box.value = '12'; box.dispatchEvent(new Event('change'));
+      ok(/\(was 10\)/.test([...$('toasts').children].pop().textContent) && S.ws.models.weapons.byDefine.get('II_WEA_SWO_LUZA').slots[0].adj === 12, 'slot 1 Attack 10 → 12: written, toast "(was 10)"');
+      const rar = [...ed().querySelectorAll('select')].find(s => [...s.options].some(o => /Legendary/.test(o.textContent)));
+      rar.value = '5'; rar.dispatchEvent(new Event('change'));
+      ok(/\(\+23%\)/.test(ed().querySelector('.se-tt').textContent) && /Critical Chance[^\n]*\+35%/.test(ed().textContent.replace(/\s+/g, ' ').replace(/Critical Chance/g, '\nCritical Chance')), 'Legendary: the tooltip shows "(+23%)"; the character gets crit 12 + 23 = 35%');
+      if (STOP === 'weapons') { $('toasts').textContent = ''; return; }
+      const hand = [...ed().querySelectorAll('select')].find(s => [...s.options].some(o => o.value === 'left'));
+      hand.value = 'left'; hand.dispatchEvent(new Event('change'));
+      ok(/left hand gives no stats/.test(ed().textContent), 'left hand: nothing (a weapon in the left hand gives no stats)');
+      if (search) { search.value = ''; search.dispatchEvent(new Event('input')); }
+      click(items().find(x => /▦ Angel/.test(x.textContent)));
+      ok(/▦ Angel/.test(ed().querySelector('h2').textContent) && ed().querySelectorAll('input[data-key^="wf|"]').length > 10, 'family table: Angel, every weapon × stat');
+      const cell = ed().querySelector('input[data-key^="wf|"]'); const was = cell.value;
+      cell.value = '77'; cell.dispatchEvent(new Event('change'));
+      ok(/77/.test([...$('toasts').children].pop().textContent) && new RegExp(`\\(was ${was}\\)`).test([...$('toasts').children].pop().textContent), 'a family cell edit: written, "(was …)"');
+      if (STOP === 'weaponsfamily') { $('toasts').textContent = ''; return; }
+      while (S.ws.history.length) click($('btn-undo'));
+      ok(!S.ws.dirtyFiles().length, 'Undo all: nothing left to save');
     }
 
     // ---- Battle Pass

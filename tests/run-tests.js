@@ -3608,5 +3608,59 @@ section('set effects (G part 1): propItemEtc.inc sets, the +N table, wearing by 
     'SE_PIECES_RANGE', 'SE_DST_UNKNOWN', 'SE_PLUS_MISSING', 'SE_PLUS_SHIFT', 'SE_PLUS_ROWS']) ok(FRE.diagHelp[k], `help text for ${k}`);
 }
 
+section('weapon effects (G part 2): each weapon\'s own stats, rarity, hands, tooltip, edits (JS and Python copies agree)');
+{
+  const J = JSON.stringify;
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} weapons ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py weapons) gave no readable result', e.message); }
+  const fresh = () => { const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e)); return new FRE.Workspace(fs, { only: 'weapons' }).load(); };
+  const ws = fresh(), D = ws.defines.defines, M = ws.models.weapons, Sim = FRE.weaponsSim;
+  eq(M.weapons.length, 926, '926 weapons (IK2_WEAPON_DIRECT / MAGIC)');
+  eq(M.weapons.filter(w => w.slots.some(s => s.on)).length, 534, '… 534 with own stats');
+  ok(M.byDefine.get('II_WEA_SWT_ANGEL').twin === M.byDefine.get('II_WEA_SWT_ANGELUM') && M.byDefine.get('II_WEA_SWT_LUZAM').twinOf === null, 'Ultimate twins pair by define + UM (LUZAM is the Crystal tier, not a twin)');
+  if (py) {
+    const u16 = t => new Uint8Array([0xff, 0xfe, ...[...t].flatMap(ch => [ch.charCodeAt(0) & 255, ch.charCodeAt(0) >> 8])]);
+    const tiersOf = k => k === 'real' ? M.rarity : FRE.upgrade.loadRarity(new FRE.SourceFile('WeaponRarity.inc', u16(py.files[k])), D);
+    for (const [k, t] of Object.entries(py.tiers)) eq(J([...tiersOf(k).tiers.values()].map(x => [x.level, x.pct, x.flat]).sort((a, b) => a[0] - b[0])), J(t), `WeaponRarity ${k}: the tiers as LoadWeaponRarity keeps them`);
+    const envs = {};
+    for (const k of Object.keys(py.tiers)) envs[k] = Sim.envFor(ws, Object.assign({}, M, { rarity: tiersOf(k) }));
+    let agree = 0; const bad = [];
+    for (const c of py.cases) {
+      const env = envs[c.world];
+      const steps = c.steps.map(s => s[0] === 'on' ? ['on', s[1], { id: s[2][0], rarity: s[2][1], expired: s[2][2] }] : s);
+      const st = Sim.statList(Sim.run(env, steps));
+      const tt = Sim.tooltip(env, M.byId.get(c.id), c.rarity).map(l => [l.dst, l.adj, l.bonus, !!l.rate]);
+      const j = J({ st, tt }), p = J({ st: c.stats, tt: c.tooltip });
+      if (j === p) agree++; else if (bad.length < 3) bad.push(`${c.world} ${J(c.steps)}: js ${j.slice(0, 200)} py ${p.slice(0, 200)}`);
+    }
+    eq(agree, py.cases.length, `wearing weapons: every case agrees (${py.cases.length}: every weapon with stats × rarity 0-7, right / left hand, swap, expired, off-hand moved to the right, 2 made-up rarity files)`);
+    bad.forEach(x => print('   ' + x));
+    let same = 0;
+    for (const sc of py.edits) {
+      const W = fresh(), f = W.files.get('spec_item.txt');
+      for (const [define, i, dn, adj] of sc.ops) {
+        const w = W.models.weapons.byDefine.get(define);
+        W.apply('spec_item.txt', FRE.weaponsOps.setSlot(f.text, w, i, dn ? { dst: D.get(dn), dstName: dn, adj } : null, W.defines.defines), 'x');
+      }
+      const b = f.serialize(), sha = GLib.compute_checksum_for_bytes(GLib.ChecksumType.SHA256, new GLib.Bytes(b));
+      if (sha === sc.sha && b.length === sc.size) same++; else print(`   edit ${J(sc.ops)}: js ${b.length} bytes, py ${sc.size}`);
+    }
+    eq(same, py.edits.length, `edit scripts: byte-identical Spec_Item.txt (${py.edits.length}: set, empty, a weapon and its twin, a negative amount)`);
+  }
+  {
+    const env = Sim.envFor(ws), w = M.byDefine.get('II_WEA_SWO_LUZA');
+    const ch = Sim.run(env, [['on', 'right', { id: w.id, rarity: 5, expired: false }]]);
+    eq(ch.stats.get(D.get('DST_CHR_CHANCECRITICAL')), 35, "Lusaka's Sword at Legendary: crit chance 12 + 23 = 35 (WeaponRarity_ScaleParam adds, it does not multiply)");
+    eq(Sim.run(env, [['on', 'left', { id: w.id, rarity: 0 }]]).stats.size, 0, 'a weapon in the left hand gives no stats (__BLADELWEAPON0608)');
+    eq(Sim.tooltip(env, w, 5)[0].text.endsWith('(+23%)'), true, 'the tooltip shows the bonus after the value: "(+23%)"');
+    const W = fresh(), f = W.files.get('spec_item.txt'), x = W.models.weapons.byDefine.get('II_WEA_SWO_LUZA');
+    W.apply('spec_item.txt', FRE.weaponsOps.setSlot(f.text, x, 1, { dst: D.get('DST_ATTACKSPEED'), dstName: 'DST_ATTACKSPEED', adj: 6 }, D), 'x');
+    ok(W.diags.some(d => d.code === 'WE_ASPD_SMALL'), 'Attack Speed 6 (raw) is flagged: +0.3% real');
+    throws(() => FRE.weaponsOps.setSlot(f.text, x, 7, null, D), 'there is no slot 7');
+  }
+  for (const k of ['WE_DST_ZERO', 'WE_SLOT_DUP', 'WE_ASPD_SMALL', 'WE_RARITY_ASPD', 'WE_TIER_ASPD']) ok(FRE.diagHelp[k], `help text for ${k}`);
+}
+
 print(`\n${pass} passed, ${fail} failed`);
 if (fail) System.exit(1);

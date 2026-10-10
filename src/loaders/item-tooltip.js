@@ -253,5 +253,5 @@
     return out;
   }
 
-  FRE.itemTooltip = { build, cfmt, duration, dstWords };
+  FRE.itemTooltip = { build, cfmt, duration, dstWords, DST_RATE_NAMES: () => DST_RATE.slice() };
 })(globalThis.FRE = globalThis.FRE || {});
