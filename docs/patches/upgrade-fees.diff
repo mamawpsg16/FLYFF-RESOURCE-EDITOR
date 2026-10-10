@@ -1,6 +1,6 @@
 --- a/Source/Source/_Common/UpgradeFees.h
 +++ b/Source/Source/_Common/UpgradeFees.h
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,137 @@
 +// UpgradeFees.h: the Penya fees of the upgrade / remove actions, read from UpgradeFees.lua (resource editor patch upgrade-fees.diff).
 +// The WorldServer charges them (Server/Resource/UpgradeFees.lua); Neuz shows the piercing price and checks the player's Penya in
 +// the safe piercing window (Client/UpgradeFees.lua). Keep both copies the same.
@@ -10,6 +10,9 @@
 +#define __UPGRADEFEES_H__
 +
 +#include "LuaBase.h"
++#ifdef __WORLDSERVER
++#include "defineText.h"		// TID_GAME_LACKMONEY (UltimateWeapon.cpp includes this header before its own defineText.h)
++#endif // __WORLDSERVER
 +
 +class CUpgradeFees
 +{
