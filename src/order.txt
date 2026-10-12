@@ -70,6 +70,11 @@ loaders/weapons.js
 loaders/weapons-sim.js
 edit/weapons-ops.js
 validate/weapons.js
+loaders/pvp.js
+loaders/pvp-sim.js
+loaders/pvp-rules.js
+edit/pvp-ops.js
+validate/pvp.js
 core/workspace.js
 core/client-sync.js
 core/after-save.js
@@ -102,4 +107,5 @@ ui/rates.js
 ui/upgrade.js
 ui/sets.js
 ui/weapons.js
+ui/pvp.js
 ui/app.js

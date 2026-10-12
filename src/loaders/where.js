@@ -10,7 +10,8 @@
 //   battlepass the live BPReward rows (nType of the login pass)
 //   part 2 (loaders/gifts.js + gifts-sim.js): level-up gifts (Event.lua; how often one character gets each: giftsSim.life),
 //              rebirth gifts (1Rebirth.inc), couple gifts (couple.inc; which levels a couple reaches: giftsSim.couple),
-//              Guild Siege Red Chips per siege (top 3 guilds, GuildCombatResultRanking) and weekly (GuildSiegePrize.cpp)
+//              Guild Siege prizes per siege (top 3 guilds, GuildCombatResultRanking) and weekly (GuildSiegePrize.cpp / .lua):
+//              PVP Tokens since 4fa49551 (the item the C++ names, gifts.compiled)
 // Each line has `facts`: the plain values the independent Python copy (tools/oracle_sim.py where) must find too.
 (function (FRE) {
   'use strict';
@@ -173,7 +174,7 @@
     if (gifts.rebirth) for (const [tier, g] of gifts.rebirth.gifts) add(g.id, { k: 'rebirth', tier, g });
     const reached = new Set(gifts.couple ? FRE.giftsSim.couple(genv, { sex: [0, 1] }).levels : []);
     if (gifts.couple) for (const row of gifts.couple.items) if (has(row.id)) add(row.id, { k: 'couple', row });
-    if (gifts.siege && has(genv.redChip)) { add(genv.redChip, { k: 'siege' }); add(genv.redChip, { k: 'weekly' }); }
+    if (gifts.siege && has(genv.prizeItem)) { add(genv.prizeItem, { k: 'siege' }); add(genv.prizeItem, { k: 'weekly' }); }
     return { idx, table, cache: { ex: new Map(), kinds }, gifts, pays, reached };
   }
   // the per-siege table: for n guilds that applied (MINJOINGUILDSIZE .. MAXJOINGUILDSIZE), the chips of rank 1-3
@@ -317,12 +318,12 @@
     const gifts = model.gifts;
     if (refs.some(r => r.k === 'siege') && gifts && gifts.siege) {
       const table = siegeTable(gifts), c = gifts.siege.config;
-      lines.push({ kind: 'siege', who: 'Guild Siege', table, config: c, from: gifts.siege.comp.from,
-        facts: { kind: 'siege', joinPenya: c.joinPenya, table } });
+      lines.push({ kind: 'siege', who: 'Guild Siege', table, config: c, from: gifts.siege.comp.from, mode: gifts.siege.comp.siege.mode,
+        perKill: gifts.siege.comp.perKill, fromLua: !!gifts.siege.comp.fromLua, facts: { kind: 'siege', joinPenya: c.joinPenya, table } });
     }
     if (refs.some(r => r.k === 'weekly') && gifts && gifts.siege) {
       const w = gifts.siege.comp.weekly;
-      lines.push({ kind: 'weekly', who: 'Guild Siege weekly', weekly: w, from: gifts.siege.comp.from,
+      lines.push({ kind: 'weekly', who: 'Guild Siege weekly', weekly: w, from: gifts.siege.comp.from, fromLua: !!gifts.siege.comp.fromLua,
         facts: { kind: 'weekly', guild: w.guild, total: w.total, perClass: w.perClass, mvp: w.mvp } });
     }
 
@@ -350,7 +351,7 @@
     }
     for (const l of lines.filter(l => l.kind === 'couple' && !l.reached)) checks.push({ severity: 'WARN', code: 'W_COUPLE_UNREACHABLE', text: `The couple level ${l.level} gift is never given: couples stop at level ${FRE.gifts.MAX_COUPLE_LEVEL} (couple.h:17).` });
     const sg = lines.find(l => l.kind === 'siege' || l.kind === 'weekly');
-    if (sg && gifts.siege.comp.changed.length) checks.push({ severity: 'WARN', code: 'W_CPP_CHANGED', text: `The Guild Siege C++ changed: ${gifts.siege.comp.changed.join('; ')}. The numbers shown for those parts are the editor's own copy (cda3af21).` });
+    if (sg && gifts.siege.comp.changed.length) checks.push({ severity: 'WARN', code: 'W_CPP_CHANGED', text: `The Guild Siege C++ changed: ${gifts.siege.comp.changed.join('; ')}. The numbers shown for those parts are the editor's own copy (6de6da39).` });
     const set = costs && costs.get(itemId);
     if (set && set.by.length) {
       const last = set.by[set.by.length - 1];

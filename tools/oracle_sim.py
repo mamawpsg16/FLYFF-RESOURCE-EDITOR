@@ -4090,6 +4090,11 @@ def db_run(root):
 #     copies, a loose file before data.res (file.cpp:273 CResFile::Open).
 #   Client/Client/DonationShopTree.inc: CWndDonationShop::OnInitialUpdate (WndDonationShop.cpp:346; 409 with donation-tree.diff), each opening.
 #   Client/Client/NpcBoard_<id>.inc: the npc-board.diff default: branch of CWndWorld::OnCommand, each click.
+#   Client/Client/GuildCombatTEXT_<n>_ENG/_USA.inc: CWndWorld::OnCommand MMI_GUILDCOMBAT_INFO_BOARD<n> (WndWorld.cpp:4600 / :4681),
+#     the game's own code, each click: no patch.
+#   FFAManager.inc / TDMManager.inc: Project.cpp:920 / :923 ReadConfig at WorldServer start, and the GM commands /ffareload /
+#     /tdmreload (FuncTextCmd.cpp:423 / :517): a restart OR the command. GuildCombat.txt: ThreadMng.cpp:293, WorldServer start.
+#   GuildSiegePrize.lua: eveschool.cpp:3665 LoadPrizes (WorldServer start) + databaseserver/Project.cpp:216 (DatabaseServer).
 #   Stop Server.bat kills Neuz.exe and all 7 servers; Start Server.bat starts them and then Client\- Start Game.bat.
 AS_SHARED = ['spec_item.txt', 'character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt',
              'defineneuz.h', 'definetext.h', 'etc.inc', 'etc.txt.txt', 'textclient.inc', 'textclient.txt.txt',
@@ -4099,17 +4104,17 @@ AS_TREE = 'client/donationshoptree.inc'
 # (path, line, text that must be on that line): the loads this table relies on
 AS_CITES = [
     ('WORLDSERVER/WorldServer.cpp', 397, 'OpenProject( "Masquerade.prj" )'),
-    ('_Common/Project.cpp', 790, 'LoadPropItem( "Spec_Item.txt"'),
-    ('_Common/Project.cpp', 796, '"character"'),
-    ('_Common/Project.cpp', 830, 'LoadEtc( "etc.inc" )'),
-    ('_Common/Project.cpp', 907, 'LoadBattlePass( "BattlePass.inc" )'),
-    ('_Common/Project.cpp', 932, 'LoadDonationShop( "DonationShop.inc" )'),
-    ('_Common/Project.cpp', 979, 'm_Exchange.Load_Script()'),
-    ('_Common/Project.cpp', 828, 'LoadPropMoverEx( "PropMoverEx.inc" )'),
-    ('_Common/Project.cpp', 3196, '#ifdef __WORLDSERVER'),
-    ('_Common/Project.cpp', 842, 'LoadGiftbox( "propGiftbox.inc" )'),
-    ('_Common/Project.cpp', 836, '#ifdef __WORLDSERVER'),
-    ('_Common/Project.cpp', 855, 'LoadPackItem( "propPackItem.inc" )'),
+    ('_Common/Project.cpp', 812, 'LoadPropItem( "Spec_Item.txt"'),
+    ('_Common/Project.cpp', 818, '"character"'),
+    ('_Common/Project.cpp', 852, 'LoadEtc( "etc.inc" )'),
+    ('_Common/Project.cpp', 935, 'LoadBattlePass( "BattlePass.inc" )'),
+    ('_Common/Project.cpp', 967, 'LoadDonationShop( "DonationShop.inc" )'),
+    ('_Common/Project.cpp', 1014, 'm_Exchange.Load_Script()'),
+    ('_Common/Project.cpp', 850, 'LoadPropMoverEx( "PropMoverEx.inc" )'),
+    ('_Common/Project.cpp', 3231, '#ifdef __WORLDSERVER'),
+    ('_Common/Project.cpp', 864, 'LoadGiftbox( "propGiftbox.inc" )'),
+    ('_Common/Project.cpp', 858, '#ifdef __WORLDSERVER'),
+    ('_Common/Project.cpp', 877, 'LoadPackItem( "propPackItem.inc" )'),
     ('_Common/ProjectCmn.cpp', 1256, '"character.txt.txt"'),
     ('_Common/ProjectCmn.cpp', 1259, '"etc.txt.txt"'),
     ('_Common/ProjectCmn.cpp', 1274, '"textClient.txt.txt"'),
@@ -4118,7 +4123,7 @@ AS_CITES = [
     ('_Common/ProjectCmn.cpp', 1383, '"defineText.h"'),
     ('_Common/ProjectCmn.cpp', 1376, '"defineItem.h"'),
     ('_Common/ProjectCmn.cpp', 1261, '"propItem.txt.txt"'),
-    ('_Common/Project.cpp', 768, 'm_modelMng.LoadScript( scanner.token )'),
+    ('_Common/Project.cpp', 790, 'm_modelMng.LoadScript( scanner.token )'),
     ('_Common/WorldFile.cpp', 269, '#ifdef __WORLDSERVER'),
     ('_Common/WorldFile.cpp', 305, '.dyo'),
     ('_Common/WorldFile.cpp', 382, '#endif'),
@@ -4126,24 +4131,34 @@ AS_CITES = [
     ('Neuz/Neuz.cpp', 1573, 'prj.OpenProject( "Masquerade.prj" )'),
     ('Neuz/Neuz.cpp', 1593, 'prj.LoadPreFiles()'),
     ('_Common/file.cpp', 273, 'CResFile::Open'),
-    ('_Common/Project.cpp', 983, 'prj.m_EventLua.LoadScript()'),
-    ('_Common/Project.cpp', 982, 'defined(__WORLDSERVER)'),
-    ('_Common/Project.cpp', 891, 'GuildBuffManage::loadGuildBuffFile()'),
-    ('_Common/Project.cpp', 893, 'ServerBuffManage::loadServerBuffFile()'),
-    ('_Common/Project.cpp', 892, '#ifdef __WORLDSERVER'),
-    ('_Common/Project.cpp', 928, 'LoadRebirthProp()'),
-    ('_Common/Project.cpp', 861, 'LoadPiercingAvail( "propItemEtc.inc" )'),
+    ('_Common/Project.cpp', 1018, 'prj.m_EventLua.LoadScript()'),
+    ('_Common/Project.cpp', 1017, 'defined(__WORLDSERVER)'),
+    ('_Common/Project.cpp', 913, 'GuildBuffManage::loadGuildBuffFile()'),
+    ('_Common/Project.cpp', 915, 'ServerBuffManage::loadServerBuffFile()'),
+    ('_Common/Project.cpp', 914, '#ifdef __WORLDSERVER'),
+    ('_Common/Project.cpp', 963, 'LoadRebirthProp()'),
+    ('_Common/Project.cpp', 883, 'LoadPiercingAvail( "propItemEtc.inc" )'),
     ('_Common/ProjectCmn.cpp', 1262, '"propItemEtc.txt.txt"'),
-    ('_Common/Project.cpp', 741, 'LoadExpTable( scanner.token )'),
-    # upgrade-fees.diff: the 8 compiled fee lines it replaces (one line lower once its #include is in)
-    ('WORLDSERVER/ItemUpgrade.cpp', (231, 232), 'int nCost = '),
-    ('WORLDSERVER/ItemUpgrade.cpp', (447, 448), 'int nPayPenya = '),
-    ('WORLDSERVER/ItemUpgrade.cpp', (797, 798), 'int nCost = '),
-    ('WORLDSERVER/DPSrvr.cpp', (6849, 6850), 'int nPayPenya = '),
-    ('WORLDSERVER/DPSrvr.cpp', (12498, 12499), 'nCost\t= '),
-    ('_Interface/WndPiercing.cpp', (111, 112), 'nCost = '),
-    ('_Interface/WndField.cpp', (28195, 28196), 'GetGold() < '),
-    ('_Interface/WndField.cpp', (28245, 28246), 'GetGold() < '),
+    ('_Common/Project.cpp', 763, 'LoadExpTable( scanner.token )'),
+    # upgrade-fees: the 8 fee lines (in V19 since 6af3976a)
+    ('WORLDSERVER/ItemUpgrade.cpp', 232, 'int nCost = '),
+    ('WORLDSERVER/ItemUpgrade.cpp', 450, 'int nPayPenya = '),
+    ('WORLDSERVER/ItemUpgrade.cpp', 804, 'int nCost = '),
+    ('WORLDSERVER/DPSrvr.cpp', (6960, 6959), 'int nPayPenya = '),
+    ('WORLDSERVER/DPSrvr.cpp', (12700, 12699), 'nCost\t= '),
+    ('_Interface/WndPiercing.cpp', 112, 'nCost = '),
+    ('_Interface/WndField.cpp', 28246, 'GetGold() < '),
+    ('_Interface/WndField.cpp', 28296, 'GetGold() < '),
+    # PvP Events
+    ('_Common/Project.cpp', 920, 'CFFAManager::GetInstance()->ReadConfig()'),
+    ('_Common/Project.cpp', 923, 'CTDMManager::GetInstance()->ReadConfig()'),
+    ('_Interface/FuncTextCmd.cpp', 423, 'CFFAManager::GetInstance()->ReadConfig( pUser )'),
+    ('_Interface/FuncTextCmd.cpp', 517, 'CTDMManager::GetInstance()->ReadConfig( pUser )'),
+    ('WORLDSERVER/ThreadMng.cpp', 293, 'g_GuildCombatMng.LoadScript( "GuildCombat.txt" )'),
+    ('_Common/eveschool.cpp', 3665, 'CGuildSiegePrize::GetInstance()->LoadPrizes()'),
+    ('databaseserver/Project.cpp', 216, 'CGuildSiegePrize::GetInstance()->LoadScript()'),
+    ('_Interface/WndWorld.cpp', 4600, 'FILE_GUILDCOMBAT_TEXT_6'),
+    ('_Interface/WndWorld.cpp', 4681, 'FILE_GUILDCOMBAT_TEXT_1'),
 ]
 AS_PATCHES = ('npc-board', 'donation-tree', 'upgrade-fees')
 # UpgradeFees.lua: read by _Common/UpgradeFees.h CUpgradeFees (upgrade-fees.diff) in the WorldServer AND Neuz, once per run;
@@ -4152,7 +4167,16 @@ AS_FEES = 'upgradefees.lua'
 
 
 def as_who(key):
-    """-> (WorldServer reads it at startup, how the game reads it: 'start' / 'open' / 'click' / None)"""
+    """-> (WorldServer reads it at startup (or 'reload:ffa' / 'reload:tdm': startup or the GM command), how the game reads it:
+    'start' / 'open' / 'click' / 'gsclick' (the Guild Siege boards, no patch) / None)"""
+    if key == 'ffamanager.inc':
+        return 'reload:ffa', None
+    if key == 'tdmmanager.inc':
+        return 'reload:tdm', None
+    if key in ('guildcombat.txt', 'guildsiegeprize.lua'):
+        return True, None
+    if re.fullmatch(r'client/guildcombattext_\d_(eng|usa)\.inc', key):
+        return False, 'gsclick'
     if key in AS_SHARED:
         return True, 'start'
     if key == AS_TREE:
@@ -4161,19 +4185,19 @@ def as_who(key):
         return False, 'click'
     if re.fullmatch(r'world/.+\.dyo', key):
         return True, None
-    if key == 'propmoverex.inc':          # drops are kept only in the WorldServer (Project.cpp:3196)
+    if key == 'propmoverex.inc':          # drops are kept only in the WorldServer (Project.cpp:3231)
         return True, None
-    if key == 'propgiftbox.inc':          # LoadGiftbox sits in #ifdef __WORLDSERVER (Project.cpp:836-847)
+    if key == 'propgiftbox.inc':          # LoadGiftbox sits in #ifdef __WORLDSERVER (Project.cpp:858-869)
         return True, None
-    if key in ('event.lua', 'serverbuff.txt'):    # Project.cpp:982 (__WORLDSERVER) / :892-893 (#ifdef __WORLDSERVER)
+    if key in ('event.lua', 'serverbuff.txt'):    # Project.cpp:1017 (__WORLDSERVER) / :892-893 (#ifdef __WORLDSERVER)
         return True, None
-    if key == 'guildbuff.txt':            # Project.cpp:891, outside the #ifdef: the game loads it too
+    if key == 'guildbuff.txt':            # Project.cpp:913, outside the #ifdef: the game loads it too
         return True, 'start'
-    if key == '1rebirth.inc':             # Project.cpp:928, outside any __WORLDSERVER #ifdef: the game parses its own copy
+    if key == '1rebirth.inc':             # Project.cpp:963, outside any __WORLDSERVER #ifdef: the game parses its own copy
         return True, 'start'
     if key == 'couple.inc':               # CCoupleProperty::Initialize in WORLDSERVER / databaseserver / Neuz couplehelper.cpp
         return True, 'start'
-    if key in ('propitemetc.inc', 'propitemetc.txt.txt', 'exptable.inc'):   # Project.cpp:861 / ProjectCmn.cpp:1262 / Project.cpp:741, no #ifdef
+    if key in ('propitemetc.inc', 'propitemetc.txt.txt', 'exptable.inc'):   # Project.cpp:883 / ProjectCmn.cpp:1262 / Project.cpp:763, no #ifdef
         return True, 'start'
     return True, 'start'          # unknown file: both, at startup
 
@@ -4185,7 +4209,9 @@ def as_compute(changes, client, patches, codes):
         need = set()
         for k in files:
             srv, cl = as_who(k)
-            if srv:
+            if isinstance(srv, str):
+                need.add(srv)
+            elif srv:
                 need.add('servers')
             if cl == 'start':
                 st = client.get(k, 'none')
@@ -4200,6 +4226,8 @@ def as_compute(changes, client, patches, codes):
                     need.add('patch:donation-tree')
             elif cl == 'click':
                 need |= {'click:board', 'patch:npc-board'}
+            elif cl == 'gsclick':
+                need.add('click:board')
             if k == AS_FEES:
                 need.add('patch:upgrade-fees')
         for pid in AS_PATCHES:
@@ -4215,6 +4243,8 @@ def as_compute(changes, client, patches, codes):
         steps.append(['game', None])
     else:
         steps += [[x, None] for x in ('reopen:donation', 'click:board') if x in every]
+    if 'servers' not in every:
+        steps += [[x, None] for x in ('reload:ffa', 'reload:tdm') if x in every]
     return {'steps': steps, 'changes': per, 'notes': notes, 'built': [p for p in AS_PATCHES if p in ticked]}
 
 
@@ -4223,7 +4253,9 @@ def as_run(root):
     rnd = random.Random(1019)
     keys = AS_SHARED + [AS_TREE, 'client/npcboard_282.inc', 'client/npcboard_300.inc', 'world/wdmadrigal/wdmadrigal.dyo',
                         'world/wdvolcane/wdvolcane.dyo', 'propmoverex.inc', 'propgiftbox.inc', 'propskill.txt',
-                        'event.lua', 'serverbuff.txt', 'guildbuff.txt', '1rebirth.inc', 'couple.inc', 'propitemetc.inc', 'propitemetc.txt.txt', 'exptable.inc', AS_FEES]
+                        'event.lua', 'serverbuff.txt', 'guildbuff.txt', '1rebirth.inc', 'couple.inc', 'propitemetc.inc', 'propitemetc.txt.txt', 'exptable.inc', AS_FEES,
+                        'ffamanager.inc', 'tdmmanager.inc', 'guildcombat.txt', 'guildsiegeprize.lua',
+                        'client/guildcombattext_5_eng.inc', 'client/guildcombattext_1_usa.inc']
     states = ['written', 'created', 'datares', 'different', 'none']
     pstates = ['in-source', 'missing', 'unknown', 'built']
     codesets = [[], ['DT_PATCH'], ['DT_ORDER'], ['NN_RULES_PATCH']]
@@ -6830,7 +6862,7 @@ def wh_facts(root, rates=None):
             if r['id'] in props:
                 add(r['id'], {'kind': 'couple', 'level': r['level'], 'sex': r['sex'], 'flag': r['flag'], 'minutes': max(0, r['minutes']),
                               'num': r['num'], 'reached': r['level'] in reached})
-    red = D.get('II_CHP_RED')
+    red = D.get(G['comp']['item'])
     if G['siege'] is not None and red is not None and (red & 0xFFFFFFFF) in props:
         c = G['siege']
         table = [[n] + [gf_chips(c['join'], n, k, G['comp']) for k in range(min(3, n))] for n in range(max(1, c['min']), max(c['min'], c['max']) + 1)]
@@ -6909,9 +6941,11 @@ GF_GENERAL = 120       # MAX_GENERAL_LEVEL
 GF_LEGEND = 130        # MAX_LEGEND_LEVEL
 GF_THIRD = 150         # MAX_3RD_LEGEND_LEVEL
 GF_COUPLE_MAX = 21     # CCouple::eMaxLevel (couple.h:17)
-GF_SIEGE = ([0.9, 0.00001, 0.1], [0.7, 0.2, 0.1])                       # eveschool.cpp:1702-1712
-GF_WEEKLY = {'guild': [3000, 1500, 900, 360, 240], 'total': [1000, 500, 300, 200, 150, 120, 100, 70, 40, 20],
-             'perClass': [500, 250, 150, 100, 75, 60, 50, 35, 20, 10], 'mvp': [1500, 750, 450, 300, 225, 180, 150, 105, 60, 30]}
+GF_SIEGE = ([0.9, 0.00001, 0.1], [0.7, 0.2, 0.1])                       # the fChipNum formula (eveschool.cpp before 6de6da39)
+# V19 6de6da39 (PvP events part B): GetSiegePrize( i ) = s_nSiegePrize[3], PVP Tokens (4fa49551), s_nTokensPerKill, ReadPrizes
+GF_FIXED, GF_PERKILL, GF_ITEM, GF_LUA = [50, 14, 7], 2, 'II_CHP_PVP_TOKEN', True
+GF_WEEKLY = {'guild': [600, 300, 180, 72, 48], 'total': [200, 100, 60, 40, 30, 24, 20, 14, 8, 4],
+             'perClass': [100, 50, 30, 20, 15, 12, 10, 7, 4, 2], 'mvp': [300, 150, 90, 60, 45, 36, 30, 21, 12, 6]}
 
 
 def gf_f32(x):
@@ -7143,27 +7177,51 @@ def gf_siege_cfg(data, D):
 
 def gf_compiled(cpp):
     """the amounts compiled into the C++ (cpp: {'eveschool.cpp': text, 'guildsiegeprize.cpp': text} or None)"""
-    out = {'factors': list(GF_SIEGE[0]), 'shares': list(GF_SIEGE[1]), 'weekly': {k: list(v) for k, v in GF_WEEKLY.items()}, 'from': 'builtin', 'changed': 0}
+    out = {'mode': 'fixed', 'fixed': list(GF_FIXED), 'factors': list(GF_SIEGE[0]), 'shares': list(GF_SIEGE[1]), 'perKill': GF_PERKILL, 'item': GF_ITEM,
+           'lua': GF_LUA, 'weekly': {k: list(v) for k, v in GF_WEEKLY.items()}, 'from': 'builtin', 'changed': 0}
     if not cpp:
         return out
-    out['from'] = 'cpp'
     ev, gp = cpp.get('eveschool.cpp'), cpp.get('guildsiegeprize.cpp')
+    if ev is None and gp is None:
+        return out
+    out['from'] = 'cpp'
     if ev is None:
         out['changed'] += 1
     else:
-        m = re.search(r'fChipNum = m_nJoinPanya \* vecGCRanking\.size\(\) \* ([0-9.]+)f \* ([0-9.]+)f \* ([0-9.]+)f;', ev)
+        # GuildCombatResultRanking .. GuildCombatCloseTeleport: the item handed out
+        a = ev.find('void CGuildCombat::GuildCombatResultRanking')
+        b = ev.find('void CGuildCombat::GuildCombatCloseTeleport')
+        body = ev[a:b] if a >= 0 and b > a else ev[a:] if a >= 0 else ev
+        m = re.search(r'm_dwItemId\s*=\s*(II_\w+)\s*;', body)
         if m:
-            out['factors'] = [float(x) for x in m.groups()]
+            out['item'] = m.group(1)
         else:
             out['changed'] += 1
-        sh = re.findall(r'case (\d) :[^\n]*\n\s*fChipNum \*= ([0-9.]+)f', ev)
-        got = {int(a): float(b) for a, b in sh if int(a) < 3}
-        if len(got) == 3:
-            out['shares'] = [got[0], got[1], got[2]]
+        if re.search(r'GetSiegePrize\(\s*i\s*\)', ev):
+            out['mode'] = 'fixed'
         else:
-            out['changed'] += 1
+            out['mode'] = 'formula'
+            m = re.search(r'fChipNum = m_nJoinPanya \* vecGCRanking\.size\(\) \* ([0-9.]+)f \* ([0-9.]+)f \* ([0-9.]+)f;', ev)
+            if m:
+                out['factors'] = [float(x) for x in m.groups()]
+            else:
+                out['changed'] += 1
+            sh = re.findall(r'case (\d) :[^\n]*\n\s*fChipNum \*= ([0-9.]+)f', ev)
+            got = {int(a): float(b) for a, b in sh if int(a) < 3}
+            if len(got) == 3:
+                out['shares'] = [got[0], got[1], got[2]]
+            else:
+                out['changed'] += 1
         if not re.search(r'if\(\s*i\s*>=\s*3\s*\)\s*break;', ev):
             out['changed'] += 1
+    m1 = re.search(r'static\s+int\s+s_nTokensPerKill\s*=\s*(\d+)\s*;', gp or '')
+    m2 = re.search(r'#define\s+GS_TOKEN_PER_KILL\s+(\d+)', ev or '')
+    if m1:
+        out['perKill'] = int(m1.group(1))
+    elif m2:
+        out['perKill'] = int(m2.group(1))
+    elif ev is not None:
+        out['perKill'] = 0                       # before 4fa49551: no token per kill
     if gp is None:
         out['changed'] += 1
     else:
@@ -7177,11 +7235,21 @@ def gf_compiled(cpp):
             out['changed'] += 1
         if not re.search(r'LogPlayerBoard\(\s*pQuery,\s*vecByPoint,\s*10,', gp):
             out['changed'] += 1
+        out['lua'] = 'CGuildSiegePrize::ReadPrizes' in gp
+        if out['mode'] == 'fixed':
+            m = re.search(r's_nSiegePrize\[\s*3\s*\]\s*=\s*\{([^}]*)\}', gp)
+            if m:
+                out['fixed'] = [int(x) for x in m.group(1).replace(' ', '').split(',') if x.strip()]
+            else:
+                out['changed'] += 1
     return out
 
 
 def gf_chips(join, n, rank, comp):
-    """fChipNum = m_nJoinPanya * size() * 0.9f * 0.00001f * 0.1f (unsigned int product, then float), × the share, (int), min 1"""
+    """fixed (6de6da39): GetSiegePrize( rank ) (0 when there is no such place); else fChipNum = m_nJoinPanya * size() * 0.9f *
+    0.00001f * 0.1f (unsigned int product, then float), × the share, (int), min 1"""
+    if comp.get('mode') == 'fixed':
+        return comp['fixed'][rank] if rank < len(comp['fixed']) else 0
     x = gf_f32(float((join * n) & 0xFFFFFFFF))
     for k in comp['factors']:
         x = gf_f32(x * gf_f32(k))
@@ -7374,6 +7442,8 @@ def gf_siege_run(G, props, guilds, red):
     ch = props.get(red, (1, 0))[1]
     for r in range(min(3, len(v))):
         chips = gf_chips(cfg['join'], len(v), r, comp)
+        if chips < 1:                            # 6de6da39: if( itemElem.m_nItemNum < 1 ) continue;
+            continue
         for k, m in enumerate(guilds[v[r]]['lineup']):
             if m[2]:
                 bag = GfBag(props, m[3])
@@ -7412,13 +7482,18 @@ def gf_world(root, cpp=None, now=None):
     G = {'levelup': gf_levelup(rd('Event.lua'), D, now or DR_FIXED_NOW), 'rebirth': gf_rebirth(rd('1Rebirth.inc'), D, props),
          'couple': gf_couple(rd('couple.inc'), D), 'maxlevel': gf_max_level(rd('expTable.inc')),
          'siege': gf_siege_cfg(rd('GuildCombat.txt'), D), 'comp': gf_compiled(cpp)}
+    lua = rd('GuildSiegePrize.lua')
+    if G['comp']['lua'] and lua is not None:     # ReadPrizes over the compiled numbers (the servers with part B)
+        pz = pv_prizes(lua.decode('latin-1'))['prizes']
+        G['comp'].update({'perKill': pz['TokensPerKill'], 'fixed': list(pz['SiegePrize']),
+                          'weekly': {'guild': pz['GuildPrize'], 'total': pz['ClassPrize'], 'perClass': pz['ClassPerClassPrize'], 'mvp': pz['MvpPrize']}})
     props[FILLER] = (1, 0)
     return G, props, D
 
 
 def gf_cases(G, props, D, seed):
     """life / couple / siege / weekly cases on one world, the results of this copy"""
-    red = D.get('II_CHP_RED', 0) & 0xFFFFFFFF
+    red = D.get(G['comp']['item'], 0) & 0xFFFFFFFF        # the siege prize item (PVP Tokens since 4fa49551)
     R = Rand(seed)
     out = {'life': [], 'couple': [], 'siege': [], 'weekly': [], 'pays': [], 'parsed': {}}
     accounts = sorted({g['account'] for g in (G['levelup'] or {'gifts': []})['gifts']} | {'player'})
@@ -7456,7 +7531,7 @@ def gf_cases(G, props, D, seed):
         'couple': None if G['couple'] is None else {'exp': G['couple']['exp'], 'items': [[r['level'], r['id'], r['sex'], r['flag'], r['minutes'], r['num']] for r in G['couple']['items']],
                                                     'bad': len(G['couple']['bad'])},
         'maxlevel': G['maxlevel'], 'siege': G['siege'],
-        'comp': {'factors': G['comp']['factors'], 'shares': G['comp']['shares'], 'weekly': G['comp']['weekly'], 'from': G['comp']['from'], 'changed': G['comp']['changed']},
+        'comp': {k: G['comp'][k] for k in ('mode', 'fixed', 'factors', 'shares', 'perKill', 'item', 'lua', 'weekly', 'from', 'changed')},
         'chips': [[n, [gf_chips(G['siege']['join'], n, r, G['comp']) for r in range(3)]] for n in range(1, 13)] if G['siege'] else [],
     }
     return out
@@ -7494,6 +7569,19 @@ GF_COUPLE = ('Level\r\n{\r\n\t0\r\n\t5\r\n\t9\r\n\t9\r\n\t20\r\n\t15\r\n\t30\r\n
              'SkillKind\r\n{\r\n\tII_COUPLE_BUFF_POWER_01\r\n}\r\nSkillLevel\r\n{\r\n\t1\t0\r\n\t3\t1\r\n}\r\n')
 
 
+GF_OLD_EV = ('void CGuildCombat::GuildCombatResultRanking()\r\n{\r\n\tfor( int i=0; i<(int)( vecGCRanking.size() ); i++ )\r\n\t{\r\n\t\tif( i >= 3 ) break;\r\n'
+             '\t\tCItemElem itemElem;\r\n\t\titemElem.m_dwItemId = II_CHP_RED;\r\n'
+             '\t\tfloat fChipNum = m_nJoinPanya * vecGCRanking.size() * 0.9f * 0.00001f * 0.1f;\r\n\t\tswitch( i )\r\n\t\t{\r\n'
+             '\t\t\tcase 0 :\t// 1\r\n\t\t\t\tfChipNum *= 0.7f;\r\n\t\t\t\tbreak;\r\n\t\t\tcase 1 :\t// 2\r\n\t\t\t\tfChipNum *= 0.2f;\r\n\t\t\t\tbreak;\r\n'
+             '\t\t\tcase 2 :\t// 3\r\n\t\t\t\tfChipNum *= 0.1f;\r\n\t\t\t\tbreak;\r\n\t\t}\r\n\t}\r\n}\r\nvoid CGuildCombat::GuildCombatCloseTeleport()\r\n{\r\n}\r\n')
+GF_OLD_GP = ('static const int s_nGuildPrize[5]  = { 3000, 1500, 900, 360, 240 };\r\nstatic const int s_nClassPrize[10] = { 1000, 500, 300, 200, 150, 120, 100, 70, 40, 20 };\r\n'
+             'static const int s_nClassPerClassPrize[10] = { 500, 250, 150, 100, 75, 60, 50, 35, 20, 10 };\r\n'
+             'static const int s_nMvpPrize[10]   = { 1500, 750, 450, 300, 225, 180, 150, 105, 60, 30 };\r\n'
+             '\tfor( int nRank = 0; nRank < 5 && !vecGuild.empty(); nRank++ )\r\n\tLogPlayerBoard( pQuery, vecByPoint, 10, s_nClassPrize, "CLASS" );\r\n')
+GF_LUA_FILE = ('dofile( ".\\\\LuaFunc\\\\GuildSiegePrizeFunc.lua" )\r\nWeeklyPrizeTime = "Mon 00:00"\r\nTokensPerKill = 3\r\n'
+               'SiegePrize = { 51, 0, 8 }\r\nGuildPrize = { 1, 2, 3, 4, 5, 6 }\r\nMvpPrize = "x"\r\nClassPrize = { 10, "20", 7.5, 40 }\r\n')
+
+
 def gf_run(root):
     srcdir = os.path.join(os.path.dirname(os.path.abspath(root)), 'src')
     cpp = {}
@@ -7514,6 +7602,10 @@ def gf_run(root):
         {'name': 'changed C++: shares 50/30/20, a missing ladder and the top 5 rule changed',
          'files': {}, 'cpp': {'eveschool.cpp': ev.replace('fChipNum *= 0.7f', 'fChipNum *= 0.5f').replace('fChipNum *= 0.2f', 'fChipNum *= 0.3f').replace('fChipNum *= 0.1f;\n', 'fChipNum *= 0.2f;\n').replace('fChipNum *= 0.1f;\r\n', 'fChipNum *= 0.2f;\r\n'),
                               'guildsiegeprize.cpp': gp.replace('s_nMvpPrize[10]', 's_nMvpReward[10]').replace('nRank < 5 && !vecGuild.empty()', 'nRank < 3 && !vecGuild.empty()')}},
+        {'name': 'the C++ before part B (the fee formula, Red Chips, no per-kill tokens)', 'files': {}, 'cpp': {'eveschool.cpp': GF_OLD_EV, 'guildsiegeprize.cpp': GF_OLD_GP}},
+        {'name': 'part B with a made-up GuildSiegePrize.lua', 'files': {'GuildSiegePrize.lua': GF_LUA_FILE}, 'cpp': cpp or None},
+        {'name': 'part B, places 0 / 5 / 1 compiled, no Lua file read', 'files': {},
+         'cpp': {'eveschool.cpp': ev, 'guildsiegeprize.cpp': gp.replace('s_nSiegePrize[3] = { 50, 14, 7 }', 's_nSiegePrize[3] = { 0, 5, 1 }').replace('CGuildSiegePrize::ReadPrizes', 'CGuildSiegePrize::ReadNothing')}},
     ]
     import shutil, tempfile
     for k, v in enumerate(variants):
@@ -10106,6 +10198,696 @@ def we_run_all(root):
         out['edits'].append({'ops': sc, 'sha': hashlib.sha256(b).hexdigest(), 'size': len(b)})
     return out
 
+# ===================================================================================================
+# pvp: PvP Events (FFA, TDM, Guild Siege), straight from the C++ (FLYFF-V19-SOURCE/Source/Source/_Common), not from the JS copy:
+#   FFAManager.cpp:91 / TDMManager.cpp:99 ReadConfig: a CScript; keys compared as written; GetNumber resolves #defines; the loop
+#     stops at the first error; then the range checks in this order; any error = the event is off (no config).
+#   FFAManager.cpp:222 GetNextScheduledStart (today .. today + 7, day 0 = every day, CTime::GetDayOfWeek 1 = Sunday);
+#     :284 Process: CLOSED -> Announce when the next start is <= ANNOUNCE minutes away -> at the start OpenFFA (registered <
+#     MIN_MEMBERS: CancelFFA -> CLOSED) -> PREPARE minutes -> StartBattle (inside < 2: cancelled) -> WAR minutes -> ENDING 15 s -> CLOSED.
+#   :856 CancelPlayer: back = paid - (int)( (__int64)paid * cut / 100 ); purse unless it would pass INT_MAX (mail); :762 RefundFee.
+#   :594 GetRanking (insertion sort from the std::map order) / :644 EndBattle (top 3 need 1+ kill); TDMManager.cpp:1108 MakeTeams
+#     (pairs (level, id) sorted, reversed, snake R B B R), :560 an away life = +1 to the other team, :696 EndBattle (team prize for
+#     the winning team's players with 1+ kill, MVP = rank 1 with 1+ kill, a draw = no team prize).
+#   eveschool.cpp:3658 LoadScript (a bare CScanner: no #defines; __MAINSERVER: AUTO_OPEN_IDC), :3456 the auto open (the weekday's
+#     row, its minute, MINJOINGUILDSIZE guilds), :2203 ProcessCommand (a line runs, then waits its dwTime), :2415
+#     GetNextGuildCobmatTime, :512 MulDiv( bid, REQUESTCANCLEPERCENT, 100 ).
+#   GuildSiegePrize.cpp ReadPrizes (6de6da39): GSReadPrizeValue = lua_isnumber, nMin <= d <= 32767, d == (int)d.
+#   Edits: the editor's way of writing each value (only the number changes; new lines copy the line above).
+# Not modelled: early battle ends, GM commands, a Lua value from another global or an expression, [n] = keys in a Lua list.
+# ===================================================================================================
+import datetime as _dt
+PV_INT_MAX = 2147483647
+PV_SCALARS = [('COST', 0, 'cost'), ('CANCEL_CUT', 20, 'cancelCut'), ('MIN_LEVEL', 1, 'level'), ('MIN_MEMBERS', 2, 'min'),
+              ('MAX_MEMBERS', 30, 'max'), ('LIFES', 10, 'lives'), ('ANNOUNCE_TIME', 10, 'announce'), ('RESPAWN_TIME', 10, 'respawn'),
+              ('PREPARATION_TIME', 1, 'prepare'), ('WAR_TIME', 10, 'war')]
+PV_PRIZES = [('SiegePrize', [50, 14, 7]), ('GuildPrize', [600, 300, 180, 72, 48]), ('ClassPrize', [200, 100, 60, 40, 30, 24, 20, 14, 8, 4]),
+             ('ClassPerClassPrize', [100, 50, 30, 20, 15, 12, 10, 7, 4, 2]), ('MvpPrize', [300, 150, 90, 60, 45, 36, 30, 21, 12, 6])]
+PV_WEEK0 = 1791676800            # 2026-10-11 00:00, a Sunday (wall clock as UTC seconds)
+PV_DAY = 86400
+
+
+def pv_atoi(s):
+    m = re.match(r'\s*([+-]?)(\d+)', s)
+    if not m:
+        return 0
+    v = int(m.group(2)) * (-1 if m.group(1) == '-' else 1)
+    return max(-2147483648, min(PV_INT_MAX, v))
+
+
+class PvScan:
+    """CScanner / CScript over tokens(): get() -> the next token or None; number() = GetNumber (defines when D is given)"""
+    def __init__(self, text, D=None):
+        self.t = [x.decode('latin-1') for x in tokens(text.encode('latin-1'))]
+        self.k, self.D = 0, D
+
+    def get(self):
+        x = self.t[self.k] if self.k < len(self.t) else None
+        self.k += 1
+        return x
+
+    def val(self, x):
+        if self.D is not None and x in self.D:
+            return s32(self.D[x])
+        if x.lower().startswith('0x'):
+            try:
+                return s32(int(x[2:] or '0', 16))
+            except ValueError:
+                return 0
+        return pv_atoi(x)
+
+    def number(self):
+        x = self.get()
+        if x is None or x == '':
+            return 0
+        if x == '=':
+            return -1
+        if x in ('-', '+'):
+            y = self.get() or ''
+            v = self.val(y)
+            return s32(-v) if x == '-' else v
+        return self.val(x)
+
+
+def pv_read(text, kind, D, props):
+    """ReadConfig -> (cfg or None, error text or None)"""
+    P = kind.upper()
+    s = PvScan(text, D)
+    v = {f: d for _, d, f in PV_SCALARS}
+    rid, reward, top, team, mvp, times, boxes, err = -1, 0, [0, 0, 0], 0, 0, [], {}, None
+    w = s.get()
+    while w is not None and err is None:
+        sc = [f for k, d, f in PV_SCALARS if w == P + '_' + k]
+        if sc:
+            v[sc[0]] = s.number()
+        elif w == P + '_REWARD':
+            rid = s.number(); reward = s.number()
+        elif kind == 'ffa' and w == 'FFA_TOP_REWARD':
+            top = [s.number(), s.number(), s.number()]
+        elif kind == 'tdm' and w == 'TDM_TEAM_REWARD':
+            team = s.number()
+        elif kind == 'tdm' and w == 'TDM_MVP_REWARD':
+            mvp = s.number()
+        elif kind == 'tdm' and w in ('TDM_WAIT', 'TDM_SPAWN_RED', 'TDM_SPAWN_BLUE'):
+            b = [s.number() for _ in range(5)]
+            if b[2] <= b[0] or b[3] <= b[1]:
+                err = '%s x1 z1 x2 z2 height: x2 must be > x1 and z2 > z1' % w
+            elif b[4] <= 0:
+                err = '%s x1 z1 x2 z2 height: the height (5th number) is missing or not > 0' % w
+            else:
+                boxes[w[4:]] = b
+        elif w == P + '_BEGIN':
+            d, h, m = s.number(), s.number(), s.number()
+            if d < 0 or d > 7 or h < 0 or h > 23 or m < 0 or m > 59:
+                err = 'bad %s_BEGIN %d %d %d (day 0-7, hour 0-23, minute 0-59)' % (P, d, h, m)
+            else:
+                times.append([d, h, m])
+        else:
+            err = 'unknown word "%s"' % w
+        w = s.get()
+    prop = props.get(rid & 0xFFFFFFFF) if rid != -1 else None
+    if err is None:
+        checks = [(v['cost'] < 0, P + '_COST < 0'), (not 0 <= v['cancelCut'] <= 100, P + '_CANCEL_CUT must be 0 - 100'),
+                  (v['level'] < 1, P + '_MIN_LEVEL < 1'), (v['min'] < 2, P + '_MIN_MEMBERS < 2'),
+                  (v['max'] < v['min'] or v['max'] > 100, '%s_MAX_MEMBERS must be %s_MIN_MEMBERS - 100' % (P, P)),
+                  (v['lives'] < 1, P + '_LIFES < 1'), (not 1 <= v['announce'] <= 60, P + '_ANNOUNCE_TIME must be 1 - 60 minutes'),
+                  (not 0 <= v['respawn'] <= 60, P + '_RESPAWN_TIME must be 0 - 60 seconds'),
+                  (not 0 <= v['prepare'] <= 30, P + '_PREPARATION_TIME must be 0 - 30 minutes'),
+                  (not 1 <= v['war'] <= 120, P + '_WAR_TIME must be 1 - 120 minutes'), (prop is None, P + '_REWARD: unknown item')]
+        for bad, text_ in checks:
+            if bad:
+                err = text_; break
+        if err is None and not 0 <= reward <= s32(prop[0]):
+            err = P + "_REWARD: amount must be 0 - the item's stack size"
+        if err is None and kind == 'ffa' and any(not 0 <= x <= 9999 for x in top):
+            err = 'FFA_TOP_REWARD: amounts must be 0 - 9999'
+        if err is None and kind == 'tdm':
+            if not 0 <= team <= 9999:
+                err = 'TDM_TEAM_REWARD must be 0 - 9999'
+            elif not 0 <= mvp <= 9999:
+                err = 'TDM_MVP_REWARD must be 0 - 9999'
+            elif len(boxes) < 3:
+                err = 'TDM_WAIT, TDM_SPAWN_RED and TDM_SPAWN_BLUE are all needed'
+    if err is not None:
+        return None, err
+    cfg = dict(v)
+    cfg.update({'rewardId': rid, 'reward': reward, 'times': times})
+    if kind == 'ffa':
+        cfg['top'] = top
+    else:
+        cfg.update({'team': team, 'mvp': mvp, 'boxes': {k: boxes[k] for k in sorted(boxes)}})
+    return cfg, None
+
+
+def pv_gc(text):
+    """CGuildCombat::LoadScript -> {'ok', 'rows', 'byDay', 'lastDay', 'join', 'min', 'max', 'cancel', 'not', 'open'}"""
+    s = PvScan(text)
+    out = {'ok': False, 'rows': [], 'byDay': [None] * 7, 'lastDay': 0, 'join': None, 'min': 0, 'max': 0, 'cancel': 0, 'not': 0, 'open': []}
+    w = s.get()
+    while w is not None:
+        cnt = -1
+        if w == 'AUTO_OPEN_IDC':
+            s.get()
+            x = s.get()
+            while (x or '')[:1] != '}':
+                if len(out['rows']) >= 7:
+                    return out
+                d = pv_atoi(x or '')
+                out['lastDay'] = d
+                if d <= 0 or d > 7:
+                    return out
+                h = s.number()
+                if h < 0 or h > 24:
+                    return out
+                m = s.number()
+                if m < 0 or m > 59:
+                    return out
+                out['rows'].append([d, h, m])
+                out['byDay'][d - 1] = [d, h, m]
+                x = s.get()
+        elif w == 'JOINPENYA':
+            out['join'] = s.number()
+        elif w == 'MINJOINGUILDSIZE':
+            out['min'] = s.number()
+        elif w == 'MAXJOINGUILDSIZE':
+            out['max'] = s.number()
+        elif w == 'REQUESTCANCLEPERCENT':
+            out['cancel'] = s.number()
+        elif w == 'NOTREQUESTPERCENT':
+            out['not'] = s.number()
+        elif w in ('OPEN', 'MAINTENANCE', 'WAR'):
+            cnt = ('OPEN', 'MAINTENANCE', 'WAR').index(w)
+        if cnt != -1:
+            s.number(); s.get()
+            x = s.get()
+            lines = []
+            while (x or '')[:1] != '}':
+                if x is None:
+                    return out              # the server loops forever
+                lines.append([x, s.number() & 0xFFFFFFFF, s.number(), s.number()])
+                x = s.get()
+            if cnt == 0:
+                out['open'] = lines
+        w = s.get()
+    out['ok'] = True
+    return out
+
+
+def pv_timeline(gc):
+    at, ms = {}, 0
+    names = {102: 'enter', 103: 'prepare', 104: 'fight', 105: 'end', 107: 'out'}
+    for state, t, cmd, par in gc['open']:
+        if state == 'WARSTATE' and cmd in names and names[cmd] not in at:
+            at[names[cmd]] = ms // 1000 if ms % 1000 == 0 else ms / 1000
+        ms += t
+    tl = {k: at.get(k) for k in ('enter', 'prepare', 'fight', 'end', 'out')}
+    tl['total'] = ms // 1000 if ms % 1000 == 0 else ms / 1000
+    return tl
+
+
+def pv_lua_number(raw):
+    """lua_isnumber + lua_tonumber of a literal as written (a quoted number counts) -> float or None"""
+    s = raw.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in '"\'':
+        s = s[1:-1].strip()
+    m = re.fullmatch(r'([-+]?)(0[xX][0-9a-fA-F]+|\d+\.?\d*(?:[eE][-+]?\d+)?|\.\d+(?:[eE][-+]?\d+)?)', s)
+    if not m:
+        return None
+    v = float(int(m.group(2), 16)) if m.group(2)[:2].lower() == '0x' else float(m.group(2))
+    return -v if m.group(1) == '-' else v
+
+
+def pv_prizes(text):
+    """ReadPrizes after RunScript -> {'prizes', 'failed', 'bad'} (text None: no file)"""
+    pz = {'TokensPerKill': 2}
+    pz.update({n: list(d) for n, d in PV_PRIZES})
+    if text is None:
+        return {'prizes': pz, 'failed': False, 'bad': 0}
+    tk, errs = up_lua_tokens(text)
+    depth = []
+    for k in tk:
+        if k[1] in ('(', '[', '{'):
+            depth.append(k[1])
+        elif k[1] in (')', ']', '}'):
+            if not depth or depth[-1] != {')': '(', ']': '[', '}': '{'}[k[1]]:
+                errs.append(k[2]); break
+            depth.pop()
+    if errs or depth:
+        return {'prizes': pz, 'failed': True, 'bad': 0}
+    last = {}
+    i = 0
+    while i < len(tk):
+        k = tk[i]
+        if k[0] == 'w' and i + 1 < len(tk) and tk[i + 1][1] == '=' and (i == 0 or tk[i - 1][1] not in ('.', ':')):
+            j = i + 2
+            if j < len(tk) and tk[j][1] == '{':
+                e = j
+                while e < len(tk) and tk[e][1] != '}':
+                    e += 1
+                items, cur = [], []
+                for x in tk[j + 1:e] + [('d', ',', 0, 0)]:
+                    if x[1] in (',', ';'):
+                        if cur:
+                            items.append(None if any(c[1] == '=' for c in cur) else text[cur[0][2]:cur[-1][3]])
+                        cur = []
+                    else:
+                        cur.append(x)
+                last[k[1]] = ('list', [x for x in items if x is not None])
+                i = e + 1; continue
+            if j < len(tk):
+                e = j + 1 if tk[j][1] in ('-', '+') and j + 1 < len(tk) else j
+                last[k[1]] = ('one', text[tk[j][2]:tk[e][3]])
+                i = e + 1; continue
+        i += 1
+    bad = 0
+
+    def ok(raw, lo):
+        d = pv_lua_number(raw)
+        return int(d) if d is not None and lo <= d <= 32767 and d == int(d) else None
+    if 'TokensPerKill' in last:
+        kind, raw = last['TokensPerKill']
+        if kind == 'one' and raw != 'nil':
+            v = ok(raw, 0)
+            if v is None:
+                bad += 1
+            else:
+                pz['TokensPerKill'] = v
+        elif kind == 'list':
+            bad += 1
+    for name, d in PV_PRIZES:
+        if name not in last:
+            continue
+        kind, val = last[name]
+        if kind == 'one':
+            if val != 'nil':
+                bad += 1
+            continue
+        for i, raw in enumerate(val[:len(d)]):
+            if raw == 'nil':
+                continue
+            v = ok(raw, 1)
+            if v is None:
+                bad += 1
+            else:
+                pz[name][i] = v
+    return {'prizes': pz, 'failed': False, 'bad': bad}
+
+
+# ---------------------------------------------------------------- the clock (wall seconds as UTC)
+def pv_wday(t):
+    return _dt.datetime.fromtimestamp(t, _dt.timezone.utc).isoweekday() % 7 + 1      # 1 = Sunday
+
+
+def pv_next(times, now):
+    best = 0
+    day0 = now - now % PV_DAY
+    for off in range(8):
+        d = day0 + off * PV_DAY
+        wd = pv_wday(d)
+        for dd, h, m in times:
+            if dd != 0 and dd != wd:
+                continue
+            t = d + h * 3600 + m * 60
+            if t > now and (best == 0 or t < best):
+                best = t
+    return best
+
+
+def pv_runs(cfg, frm, until, reg=None, joined=None):
+    out, now, last = [], frm, 0
+    while True:
+        st = pv_next(cfg['times'], now)
+        if st == 0 or st == last:
+            break
+        ann = max(now, st - cfg['announce'] * 60)
+        if ann > until:
+            break
+        last = st
+        i = len(out)
+        r = reg[i % len(reg)] if reg else cfg['min']
+        run = [ann, st, None, None, st, None, []]
+        if r < cfg['min']:
+            run[5] = 'registered'
+        else:
+            run[2] = st + cfg['prepare'] * 60
+            j = joined[i % len(joined)] if joined else r
+            if j < 2:
+                run[5] = 'joined'; run[4] = run[2]
+            else:
+                run[3] = run[2] + cfg['war'] * 60
+                run[4] = run[3] + 15
+        t = pv_next(cfg['times'], st)
+        while t and t <= run[4]:
+            run[6].append(t)
+            t = pv_next(cfg['times'], t)
+        out.append(run)
+        now = run[4]
+    return out
+
+
+def pv_sieges(gc, tl, frm, until, guilds):
+    out = []
+    d = frm - frm % PV_DAY
+    while d <= until:
+        row = gc['byDay'][pv_wday(d) - 1]
+        if row and row[1] <= 23:
+            t = d + row[1] * 3600 + row[2] * 60
+            if t + 59 >= frm and t <= until and guilds >= gc['min']:
+                f = lambda k: None if tl[k] is None else t + tl[k]
+                out.append([t, f('enter'), f('prepare'), f('fight'), f('end'), f('out'), t + tl['total']])
+        d += PV_DAY
+    return out
+
+
+def pv_shown(gc, now):
+    """GetNextGuildCobmatTime"""
+    if not gc['lastDay'] or gc['byDay'][gc['lastDay'] - 1] is None:
+        return None
+    row = gc['byDay'][gc['lastDay'] - 1]
+    nd = gc['lastDay'] - pv_wday(now)
+    if nd > 0:
+        base = now + nd * PV_DAY
+    elif nd == 0:
+        base = now if now % PV_DAY <= row[1] * 3600 + row[2] * 60 else now + gc['lastDay'] * PV_DAY
+    else:
+        base = now + (7 + nd) * PV_DAY
+    return base - base % PV_DAY + row[1] * 3600 + row[2] * 60
+
+
+# ---------------------------------------------------------------- money and tokens
+def pv_cancel(cut, paid, gold):
+    back = paid - (paid * cut) // 100          # paid >= 0, cut 0-100: (__int64) then / 100
+    if back > 0 and gold + back <= PV_INT_MAX:
+        return [back, 'purse', gold + back]
+    if back > 0:
+        return [back, 'mail', gold]
+    return [0, None, gold]
+
+
+def pv_refund(paid, gold):
+    if paid <= 0:
+        return [0, None, gold]
+    return [paid, 'purse', gold + paid] if gold + paid <= PV_INT_MAX else [paid, 'mail', gold]
+
+
+def pv_muldiv(a, b, c):
+    return (a * b + c // 2) // c
+
+
+def pv_rank(players):
+    v = sorted(players, key=lambda p: p['id'])
+    for i in range(1, len(v)):
+        j = i
+        while j > 0 and (v[j]['kills'] > v[j - 1]['kills'] or (v[j]['kills'] == v[j - 1]['kills'] and v[j]['deaths'] < v[j - 1]['deaths'])):
+            v[j - 1], v[j] = v[j], v[j - 1]
+            j -= 1
+    return v
+
+
+def pv_ffa(cfg, players):
+    out = []
+    for i, p in enumerate(pv_rank(players)):
+        top = cfg['top'][i] if i < 3 and p['kills'] > 0 else 0
+        out.append([p['id'], i + 1, p['kills'] * cfg['reward'], top, p['kills'] * cfg['reward'] + top])
+    return out
+
+
+def pv_tdm(cfg, players, away):
+    inside = sorted([(p['level'], p['id']) for p in players if p['inside']])[::-1]
+    team = {pid: ('red' if i % 4 in (0, 3) else 'blue') for i, (lv, pid) in enumerate(inside)}
+    pts = {'red': away[1], 'blue': away[0]}           # away = [red lives lost away, blue lives lost away]
+    ps = [dict(p, team=team.get(p['id'])) for p in players]
+    for p in ps:
+        if p['team']:
+            pts[p['team']] += p['kills']
+    win = 'red' if pts['red'] > pts['blue'] else 'blue' if pts['blue'] > pts['red'] else None
+    rk = pv_rank(ps)
+    rows = []
+    for i, p in enumerate(rk):
+        w = cfg['team'] if win and p['team'] == win and p['kills'] > 0 else 0
+        m = cfg['mvp'] if i == 0 and p['kills'] > 0 else 0
+        rows.append([p['id'], p['team'], i + 1, p['kills'] * cfg['reward'], w, m, p['kills'] * cfg['reward'] + w + m])
+    return {'teams': [pts['red'], pts['blue']], 'winner': win, 'rows': rows}
+
+
+# ---------------------------------------------------------------- the editor's writes (line by line)
+def pv_eol(t):
+    return '\r\n' if t.count('\r\n') >= t.count('\n') - t.count('\r\n') else '\n'
+
+
+def pv_lines(t):
+    """[(start, end of content, end with the EOL)]"""
+    out, i = [], 0
+    for m in re.finditer(r'[^\r\n]*(\r\n|\r|\n|$)', t):
+        if m.start() == len(t) and m.group(0) == '':
+            break
+        out.append((m.start(), m.start() + len(m.group(0)) - len(m.group(1)), m.end()))
+    return out
+
+
+def pv_code(line):
+    """the line without a // comment"""
+    return re.sub(r'//.*', '', line)
+
+
+def pv_edit_inc(t, kind, op):
+    P = kind.upper()
+    L = pv_lines(t)
+    code = [pv_code(t[a:b]) for a, b, c in L]
+    keys = [P + '_' + k for k, d, f in PV_SCALARS]
+    if op[0] == 'set':
+        key = P + '_' + [k for k, d, f in PV_SCALARS if f == op[1]][0]
+        hit = [i for i, c in enumerate(code) if re.match(r'\s*' + key + r'(\s|$)', c)]
+        if hit:
+            a, b, c = L[hit[-1]]
+            m = re.match(r'(\s*' + key + r'\s+)(\S+)', t[a:b])
+            return t[:a + m.end(1)] + str(op[2]) + t[a + m.end(2):]
+        sc = [i for i, c in enumerate(code) if re.match(r'\s*(' + '|'.join(keys) + r')(\s|$)', c)]
+        row = '%s\t\t\t%d' % (key, op[2])
+        if sc:
+            a, b, c = L[sc[-1]]
+            ind = re.match(r'[ \t]*', t[a:b]).group(0)
+            eol = t[b:c] or pv_eol(t)
+            pre = '' if t[b:c] else eol
+            return t[:c] + pre + ind + row + ('' if pre else eol) + t[c:]
+        eol = pv_eol(t)
+        return t + ('' if t == '' or t.endswith(('\r', '\n')) else eol) + row + eol
+    begins = [i for i, c in enumerate(code) if re.match(r'\s*' + P + r'_BEGIN\s', c)]
+    if op[0] == 'add':
+        d, h, mi = op[1]
+        if not begins:
+            eol = pv_eol(t)
+            return t + ('' if t == '' or t.endswith(('\r', '\n')) else eol) + '%s_BEGIN\t%d\t%d\t%02d' % (P, d, h, mi) + eol
+        a, b, c = L[begins[-1]]
+        m = re.match(r'([ \t]*)(\S+)([ \t]+)(\S+)([ \t]+)(\S+)([ \t]+)(\S+)', t[a:b])
+        row = m.group(1) + m.group(2) + m.group(3) + str(d) + m.group(5) + str(h) + m.group(7) + '%02d' % mi
+        eol = t[b:c] or pv_eol(t)
+        pre = '' if t[b:c] else eol
+        return t[:c] + pre + row + ('' if pre else eol) + t[c:]
+    if op[0] == 'del':
+        a, b, c = L[begins[op[1]]]
+        return t[:a] + t[c:]
+    if op[0] == 'time':
+        a, b, c = L[begins[op[1]]]
+        m = re.match(r'([ \t]*\S+[ \t]+)(\S+)([ \t]+)(\S+)([ \t]+)(\S+)', t[a:b])
+        d, h, mi = op[2]
+        return t[:a] + m.group(1) + str(d) + m.group(3) + str(h) + m.group(5) + '%02d' % mi + t[a + m.end(6):]
+    raise ValueError(op)
+
+
+def pv_edit_gc(t, op):
+    L = pv_lines(t)
+    code = [pv_code(t[a:b]) for a, b, c in L]
+    if op[0] == 'bid':
+        i = [k for k, c in enumerate(code) if re.match(r'\s*JOINPENYA\s', c)][-1]
+        a, b, c = L[i]
+        m = re.match(r'(\s*JOINPENYA\s+)(\S+)', t[a:b])
+        return t[:a + m.end(1)] + str(op[1]) + t[a + m.end(2):]
+    k0 = [k for k, c in enumerate(code) if c.strip() == 'AUTO_OPEN_IDC'][0]
+    k1 = k0 + 1
+    while code[k1].strip() != '{':
+        k1 += 1
+    rows, k = [], k1 + 1
+    while code[k].strip() != '}':
+        if code[k].strip():
+            rows.append(k)
+        k += 1
+    if op[0] == 'add':
+        d, h, mi = op[1]
+        if not rows:
+            a, b, c = L[k1]
+            ind = re.match(r'[ \t]*', t[a:b]).group(0)
+            return t[:c] + ind + '\t' + '%d\t%d\t%02d' % (d, h, mi) + (t[b:c] or pv_eol(t)) + t[c:]
+        a, b, c = L[rows[-1]]
+        m = re.match(r'([ \t]*)(\S+)([ \t]+)(\S+)([ \t]+)(\S+)', t[a:b])
+        row = m.group(1) + str(d) + m.group(3) + str(h) + m.group(5) + '%02d' % mi
+        return t[:c] + row + (t[b:c] or pv_eol(t)) + t[c:]
+    if op[0] == 'del':
+        a, b, c = L[rows[op[1]]]
+        return t[:a] + t[c:]
+    if op[0] == 'time':
+        a, b, c = L[rows[op[1]]]
+        m = re.match(r'([ \t]*)(\S+)([ \t]+)(\S+)([ \t]+)(\S+)', t[a:b])
+        d, h, mi = op[2]
+        return t[:a] + m.group(1) + str(d) + m.group(3) + str(h) + m.group(5) + '%02d' % mi + t[a + m.end(6):]
+    raise ValueError(op)
+
+
+def pv_edit_lua(t, op):
+    """op: ['TokensPerKill', v] or [list name, place, v]"""
+    tk, errs = up_lua_tokens(t)
+    pz = pv_prizes(t)['prizes']
+    eol = pv_eol(t)
+    hits = [i for i, k in enumerate(tk) if k[0] == 'w' and k[1] == op[0] and i + 1 < len(tk) and tk[i + 1][1] == '=']
+    if op[0] == 'TokensPerKill':
+        if hits:
+            j = hits[-1] + 2
+            e = j + 1 if tk[j][1] in ('-', '+') and j + 1 < len(tk) else j
+            return t[:tk[j][2]] + str(op[1]) + t[tk[e][3]:]
+        return t + ('' if t.endswith(('\r', '\n')) else eol) + 'TokensPerKill = %d' % op[1] + eol
+    name, place, v = op
+    vals = list(pz[name]); vals[place] = v
+    body = '{ ' + ', '.join(str(x) for x in vals) + ' }'
+    if not hits:
+        return t + ('' if t.endswith(('\r', '\n')) else eol) + '%s = %s' % (name, body) + eol
+    j = hits[-1] + 2
+    if tk[j][1] != '{':
+        return t[:tk[hits[-1]][2]] + '%s = %s' % (name, body) + t[tk[j][3]:]
+    e, items, cur = j + 1, [], []
+    while tk[e][1] != '}':
+        if tk[e][1] in (',', ';'):
+            items.append(cur); cur = []
+        else:
+            cur.append(tk[e])
+        e += 1
+    items.append(cur)
+    items = [x for x in items if x and not any(c[1] == '=' for c in x)]
+    if place < len(items):
+        a, b = items[place][0][2], items[place][-1][3]
+        return t[:a] + str(v) + t[b:]
+    return t[:tk[j][2]] + body + t[tk[e][3]:]
+
+
+def pv_run(root):
+    D = defines(root)
+    props = spec_props(root, D)
+    rd = lambda n: open(os.path.join(root, n), 'rb').read().decode('latin-1') if os.path.exists(os.path.join(root, n)) else None
+    ffa, tdm, gct, lua = rd('FFAManager.inc'), rd('TDMManager.inc'), rd('GuildCombat.txt'), rd('GuildSiegePrize.lua')
+    R = Rand(1012)
+    # ---- reads
+    F = lambda body: 'FFA_REWARD\tII_CHP_PVP_TOKEN\t1\r\n' + body
+    T = lambda body: ('TDM_REWARD II_CHP_PVP_TOKEN 1\r\nTDM_WAIT 1 1 2 2 5\r\nTDM_SPAWN_RED 1 1 2 2 5\r\nTDM_SPAWN_BLUE 1 1 2 2 5\r\n' + body)
+    incs = [('ffa', ffa), ('tdm', tdm),
+            ('ffa', F('FFA_BEGIN 0 14 30\r\n')), ('ffa', F('FFA_COST 5\r\nFFA_BOGUS 1\r\n')), ('ffa', F('FFA_CANCEL_CUT 150\r\n')),
+            ('ffa', F('FFA_CANCEL_CUT 0\r\nFFA_CANCEL_CUT 100\r\n')), ('ffa', F('FFA_CANCEL_CUT\t-1\r\n')), ('ffa', F('FFA_BEGIN 8 1 1\r\nFFA_COST 1\r\n')),
+            ('ffa', F('FFA_BEGIN 0 24 0\r\n')), ('ffa', F('FFA_BEGIN 0 1 60\r\n')), ('ffa', F('FFA_BEGIN 7 23 59\r\nFFA_BEGIN 1 0 0\r\nFFA_BEGIN 7 23 59\r\n')),
+            ('ffa', 'FFA_REWARD II_NOT_AN_ITEM 1\r\n'), ('ffa', 'FFA_REWARD II_CHP_PVP_TOKEN 10000\r\n'), ('ffa', 'FFA_REWARD II_CHP_PVP_TOKEN 9999\r\n'),
+            ('ffa', F('FFA_TOP_REWARD 10000 1 1\r\n')), ('ffa', F('FFA_TOP_REWARD 1 2 -1\r\n')), ('ffa', F('FFA_MIN_MEMBERS 5\r\nFFA_MAX_MEMBERS 4\r\n')),
+            ('ffa', F('FFA_MAX_MEMBERS 101\r\n')), ('ffa', F('FFA_MIN_MEMBERS 1\r\n')), ('ffa', F('FFA_ANNOUNCE_TIME 0\r\n')), ('ffa', F('FFA_ANNOUNCE_TIME 61\r\n')),
+            ('ffa', F('FFA_RESPAWN_TIME 61\r\n')), ('ffa', F('FFA_PREPARATION_TIME 31\r\n')), ('ffa', F('FFA_WAR_TIME 0\r\n')), ('ffa', F('FFA_WAR_TIME 121\r\n')),
+            ('ffa', F('FFA_COST 1\r\nFFA_COST 2000000\r\n// FFA_COST 7\r\n/* FFA_COST 8 */\r\n')), ('ffa', F('FFA_COST 0x10\r\n')), ('ffa', F('FFA_COST =\r\n')),
+            ('ffa', F('FFA_LIFES 0\r\n')), ('ffa', F('FFA_MIN_LEVEL 0\r\n')), ('ffa', F('FFA_MIN_LEVEL 150\r\nFFA_BEGIN 0 0 0\r\nFFA_BEGIN 0 0 0\r\n')),
+            ('ffa', 'FFA_COST 5\r\n'), ('ffa', ''), ('ffa', F('FFA_COST 3000000000\r\n')),
+            ('tdm', T('TDM_BEGIN 0 17 30\r\n')), ('tdm', 'TDM_REWARD II_CHP_PVP_TOKEN 1\r\nTDM_WAIT 1 1 2 2 5\r\nTDM_SPAWN_RED 1 1 2 2 5\r\n'),
+            ('tdm', T('TDM_SPAWN_BLUE 2 1 2 5 5\r\n')), ('tdm', T('TDM_SPAWN_BLUE 1 1 2 2 0\r\n')), ('tdm', T('TDM_SPAWN_BLUE 1 1 2 2\r\n')),
+            ('tdm', T('TDM_TEAM_REWARD 10000\r\n')), ('tdm', T('TDM_MVP_REWARD -5\r\n')), ('tdm', T('TDM_TEAM_REWARD 0\r\nTDM_MVP_REWARD 9999\r\n')),
+            ('tdm', T('FFA_TOP_REWARD 1 2 3\r\n')), ('tdm', T('TDM_CANCEL_CUT 33\r\nTDM_BEGIN 3 12 0\r\n'))]
+    reads = []
+    for kind, text in incs:
+        if text is None:
+            continue
+        cfg, err = pv_read(text, kind, D, props)
+        reads.append({'kind': kind, 'text': text, 'cfg': cfg, 'error': err})
+    # ---- GuildCombat.txt
+    O = 'OPEN 14\r\n{\r\n\tWORLDMSG 5000 2706 101\r\n\tWARSTATE 300000 101 102\r\n\tWARSTATE 0 102 0\r\n\tALLMSG 180000 2710 103\r\n\tSTATE 0 2 0\r\n' \
+        '\tWARSTATE 60000 103 104\r\n\tWARSTATE 1800000 104 105\r\n\tSTATE 0 3 0\r\n\tWARSTATE 0 105 0\r\n\tWAIT 10000 0 0\r\n\tWARSTATE 0 106 0\r\n' \
+        '\tSTATE 30000 4 107\r\n\tWARSTATE 0 107 0\r\n}\r\n'
+    G = lambda rows, more='': 'JOINPENYA 100000000\r\nMINJOINGUILDSIZE 2\r\nREQUESTCANCLEPERCENT 80\r\nNOTREQUESTPERCENT 98\r\n' + more + \
+        'AUTO_OPEN_IDC\r\n{\r\n' + ''.join('\t%s\r\n' % r for r in rows) + '}\r\n' + O
+    gcs = [gct, G(['7 18 30']), G(['7 18 30', '7 20 00']), G(['1 1 1', '2 2 2', '3 3 3', '4 4 4', '5 5 5', '6 6 6', '7 7 7']),
+           G(['1 1 1', '2 2 2', '3 3 3', '4 4 4', '5 5 5', '6 6 6', '7 7 7', '1 2 3']), G(['0 18 30']), G(['8 18 30']), G(['3 24 0']), G(['3 25 0']),
+           G(['3 12 60']), G([]), G(['4 20 15', '7 18 30']), G(['7 23 50']), G(['II_X 18 30']), G(['3 12 0'], 'JOINPENYA 5\r\nMINJOINGUILDSIZE 3\r\n'),
+           'JOINPENYA 1\r\nAUTO_OPEN_IDC\r\n{\r\n\t7 18 30\r\n', 'AUTO_OPEN_IDC\r\n{\r\n\t2 10 0\r\n}\r\nOPEN 3\r\n{\r\n\tWARSTATE 1000 104 0\r\n\tWARSTATE 500 105 0\r\n\tWARSTATE 2000 104 0\r\n}\r\n',
+           G(['6 12 00'], 'AUTO_OPEN_TEST\r\n{\r\n\t1 17 00\r\n}\r\n')]
+    gcres = []
+    for text in gcs:
+        if text is None:
+            continue
+        g = pv_gc(text)
+        tl = pv_timeline(g) if g['ok'] else None
+        rec = {'text': text, 'ok': g['ok']}
+        if g['ok']:
+            rec.update({'rows': g['rows'], 'byDay': g['byDay'], 'lastDay': g['lastDay'], 'join': g['join'], 'min': g['min'], 'cancel': g['cancel'],
+                        'not': g['not'], 'timeline': tl,
+                        'sieges': pv_sieges(g, tl, PV_WEEK0 - 3600, PV_WEEK0 + 15 * PV_DAY, 99),
+                        'few': pv_sieges(g, tl, PV_WEEK0, PV_WEEK0 + 8 * PV_DAY, g['min'] - 1),
+                        'shown': [[t, pv_shown(g, t)] for t in range(PV_WEEK0 + 1, PV_WEEK0 + 8 * PV_DAY, 3 * 3600 + 1)],
+                        'money': [[b, pv_muldiv(b, g['cancel'], 100), pv_muldiv(b, g['not'], 100)] for b in (0, 1, 49, 50, 99, 100000000, 2000000000)]})
+        gcres.append(rec)
+    # ---- GuildSiegePrize.lua
+    luas = [lua, None, 'TokensPerKill = 0\r\n', 'TokensPerKill = -1\r\nSiegePrize = { 51, 15, 8 }\r\n', 'TokensPerKill = 3.5\nSiegePrize = { 51 }\n',
+            'TokensPerKill = "4"\nSiegePrize = { 51, 15, 8, 9 }\n', 'TokensPerKill = 40000\nSiegePrize = { 0, 1, 2 }\n', 'TokensPerKill = nil\nSiegePrize = 5\n',
+            'SiegePrize = { 1, 2\n', 'GuildPrize = { 1, 2, 3, 4, 5, 6 }\nMvpPrize = { nil, 5, "x", 7.0, 32768, 32767 }\n',
+            'SiegePrize = { 50, -- first\n 14, 7 } -- c\nSiegePrize = { 9, 8, 7 }\n', '-- TokensPerKill = 9\nClassPrize = { 0x10, 1e2, .5 }\n',
+            'TokensPerKill = 5 SiegePrize = {4;3;2}\n', 'x = "unclosed\nTokensPerKill = 3\n', 'ClassPerClassPrize = {}\n']
+    prz = [{'text': t, **pv_prizes(t)} for t in luas]
+    # ---- the schedules
+    cfgs = [r for r in reads if r['cfg'] is not None]
+    times = [[[0, 14, 30], [0, 21, 30]], [[0, 14, 30], [0, 14, 35]], [[7, 20, 0], [1, 0, 5]], [[0, 23, 58]], [[3, 12, 0]], [[0, 10, 0], [0, 10, 0]],
+             [[0, 0, 30]], [], [[2, 9, 0], [0, 9, 5], [6, 23, 59]]]
+    runs = []
+    for k, r in enumerate(cfgs[:3]):
+        for tm in times:
+            for ann, prep, war in ((5, 1, 10), (60, 0, 1), (1, 30, 120)):
+                cfg = dict(r['cfg'], times=tm, announce=ann, prepare=prep, war=war)
+                for frm in (PV_WEEK0, PV_WEEK0 + 14 * 3600 + 27 * 60, PV_WEEK0 + 3 * PV_DAY + 11 * 3600 + 59 * 60 + 59):
+                    for reg, jn in ((None, None), ([2, 1, 5], [2, 1, 2, 0]), ([0], None)):
+                        runs.append({'cfg': cfg, 'from': frm, 'until': frm + 8 * PV_DAY, 'reg': reg, 'joined': jn,
+                                     'out': pv_runs(cfg, frm, frm + 8 * PV_DAY, reg, jn)})
+    # ---- money
+    money = []
+    for cut in (0, 1, 20, 33, 99, 100):
+        for paid in (0, 1, 3, 99, 10000000, 2147483647):
+            for gold in (0, 1000, 2147483647 - 5, 2147483647):
+                money.append([cut, paid, gold, pv_cancel(cut, paid, gold), pv_refund(paid, gold)])
+    # ---- battles
+    battles = []
+    ffacfg = [dict(top=[30, 20, 10], reward=1), dict(top=[0, 0, 0], reward=3), dict(top=[9999, 1, 0], reward=0)]
+    tdmcfg = [dict(team=15, mvp=20, reward=1), dict(team=0, mvp=0, reward=2), dict(team=9999, mvp=1, reward=0)]
+    for k in range(120):
+        n = 1 + R(12)
+        ids = [1 + R(5000) for _ in range(n)]
+        ids = list(dict.fromkeys(ids))
+        ps = [{'id': i, 'kills': R(6), 'deaths': R(6), 'level': 60 + R(4) * 30, 'inside': R(5) != 0} for i in ids]
+        c = ffacfg[k % 3]
+        tc = tdmcfg[k % 3]
+        away = [R(3), R(3)]
+        battles.append({'players': ps, 'ffa': c, 'tdm': tc, 'away': away, 'ffaOut': pv_ffa(c, ps), 'tdmOut': pv_tdm(tc, ps, away)})
+    # ---- edits: each step's whole text
+    eff = 'FFA_COST\t\t\t\t10000000\r\nFFA_MIN_LEVEL\t\t\t60\r\nFFA_REWARD\t\t\t\tII_CHP_PVP_TOKEN\t1\r\n\r\nFFA_BEGIN\t0\t14\t30\r\nFFA_BEGIN\t0\t21\t30\r\n'
+    edits = [
+        ('ffa', ffa, [['set', 'cost', 12000000], ['set', 'cancelCut', 10], ['set', 'war', 15], ['time', 0, [0, 15, 0]], ['add', [7, 20, 5]], ['del', 1]]),
+        ('ffa', eff, [['set', 'cancelCut', 25], ['set', 'level', 61], ['add', [0, 9, 0]], ['del', 0], ['del', 0], ['del', 0], ['add', [1, 2, 3]]]),
+        ('ffa', 'FFA_COST 1', [['set', 'cost', 2], ['set', 'lives', 3], ['add', [0, 1, 2]]]),
+        ('tdm', tdm, [['set', 'cost', 0], ['set', 'prepare', 2], ['time', 1, [7, 23, 5]], ['add', [0, 6, 45]]]),
+        ('gc', gct, [['bid', 150000000], ['time', 0, [6, 20, 0]], ['add', [7, 18, 30]], ['del', 0], ['add', [3, 9, 5]]]),
+        ('gc', G([]), [['add', [7, 18, 30]], ['add', [1, 0, 0]], ['del', 1], ['time', 0, [2, 23, 59]]]),
+        ('lua', lua, [['TokensPerKill', 3], ['SiegePrize', 0, 51], ['SiegePrize', 2, 8], ['MvpPrize', 9, 7], ['GuildPrize', 4, 50]]),
+        ('lua', 'TokensPerKill = 2\nSiegePrize = { 50, 14 }\n', [['SiegePrize', 2, 9], ['ClassPrize', 0, 1], ['TokensPerKill', 0]]),
+        ('lua', 'SiegePrize = 5\r\nx = 1', [['SiegePrize', 1, 2], ['TokensPerKill', 4]]),
+    ]
+    eds = []
+    for kind, start, ops in edits:
+        if start is None:
+            continue
+        t, steps = start, []
+        for op in ops:
+            t = pv_edit_lua(t, op) if kind == 'lua' else pv_edit_gc(t, op) if kind == 'gc' else pv_edit_inc(t, kind, op)
+            steps.append(t)
+        eds.append({'kind': kind, 'start': start, 'ops': ops, 'steps': steps})
+    return {'week0': PV_WEEK0, 'reads': reads, 'gc': gcres, 'prizes': prz, 'runs': runs, 'money': money, 'battles': battles, 'edits': eds}
+
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -10155,6 +10937,8 @@ if __name__ == '__main__':
         print(json.dumps(se_run(root)))
     elif what == 'weapons':                     # weapon effects: each weapon's own stats, rarity, hands, tooltip, edits
         print(json.dumps(we_run_all(root)))
+    elif what == 'pvp':                         # PvP Events: FFA / TDM ReadConfig, GuildCombat.txt, GuildSiegePrize.lua, schedules, money, battles, edits
+        print(json.dumps(pv_run(root)))
     elif what == 'dds':                         # a folder of .dds icons -> {file: [w, h, sha256 of the RGBA]}
         print(json.dumps(dds_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model

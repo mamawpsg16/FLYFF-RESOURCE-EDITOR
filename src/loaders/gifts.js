@@ -10,9 +10,14 @@
 //   maxLevel expTable.inc expCharacter (CProject::LoadExpTable, Project.cpp:3681): the last row with an EXP value;
 //            IsMaxLevel = m_aExpCharacter[level + 1].nExp1 == 0 (Mover.h:1335).
 //   siege    GuildCombat.txt JOINPENYA / MINJOINGUILDSIZE / MAXJOINGUILDSIZE (CGuildCombat::LoadScript,
-//            eveschool.cpp:3528-3544) and the amounts compiled into the C++: per siege (GuildCombatResultRanking,
-//            eveschool.cpp:1688-1712) and weekly (GuildSiegePrize.cpp:17-20, cda3af21). When the C++ is not there
-//            (test-data) the copies below are used.
+//            eveschool.cpp:3528-3544) and the amounts in the C++: per siege (GuildCombatResultRanking) and weekly
+//            (GuildSiegePrize.cpp). Two shapes, told apart by the C++ text:
+//              'formula' (cda3af21 .. 4fa49551): JOINPENYA × guilds × 0.9 × 0.00001 × 0.1 × the rank's share, min 1
+//              'fixed'   (6de6da39, PvP events part B): GetSiegePrize( i ) = s_nSiegePrize[3], overridden by
+//                        GuildSiegePrize.lua (ReadPrizes; also TokensPerKill and the weekly lists; loaders/pvp.js
+//                        readPrizes); a place below 1 is not paid
+//            The prize item: the m_dwItemId of GuildCombatResultRanking (PVP Tokens since 4fa49551, Red Chips before).
+//            When the C++ is not there (test-data) the copies below (V19 6de6da39) are used.
 // Not modelled: a Lua `if` / loop / variable around the calls (the file has none: every call is read as written);
 // Lua patterns in the account filter (read as plain text).
 (function (FRE) {
@@ -21,12 +26,14 @@
   const MAX_COUPLE_LEVEL = 21;            // CCouple::eMaxLevel, couple.h:17
   const FLAG_BOUND = 2;                   // CItemElem::binds, Item.h:132
 
-  // The amounts in the C++ today (read from the source when FLYFF-V19-SOURCE is picked)
+  // The amounts in the C++ today, V19 6de6da39 (read from the source when FLYFF-V19-SOURCE is picked)
   const BUILTIN = {
-    siege: { factors: [0.9, 0.00001, 0.1], shares: [0.7, 0.2, 0.1] },         // eveschool.cpp:1702-1712
-    weekly: {                                                                   // GuildSiegePrize.cpp:17-20 (cda3af21)
-      guild: [3000, 1500, 900, 360, 240], total: [1000, 500, 300, 200, 150, 120, 100, 70, 40, 20],
-      perClass: [500, 250, 150, 100, 75, 60, 50, 35, 20, 10], mvp: [1500, 750, 450, 300, 225, 180, 150, 105, 60, 30],
+    // mode 'fixed' = GetSiegePrize( i ); factors / shares: the formula before part B (eveschool.cpp, 4fa49551)
+    siege: { mode: 'fixed', fixed: [50, 14, 7], factors: [0.9, 0.00001, 0.1], shares: [0.7, 0.2, 0.1] },
+    perKill: 2, item: 'II_CHP_PVP_TOKEN', lua: true,                           // s_nTokensPerKill; GuildCombatResultRanking; ReadPrizes
+    weekly: {                                                                   // GuildSiegePrize.cpp s_n…Prize (4fa49551: the old ladders / 5)
+      guild: [600, 300, 180, 72, 48], total: [200, 100, 60, 40, 30, 24, 20, 14, 8, 4],
+      perClass: [100, 50, 30, 20, 15, 12, 10, 7, 4, 2], mvp: [300, 150, 90, 60, 45, 36, 30, 21, 12, 6],
     },
   };
   const ARRAYS = { guild: 's_nGuildPrize', total: 's_nClassPrize', perClass: 's_nClassPerClassPrize', mvp: 's_nMvpPrize' };
@@ -227,18 +234,30 @@
   // The compiled amounts: from the C++ text when given ({ 'eveschool.cpp': text, 'guildsiegeprize.cpp': text }), else BUILTIN.
   // -> { siege: { factors, shares }, weekly: { guild, total, perClass, mvp }, from: 'cpp' | 'builtin', changed: [what was not found] }
   function compiled(cpp) {
-    const res = { siege: JSON.parse(JSON.stringify(BUILTIN.siege)), weekly: JSON.parse(JSON.stringify(BUILTIN.weekly)), from: 'builtin', changed: [] };
+    const res = { siege: JSON.parse(JSON.stringify(BUILTIN.siege)), weekly: JSON.parse(JSON.stringify(BUILTIN.weekly)), perKill: BUILTIN.perKill,
+      item: BUILTIN.item, lua: BUILTIN.lua, from: 'builtin', changed: [] };
     if (!cpp) return res;
     const ev = cpp.get ? cpp.get('eveschool.cpp') : cpp['eveschool.cpp'], gp = cpp.get ? cpp.get('guildsiegeprize.cpp') : cpp['guildsiegeprize.cpp'];
     if (!ev && !gp) return res;
     res.from = 'cpp';
     if (ev) {
-      const f = /float\s+fChipNum\s*=\s*m_nJoinPanya\s*\*\s*vecGCRanking\.size\(\)\s*\*\s*([\d.]+)f\s*\*\s*([\d.]+)f\s*\*\s*([\d.]+)f\s*;/.exec(ev);
-      if (f) res.siege.factors = [f[1], f[2], f[3]].map(Number); else res.changed.push('eveschool.cpp: the Red Chip formula (fChipNum)');
-      const sh = [0, 1, 2].map(i => new RegExp(`case\\s+${i}\\s*:[^\\n]*\\r?\\n\\s*fChipNum\\s*\\*=\\s*([\\d.]+)f`).exec(ev));
-      if (sh.every(Boolean)) res.siege.shares = sh.map(x => Number(x[1])); else res.changed.push('eveschool.cpp: the rank 1-3 shares (fChipNum *=)');
+      // the prize item: GuildCombatResultRanking's m_dwItemId
+      const a = ev.indexOf('void CGuildCombat::GuildCombatResultRanking'), b = ev.indexOf('void CGuildCombat::GuildCombatCloseTeleport');
+      const it = /m_dwItemId\s*=\s*(II_\w+)\s*;/.exec(a >= 0 ? ev.slice(a, b > a ? b : undefined) : ev);
+      if (it) res.item = it[1]; else res.changed.push('eveschool.cpp: the siege prize item (m_dwItemId)');
+      if (/GetSiegePrize\(\s*i\s*\)/.test(ev)) res.siege.mode = 'fixed';
+      else {
+        res.siege.mode = 'formula';
+        const f = /float\s+fChipNum\s*=\s*m_nJoinPanya\s*\*\s*vecGCRanking\.size\(\)\s*\*\s*([\d.]+)f\s*\*\s*([\d.]+)f\s*\*\s*([\d.]+)f\s*;/.exec(ev);
+        if (f) res.siege.factors = [f[1], f[2], f[3]].map(Number); else res.changed.push('eveschool.cpp: the per-siege formula (fChipNum)');
+        const sh = [0, 1, 2].map(i => new RegExp(`case\\s+${i}\\s*:[^\\n]*\\r?\\n\\s*fChipNum\\s*\\*=\\s*([\\d.]+)f`).exec(ev));
+        if (sh.every(Boolean)) res.siege.shares = sh.map(x => Number(x[1])); else res.changed.push('eveschool.cpp: the rank 1-3 shares (fChipNum *=)');
+      }
       if (!/if\(\s*i\s*>=\s*3\s*\)\s*break;/.test(ev)) res.changed.push('eveschool.cpp: "only the top 3 guilds" (i >= 3)');
     } else res.changed.push('eveschool.cpp not found');
+    // tokens per siege kill: s_nTokensPerKill (part B), else the step 3b #define, else none (before 3b)
+    const pk = gp && /static\s+int\s+s_nTokensPerKill\s*=\s*(\d+)\s*;/.exec(gp), pd = ev && /#define\s+GS_TOKEN_PER_KILL\s+(\d+)/.exec(ev);
+    res.perKill = pk ? Number(pk[1]) : pd ? Number(pd[1]) : ev ? 0 : res.perKill;
     if (gp) {
       for (const [k, name] of Object.entries(ARRAYS)) {
         const m = new RegExp(`${name}\\[\\s*\\d+\\s*\\]\\s*=\\s*\\{([^}]*)\\}`).exec(gp);
@@ -247,13 +266,29 @@
       }
       if (!/nRank\s*<\s*5\s*&&\s*!vecGuild\.empty\(\)/.test(gp)) res.changed.push('GuildSiegePrize.cpp: the top 5 guilds');
       if (!/LogPlayerBoard\(\s*pQuery,\s*vecByPoint,\s*10,/.test(gp)) res.changed.push('GuildSiegePrize.cpp: the top 10 players');
+      res.lua = /CGuildSiegePrize::ReadPrizes/.test(gp);
+      if (res.siege.mode === 'fixed') {
+        const sp = /s_nSiegePrize\[\s*3\s*\]\s*=\s*\{([^}]*)\}/.exec(gp);
+        if (sp) res.siege.fixed = sp[1].split(',').map(x => Number(x.trim())).filter(x => !Number.isNaN(x));
+        else res.changed.push('GuildSiegePrize.cpp: s_nSiegePrize');
+      }
     } else res.changed.push('GuildSiegePrize.cpp not found');
     return res;
   }
+  // the servers with part B read GuildSiegePrize.lua over the compiled numbers (ReadPrizes): comp with them
+  function withLua(comp, file) {
+    if (!comp.lua || !file) return comp;
+    const p = FRE.pvp.readPrizes(file).prizes;
+    return Object.assign({}, comp, { perKill: p.TokensPerKill, siege: Object.assign({}, comp.siege, { fixed: p.SiegePrize.slice() }),
+      weekly: { guild: p.GuildPrize.slice(), total: p.ClassPrize.slice(), perClass: p.ClassPerClassPrize.slice(), mvp: p.MvpPrize.slice() }, fromLua: true });
+  }
   // GuildCombatResultRanking (eveschool.cpp:1702-1715): chips for the guild at rank i (0-2) when n guilds applied.
   // m_nJoinPanya (int) × size() (unsigned) -> unsigned, then float × 0.9f × 0.00001f × 0.1f × share, (int), at least 1.
+  // 'fixed' (part B): GetSiegePrize( i ) (0 = not paid, the caller skips it)
   function siegeChips(joinPenya, n, rank, comp) {
-    const f32 = Math.fround, { factors, shares } = (comp || BUILTIN).siege;
+    const sg = (comp || BUILTIN).siege;
+    if (sg.mode === 'fixed') return sg.fixed[rank] === undefined ? 0 : sg.fixed[rank];
+    const f32 = Math.fround, { factors, shares } = sg;
     let x = f32(Math.imul(joinPenya | 0, n | 0) >>> 0);
     for (const k of factors) x = f32(x * f32(k));
     x = f32(x * f32(shares[rank]));
@@ -271,10 +306,10 @@
       rebirth: rebirth(f('1rebirth.inc'), D, ws.items.items),
       couple: couple(f('couple.inc'), D),
       maxLevel: maxLevel(f('exptable.inc')),
-      siege: f('guildcombat.txt') ? { config: siegeConfig(f('guildcombat.txt'), D), comp: compiled(ws.cpp || null) } : null,
+      siege: f('guildcombat.txt') ? { config: siegeConfig(f('guildcombat.txt'), D), comp: withLua(compiled(ws.cpp || null), f('guildsiegeprize.lua')) } : null,
     };
   }
 
-  FRE.gifts = { levelUp, giftsFor, rebirth, couple, coupleLevel, maxLevel, siegeConfig, compiled, siegeChips, fromWorkspace,
+  FRE.gifts = { levelUp, giftsFor, rebirth, couple, coupleLevel, maxLevel, siegeConfig, compiled, withLua, siegeChips, fromWorkspace,
     stripLua, luaArgs, BUILTIN, MAX_COUPLE_LEVEL, FLAG_BOUND };
 })(globalThis.FRE = globalThis.FRE || {});

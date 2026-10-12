@@ -51,11 +51,12 @@
   // Menu ids with their own case in CWndWorld::OnCommand (WndWorld.cpp:4379-6724, every `case MMI_x:` of its
   // switch( nID ), #ifdef blocks included). Any other id falls to `default:` (6470, __TRADESYS) and opens the
   // exchange window for that id (CWndDialogEvent::SetMMI), which lists the menu's SETs from the client's
-  // Exchange_Script.txt. (139 names; tools/oracle_sim.py reads the same list from the C++ file itself.)
+  // Exchange_Script.txt. (144 names; tools/oracle_sim.py reads the same list from the C++ file itself.)
   const OWN_CASE = new Set([
     'MMI_ADD_MESSENGER', 'MMI_ARENA_ENTER', 'MMI_ARENA_EXIT', 'MMI_ATTRIBUTE', 'MMI_BANKING', 'MMI_BEAUTYSHOP', 'MMI_BEAUTYSHOP_SKIN',
     'MMI_BLESSING_CANCEL', 'MMI_BUFFPET_RELEASE', 'MMI_BUFFPET_STATUS', 'MMI_CHANGEELEM', 'MMI_CHEER', 'MMI_COLLECTOR_DETAILS',
     'MMI_COLOSSEUM_COLOENTER01', 'MMI_COSTUMEMIX01', 'MMI_DIALOG', 'MMI_DUEL', 'MMI_DUEL_PARTY', 'MMI_FINDWORD', 'MMI_FIVESYSTEM',
+    'MMI_FFA_ARENA', 'MMI_FFA_RULES', 'MMI_TDM_ARENA', 'MMI_TDM_RULES', 'MMI_GW_STATUE_BUFF',   // FFA / TDM (0600d7e9 .. 8362fbc6), GS statues (d7706de4)
     'MMI_GUILDBANKING', 'MMI_GUILDCOMBAT_1TO1_CANCEL', 'MMI_GUILDCOMBAT_1TO1_ENTRANCE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_ENTRY',
     'MMI_GUILDCOMBAT_1TO1_GUIDE_PRIZE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_RULE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_TEX',
     'MMI_GUILDCOMBAT_1TO1_GUIDE_WIN', 'MMI_GUILDCOMBAT_1TO1_OFFER', 'MMI_GUILDCOMBAT_1TO1_OFFERSTATE', 'MMI_GUILDCOMBAT_1TO1_REPAYMENT',

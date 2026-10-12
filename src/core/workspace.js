@@ -192,13 +192,26 @@
       validate(ws, model) { return FRE.weaponChecks(model, { ws }); },
     },
     {
+      // PvP Events (loaders/pvp.js): FFAManager.inc / TDMManager.inc (ReadConfig: WorldServer start + /ffareload, /tdmreload),
+      // GuildCombat.txt (the siege day / time AUTO_OPEN_IDC and the minimum bid JOINPENYA, CGuildCombat::LoadScript),
+      // GuildSiegePrize.lua (the siege prizes, PvP events part B 6de6da39). Server files only; the rules boards players read are
+      // client-only files in Client/Client (NpcBoard_289 / 290, GuildCombatTEXT_<n>_ENG / _USA: Workspace.setBoardFiles).
+      id: 'pvp', label: 'PvP Events',
+      required: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt'], optional: ['GuildSiegePrize.lua'],
+      editable: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt', 'GuildSiegePrize.lua'],
+      client: [], deps: ['GuildSiegePrize.lua', 'client/npcboard_289.inc', 'client/npcboard_290.inc',
+        ...[1, 2, 3, 4, 5, 6].flatMap(n => [`client/guildcombattext_${n}_eng.inc`, `client/guildcombattext_${n}_usa.inc`])],
+      parse(ws) { return FRE.pvp.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.pvpChecks(model, { ws }); },
+    },
+    {
       // Where is this item from? (task H, loaders/where.js): every model above parsed read-only, nothing editable.
       // Last, so its parse sees the other models. maps: towns of the NPCs, and whether they stand in the game.
       id: 'where', label: 'Item Sources & Uses',
       required: [], editable: [], client: [],
       // part 2 (loaders/gifts.js): level-up gifts (Event.lua), rebirth gifts, couple gifts, the max level (expTable.inc),
       // the Guild Siege config; the prize amounts compiled into the C++ come in as opts.cpp (io/source-read.js)
-      optional: ['Event.lua', 'expTable.inc', '1Rebirth.inc', 'couple.inc', 'GuildCombat.txt'],
+      optional: ['Event.lua', 'expTable.inc', '1Rebirth.inc', 'couple.inc', 'GuildCombat.txt', 'GuildSiegePrize.lua'],
       uses: ['npc', 'donation', 'exchange', 'drops', 'boxes', 'battlepass'],
       maps: true,
       parse(ws) { return FRE.where.index(ws); },
@@ -333,13 +346,16 @@
     // the Client folder. setBoardFiles: the ones already there (SourceFiles read from Client/Client).
     setBoardFiles(list) {
       for (const f of list || []) this._addBoard(f);
+      if (this.available.pvp && this.available.pvp.ok && (list || []).length) this.reparse('guildsiegeprize.lua');   // the boards it checks
     }
     _addBoard(f) {
       f.clientOnly = true;
       f.dir = 'Client';
       const lower = 'client/' + f.name.toLowerCase();
       this.files.set(lower, f);
-      if (!f.readOnly && this.shown.has('npc')) this.editable.add(lower);     // rules texts are edited in NPC Shops only
+      // rules texts are edited in NPC Shops; the PvP Events task keeps its own boards (FFA / TDM Rules, the Guild Siege boards) in step
+      const pvp = this.shown.has('pvp') && FRE.pvp.isPvpBoard(lower);
+      if (!f.readOnly && ((this.shown.has('npc') && /^client\/npcboard_\d+\.inc$/.test(lower)) || pvp)) this.editable.add(lower);
       return { lower, file: f };
     }
     // -> { lower, file } of NpcBoard_<id>.inc; create: an empty one (no bytes yet) when there is none

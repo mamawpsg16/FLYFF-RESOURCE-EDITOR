@@ -128,18 +128,21 @@
       h('td', `level ${l.level}`, l.reached ? null : h('span.tag.warn', ' never reached')), h('td', `×${group(l.num)}`), h('td.muted.small', extras(l)), h('td', sexText(l.sex)))),
       'From couple.inc: sent by mail to the partners when the couple reaches that level (couples earn points while both are online).'));
     // 🏰 Guild Siege prizes (the amounts are compiled into the C++)
-    const fromText = l => (l.from === 'cpp' ? 'Read from the C++ in FLYFF-V19-SOURCE.' : 'From the C++ (the editor\'s own copy: pick FLYFF-V19-SOURCE to read it).');
+    const fromText = l => (l.fromLua ? 'From GuildSiegePrize.lua (edit it in PvP Events; a server restart reads it).'
+      : l.from === 'cpp' ? 'Read from the C++ in FLYFF-V19-SOURCE.' : 'From the C++ (the editor\'s own copy: pick FLYFF-V19-SOURCE to read it).');
     for (const l of of('siege')) {
       put(section('🏰', 'Guild Siege, after each siege (top 3 guilds)', ['Guilds that applied', 'Rank 1', 'Rank 2', 'Rank 3'], l.table.map(r => h('tr',
-        h('td', String(r[0])), [1, 2, 3].map(k => h('td', r[k] === undefined ? '' : `${group(r[k])} each`)))),
-        `Every lineup member who is online gets this many (bag, or mail when it is full); offline members get none. More guilds that applied give more (JOINPENYA ${group(l.config.joinPenya)} in GuildCombat.txt × guilds × 0.9 × 0.00001 × 0.1, then 70 / 20 / 10% for rank 1 / 2 / 3). Not after a GM stop. ${fromText(l)} A change needs a server rebuild.`));
+        h('td', String(r[0])), [1, 2, 3].map(k => h('td', r[k] === undefined || r[k] < 1 ? '' : `${group(r[k])} each`)))),
+        `Every lineup member who is online gets this many (bag, or mail when it is full); offline members get none. ${l.mode === 'fixed'
+          ? 'The same for any number of guilds (SiegePrize).'
+          : `More guilds that applied give more (JOINPENYA ${group(l.config.joinPenya)} in GuildCombat.txt × guilds × 0.9 × 0.00001 × 0.1, then 70 / 20 / 10% for rank 1 / 2 / 3).`}${l.perKill ? ` Plus ${group(l.perKill)} for every kill in the siege, paid at once.` : ''} Not after a GM stop. ${fromText(l)}${l.fromLua ? '' : ' A change needs a server rebuild.'}`));
     }
     for (const l of of('weekly')) {
       const w = l.weekly, n = Math.max(w.guild.length, w.total.length, w.perClass.length, w.mvp.length);
       const cell = (a, i) => h('td', a[i] === undefined ? '' : group(a[i]));
       put(section('🏰', 'Guild Siege, every week (rankings)', ['Rank', 'Guild (wins) → guild bank', 'Total points', 'Each class board', 'MVP count'],
         Array.from({ length: n }, (_, i) => h('tr', h('td', `#${i + 1}`), cell(w.guild, i), cell(w.total, i), cell(w.perClass, i), cell(w.mvp, i))),
-        `Paid on Monday 00:00 (GuildSiegePrize.lua). Players get theirs by mail and can win on several boards. The guild's chips go into the guild bank: when it is full they are lost (the server only writes a log line). ${fromText(l)} A change needs a server rebuild.`));
+        `Paid on Monday 00:00 (GuildSiegePrize.lua). Players get theirs by mail and can win on several boards. The guild's share goes into the guild bank: when it is full it is lost (the server only writes a log line). ${fromText(l)}${l.fromLua ? '' : ' A change needs a server rebuild.'}`));
     }
     // 🔧 used in
     put(section('🔧', 'Used in an exchange (players give it)', ['NPC', 'Exchange', 'Takes', 'Gives', ''], of('use').map(l => h('tr' + (l.live === false ? '.muted' : ''),

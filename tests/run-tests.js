@@ -116,8 +116,8 @@ const W = freshWorkspace();
 {
   eq(W.missing.length, 0, 'all required files present');
   eq(FRE.specItem.VALUES_PER_RECORD, 175, 'Spec_Item record = 175 values');
-  eq(W.items.rows.length, 8067, 'Spec_Item rows');
-  eq(W.items.items.size, 8067, 'Spec_Item items loaded');
+  eq(W.items.rows.length, 8073, 'Spec_Item rows');
+  eq(W.items.items.size, 8073, 'Spec_Item items loaded');
   eq(W.items.stopped, null, 'Spec_Item parse did not stop');
   eq(W.items.skippedVer, 0, 'no rows above __VER 19');
   eq(W.chars.npcs.length, 594, 'NPC blocks across 3 files');
@@ -225,13 +225,13 @@ const changedLines = f => FRE.diff.diffLines(FRE.diff.splitKeepEol(f.originalTex
 const setType = (w, npcOf, type) => { const f = ci(w); w.apply('character.inc', FRE.shopOps.setShopType(f.text, npcOf(w), type), 'type'); };
 
 editCase('shop type: Waforu Red Chip -> Penya -> Red Chip round trip', w => {
-  const f = ci(w), before = f.serialize();
+  const f = ci(w), before = f.serialize(), types = (f.text.match(/SetVenderType/g) || []).length;
   const n2 = waforu(w).statements.filter(s => s.cmd === 'AddVenderItem2').length;
   setType(w, waforu, 0);
   eq(waforu(w).venderType, 0, 'Penya: no SetVenderType left');
   eq(waforu(w).statements.filter(s => s.cmd === 'AddVenderItem2').length, 0, 'Penya: no AddVenderItem2 left');
   eq(shopItems(waforu(w)).length, n2, 'Penya: every item became AddShopItem');
-  ok(!/SetVenderType/.test(f.text), 'Penya: SetVenderType line removed (the only one in the file)');
+  eq((f.text.match(/SetVenderType/g) || []).length, types - 1, 'Penya: its SetVenderType line removed (Donaris and Amos keep theirs: PVP Token shops, 5035ab0f)');
   setType(w, waforu, 1);
   ok(B.bytesEqual(f.serialize(), before), 'Red Chip again: identical bytes to the original');
   w.undo();
@@ -405,7 +405,7 @@ section('item tooltip');
   ok(T('II_GEN_REF_REF_FIRST').game.includes('Restore MP: 25'), 'refresher: Restore MP');
   eq(FRE.itemTooltip.cfmt('%s%s%%', 'Attack Speed', '+7'), 'Attack Speed+7%', 'rate format');
   let n = 0; for (const it of W.items.items.values()) { FRE.itemTooltip.build(W, it); n++; }
-  eq(n, 8067, 'every item builds a tooltip');
+  eq(n, 8073, 'every item builds a tooltip');
 }
 
 // ---------------------------------------------------------------- Donation Shop (DonationShop.inc, commit 7d7df4f9)
@@ -414,7 +414,7 @@ section('donation shop');
   const m = W.models.donation;
   const [okp, out] = GLib.spawn_command_line_sync(`python3 ${ROOT}/tools/oracle.py ${FIXTURES}`);
   const oracle = JSON.parse(new TextDecoder().decode(out)).donation;
-  eq(m.rows.length, 338, 'Donation Shop: 338 rows');
+  eq(m.rows.length, 341, 'Donation Shop: 341 rows');
   eq(m.categories.length, 20, 'Donation Shop: 20 categories');
   eq(oracle.rows, m.rows.length, 'oracle agrees: rows');
   eq(JSON.stringify(oracle.categories), JSON.stringify(m.categories), 'oracle agrees: categories in order');
@@ -448,7 +448,7 @@ editCase('donation: add / move / remove keep LF and bytes', w => {
   w.apply('donationshop.inc', FRE.donationOps.removeItem(f.text, dsRows(w, 'II_SYS_SYS_SCR_BLESSEDNESS')[0]), 'remove');
   ok(B.bytesEqual(f.serialize(), before), 'add + move + remove = identical bytes');
   w.apply('donationshop.inc', FRE.donationOps.removeItem(f.text, dsRows(w, 'II_SYS_SYS_SCR_PET_LIFE')[0]), 'remove');
-  eq(w.models.donation.rows.length, 337, 'removed a real row');
+  eq(w.models.donation.rows.length, 340, 'removed a real row');
   eq(changedLines(f).length, 1, 'remove deletes exactly one line');
   eq(w.newBlocking().length, 0, 'no new blocking problems');
   while (w.undo());
@@ -1498,7 +1498,7 @@ section('add new NPC: bytes, rules, simulator (JS and Python copies agree)');
 
   // handoff §6.5.1: the live data loads; 46 maps end at the 0xFFFFFFFF marker, the 2 junk maps do not
   const ends = [...w.mapFiles.keys()].map(m => [m, FRE.npcOps.insertPoint(w.mapFile(m).serialize())]);
-  eq(ends.filter(([, a]) => a !== null).length, 46, '46 maps take a new NPC record');
+  eq(ends.filter(([, a]) => a !== null).length, 47, '47 maps take a new NPC record (WdFFA added, 0600d7e9)');
   eq(ends.filter(([, a]) => a === null).map(([m]) => m).sort().join(','), 'WdGuildWar1To1,WdVolcaneYellow', 'only the 2 junk maps cannot');
   const mad = FRE.world.readDyo(before.dyo);
   eq(mad.movers.length, 364, 'WdMadrigal.dyo: 364 NPC records');
@@ -1663,7 +1663,7 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
   ok(names.every(n => w.isEditable(n)) && ['defineText.h', 'textClient.inc', 'textClient.txt.txt', 'Exchange_Script.txt'].every(n => w.clientFileNames().includes(n)),
     'NPC task may write (and client-sync) defineText.h, textClient.inc, textClient.txt.txt, Exchange_Script.txt');
   ok(w.models.exchange && w.models.exchange.menus.length > 70, 'NPC task reads the exchange menus');
-  eq(FRE.menuOps.freeMenuIds(w)[0], 282, 'first free menu id: 282 (MMI_COLLECTOR_DETAILS is 281)');
+  eq(FRE.menuOps.freeMenuIds(w).slice(0, 6).join(), '284,285,286,287,291,292', 'free menu ids: 284-287, then 291 (282 statue buff, 283 FFA Arena, 288-290 TDM Arena / FFA / TDM Rules)');
   eq(FRE.menuOps.nextTid(w), 8044, 'next free TID: 8044 (after TID_TOOLTIP_SKILLDMG 8043)');
   eq(FRE.menuOps.nextTextId(w), 3929, 'next textClient key: IDS_TEXTCLIENT_INC_003929');
 
@@ -1671,7 +1671,7 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
   const jeff = JSON.parse(readText(ROOT + '/tools/jeff-menus.json'));
   eq(FRE.validateNewMenus(w, jeff).length, 0, "Jeff's 6 menus: no problem");
   const plan = FRE.menuOps.newMenusPlan(w, jeff);
-  eq(plan.ids.join(), '282,283,284,285,286,287', 'Jeff: menu ids 282-287');
+  eq(plan.ids.join(), '284,285,286,287,291,292', 'Jeff: menu ids 284-287, 291, 292 (Ankou = 291)');
   {
     // Try it before Create (menuOps.tryTable): a scratch load, the workspace untouched, the new texts shown
     const snap = names.map(n => w.files.get(n).text), hist = w.history.length, defs = w.defines.defines.size;
@@ -1680,16 +1680,16 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
       'Try before Create: no file, undo step or define changes');
     eq(plan.ids.map(id => T0.table.find(id) ? T0.table.find(id).sets.length : 0).join(), '10,10,10,10,11,10', "Try before Create: the scratch load has Jeff's 6 menus with all their exchanges");
     eq(T0.env.text(plan.results[0]), 'You received your weapon.', 'Try before Create: the new success message is shown (not yet in textClient)');
-    const r0 = XS0 => XS0.resultExchange(T0.env, T0.table, XS0.stockedPlayer(T0.env, T0.table.find(286).sets[0], { free: 1 }), 286, 0, XS0.rng(1));
+    const r0 = XS0 => XS0.resultExchange(T0.env, T0.table, XS0.stockedPlayer(T0.env, T0.table.find(291).sets[0], { free: 1 }), 291, 0, XS0.rng(1));
     const rr = r0(FRE.exchangeSim);
     ok(rr.result === 'SUCCESS' && rr.given[0].id === w.defines.defines.get('II_WEA_SWO_BEHESWORD'), 'Try before Create: Ankou #1 gives Curtana on the scratch load');
-    eq(FRE.exchangeSim.clientReply(T0.env, T0.table, 286, 0, rr).box, 'You received your weapon.', 'Try before Create: the player reads the new success message');
+    eq(FRE.exchangeSim.clientReply(T0.env, T0.table, 291, 0, rr).box, 'You received your weapon.', 'Try before Create: the player reads the new success message');
   }
   w.applyGroup(plan.parts, 'Jeff');
   const txt = n => w.files.get(n).text;
-  ok(txt('defineneuz.h').includes('#define MMI_COLLECTOR_DETAILS\t281\t// Collins: Collector Details window (collecting drop rates)\r\n#define MMI_WPNPIECE_ENTANESS\t282\t// MaFl_Jeff exchange menu\r\n'), 'defineNeuz.h: MMI_WPNPIECE_ENTANESS 282 right after MMI_COLLECTOR_DETAILS 281');
-  ok(/TID_MMI_MUSICFESTIVALGUITAR\t\t\t7279[^\n]*\n#define\tTID_MMI_WPNPIECE_ENTANESS\t\t\t7282\r\n/.test(txt('definetext.h')) && txt('definetext.h').endsWith('#define\tTID_GAME_WPNPIECE_FAIL\t\t\t\t\t8045\r\n'),
-    'defineText.h: TID_MMI_ labels 7282.. after TID_MMI_MUSICFESTIVALGUITAR 7279; result TIDs 8044/8045 at the end');
+  ok(txt('defineneuz.h').includes('#define MMI_TDM_RULES\t290\t// Amos: TDM rules window (Client/NpcBoard_290.inc)\r\n#define MMI_WPNPIECE_ENTANESS\t284\t// MaFl_Jeff exchange menu\r\n'), 'defineNeuz.h: MMI_WPNPIECE_ENTANESS 284 after the last menu define (MMI_TDM_RULES 290)');
+  ok(/TID_MMI_MUSICFESTIVALGUITAR\t\t\t7279[^\n]*\n#define\tTID_MMI_WPNPIECE_ENTANESS\t\t\t7284\r\n/.test(txt('definetext.h')) && txt('definetext.h').endsWith('#define\tTID_GAME_WPNPIECE_FAIL\t\t\t\t\t8045\r\n'),
+    'defineText.h: TID_MMI_ labels 7284.. after TID_MMI_MUSICFESTIVALGUITAR 7279; result TIDs 8044/8045 at the end');
   ok(txt('textclient.txt.txt').endsWith('IDS_TEXTCLIENT_INC_003934\tCrystal Lusaka Weapons\r\nIDS_TEXTCLIENT_INC_003935\tYou received your weapon.\r\nIDS_TEXTCLIENT_INC_003936\tYou need the weapon pieces, the boss item and a free inventory slot.\r\n'),
     'textClient.txt.txt: 8 lines appended (line i still holds key i)');
   ok(txt('textclient.txt.txt').split('\r\n').every((l, i) => !l || l.startsWith('IDS_TEXTCLIENT_INC_' + String(i).padStart(6, '0'))), 'textClient.txt.txt stays positional');
@@ -1699,9 +1699,9 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
     "in game: Jeff's right-click = Dialog + the 6 labels, each opening the exchange window with its weapons");
   eq(w.diags.filter(d => d.module === 'exchange' && d.severity === 'BLOCK').length, 0, 'the exchange loader reads the new menus without a problem');
   const XS = FRE.exchangeSim, env = XS.envFromWorkspace(w), table = XS.serverTable(w.models.exchange);
-  const ank = table.find(286);
+  const ank = table.find(291);
   const p1 = XS.stockedPlayer(env, ank.sets[0], { free: 1 });
-  const r1 = XS.resultExchange(env, table, p1, 286, 0, XS.rng(1));
+  const r1 = XS.resultExchange(env, table, p1, 291, 0, XS.rng(1));
   ok(r1.result === 'SUCCESS' && r1.given.length === 1 && r1.given[0].id === w.defines.defines.get('II_WEA_SWO_BEHESWORD') && r1.taken.length === 2, 'Ankou #1: 200 pieces + 1 Ankou\'s Scale -> Curtana');
   w.undo();
   ok(names.every((n, i) => B.bytesEqual(w.files.get(n).serialize(), before[i])) && !w.defines.defines.has('MMI_WPNPIECE_ENTANESS'), 'one Undo restores all 6 files and the defines');
@@ -2968,7 +2968,8 @@ section('gifts and Guild Siege prizes: level-up / rebirth / couple gifts, siege 
     const cpJ = g.couple ? { exp: g.couple.exp, items: g.couple.items.map(x => [x.level, x.id, x.sex, x.flag, x.minutes, x.num]), bad: g.couple.bad.length } : null;
     const sgJ = g.siege ? { join: g.siege.config.joinPenya, min: g.siege.config.minGuild, max: g.siege.config.maxGuild } : null;
     const c = g.siege.comp;
-    const compJ = { factors: c.siege.factors, shares: c.siege.shares, weekly: c.weekly, from: c.from, changed: c.changed.length };
+    const compJ = { mode: c.siege.mode, fixed: c.siege.fixed, factors: c.siege.factors, shares: c.siege.shares, perKill: c.perKill, item: c.item, lua: c.lua,
+      weekly: c.weekly, from: c.from, changed: c.changed.length };
     const chips = g.siege ? Array.from({ length: 12 }, (_, i) => [i + 1, [0, 1, 2].map(k => FRE.gifts.siegeChips(g.siege.config.joinPenya, i + 1, k, c))]) : [];
     const norm = o => JSON.parse(JSON.stringify(o));
     eq(J(norm(luJ)), J(norm(P.levelup)), `${v.name}: Event.lua: the same events, windows and level-up gifts`);
@@ -2977,7 +2978,7 @@ section('gifts and Guild Siege prizes: level-up / rebirth / couple gifts, siege 
     eq(g.maxLevel, P.maxlevel, `${v.name}: expTable.inc: the max level`);
     eq(J(sgJ), J(P.siege), `${v.name}: GuildCombat.txt: JOINPENYA, MIN/MAXJOINGUILDSIZE`);
     eq(J(compJ), J(P.comp), `${v.name}: the amounts compiled into the C++ (and what was not found)`);
-    eq(J(chips), J(P.chips), `${v.name}: per-siege Red Chips for 1-12 guilds, ranks 1-3 (float32)`);
+    eq(J(chips), J(P.chips), `${v.name}: per-siege prize for 1-12 guilds, ranks 1-3 (fixed list, or the float32 formula before part B)`);
     // how often each level-up gift pays
     const pays = [];
     for (const name of [...new Set(r.pays.map(x => x[0]))]) {
@@ -3029,8 +3030,10 @@ section('gifts and Guild Siege prizes: level-up / rebirth / couple gifts, siege 
   eq(cloak && cloak.tier, 20, 'Cloak of Bravery: the rebirth 20 gift (3fb37a62)');
   const wed = FRE.where.factsOf(FRE.where.sources(ws, D.get('II_SYS_SYS_SCR_BXMWED01_1'))).find(f => f.kind === 'couple');
   ok(wed && wed.level === 21 && wed.sex === 0 && wed.reached, 'the male wedding box: couple level 21, male partner, reached');
-  const red = FRE.where.factsOf(FRE.where.sources(ws, D.get('II_CHP_RED'))).find(f => f.kind === 'siege');
-  eq(J(red && red.table[1]), J([3, 189, 54, 27]), 'Red Chips: 3 guilds applied -> 189 / 54 / 27 chips each (eveschool.cpp:1702)');
+  // part B (6de6da39): the siege pays PVP Tokens, a fixed 50 / 14 / 7 whatever the number of guilds (GuildSiegePrize.lua SiegePrize)
+  const tok = FRE.where.factsOf(FRE.where.sources(ws, D.get('II_CHP_PVP_TOKEN'))).find(f => f.kind === 'siege');
+  eq(J(tok && tok.table[1]), J([3, 50, 14, 7]), 'PVP Tokens: 3 guilds applied -> 50 / 14 / 7 each (GetSiegePrize, 6de6da39)');
+  ok(!FRE.where.factsOf(FRE.where.sources(ws, D.get('II_CHP_RED'))).some(f => f.kind === 'siege'), 'Red Chips are no Guild Siege prize any more (4fa49551)');
 }
 
 section('rates & buffs: Event.lua rates, Server / Guild Buff, EXP per kill, edits (JS and Python copies agree)');
@@ -3660,6 +3663,190 @@ section('weapon effects (G part 2): each weapon\'s own stats, rarity, hands, too
     throws(() => FRE.weaponsOps.setSlot(f.text, x, 7, null, D), 'there is no slot 7');
   }
   for (const k of ['WE_DST_ZERO', 'WE_SLOT_DUP', 'WE_ASPD_SMALL', 'WE_RARITY_ASPD', 'WE_TIER_ASPD']) ok(FRE.diagHelp[k], `help text for ${k}`);
+}
+
+// ---------------------------------------------------------------- PvP Events (FFA, TDM, Guild Siege)
+section('PvP Events: FFA / TDM / Guild Siege settings, schedules, money, battles, edits, rules boards (JS and Python copies agree)');
+{
+  const J = JSON.stringify;
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} pvp ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py pvp) gave no readable result', e.message); }
+  const P = FRE.pvp, Sim = FRE.pvpSim, O = FRE.pvpOps;
+  const base = (() => { const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e)); return new FRE.Workspace(fs, { only: 'pvp' }).load(); })();
+  const ctx = { defines: base.defines.defines, items: base.items.items };
+  const tf = t => ({ name: 'x', text: t });
+  eq(Sim.WEEK0, py ? py.week0 : Sim.WEEK0, 'both copies use the same Sunday 2026-10-11 00:00');
+  if (py) {
+    // ReadConfig
+    let same = 0;
+    const cfgJ = c => {
+      if (!c) return null;
+      const o = { cost: c.cost, cancelCut: c.cancelCut, level: c.level, min: c.min, max: c.max, lives: c.lives, announce: c.announce, respawn: c.respawn,
+        prepare: c.prepare, war: c.war, rewardId: c.rewardId, reward: c.reward, times: c.times.map(x => [x.day, x.hour, x.minute]) };
+      if (c.top) o.top = c.top;
+      if (c.boxes) { o.team = c.team; o.mvp = c.mvp; o.boxes = Object.fromEntries(Object.keys(c.boxes).sort().map(k => [k, ['x1', 'z1', 'x2', 'z2', 'y'].map(f => c.boxes[k][f])])); }
+      return o;
+    };
+    const pyCfg = c => c && Object.assign({}, c, { boxes: c.boxes });
+    for (const r of py.reads) {
+      const m = P.readManager(tf(r.text), r.kind, ctx);
+      const a = J([cfgJ(m.cfg), m.error]), b = J([pyCfg(r.cfg), r.error]);
+      if (a === b) same++; else print(`   ${r.kind} ${J(r.text).slice(0, 80)}: JS ${a} | Py ${b}`);
+    }
+    eq(same, py.reads.length, `ReadConfig: ${py.reads.length} FFA / TDM files (the real ones, every range, unknown words, boxes, last line wins): the same settings or the same error`);
+    // GuildCombat.txt
+    same = 0;
+    for (const g of py.gc) {
+      const m = P.readGuildCombat(tf(g.text)), tl = P.siegeTimeline(m);
+      let a;
+      if (!m.ok) a = J({ ok: false });
+      else {
+        const sg = (from, until, guilds) => Sim.sieges(m, tl, from, until, { guilds }).map(s => [s.start, s.enter, s.prepare, s.fight, s.end, s.out, s.closed]);
+        a = J({ ok: true, rows: m.autoOpen.map(r => [r.day, r.hour, r.minute]), byDay: m.byDay.map(r => r && [r.day, r.hour, r.minute]), lastDay: m.lastDay,
+          join: m.joinPenya ? m.joinPenya.value : null, min: m.minGuild, cancel: m.cancelPct, not: m.notPct, timeline: tl,
+          sieges: sg(Sim.WEEK0 - 3600, Sim.WEEK0 + 15 * Sim.DAY, 99), few: sg(Sim.WEEK0, Sim.WEEK0 + 8 * Sim.DAY, m.minGuild - 1),
+          shown: (g.shown || []).map(([t]) => [t, Sim.shownNext(m, t)]),
+          money: (g.money || []).map(([b]) => [b, Sim.siegeCancel(m, b), Sim.siegeNotSelected(m, b)]) });
+      }
+      const b = J(g.ok ? Object.fromEntries(Object.entries(g).filter(([k]) => k !== 'text')) : { ok: false });
+      if (a === b) same++; else print(`   GuildCombat.txt ${J(g.text).slice(0, 90)}:\n     JS ${a.slice(0, 400)}\n     Py ${b.slice(0, 400)}`);
+    }
+    eq(same, py.gc.length, `GuildCombat.txt: ${py.gc.length} files (7 / 8 rows, a day twice, day 0 / 8, hour 24 / 25, minute 60, unclosed, AUTO_OPEN_TEST): load, sieges for 2 weeks, the window's next siege, cancel / not selected money`);
+    // GuildSiegePrize.lua
+    same = 0;
+    for (const p of py.prizes) {
+      const m = P.readPrizes(p.text === null ? null : tf(p.text));
+      const a = J([m.prizes, m.failed, m.bad.length]), b = J([p.prizes, p.failed, p.bad]);
+      if (a === b) same++; else print(`   GuildSiegePrize.lua ${J(p.text)}: JS ${a} | Py ${b}`);
+    }
+    eq(same, py.prizes.length, `GuildSiegePrize.lua: ${py.prizes.length} files (nil, strings, decimals, out of range, short / long lists, not a list, Lua errors): the prizes paid`);
+    // the FFA / TDM scheduler
+    same = 0;
+    for (const r of py.runs) {
+      const cfg = Object.assign({}, r.cfg, { times: r.cfg.times.map(([day, hour, minute]) => ({ day, hour, minute })) });
+      const o = { registered: r.reg ? i => r.reg[i % r.reg.length] : undefined, joined: r.joined ? i => r.joined[i % r.joined.length] : undefined };
+      const js = Sim.runs(cfg, r.from, r.until, o).map(x => [x.announce, x.start, x.prepareEnd, x.battleEnd, x.closed, x.cancelled, x.skipped]);
+      if (J(js) === J(r.out)) same++; else if (same >= 0) { print(`   runs ${J(r.cfg.times)} from ${r.from}: JS ${J(js).slice(0, 300)} | Py ${J(r.out).slice(0, 300)}`); same = -10000; }
+    }
+    eq(same, py.runs.length, `the FFA / TDM clock: ${py.runs.length} timelines (every day / weekdays, starts inside a run, midnight, cancelled runs): every announce, start, battle, close and skipped start`);
+    // money
+    same = 0;
+    for (const [cut, paid, gold, c, rf] of py.money) {
+      const x = Sim.cancel({ cancelCut: cut }, paid, gold), y = Sim.refund(paid, gold);
+      if (J([[x.back, x.where, x.gold], [y.back, y.where, y.gold]]) === J([c, rf])) same++; else print(`   cancel cut ${cut} paid ${paid} gold ${gold}: JS ${J([x, y])} | Py ${J([c, rf])}`);
+    }
+    eq(same, py.money.length, `Cancel and refunds: ${py.money.length} cases (cut 0-100, a full purse): the same Penya back, by purse or mail`);
+    // battles
+    same = 0;
+    for (const b of py.battles) {
+      const f = Sim.ffaResult(b.ffa, b.players).map(r => [r.id, r.place, r.perKill, r.top, r.total]);
+      const t = Sim.tdmResult(b.tdm, b.players, { away: { red: b.away[0], blue: b.away[1] } });
+      const tj = { teams: [t.teams.red, t.teams.blue], winner: t.winner, rows: t.rows.map(r => [r.id, r.team, r.place, r.perKill, r.win, r.mvp, r.total]) };
+      if (J(f) === J(b.ffaOut) && J(tj) === J(b.tdmOut)) same++; else print(`   battle ${J(b.players).slice(0, 200)}: JS ${J([f, tj]).slice(0, 300)} | Py ${J([b.ffaOut, b.tdmOut]).slice(0, 300)}`);
+    }
+    eq(same, py.battles.length, `battles: ${py.battles.length} FFA and TDM endings (ties, no kills, players outside, away points): the same ranking, teams, winner and tokens`);
+    // edits
+    same = 0;
+    let n = 0;
+    for (const e of py.edits) {
+      let text = e.start;
+      e.ops.forEach((op, i) => {
+        let sp;
+        if (e.kind === 'lua') {
+          const m = P.readPrizes(tf(text));
+          sp = op[0] === 'TokensPerKill' ? O.setPrize(m, text, 'TokensPerKill', 0, op[1]) : O.setPrize(m, text, op[0], op[1], op[2]);
+        } else if (e.kind === 'gc') {
+          const m = P.readGuildCombat(tf(text));
+          const t3 = a => ({ day: a[0], hour: a[1], minute: a[2] });
+          sp = op[0] === 'bid' ? O.setBid(m, op[1]) : op[0] === 'add' ? O.addSiegeRow(m, text, t3(op[1])) : op[0] === 'del' ? O.removeSiegeRow(m, text, op[1]) : O.setSiegeRow(m, op[1], t3(op[2]));
+        } else {
+          const m = P.readManager(tf(text), e.kind, ctx);
+          const t3 = a => ({ day: a[0], hour: a[1], minute: a[2] });
+          sp = op[0] === 'set' ? O.setScalar(m, text, op[1], op[2]) : op[0] === 'add' ? O.addBegin(m, text, t3(op[1])) : op[0] === 'del' ? O.removeBegin(m, text, op[1]) : O.setBegin(m, op[1], t3(op[2]));
+        }
+        text = FRE.SourceFile.spliceText(text, sp, 'utf16', 'x');
+        n++; if (text === e.steps[i]) same++; else print(`   edit ${e.kind} ${J(op)} on ${J(e.start).slice(0, 60)}: JS ${J(text).slice(0, 300)} | Py ${J(e.steps[i]).slice(0, 300)}`);
+      });
+    }
+    eq(same, n, `edit scripts: ${py.edits.length} scripts, ${n} steps (fees, times added / changed / removed, siege days, the prize lists): byte-identical texts`);
+  }
+
+  // ---- the task on the real files (fixtures) with the rules boards
+  const fresh = () => {
+    const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e));
+    const W = new FRE.Workspace(fs, { only: 'pvp' }).load();
+    const boards = [];
+    for (const [, e] of loadFolder(ROOT + '/test-data/fixtures/Client/Client')) if (/^(npcboard_\d+|guildcombattext_\d_(eng|usa))\.inc$/i.test(e.name)) boards.push(openSource(e));
+    W.setBoardFiles(boards);
+    return W;
+  };
+  const W = fresh(), m = W.models.pvp;
+  ok(W.available.pvp.ok && !m.ffa.error && !m.tdm.error && m.gs.ok, 'the real FFAManager.inc, TDMManager.inc and GuildCombat.txt load');
+  eq(J(m.ffa.cfg.times.map(t => [t.day, t.hour, t.minute])), J([[0, 14, 30], [0, 21, 30]]), 'FFA: every day 14:30 and 21:30');
+  eq(J([m.tdm.cfg.cost, m.tdm.cfg.team, m.tdm.cfg.mvp]), J([10000000, 15, 20]), 'TDM: 10,000,000 Penya, team 15, MVP 20');
+  eq(J(m.gs.autoOpen.map(r => [r.day, r.hour, r.minute])), J([[7, 18, 30]]), 'Guild Siege: Saturday 18:30 (AUTO_OPEN_IDC, __MAINSERVER)');
+  eq(J([m.timeline.enter, m.timeline.fight, m.timeline.end]), J([305, 545, 2345]), 'the siege: enter at +5:05, combat +9:05 to +39:05 (the OPEN block)');
+  eq(J(m.prizes.prizes.SiegePrize), J([50, 14, 7]), 'GuildSiegePrize.lua: places 50 / 14 / 7');
+  eq(W.diags.filter(d => d.module === 'pvp').map(d => d.code).join(), '', 'no problem on the real files (every board sentence matches the data)');
+  ok(FRE.pvpRules.check(m, W.files).length >= 50 && FRE.pvpRules.check(m, W.files).every(r => r.status === 'ok'), 'every rules-board fact is found and agrees (FFA, TDM, both Guild Siege copies)');
+  for (const f of ['client/npcboard_289.inc', 'client/npcboard_290.inc', 'client/guildcombattext_1_eng.inc', 'client/guildcombattext_5_usa.inc']) ok(W.isEditable(f), `${f} is editable in this task`);
+  // one FFA time + the board, one undo step
+  const plan = (W, lower, sp) => { const p = O.plan(W, lower, sp); W.applyGroup(p.parts, 'x'); return p; };
+  let p = plan(W, 'ffamanager.inc', O.setBegin(W.models.pvp.ffa, 0, { day: 0, hour: 15, minute: 0 }));
+  ok(/FFA_BEGIN\t0\t15\t00/.test(W.files.get('ffamanager.inc').text), 'FFA 14:30 -> 15:00: FFA_BEGIN 0 15 00');
+  ok(W.files.get('client/npcboard_289.inc').text.includes(' - Every day at 15:00 and 21:30 (Philippine time, GMT+8).'), '… and the FFA Rules board says "Every day at 15:00 and 21:30" (same step)');
+  eq(p.changed.length, 1, '… one board line changed');
+  W.undo();
+  ok(W.files.get('client/npcboard_289.inc').text.includes('Every day at 14:30 and 21:30') && !W.files.get('ffamanager.inc').dirty, 'Undo: the file and the board are back');
+  plan(W, 'tdmmanager.inc', O.setScalar(W.models.pvp.tdm, W.files.get('tdmmanager.inc').text, 'cost', 12500000));
+  ok(W.files.get('client/npcboard_290.inc').text.includes('Entry fee: 12,500,000 Penya'), 'TDM fee 12,500,000: the TDM Rules board says it with commas; the file gets plain digits');
+  ok(/TDM_COST\t+12500000/.test(W.files.get('tdmmanager.inc').text), '… TDM_COST 12500000');
+  plan(W, 'tdmmanager.inc', O.setScalar(W.models.pvp.tdm, W.files.get('tdmmanager.inc').text, 'war', 1));
+  ok(W.files.get('client/npcboard_290.inc').text.includes('The battle lasts 1 minute.'), 'a 1-minute battle: "lasts 1 minute" (singular)');
+  plan(W, 'guildsiegeprize.lua', O.setPrize(W.models.pvp.prizes, W.files.get('guildsiegeprize.lua').text, 'SiegePrize', 0, 51));
+  for (const b of ['client/guildcombattext_5_eng.inc', 'client/guildcombattext_5_usa.inc']) ok(W.files.get(b).text.includes('gets PVP Tokens: 51 / 14 / 7'), `siege place 1 = 51: ${b} says 51 / 14 / 7`);
+  plan(W, 'guildcombat.txt', O.setSiegeRow(W.models.pvp.gs, 0, { day: 6, hour: 20, minute: 0 }));
+  const t1 = W.files.get('client/guildcombattext_1_eng.inc').text;
+  ok(t1.includes('every Friday 20:00 (Philippine') && t1.includes('any time before 20:00') && t1.includes('* Schedule (Friday)') && t1.includes(' - 20:05  Enter the arena') && t1.includes(' - 20:39  Combat ends'),
+    'siege Saturday 18:30 -> Friday 20:00: board 1 (day, apply before, schedule day, 20:05 enter … 20:39 end)');
+  ok(W.files.get('client/guildcombattext_1_usa.inc').text.includes(' - 20:09  Combat begins'), '… the USA copy too');
+  ok(W.diags.some(d => d.code === 'PVP_GS_SHOWN'), 'a Friday siege: the siege window shows a wrong next siege at times (PVP_GS_SHOWN, GetNextGuildCobmatTime)');
+  ok(W.files.get('guildcombat.txt').text.includes('\t6\t20\t00'), 'GuildCombat.txt: the row is 6 20 00, the Korean comment kept');
+  // checks
+  const W2 = fresh();
+  plan(W2, 'ffamanager.inc', O.addBegin(W2.models.pvp.ffa, W2.files.get('ffamanager.inc').text, { day: 0, hour: 17, minute: 30 }));
+  ok(W2.diags.some(d => d.code === 'PVP_TIME_CLASH'), 'an FFA at 17:30 overlaps the TDM at 17:30 (PVP_TIME_CLASH)');
+  ok(W2.files.get('client/npcboard_289.inc').text.includes('Every day at 14:30, 17:30 and 21:30'), '… the board lists 14:30, 17:30 and 21:30');
+  plan(W2, 'ffamanager.inc', O.addBegin(W2.models.pvp.ffa, W2.files.get('ffamanager.inc').text, { day: 0, hour: 14, minute: 35 }));
+  ok(W2.diags.some(d => d.code === 'PVP_SKIPPED'), 'a 14:35 start inside the 14:30 run is skipped (PVP_SKIPPED)');
+  const end2 = W2.files.get('ffamanager.inc').text.length;
+  W2.apply('ffamanager.inc', [{ start: end2, end: end2, insert: '\r\nFFA_CANCEL_CUT 150\r\n' }], 'bad');      // the last line wins
+  ok(W2.newBlocking().some(d => d.code === 'PVP_OFF'), 'FFA_CANCEL_CUT 150: the FFA is switched off (PVP_OFF blocks saving)');
+  W2.undo();
+  W2.apply('guildsiegeprize.lua', [{ start: 0, end: 0, insert: 'SiegePrize = { 1, 2\n' }], 'bad');
+  ok(W2.newBlocking().some(d => d.code === 'PVP_PRIZE_LUA'), 'an unclosed list in GuildSiegePrize.lua: PVP_PRIZE_LUA (the weekly payout clock would stop)');
+  W2.undo();
+  W2.apply('client/npcboard_290.inc', [{ start: W2.files.get('client/npcboard_290.inc').text.indexOf('+15'), end: W2.files.get('client/npcboard_290.inc').text.indexOf('+15') + 3, insert: '+16' }], 'board');
+  ok(W2.diags.some(d => d.code === 'PVP_RULES_DIFF'), 'the TDM board says +16 while the data says 15: PVP_RULES_DIFF');
+  throws(() => O.setScalar(W2.models.pvp.ffa, W2.files.get('ffamanager.inc').text, 'cancelCut', 101), 'a cancel cut above 100% is refused (the server would switch the FFA off)');
+  throws(() => O.addSiegeRow(W2.models.pvp.gs, W2.files.get('guildcombat.txt').text, { day: 7, hour: 20, minute: 0 }), 'a second Saturday siege is refused (one time per weekday)');
+  throws(() => O.setPrize(W2.models.pvp.prizes, W2.files.get('guildsiegeprize.lua').text, 'SiegePrize', 0, 0), 'a siege place of 0 is refused (1-32767)');
+  // the simulator on the real settings
+  const runs = Sim.runs(m.ffa.cfg, Sim.WEEK0, Sim.WEEK0 + Sim.DAY);
+  eq(J(runs.map(r => [Sim.hhmm(r.announce), Sim.hhmm(r.start), Sim.hhmm(r.battleEnd), Sim.hhmm(r.closed)])), J([['14:25', '14:30', '14:41', '14:41'], ['21:25', '21:30', '21:41', '21:41']]),
+    'FFA: registration 14:25, start 14:30, battle 14:31-14:41, Flarine 14:41:15 (and the same at 21:30)');
+  eq(J(Sim.cancel(m.ffa.cfg, 10000000, 0)), J({ back: 8000000, kept: 2000000, where: 'purse', gold: 8000000 }), 'Cancel: 8,000,000 back of 10,000,000 (20% kept), as tested in game (d267070c)');
+  const tdm = Sim.tdmResult(m.tdm.cfg, [{ id: 1, level: 150, kills: 3, deaths: 0 }, { id: 2, level: 140, kills: 1, deaths: 1 }, { id: 3, level: 130, kills: 0, deaths: 2 }, { id: 4, level: 120, kills: 0, deaths: 2 }]);
+  eq(J([tdm.teams, tdm.winner, tdm.rows.map(r => r.total)]), J([{ red: 3, blue: 1 }, 'red', [3 + 15 + 20, 1, 0, 0]]), 'TDM: snake teams R B B R, Red 3 : 1 Blue, the MVP gets kills + 15 + 20');
+  // after saving
+  const A = FRE.afterSave;
+  eq(A.compute({ changes: [{ label: 'x', files: ['ffamanager.inc'] }] }).steps.map(s => s.id).join(), 'reload:ffa', 'FFAManager.inc: type /ffareload (or restart)');
+  eq(A.compute({ changes: [{ label: 'x', files: ['ffamanager.inc', 'client/npcboard_289.inc'] }], patches: { 'npc-board': 'in-source' } }).steps.map(s => s.id).join(), 'patch:npc-board,game,reload:ffa', 'FFA + its board: the board patch step, the game, /ffareload');
+  eq(A.compute({ changes: [{ label: 'x', files: ['guildcombat.txt', 'client/guildcombattext_1_eng.inc'] }] }).steps.map(s => s.id).join(), 'servers', 'GuildCombat.txt + its board: a server restart (the board needs no patch)');
+  eq(A.compute({ changes: [{ label: 'x', files: ['client/guildcombattext_5_eng.inc'] }] }).steps.map(s => s.id).join(), 'click:board', 'a Guild Siege board alone: click the menu again (no patch)');
+  for (const k of ['PVP_OFF', 'PVP_NO_TIMES', 'PVP_TIME_TWICE', 'PVP_SKIPPED', 'PVP_TIME_CLASH', 'PVP_GS_LOAD', 'PVP_GS_DAY_TWICE', 'PVP_GS_HOUR24', 'PVP_GS_NONE',
+    'PVP_GS_SHOWN', 'PVP_PRIZE_LUA', 'PVP_PRIZE_BAD', 'PVP_PRIZE_EXTRA', 'PVP_PATCH_MISSING', 'PVP_RULES_DIFF', 'PVP_RULES_NOTFOUND']) ok(FRE.diagHelp[k], `help text for ${k}`);
 }
 
 print(`\n${pass} passed, ${fail} failed`);

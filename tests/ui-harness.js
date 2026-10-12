@@ -101,6 +101,11 @@
     sub.children.set('DonationShopTree.inc', new FakeFile('DonationShopTree.inc', u8));
     clientDir.children.set('Client', sub);
   }
+  if (FRE.HARNESS_BOARDS) {               // Client/Client rules boards (NpcBoard_289 / 290, GuildCombatTEXT_<n>_ENG / _USA)
+    if (!clientDir.children.has('Client')) clientDir.children.set('Client', new FakeDir('Client'));
+    const sub = clientDir.children.get('Client');
+    for (const [n, b64] of Object.entries(FRE.HARNESS_BOARDS)) sub.children.set(n, new FakeFile(n, Uint8Array.from(atob(b64), c => c.charCodeAt(0))));
+  }
 
   // the folder the user picks: FLYFF-V19-SOURCE with Server/Resource and Client (FRE.layout finds them)
   const root = new FakeDir('FLYFF-V19-SOURCE');
@@ -162,7 +167,7 @@
     // the cards are drawn after the patch check (io/patch-state.js reads one C++ file per patch)
     await waitFor(() => document.querySelector('.task-card:not(:disabled)'), 'task cards enabled');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
-    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 10 && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 10 tasks to pick (Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 11 && document.querySelector('.task-card[data-task="pvp"]') && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 11 tasks to pick (PvP Events; Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
@@ -179,8 +184,8 @@
     ok([...phases].some(t => /Reading the game client/.test(t)) || phases.size >= 2, `the window went through the phases (${[...phases].join(' | ')})`);
     ok(!document.body.classList.contains('start') && /Task:\s*NPC Shops/.test($('mode-tabs').textContent), 'NPC Shops task open');
     ok(S.client && S.client.dir === clientDir, 'Client copies attached automatically');
-    ok(S.ws.items.rows.length === 8067, 'items loaded (8067)');
-    ok(document.querySelectorAll('#list .npc').length === 6 && /Shops with hand-picked items \(6\)/.test(document.querySelector('select.npc-filter').textContent), 'NPC list defaults to the 6 shops with fixed items (AddShopItem)');
+    ok(S.ws.items.rows.length === 8073, 'items loaded (8073: the PVP Token and the FFA / TDM items)');
+    ok(document.querySelectorAll('#list .npc').length === 8 && /Shops with hand-picked items \(8\)/.test(document.querySelector('select.npc-filter').textContent), 'NPC list defaults to the 8 shops with fixed items (+ Donaris and Amos, PVP Token shops)');
     ok(S.ws.diags.filter(d => d.code === 'C_NO_OPEN_BRACE').length === 6, '6 missing-brace warnings');
 
     const lui = [...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MaFl_Lui'));
@@ -474,7 +479,7 @@
       const inp = (el, v) => { el.value = v; el.dispatchEvent(new Event('input')); };
       const lab = box.querySelector('input.mf-label'), nm = box.querySelector('input.mf-name');
       inp(lab, 'Test Weapons');
-      ok(nm.value === 'MMI_TEST_WEAPONS' && /✓ free · menu id 282/.test(box.textContent), 'menu form: the label fills the name (MMI_TEST_WEAPONS), shown free with its id');
+      ok(nm.value === 'MMI_TEST_WEAPONS' && /✓ free · menu id 284/.test(box.textContent), 'menu form: the label fills the name (MMI_TEST_WEAPONS), shown free with its id');
       inp(nm, 'MMI_TRADE');
       ok(/✗ MMI_TRADE \(or TID_MMI_TRADE\) already exists/.test(box.textContent) && box.querySelector('#mf-create').disabled, 'a taken name says so and blocks Create');
       inp(nm, 'MMI_TEST_UI');
@@ -499,8 +504,8 @@
       await pickItems(btnByText(card(0), '+ Reward'), ['II_SYS_SYS_SCR_BLESSEDNESS']);
       ok(!box.querySelector('#mf-create').disabled && /You get .*×1\s+←\s+Topaz Piece ×1/.test(card(0).querySelector('.mf-card-gets').textContent), 'card 1: Topaz → one reward; Create allowed');
       const pv = box.querySelector('.nn-preview').textContent;
-      ok(/#define MMI_TEST_UI\s+282/.test(pv) && /TID_MMI_TEST_UI\s+7282/.test(pv) && /Test Weapons/.test(pv) && /AddMenu\( MMI_TEST_UI \);/.test(pv),
-        'menu dialog preview: MMI_TEST_UI 282, label TID 7282, AddMenu on Peach');
+      ok(/#define MMI_TEST_UI\s+284/.test(pv) && /TID_MMI_TEST_UI\s+7284/.test(pv) && /Test Weapons/.test(pv) && /AddMenu\( MMI_TEST_UI \);/.test(pv),
+        'menu dialog preview: MMI_TEST_UI 284, label TID 7284 (282 / 283 are used since d7706de4 / 0600d7e9), AddMenu on Peach');
       // a second reward on the same card: random, 50/50, then 70% moves the other to 30%
       await pickItems(btnByText(card(0), '+ Reward (random)'), ['II_SYS_SYS_SCR_AMPESS']);
       const pcts = () => [...card(0).querySelectorAll('.mf-rewards input.pct-input')].map(x => x.value);
@@ -734,10 +739,10 @@
       typeIn(box.querySelector('textarea.board-text'), '#b#cffffcc00How to win#nc#nb\nKill players for points');
       const pv = box.querySelector('.board-preview');
       ok(pv && pv.querySelector('.board-title').textContent === 'Guild Rules' && /How to win/.test(pv.textContent) && !/#b/.test(pv.textContent), 'preview: the name as title, the codes drawn (not shown)');
-      ok(/Saved as MMI_GUILD_RULES, menu 282; text file Client\/Client\/NpcBoard_282\.inc/.test(box.textContent) && /npc-board change/.test(box.textContent), 'says where it goes and that the client needs the change');
+      ok(/Saved as MMI_GUILD_RULES, menu 284; text file Client\/Client\/NpcBoard_284\.inc/.test(box.textContent) && /npc-board change/.test(box.textContent), 'says where it goes and that the client needs the change');
       click(btnByText(box, 'Create'));
       ok([...$('editor').querySelectorAll('.menus button.board')].some(b => /Guild Rules/.test(b.textContent) && b.querySelector('.pencil')), 'the new menu shows in the right-click row');
-      ok(S.ws.dirtyFiles().some(f => f.clientOnly && f.name === 'NpcBoard_282.inc') && !S.ws.files.get('exchange_script.txt').dirty, 'Client/Client/NpcBoard_282.inc to be created; Exchange_Script.txt untouched');
+      ok(S.ws.dirtyFiles().some(f => f.clientOnly && f.name === 'NpcBoard_284.inc') && !S.ws.files.get('exchange_script.txt').dirty, 'Client/Client/NpcBoard_284.inc to be created; Exchange_Script.txt untouched');
       // the + NPC stage put older bytes back on the fake disk: make the disk hold what this workspace loaded
       for (const f of S.ws.dirtyFiles()) if (!f.clientOnly && res.children.has(f.name)) res.children.get(f.name).bytes = f.bytes;
       for (const [, f] of S.client.files) if (clientDir.children.has(f.name)) clientDir.children.get(f.name).bytes = f.bytes;
@@ -745,8 +750,8 @@
       await waitFor(() => btnByText(document, 'Back up and write'), 'review dialog (rules)');
       click(btnByText(document, 'Back up and write'));
       await waitFor(() => [...document.querySelectorAll('.modal header')].some(hh => /^Saved|failed/.test(hh.textContent)), 'save finished (rules)');
-      const made = clientDir.children.get('Client').children.get('NpcBoard_282.inc');
-      ok(made && new TextDecoder().decode(made.bytes) === '#b#cffffcc00How to win#nc#nb\r\nKill players for points', 'saved: Client/Client/NpcBoard_282.inc written with CRLF');
+      const made = clientDir.children.get('Client').children.get('NpcBoard_284.inc');
+      ok(made && new TextDecoder().decode(made.bytes) === '#b#cffffcc00How to win#nc#nb\r\nKill players for points', 'saved: Client/Client/NpcBoard_284.inc written with CRLF');
       ok(S.ws.dirtyFiles().length === 0, 'clean after saving');
       document.querySelectorAll('.modal-back').forEach(m => m.remove());
       // edit it again from its menu button, then undo
@@ -757,7 +762,7 @@
       typeIn(box.querySelector('textarea.board-text'), 'Changed');
       ok(/^Edit rules text: /.test(box.querySelector('header').textContent), '✎ on a rules menu: "Edit rules text: …"');
       click(btnByText(box, 'Apply changes'));
-      ok(S.ws.boardTextOf(282) === 'Changed', 'text changed');
+      ok(S.ws.boardTextOf(284) === 'Changed', 'text changed');
       click($('btn-undo'));
       ok(S.ws.dirtyFiles().length === 0, 'Undo: back to the saved text');
     }
@@ -1265,9 +1270,9 @@
       const lookCombo = () => [...nf.querySelectorAll('.combo')].find(c => /box look/.test(c.querySelector('input').placeholder));
       await pickIn(nf, lookCombo(), 'Itm_SysSysScrBxLuck', /look — used by/);
       await waitFor(() => !create().disabled, 'Create enabled');
-      ok(/\/createitem 31671 1/.test(nf.textContent) && /GiftBox\tII_SYS_SYS_SCR_HARNESS_BOX/.test(nf.textContent) && /#define\tII_SYS_SYS_SCR_HARNESS_BOX\t\t\t31671/.test(nf.textContent),
-        'preview: item 31671, the #define, the GiftBox block');
-      ok(/SysSysScrBxCom/.test(nf.textContent) && /IDS_PROPITEM_TXT_017062\tHarness Box/.test(nf.textContent), 'preview: the ground model line and the name line');
+      ok(/\/createitem 31677 1/.test(nf.textContent) && /GiftBox\tII_SYS_SYS_SCR_HARNESS_BOX/.test(nf.textContent) && /#define\tII_SYS_SYS_SCR_HARNESS_BOX\t\t\t31677/.test(nf.textContent),
+        'preview: item 31677, the #define, the GiftBox block');
+      ok(/SysSysScrBxCom/.test(nf.textContent) && /IDS_PROPITEM_TXT_017074\tHarness Box/.test(nf.textContent), 'preview: the ground model line and the name line');
       await waitFor(() => [...nf.querySelectorAll('.bx-tt')].some(t => /Harness Box/.test(t.textContent)), 'the tooltip of the planned box');
       ok([...nf.querySelectorAll('.bx-tt')].some(t => /Moonstone/.test(t.textContent) && /Penya price/.test(t.textContent)), 'the picked item\'s tooltip shows in the form');
       click(btnByText(nf.querySelector('footer'), 'Try it'));
@@ -1289,9 +1294,9 @@
       await waitFor(() => !sf.querySelector('#bxs-apply').disabled && /cannot trade it/.test(sf.textContent), 'settings ready');
       if (STOP === 'boxsettings') { $('toasts').textContent = ''; return; }
       click(sf.querySelector('#bxs-apply'));
-      ok(/cannot be traded/.test(ed().textContent) && !FRE.itemOps.isTradeable(S.ws, S.ws.itemById(31671)).tradeable, 'settings applied: the box cannot be traded');
+      ok(/cannot be traded/.test(ed().textContent) && !FRE.itemOps.isTradeable(S.ws, S.ws.itemById(31677)).tradeable, 'settings applied: the box cannot be traded');
       while (S.ws.history.length) click($('btn-undo'));
-      ok(!S.ws.dirtyFiles().length && !S.ws.itemById(31671), 'Undo removes the new box from every file');
+      ok(!S.ws.dirtyFiles().length && !S.ws.itemById(31677), 'Undo removes the new box from every file');
       listSearch.value = ''; listSearch.dispatchEvent(new Event('input'));
     }
 
@@ -1317,8 +1322,13 @@
       isearch.value = ''; isearch.dispatchEvent(new Event('input'));
       if (STOP === 'where') { $('toasts').textContent = ''; return; }
       // part 2: gifts and Guild Siege prizes
-      ok(/🏰 Guild Siege, after each siege \(top 3 guilds\)/.test(ed().textContent) && /189 each/.test(ed().textContent) && /🏰 Guild Siege, every week/.test(ed().textContent) && /3,000/.test(ed().textContent),
-        'Red Chip: the per-siege table (3 guilds: 189 each for rank 1) and the weekly ladders');
+      isearch.value = 'II_CHP_PVP_TOKEN'; isearch.dispatchEvent(new Event('input'));
+      const tokRow = () => [...document.querySelectorAll('#item-list .item')].find(r => r.querySelector('.def') && r.querySelector('.def').textContent === 'II_CHP_PVP_TOKEN');
+      await waitFor(() => tokRow(), 'item list: PVP Token');
+      click(tokRow().querySelector('button'));
+      isearch.value = ''; isearch.dispatchEvent(new Event('input'));
+      ok(/🏰 Guild Siege, after each siege \(top 3 guilds\)/.test(ed().textContent) && /50 each/.test(ed().textContent) && /every kill in the siege/.test(ed().textContent) && /🏰 Guild Siege, every week/.test(ed().textContent) && /600/.test(ed().textContent),
+        'PVP Token: the per-siege places (50 each for rank 1, + 2 per kill) and the weekly ladders (6de6da39)');
       const pick = def => { search.value = def; search.dispatchEvent(new Event('input')); click([...document.querySelectorAll('#list .npc')].find(n => new RegExp(def + '\\b').test(n.textContent))); };
       pick('II_SYS_SYS_EVE_CHRISTMASCAKE01');
       ok(/🎂 Level-up gift \(1\)/.test(ed().textContent) && /level 105/.test(ed().textContent) && /2 times per character/.test(ed().textContent) && /\+1 after every rebirth/.test(ed().textContent)
@@ -1649,6 +1659,32 @@
       if (STOP === 'weaponsfamily') { $('toasts').textContent = ''; return; }
       while (S.ws.history.length) click($('btn-undo'));
       ok(!S.ws.dirtyFiles().length, 'Undo all: nothing left to save');
+    }
+
+    // ---- PvP Events (Guild Siege / FFA / TDM)
+    {
+      await openTask('pvp');
+      const ed = () => $('editor'), items = () => [...document.querySelectorAll('#list .npc')];
+      ok(S.mode === 'pvp' && items().map(x => x.querySelector('.n span').textContent).join('|') === 'Guild Siege|FFA (Free-For-All)|TDM (Team Deathmatch)|🗓 The week', 'PvP Events: Guild Siege, FFA, TDM, the week');
+      ok(/Saturday 18:30/.test(items()[0].textContent) && /every Saturday 18:30/.test(ed().textContent) && /50/.test(ed().textContent), 'Guild Siege: Saturday 18:30, the rules board table, the prizes');
+      ok(!S.ws.diags.some(d => d.module === 'pvp'), 'no problem on the real files');
+      if (STOP === 'pvp') { $('toasts').textContent = ''; return; }
+      click(items()[1]);
+      ok(/Every day at 14:30 and 21:30/.test(ed().textContent) && ed().querySelector('input[data-key="pvp|ffa|h0"]'), 'FFA: every day 14:30 and 21:30, the start-time rows');
+      const hr = ed().querySelector('input[data-key="pvp|ffa|h0"]');
+      hr.value = '15'; hr.dispatchEvent(new Event('change'));
+      const last = [...$('toasts').children].pop().textContent;
+      ok(/rules board too/.test(last) && /\(was every day 14:30\)/.test(last), 'FFA 14:30 -> 15:30: one step with the rules board ("rules board too (was every day 14:30)")');
+      ok(S.ws.files.get('client/npcboard_289.inc').text.includes('Every day at 15:30 and 21:30') && /FFA_BEGIN\t0\t15\t30/.test(S.ws.files.get('ffamanager.inc').text), '… FFAManager.inc and NpcBoard_289.inc both changed');
+      if (STOP === 'pvpffa') { $('toasts').textContent = ''; return; }
+      click($('btn-save'));
+      await waitFor(() => btnByText(document, 'Back up and write'), 'review dialog (pvp)');
+      const rv = lastModalAny();
+      ok(/\/ffareload/.test(rv.textContent), 'review: After saving says /ffareload');
+      if (STOP === 'pvpreview') return;
+      for (const m of [...document.querySelectorAll('.modal')]) { const b = btnByText(m, 'Cancel') || btnByText(m, 'Close'); if (b) click(b); }
+      while (S.ws.history.length) click($('btn-undo'));
+      ok(!S.ws.dirtyFiles().length, 'Undo: nothing left to save');
     }
 
     // ---- Battle Pass

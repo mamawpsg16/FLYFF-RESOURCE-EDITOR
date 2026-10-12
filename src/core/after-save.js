@@ -11,51 +11,57 @@
 //     LoadPreFiles :1593, OpenProject :1573). A loose file in Client/ wins over data.res (file.cpp:273
 //     CResFile::Open, b7645c52). Never reads .dyo (WorldFile.cpp:269-382 is #ifdef __WORLDSERVER).
 //   propMoverEx.inc (Monster Drops): the game reads it at startup but the drop lines are kept only #ifdef __WORLDSERVER
-//     (Project.cpp:3196 / 3218 / 3234), and it has no loose Client copy: a drop change needs only the server restart.
-//   propGiftbox.inc (Boxes): LoadGiftbox is #ifdef __WORLDSERVER (Project.cpp:836-847), no Client copy: server restart only.
-//   propPackItem.inc (Boxes): LoadPackItem (Project.cpp:855) runs in both; the game reads Client/propPackItem.inc (Item Wiki).
+//     (Project.cpp:3231 / 3253 / 3269), and it has no loose Client copy: a drop change needs only the server restart.
+//   propGiftbox.inc (Boxes): LoadGiftbox is #ifdef __WORLDSERVER (Project.cpp:858-869), no Client copy: server restart only.
+//   propPackItem.inc (Boxes): LoadPackItem (Project.cpp:877) runs in both; the game reads Client/propPackItem.inc (Item Wiki).
 //   defineItem.h / propItem.txt.txt / mdlDyna.inc (+ New box): LoadDefines / LoadStrings / the model script, at startup in both.
 //   Client/Client/DonationShopTree.inc: each time the Donation Shop window opens (WndDonationShop.cpp:346; 409 with donation-tree.diff).
 //   Client/Client/NpcBoard_<id>.inc: on every click of the menu, once docs/patches/npc-board.diff is built.
+//   Client/Client/GuildCombatTEXT_<n>_ENG / _USA.inc: the Guild Siege boards, read on every click by the game's own code
+//     (WndWorld.cpp:4600 / :4681 GetLangFileName( FILE_GUILDCOMBAT_TEXT_n ), no patch).
+//   FFAManager.inc / TDMManager.inc: the WorldServer at startup (Project.cpp:920 / :923 ReadConfig) AND the GM commands
+//     /ffareload / /tdmreload (FuncTextCmd.cpp:423 / :517; refused while a run is going), so a save needs one of the two.
+//   GuildCombat.txt: the WorldServer at startup (ThreadMng.cpp:293). GuildSiegePrize.lua: the WorldServer at startup
+//     (eveschool.cpp:3665 LoadPrizes, 6de6da39) and the DatabaseServer (databaseserver/Project.cpp:216 LoadScript).
 // Stop Server.bat closes Neuz and every server; Start Server.bat starts them and then the game
 // (Client\- Start Game.bat copies Source\Output\Neuz\NoGameguard\Neuz.exe first).
 (function (FRE) {
   'use strict';
 
-  const STARTUP = 'startup', WINDOW = 'window', CLICK = 'click';
+  const STARTUP = 'startup', WINDOW = 'window', CLICK = 'click', RELOAD = 'reload';
   // key (lowercase, as in Workspace.files) -> { server, client, cite }
   const READERS = {
-    'spec_item.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:790 LoadPropItem' },
-    'character.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:796 / :3257 LoadCharacter' },
-    'character-etc.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:796 / :3257 LoadCharacter' },
-    'character-school.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:796 / :3257 LoadCharacter' },
+    'spec_item.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:812 LoadPropItem' },
+    'character.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:818 / :3257 LoadCharacter' },
+    'character-etc.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:818 / :3257 LoadCharacter' },
+    'character-school.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:818 / :3257 LoadCharacter' },
     'character.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1256 LoadStrings' },
     'defineneuz.h': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1373 LoadDefines' },
     'definetext.h': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1383 LoadDefines' },
-    'etc.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:830 LoadEtc' },
+    'etc.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:852 LoadEtc' },
     'etc.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1259 LoadStrings' },
     'textclient.inc': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1366 LoadText' },
     'textclient.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1274 LoadStrings' },
-    'exchange_script.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:979 -> Exchange.cpp:34 Load_Script' },
-    'donationshop.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:932 -> ProjectCmn.cpp:1845 LoadDonationShop' },
-    'battlepass.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:907 -> ProjectCmn.cpp:1682 LoadBattlePass' },
+    'exchange_script.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:1014 -> Exchange.cpp:34 Load_Script' },
+    'donationshop.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:967 -> ProjectCmn.cpp:1845 LoadDonationShop' },
+    'battlepass.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:935 -> ProjectCmn.cpp:1682 LoadBattlePass' },
     // the game parses propMoverEx.inc too, but keeps no drop lines: DropItem / DropKind / DropGold are added #ifdef __WORLDSERVER
-    'propmoverex.inc': { server: STARTUP, client: null, cite: 'Project.cpp:828 LoadPropMoverEx (drops #ifdef __WORLDSERVER :3196)' },
-    // random boxes: LoadGiftbox sits in #ifdef __WORLDSERVER (Project.cpp:836-847); sets: the game loads its own copy too (Item Wiki, e08528a5)
-    'propgiftbox.inc': { server: STARTUP, client: null, cite: 'Project.cpp:842 LoadGiftbox (#ifdef __WORLDSERVER :836)' },
-    'proppackitem.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:855 LoadPackItem (the game too: Item Wiki)' },
+    'propmoverex.inc': { server: STARTUP, client: null, cite: 'Project.cpp:850 LoadPropMoverEx (drops #ifdef __WORLDSERVER :3196)' },
+    // random boxes: LoadGiftbox sits in #ifdef __WORLDSERVER (Project.cpp:858-869); sets: the game loads its own copy too (Item Wiki, e08528a5)
+    'propgiftbox.inc': { server: STARTUP, client: null, cite: 'Project.cpp:864 LoadGiftbox (#ifdef __WORLDSERVER :836)' },
+    'proppackitem.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:877 LoadPackItem (the game too: Item Wiki)' },
     // a new box item (J part 2, the 949f2cc2 way): its #define, its name / description, its ground model
     'defineitem.h': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1376 LoadDefines' },
     'propitem.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1261 LoadStrings' },
-    'mdldyna.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:768 m_modelMng.LoadScript (the "model" line of Masquerade.prj)' },
-    // Rates & Buffs: Event.lua (the WorldServer and the DatabaseServer, Project.cpp:983 / databaseserver/Project.cpp:192; the
-    // DatabaseServer menu "Apply now", DatabaseServer.cpp:488, reloads it live), ServerBuff.txt (WorldServer only, Project.cpp:893),
-    // GuildBuff.txt (both, Project.cpp:891; the game shows only what the server sends)
-    'event.lua': { server: STARTUP, client: null, cite: 'Project.cpp:983 m_EventLua.LoadScript (+ databaseserver/Project.cpp:192)' },
-    'serverbuff.txt': { server: STARTUP, client: null, cite: 'Project.cpp:893 loadServerBuffFile (#ifdef __WORLDSERVER)' },
-    'guildbuff.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:891 loadGuildBuffFile' },
-    // rebirth tiers: both load it (Project.cpp:928, #ifdef __REBIRTH_SYSTEM only); the game discards the numbers but reads the file
-    '1rebirth.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:928 LoadRebirthProp' },
+    'mdldyna.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:790 m_modelMng.LoadScript (the "model" line of Masquerade.prj)' },
+    // Rates & Buffs: Event.lua (the WorldServer and the DatabaseServer, Project.cpp:1018 / databaseserver/Project.cpp:192; the
+    // DatabaseServer menu "Apply now", DatabaseServer.cpp:488, reloads it live), ServerBuff.txt (WorldServer only, Project.cpp:915),
+    // GuildBuff.txt (both, Project.cpp:913; the game shows only what the server sends)
+    'event.lua': { server: STARTUP, client: null, cite: 'Project.cpp:1018 m_EventLua.LoadScript (+ databaseserver/Project.cpp:192)' },
+    'serverbuff.txt': { server: STARTUP, client: null, cite: 'Project.cpp:915 loadServerBuffFile (#ifdef __WORLDSERVER)' },
+    'guildbuff.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:913 loadGuildBuffFile' },
+    // rebirth tiers: both load it (Project.cpp:963, #ifdef __REBIRTH_SYSTEM only); the game discards the numbers but reads the file
+    '1rebirth.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:963 LoadRebirthProp' },
     // Upgrade Rates (task K): ItemUpgrade.lua (CItemUpgrade's constructor -> LoadScript, WORLDSERVER/ItemUpgrade.cpp:31 / :59, WorldServer
     // only), s.txt (LoadServerScript Project.cpp:994, WorldServer; the game reads its own copy for the Collector Details window :937),
     // Ultimate_UltimateWeapon.txt (Project.cpp:967 LoadUltimateWeapon -> UltimateWeapon.cpp:116, #ifdef __WORLDSERVER),
@@ -72,13 +78,20 @@
     'couple.inc': { server: STARTUP, client: STARTUP, cite: 'WORLDSERVER/couplehelper.cpp:44, databaseserver/couplehelper.cpp:158, Neuz/couplehelper.cpp:33 CCoupleProperty::Initialize' },
     // Set Effects (task G part 1): the sets (both: bonuses on the server, the tooltip in the game), their names (LoadStrings' list),
     // the +N armor table (the "expTable" line of Masquerade.prj, both)
-    'propitemetc.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:861 LoadPiercingAvail' },
+    'propitemetc.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:883 LoadPiercingAvail' },
     'propitemetc.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1262 LoadStrings' },
-    'exptable.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:741 LoadExpTable (the "expTable" line of Masquerade.prj)' },
+    'exptable.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:763 LoadExpTable (the "expTable" line of Masquerade.prj)' },
     'client/donationshoptree.inc': { server: null, client: WINDOW, cite: 'WndDonationShop.cpp:346 (409 with donation-tree.diff) LoadTreeScript' },
+    // PvP Events: the FFA / TDM settings (startup or the GM reload command), the siege day / bid and its prizes (startup)
+    'ffamanager.inc': { server: RELOAD, client: null, reload: 'ffa', cite: 'Project.cpp:920 ReadConfig; /ffareload FuncTextCmd.cpp:423' },
+    'tdmmanager.inc': { server: RELOAD, client: null, reload: 'tdm', cite: 'Project.cpp:923 ReadConfig; /tdmreload FuncTextCmd.cpp:517' },
+    'guildcombat.txt': { server: STARTUP, client: null, cite: 'ThreadMng.cpp:293 g_GuildCombatMng.LoadScript' },
+    'guildsiegeprize.lua': { server: STARTUP, client: null, cite: 'eveschool.cpp:3665 LoadPrizes (WorldServer) + databaseserver/Project.cpp:216 LoadScript (DatabaseServer)' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };
   const BOARD = { server: null, client: CLICK, cite: 'npc-board.diff: WndWorld.cpp OnCommand default:' };
+  // the Guild Siege boards: the game's own code reads them on each click (no patch needed)
+  const GS_BOARD = { server: null, client: CLICK, noPatch: true, cite: 'WndWorld.cpp:4600 / :4681 FILE_GUILDCOMBAT_TEXT_n' };
   // a file the table does not know: assume both read it at startup (the safe answer)
   const UNKNOWN = { server: STARTUP, client: STARTUP, cite: '?' };
 
@@ -87,6 +100,7 @@
     if (READERS[key]) return READERS[key];
     if (/^world\/.+\.dyo$/.test(key)) return DYO;
     if (/^client\/npcboard_\d+\.inc$/.test(key)) return BOARD;
+    if (/^client\/guildcombattext_\d_(eng|usa)\.inc$/.test(key)) return GS_BOARD;
     return UNKNOWN;
   }
 
@@ -121,6 +135,7 @@
       for (const key of c.files) {
         const r = readerOf(key), name = nameOf(key);
         if (r.server === STARTUP) { needs.add('servers'); why.push(`the WorldServer reads ${name} once, at startup (${r.cite})`); }
+        if (r.server === RELOAD) { needs.add('reload:' + r.reload); why.push(`the WorldServer reads ${name} at startup and on /${r.reload}reload (${r.cite})`); }
         if (r.client === STARTUP) {
           const st = client[key] || 'none';
           if (st === 'written' || st === 'created') { needs.add('game'); why.push(`the game reads its own Client/${name} once, at startup`); }
@@ -137,7 +152,8 @@
           if (treePatch) { needs.add('patch:donation-tree'); why.push('a category the game\'s code does not know sorts last and gets the wrong card text until donation-tree.diff is built into Neuz'); }
         }
         if (r.patch) { needs.add('patch:' + r.patch); why.push(`the server and the game read ${name} only with ${r.patch}.diff built into the WorldServer and Neuz; without it they keep the fees compiled in the C++`); }
-        if (r.client === CLICK) {
+        if (r.client === CLICK && r.noPatch) { needs.add('click:board'); why.push(`the game reads Client/Client/${name} each time the board menu is clicked (${r.cite})`); }
+        else if (r.client === CLICK) {
           needs.add('click:board'); needs.add('patch:npc-board');
           why.push(`the game reads Client/Client/${name} each time the menu is clicked, but only with npc-board.diff built into Neuz`);
         }
@@ -161,6 +177,11 @@
     else {
       if (all.has('reopen:donation')) steps.push({ id: 'reopen:donation', short: 'reopen the Donation Shop window', text: 'Close and reopen the Donation Shop window in the game. No restart is needed: it reads the categories each time it opens.' });
       if (all.has('click:board')) steps.push({ id: 'click:board', short: 'click the rules menu again', text: 'Click the rules menu again in the game. No restart is needed: it reads the text on every click.' });
+    }
+    // FFA / TDM settings: a server restart reads them too; else the GM reload command (refused while a run is going)
+    if (!all.has('servers')) for (const k of ['ffa', 'tdm']) if (all.has('reload:' + k)) {
+      const L = k.toUpperCase();
+      steps.push({ id: 'reload:' + k, short: `type /${k}reload in game`, text: `In the game, as GM, type /${k}reload while no ${L} runs (it is refused during a run; the chat line says how many start times and the fee it read). Or run Stop Server.bat, then Start Server.bat.` });
     }
     return { steps, changes: outChanges, notes, built: Object.keys(PATCHES).filter(id => built.has(id)) };
   }
@@ -188,5 +209,5 @@
     return compute({ changes, client, names, patches, codes: ws.diags.map(d => d.code) });
   }
 
-  FRE.afterSave = { READERS, DYO, BOARD, PATCHES, readerOf, compute, forWorkspace };
+  FRE.afterSave = { READERS, DYO, BOARD, GS_BOARD, PATCHES, readerOf, compute, forWorkspace };
 })(globalThis.FRE = globalThis.FRE || {});

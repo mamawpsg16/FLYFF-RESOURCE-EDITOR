@@ -487,7 +487,7 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when": "Sat 10 Oct 2026, 16:18", "rev": "372cbfb", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when": "Mon 12 Oct 2026, 09:49", "rev": "2c8e2b8", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -6298,6 +6298,23 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
     WE_RARITY_ASPD: ['A Weapon Rarity tier adds its % bonus to every rate stat, Attack Speed included, but Attack Speed is counted in 1/20 %: the bonus is tiny there, while the tooltip shows it as a whole %.', 'Nothing to fix in the file; it is how WeaponRarity_ScaleParam works.'],
     WE_TIER_ASPD: ['A tier 2 (Legendary Golden) weapon has less raw Attack Speed than the tier 1 (Lusaka) weapon of the same type: players lose speed when they upgrade.', 'Raise tier 2, or lower tier 1.'],
     UP_STALE_COMMENT: ['The line\'s number changed, but its comment (after -- or //) may still describe the old number.', 'Update or remove the comment by hand if you want the file to stay clear.'],
+    // PvP Events (FFAManager.inc, TDMManager.inc, GuildCombat.txt, GuildSiegePrize.lua, the rules boards)
+    PVP_OFF: ['The WorldServer reads FFAManager.inc / TDMManager.inc at startup and on /ffareload or /tdmreload. Any mistake (an unknown word, a value out of range, a bad start time) switches that event off until the file is fixed: no runs, the NPC says it is not available.', 'Fix the value shown, then type /ffareload or /tdmreload in game (or restart the servers).'],
+    PVP_NO_TIMES: ['There is no start time (FFA_BEGIN / TDM_BEGIN), so the event never starts on its own.', 'Add a start time, or leave it on purpose (a GM can still start one).'],
+    PVP_TIME_TWICE: ['The same start time is written twice. It is one run; the second line changes nothing.', 'Remove one of the lines.'],
+    PVP_SKIPPED: ['The server looks for the next start only when the previous run is over. A start that falls inside a run (from registration to everyone back in town) is skipped.', 'Move the start time later, or make the earlier run shorter.'],
+    PVP_TIME_CLASH: ['Two events run at the same time (registration included). A player can be inside only one PvP arena, so the events take players from each other.', 'Move one of the times.'],
+    PVP_GS_LOAD: ['GuildCombat.txt has a value the server refuses (more than 7 siege times, a day outside 1-7, an hour outside 0-24, a minute outside 0-59, an unclosed block). The WorldServer then stops starting.', 'Fix the line shown.'],
+    PVP_GS_DAY_TWICE: ['The server keeps one siege time per weekday. When a day is written twice, the later row replaces the earlier one.', 'Keep one row per day.'],
+    PVP_GS_HOUR24: ['The loader accepts hour 24, but the server compares it with the clock (0-23), so the siege never opens.', 'Use 0-23 (00:30 is hour 0).'],
+    PVP_GS_NONE: ['AUTO_OPEN_IDC has no usable siege time, so the Guild Siege never opens on its own.', 'Add a day and time.'],
+    PVP_GS_SHOWN: ['The Guild Siege window\'s "next siege" time is worked out from the LAST row of AUTO_OPEN_IDC only, and on that day after the siege it adds the day number (1-7) instead of 7 days. With one row on Saturday (7) it is always right; other days or several rows show a wrong time to players at some moments. The siege itself still opens at the right time.', 'Keep one siege time on Saturday, or tell players the times on the rules board (GuildCombatTEXT_1).'],
+    PVP_PRIZE_LUA: ['GuildSiegePrize.lua is real Lua. When it does not run, both servers pay the compiled prizes, and the DatabaseServer loses the functions that time the weekly payout, so the weekly prizes stop.', 'Fix the line shown (a missing bracket or quote).'],
+    PVP_PRIZE_BAD: ['A prize must be a whole number (TokensPerKill 0-32767, every list place 1-32767). A bad value is ignored: the server keeps the compiled number for it and writes an Error line.', 'Type a whole number in range.'],
+    PVP_PRIZE_EXTRA: ['A prize list has more numbers than places; the server reads only the first ones (3 siege places, 5 guilds, 10 players).', 'Remove the extra numbers.'],
+    PVP_PATCH_MISSING: ['The servers read the Guild Siege prizes from GuildSiegePrize.lua only with the C++ change of PvP events part B (commit 6de6da39, CGuildSiegePrize::ReadPrizes). This source does not have it, so the compiled numbers are paid.', 'Update FLYFF-V19-SOURCE and rebuild the WorldServer and the DatabaseServer.'],
+    PVP_RULES_DIFF: ['The rules board players read (Donaris FFA Rules, Amos TDM Rules, the Guild Siege boards at Frankie) says another value than the data the servers use.', 'Change the board (or the value); the editor keeps them in step when you edit the value here.'],
+    PVP_RULES_NOTFOUND: ['The editor finds each value in a board by the words around it. This sentence was reworded, so a change of the value will not reach the board.', 'Check the board by hand after changing that value.'],
   };
 })(globalThis.FRE = globalThis.FRE || {});
 
@@ -9609,11 +9626,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
   // Menu ids with their own case in CWndWorld::OnCommand (WndWorld.cpp:4379-6724, every `case MMI_x:` of its
   // switch( nID ), #ifdef blocks included). Any other id falls to `default:` (6470, __TRADESYS) and opens the
   // exchange window for that id (CWndDialogEvent::SetMMI), which lists the menu's SETs from the client's
-  // Exchange_Script.txt. (139 names; tools/oracle_sim.py reads the same list from the C++ file itself.)
+  // Exchange_Script.txt. (144 names; tools/oracle_sim.py reads the same list from the C++ file itself.)
   const OWN_CASE = new Set([
     'MMI_ADD_MESSENGER', 'MMI_ARENA_ENTER', 'MMI_ARENA_EXIT', 'MMI_ATTRIBUTE', 'MMI_BANKING', 'MMI_BEAUTYSHOP', 'MMI_BEAUTYSHOP_SKIN',
     'MMI_BLESSING_CANCEL', 'MMI_BUFFPET_RELEASE', 'MMI_BUFFPET_STATUS', 'MMI_CHANGEELEM', 'MMI_CHEER', 'MMI_COLLECTOR_DETAILS',
     'MMI_COLOSSEUM_COLOENTER01', 'MMI_COSTUMEMIX01', 'MMI_DIALOG', 'MMI_DUEL', 'MMI_DUEL_PARTY', 'MMI_FINDWORD', 'MMI_FIVESYSTEM',
+    'MMI_FFA_ARENA', 'MMI_FFA_RULES', 'MMI_TDM_ARENA', 'MMI_TDM_RULES', 'MMI_GW_STATUE_BUFF',   // FFA / TDM (0600d7e9 .. 8362fbc6), GS statues (d7706de4)
     'MMI_GUILDBANKING', 'MMI_GUILDCOMBAT_1TO1_CANCEL', 'MMI_GUILDCOMBAT_1TO1_ENTRANCE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_ENTRY',
     'MMI_GUILDCOMBAT_1TO1_GUIDE_PRIZE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_RULE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_TEX',
     'MMI_GUILDCOMBAT_1TO1_GUIDE_WIN', 'MMI_GUILDCOMBAT_1TO1_OFFER', 'MMI_GUILDCOMBAT_1TO1_OFFERSTATE', 'MMI_GUILDCOMBAT_1TO1_REPAYMENT',
@@ -9915,9 +9933,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
 //   maxLevel expTable.inc expCharacter (CProject::LoadExpTable, Project.cpp:3681): the last row with an EXP value;
 //            IsMaxLevel = m_aExpCharacter[level + 1].nExp1 == 0 (Mover.h:1335).
 //   siege    GuildCombat.txt JOINPENYA / MINJOINGUILDSIZE / MAXJOINGUILDSIZE (CGuildCombat::LoadScript,
-//            eveschool.cpp:3528-3544) and the amounts compiled into the C++: per siege (GuildCombatResultRanking,
-//            eveschool.cpp:1688-1712) and weekly (GuildSiegePrize.cpp:17-20, cda3af21). When the C++ is not there
-//            (test-data) the copies below are used.
+//            eveschool.cpp:3528-3544) and the amounts in the C++: per siege (GuildCombatResultRanking) and weekly
+//            (GuildSiegePrize.cpp). Two shapes, told apart by the C++ text:
+//              'formula' (cda3af21 .. 4fa49551): JOINPENYA × guilds × 0.9 × 0.00001 × 0.1 × the rank's share, min 1
+//              'fixed'   (6de6da39, PvP events part B): GetSiegePrize( i ) = s_nSiegePrize[3], overridden by
+//                        GuildSiegePrize.lua (ReadPrizes; also TokensPerKill and the weekly lists; loaders/pvp.js
+//                        readPrizes); a place below 1 is not paid
+//            The prize item: the m_dwItemId of GuildCombatResultRanking (PVP Tokens since 4fa49551, Red Chips before).
+//            When the C++ is not there (test-data) the copies below (V19 6de6da39) are used.
 // Not modelled: a Lua `if` / loop / variable around the calls (the file has none: every call is read as written);
 // Lua patterns in the account filter (read as plain text).
 (function (FRE) {
@@ -9926,12 +9949,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
   const MAX_COUPLE_LEVEL = 21;            // CCouple::eMaxLevel, couple.h:17
   const FLAG_BOUND = 2;                   // CItemElem::binds, Item.h:132
 
-  // The amounts in the C++ today (read from the source when FLYFF-V19-SOURCE is picked)
+  // The amounts in the C++ today, V19 6de6da39 (read from the source when FLYFF-V19-SOURCE is picked)
   const BUILTIN = {
-    siege: { factors: [0.9, 0.00001, 0.1], shares: [0.7, 0.2, 0.1] },         // eveschool.cpp:1702-1712
-    weekly: {                                                                   // GuildSiegePrize.cpp:17-20 (cda3af21)
-      guild: [3000, 1500, 900, 360, 240], total: [1000, 500, 300, 200, 150, 120, 100, 70, 40, 20],
-      perClass: [500, 250, 150, 100, 75, 60, 50, 35, 20, 10], mvp: [1500, 750, 450, 300, 225, 180, 150, 105, 60, 30],
+    // mode 'fixed' = GetSiegePrize( i ); factors / shares: the formula before part B (eveschool.cpp, 4fa49551)
+    siege: { mode: 'fixed', fixed: [50, 14, 7], factors: [0.9, 0.00001, 0.1], shares: [0.7, 0.2, 0.1] },
+    perKill: 2, item: 'II_CHP_PVP_TOKEN', lua: true,                           // s_nTokensPerKill; GuildCombatResultRanking; ReadPrizes
+    weekly: {                                                                   // GuildSiegePrize.cpp s_n…Prize (4fa49551: the old ladders / 5)
+      guild: [600, 300, 180, 72, 48], total: [200, 100, 60, 40, 30, 24, 20, 14, 8, 4],
+      perClass: [100, 50, 30, 20, 15, 12, 10, 7, 4, 2], mvp: [300, 150, 90, 60, 45, 36, 30, 21, 12, 6],
     },
   };
   const ARRAYS = { guild: 's_nGuildPrize', total: 's_nClassPrize', perClass: 's_nClassPerClassPrize', mvp: 's_nMvpPrize' };
@@ -10132,18 +10157,30 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
   // The compiled amounts: from the C++ text when given ({ 'eveschool.cpp': text, 'guildsiegeprize.cpp': text }), else BUILTIN.
   // -> { siege: { factors, shares }, weekly: { guild, total, perClass, mvp }, from: 'cpp' | 'builtin', changed: [what was not found] }
   function compiled(cpp) {
-    const res = { siege: JSON.parse(JSON.stringify(BUILTIN.siege)), weekly: JSON.parse(JSON.stringify(BUILTIN.weekly)), from: 'builtin', changed: [] };
+    const res = { siege: JSON.parse(JSON.stringify(BUILTIN.siege)), weekly: JSON.parse(JSON.stringify(BUILTIN.weekly)), perKill: BUILTIN.perKill,
+      item: BUILTIN.item, lua: BUILTIN.lua, from: 'builtin', changed: [] };
     if (!cpp) return res;
     const ev = cpp.get ? cpp.get('eveschool.cpp') : cpp['eveschool.cpp'], gp = cpp.get ? cpp.get('guildsiegeprize.cpp') : cpp['guildsiegeprize.cpp'];
     if (!ev && !gp) return res;
     res.from = 'cpp';
     if (ev) {
-      const f = /float\s+fChipNum\s*=\s*m_nJoinPanya\s*\*\s*vecGCRanking\.size\(\)\s*\*\s*([\d.]+)f\s*\*\s*([\d.]+)f\s*\*\s*([\d.]+)f\s*;/.exec(ev);
-      if (f) res.siege.factors = [f[1], f[2], f[3]].map(Number); else res.changed.push('eveschool.cpp: the Red Chip formula (fChipNum)');
-      const sh = [0, 1, 2].map(i => new RegExp(`case\\s+${i}\\s*:[^\\n]*\\r?\\n\\s*fChipNum\\s*\\*=\\s*([\\d.]+)f`).exec(ev));
-      if (sh.every(Boolean)) res.siege.shares = sh.map(x => Number(x[1])); else res.changed.push('eveschool.cpp: the rank 1-3 shares (fChipNum *=)');
+      // the prize item: GuildCombatResultRanking's m_dwItemId
+      const a = ev.indexOf('void CGuildCombat::GuildCombatResultRanking'), b = ev.indexOf('void CGuildCombat::GuildCombatCloseTeleport');
+      const it = /m_dwItemId\s*=\s*(II_\w+)\s*;/.exec(a >= 0 ? ev.slice(a, b > a ? b : undefined) : ev);
+      if (it) res.item = it[1]; else res.changed.push('eveschool.cpp: the siege prize item (m_dwItemId)');
+      if (/GetSiegePrize\(\s*i\s*\)/.test(ev)) res.siege.mode = 'fixed';
+      else {
+        res.siege.mode = 'formula';
+        const f = /float\s+fChipNum\s*=\s*m_nJoinPanya\s*\*\s*vecGCRanking\.size\(\)\s*\*\s*([\d.]+)f\s*\*\s*([\d.]+)f\s*\*\s*([\d.]+)f\s*;/.exec(ev);
+        if (f) res.siege.factors = [f[1], f[2], f[3]].map(Number); else res.changed.push('eveschool.cpp: the per-siege formula (fChipNum)');
+        const sh = [0, 1, 2].map(i => new RegExp(`case\\s+${i}\\s*:[^\\n]*\\r?\\n\\s*fChipNum\\s*\\*=\\s*([\\d.]+)f`).exec(ev));
+        if (sh.every(Boolean)) res.siege.shares = sh.map(x => Number(x[1])); else res.changed.push('eveschool.cpp: the rank 1-3 shares (fChipNum *=)');
+      }
       if (!/if\(\s*i\s*>=\s*3\s*\)\s*break;/.test(ev)) res.changed.push('eveschool.cpp: "only the top 3 guilds" (i >= 3)');
     } else res.changed.push('eveschool.cpp not found');
+    // tokens per siege kill: s_nTokensPerKill (part B), else the step 3b #define, else none (before 3b)
+    const pk = gp && /static\s+int\s+s_nTokensPerKill\s*=\s*(\d+)\s*;/.exec(gp), pd = ev && /#define\s+GS_TOKEN_PER_KILL\s+(\d+)/.exec(ev);
+    res.perKill = pk ? Number(pk[1]) : pd ? Number(pd[1]) : ev ? 0 : res.perKill;
     if (gp) {
       for (const [k, name] of Object.entries(ARRAYS)) {
         const m = new RegExp(`${name}\\[\\s*\\d+\\s*\\]\\s*=\\s*\\{([^}]*)\\}`).exec(gp);
@@ -10152,13 +10189,29 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
       }
       if (!/nRank\s*<\s*5\s*&&\s*!vecGuild\.empty\(\)/.test(gp)) res.changed.push('GuildSiegePrize.cpp: the top 5 guilds');
       if (!/LogPlayerBoard\(\s*pQuery,\s*vecByPoint,\s*10,/.test(gp)) res.changed.push('GuildSiegePrize.cpp: the top 10 players');
+      res.lua = /CGuildSiegePrize::ReadPrizes/.test(gp);
+      if (res.siege.mode === 'fixed') {
+        const sp = /s_nSiegePrize\[\s*3\s*\]\s*=\s*\{([^}]*)\}/.exec(gp);
+        if (sp) res.siege.fixed = sp[1].split(',').map(x => Number(x.trim())).filter(x => !Number.isNaN(x));
+        else res.changed.push('GuildSiegePrize.cpp: s_nSiegePrize');
+      }
     } else res.changed.push('GuildSiegePrize.cpp not found');
     return res;
   }
+  // the servers with part B read GuildSiegePrize.lua over the compiled numbers (ReadPrizes): comp with them
+  function withLua(comp, file) {
+    if (!comp.lua || !file) return comp;
+    const p = FRE.pvp.readPrizes(file).prizes;
+    return Object.assign({}, comp, { perKill: p.TokensPerKill, siege: Object.assign({}, comp.siege, { fixed: p.SiegePrize.slice() }),
+      weekly: { guild: p.GuildPrize.slice(), total: p.ClassPrize.slice(), perClass: p.ClassPerClassPrize.slice(), mvp: p.MvpPrize.slice() }, fromLua: true });
+  }
   // GuildCombatResultRanking (eveschool.cpp:1702-1715): chips for the guild at rank i (0-2) when n guilds applied.
   // m_nJoinPanya (int) × size() (unsigned) -> unsigned, then float × 0.9f × 0.00001f × 0.1f × share, (int), at least 1.
+  // 'fixed' (part B): GetSiegePrize( i ) (0 = not paid, the caller skips it)
   function siegeChips(joinPenya, n, rank, comp) {
-    const f32 = Math.fround, { factors, shares } = (comp || BUILTIN).siege;
+    const sg = (comp || BUILTIN).siege;
+    if (sg.mode === 'fixed') return sg.fixed[rank] === undefined ? 0 : sg.fixed[rank];
+    const f32 = Math.fround, { factors, shares } = sg;
     let x = f32(Math.imul(joinPenya | 0, n | 0) >>> 0);
     for (const k of factors) x = f32(x * f32(k));
     x = f32(x * f32(shares[rank]));
@@ -10176,11 +10229,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
       rebirth: rebirth(f('1rebirth.inc'), D, ws.items.items),
       couple: couple(f('couple.inc'), D),
       maxLevel: maxLevel(f('exptable.inc')),
-      siege: f('guildcombat.txt') ? { config: siegeConfig(f('guildcombat.txt'), D), comp: compiled(ws.cpp || null) } : null,
+      siege: f('guildcombat.txt') ? { config: siegeConfig(f('guildcombat.txt'), D), comp: withLua(compiled(ws.cpp || null), f('guildsiegeprize.lua')) } : null,
     };
   }
 
-  FRE.gifts = { levelUp, giftsFor, rebirth, couple, coupleLevel, maxLevel, siegeConfig, compiled, siegeChips, fromWorkspace,
+  FRE.gifts = { levelUp, giftsFor, rebirth, couple, coupleLevel, maxLevel, siegeConfig, compiled, withLua, siegeChips, fromWorkspace,
     stripLua, luaArgs, BUILTIN, MAX_COUPLE_LEVEL, FLAG_BOUND };
 })(globalThis.FRE = globalThis.FRE || {});
 
@@ -10205,7 +10258,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
 //            SEX_SEXLESS); always by mail.
 //   siege    CGuildCombat::GuildCombatResultRanking (eveschool.cpp:1582-1759): the bubble sort (points, then lives,
 //            then the average level of the members still alive and online, int division), then the top 3 guilds:
-//            every ONLINE lineup member gets the chips (bag, else mail). Not after a GM stop (eveschool.cpp:3089).
+//            every ONLINE lineup member gets the prize (bag, else mail): PVP Tokens since 4fa49551 (the item the C++
+//            names), a fixed list since 6de6da39 (a place below 1 is skipped). Not after a GM stop (eveschool.cpp:3089).
 //   weekly   CGuildSiegePrizeDBController::ComputeAndLogWeeklyPrizes (GuildSiegePrize.cpp:353-480, cda3af21): top 5
 //            guilds by wins (> 0) -> the guild bank (full: lost, DPDatabaseClient.cpp:3790); top 10 players by points on
 //            the Total board and on their class board, top 10 by MVP count; ties: the first row; by mail.
@@ -10223,7 +10277,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
   function envFor(ws, model) {
     const base = X().envFromWorkspace(ws);
     const D = ws.defines.defines;
-    return { gifts: model || G().fromWorkspace(ws), prop: base.prop, text: base.text, redChip: D.has('II_CHP_RED') ? D.get('II_CHP_RED') >>> 0 : null };
+    const gifts = model || G().fromWorkspace(ws), it = gifts.siege ? gifts.siege.comp.item : 'II_CHP_PVP_TOKEN';
+    return { gifts, prop: base.prop, text: base.text, redChip: D.has('II_CHP_RED') ? D.get('II_CHP_RED') >>> 0 : null,
+      prizeItem: D.has(it) ? D.get(it) >>> 0 : null };
   }
   // a bag with `free` empty slots (the rest filled with other items)
   function bag(free = X().MAX_INVENTORY_FREE) {
@@ -10378,13 +10434,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
       }
     }
     out.order = gs.map(g => g.i);
-    const charged = env.prop(env.redChip) ? env.prop(env.redChip).charged : 0;
+    const id = env.prizeItem, charged = env.prop(id) ? env.prop(id).charged : 0;
     for (let r = 0; r < gs.length && r < 3; r++) {
       const chips = G().siegeChips(cfg.joinPenya, gs.length, r, comp);
+      if (chips < 1) continue;                    // part B: if( itemElem.m_nItemNum < 1 ) continue;
       gs[r].x.lineup.forEach((m, k) => {
         if (!m.online) return;
         const p = bag(m.free === undefined ? X().MAX_INVENTORY_FREE : m.free);
-        out.paid.push({ guild: gs[r].i, rank: r + 1, chips, member: k, where: give(env, p, env.redChip, (chips << 16) >> 16, 0, charged) });
+        out.paid.push({ guild: gs[r].i, rank: r + 1, chips, member: k, where: give(env, p, id, (chips << 16) >> 16, 0, charged) });
       });
     }
     return out;
@@ -10433,7 +10490,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
 //   battlepass the live BPReward rows (nType of the login pass)
 //   part 2 (loaders/gifts.js + gifts-sim.js): level-up gifts (Event.lua; how often one character gets each: giftsSim.life),
 //              rebirth gifts (1Rebirth.inc), couple gifts (couple.inc; which levels a couple reaches: giftsSim.couple),
-//              Guild Siege Red Chips per siege (top 3 guilds, GuildCombatResultRanking) and weekly (GuildSiegePrize.cpp)
+//              Guild Siege prizes per siege (top 3 guilds, GuildCombatResultRanking) and weekly (GuildSiegePrize.cpp / .lua):
+//              PVP Tokens since 4fa49551 (the item the C++ names, gifts.compiled)
 // Each line has `facts`: the plain values the independent Python copy (tools/oracle_sim.py where) must find too.
 (function (FRE) {
   'use strict';
@@ -10596,7 +10654,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
     if (gifts.rebirth) for (const [tier, g] of gifts.rebirth.gifts) add(g.id, { k: 'rebirth', tier, g });
     const reached = new Set(gifts.couple ? FRE.giftsSim.couple(genv, { sex: [0, 1] }).levels : []);
     if (gifts.couple) for (const row of gifts.couple.items) if (has(row.id)) add(row.id, { k: 'couple', row });
-    if (gifts.siege && has(genv.redChip)) { add(genv.redChip, { k: 'siege' }); add(genv.redChip, { k: 'weekly' }); }
+    if (gifts.siege && has(genv.prizeItem)) { add(genv.prizeItem, { k: 'siege' }); add(genv.prizeItem, { k: 'weekly' }); }
     return { idx, table, cache: { ex: new Map(), kinds }, gifts, pays, reached };
   }
   // the per-siege table: for n guilds that applied (MINJOINGUILDSIZE .. MAXJOINGUILDSIZE), the chips of rank 1-3
@@ -10740,12 +10798,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
     const gifts = model.gifts;
     if (refs.some(r => r.k === 'siege') && gifts && gifts.siege) {
       const table = siegeTable(gifts), c = gifts.siege.config;
-      lines.push({ kind: 'siege', who: 'Guild Siege', table, config: c, from: gifts.siege.comp.from,
-        facts: { kind: 'siege', joinPenya: c.joinPenya, table } });
+      lines.push({ kind: 'siege', who: 'Guild Siege', table, config: c, from: gifts.siege.comp.from, mode: gifts.siege.comp.siege.mode,
+        perKill: gifts.siege.comp.perKill, fromLua: !!gifts.siege.comp.fromLua, facts: { kind: 'siege', joinPenya: c.joinPenya, table } });
     }
     if (refs.some(r => r.k === 'weekly') && gifts && gifts.siege) {
       const w = gifts.siege.comp.weekly;
-      lines.push({ kind: 'weekly', who: 'Guild Siege weekly', weekly: w, from: gifts.siege.comp.from,
+      lines.push({ kind: 'weekly', who: 'Guild Siege weekly', weekly: w, from: gifts.siege.comp.from, fromLua: !!gifts.siege.comp.fromLua,
         facts: { kind: 'weekly', guild: w.guild, total: w.total, perClass: w.perClass, mvp: w.mvp } });
     }
 
@@ -10773,7 +10831,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
     }
     for (const l of lines.filter(l => l.kind === 'couple' && !l.reached)) checks.push({ severity: 'WARN', code: 'W_COUPLE_UNREACHABLE', text: `The couple level ${l.level} gift is never given: couples stop at level ${FRE.gifts.MAX_COUPLE_LEVEL} (couple.h:17).` });
     const sg = lines.find(l => l.kind === 'siege' || l.kind === 'weekly');
-    if (sg && gifts.siege.comp.changed.length) checks.push({ severity: 'WARN', code: 'W_CPP_CHANGED', text: `The Guild Siege C++ changed: ${gifts.siege.comp.changed.join('; ')}. The numbers shown for those parts are the editor's own copy (cda3af21).` });
+    if (sg && gifts.siege.comp.changed.length) checks.push({ severity: 'WARN', code: 'W_CPP_CHANGED', text: `The Guild Siege C++ changed: ${gifts.siege.comp.changed.join('; ')}. The numbers shown for those parts are the editor's own copy (6de6da39).` });
     const set = costs && costs.get(itemId);
     if (set && set.by.length) {
       const last = set.by[set.by.length - 1];
@@ -13179,6 +13237,953 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
   FRE.weaponChecks = weaponChecks;
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/pvp.js ----
+// PvP Events (task "PvP Events"): the FFA, TDM and Guild Siege settings, read the way the servers read them, with the offsets
+// the edits need. No DOM. Each reader cites the C++ (FLYFF-V19-SOURCE/Source/Source/_Common).
+//   FFAManager.inc   CFFAManager::ReadConfig (FFAManager.cpp:91; 0600d7e9, cancel cut d267070c), a CScript read at WorldServer start
+//                    and by the GM command /ffareload (only while no FFA runs). The loop stops at the first error; any error switches
+//                    the FFA off ("FFA switched off" in Server\error_*.txt). Keys: the last line wins; FFA_BEGIN lines add up.
+//   TDMManager.inc   CTDMManager::ReadConfig (TDMManager.cpp:99; f42b83eb): the same, + TDM_TEAM_REWARD / TDM_MVP_REWARD and the three
+//                    boxes TDM_WAIT / TDM_SPAWN_RED / TDM_SPAWN_BLUE (x1 z1 x2 z2 height, all needed). /tdmreload.
+//   GuildCombat.txt  CGuildCombat::LoadScript (eveschool.cpp:3658), a bare CScanner at WorldServer start (ThreadMng.cpp:293: FALSE stops
+//                    the start). __MAINSERVER is defined (WORLDSERVER/VersionCommon.h), so AUTO_OPEN_IDC is read and AUTO_OPEN_TEST
+//                    skipped. AUTO_OPEN_IDC { day hour minute … }: at most 7 rows, day 1-7 (1 = Sunday), hour 0-24, minute 0-59, else
+//                    the load fails; a row is stored per weekday (__AutoOpen[day-1]): a day written twice keeps the later row.
+//                    JOINPENYA (the minimum bid), MINJOINGUILDSIZE, MAXJOINGUILDSIZE, REQUESTCANCLEPERCENT, NOTREQUESTPERCENT and the
+//                    OPEN { … } block (each line runs, then waits its dwTime ms: ProcessCommand :2203) for the siege's timeline.
+//   GuildSiegePrize.lua  CGuildSiegePrize::ReadPrizes (GuildSiegePrize.cpp, 6de6da39 = PvP events part B, verified in game 2026-10-12):
+//                    TokensPerKill (0-32767) and the lists SiegePrize[3], GuildPrize[5], ClassPrize[10], ClassPerClassPrize[10],
+//                    MvpPrize[10] (each entry 1-32767, a whole number; lua_isnumber, so "5" counts). A missing value keeps the compiled
+//                    number, a bad one too (+ an Error line). The WorldServer reads TokensPerKill + SiegePrize (when it loads
+//                    GuildCombat.txt), the DatabaseServer the weekly lists. A script that does not run: every compiled number.
+// Not modelled: a Lua value computed from another global or an expression; a table with [n] = keys; the 1vs1 siege.
+(function (FRE) {
+  'use strict';
+  const NULL_ID = -1;
+
+  // ---------------------------------------------------------------- FFAManager.inc / TDMManager.inc
+  // the plain number keys of ReadConfig: [suffix, default, field]
+  const SCALARS = [['COST', 0, 'cost'], ['CANCEL_CUT', 20, 'cancelCut'], ['MIN_LEVEL', 1, 'level'], ['MIN_MEMBERS', 2, 'min'],
+    ['MAX_MEMBERS', 30, 'max'], ['LIFES', 10, 'lives'], ['ANNOUNCE_TIME', 10, 'announce'], ['RESPAWN_TIME', 10, 'respawn'],
+    ['PREPARATION_TIME', 1, 'prepare'], ['WAR_TIME', 10, 'war']];
+  const KINDS = {
+    ffa: { id: 'ffa', P: 'FFA', label: 'FFA', file: 'FFAManager.inc', npc: 'Donaris', reload: '/ffareload', cite: 'FFAManager.cpp:91 CFFAManager::ReadConfig' },
+    tdm: { id: 'tdm', P: 'TDM', label: 'TDM', file: 'TDMManager.inc', npc: 'Amos', reload: '/tdmreload', cite: 'TDMManager.cpp:99 CTDMManager::ReadConfig' },
+  };
+  const BOXES = ['WAIT', 'SPAWN_RED', 'SPAWN_BLUE'];
+  const sp = n => ({ start: n.start, end: n.end, value: n.value });
+
+  // file: SourceFile or null; ctx: { defines: Map, items: Map id -> item (Spec_Item) }
+  // -> { kind, missing, cfg (what ReadConfig keeps, null when switched off), error (ReadConfig's text) + errorAt,
+  //      keys: { field: { value, span, key: span of the word } } (the LAST line of each key), reward: { item, amount, key },
+  //      top: [span x3] (FFA), team / mvp (TDM), boxes: { WAIT: { nums: [span x5], key } }, begins: [{ day, hour, minute, key, nums }] }
+  function readManager(file, kindId, ctx = {}) {
+    const K = KINDS[kindId], P = K.P;
+    const res = { kind: kindId, file: K.file, missing: !file, cfg: null, error: null, errorAt: null, keys: {}, reward: null, top: null,
+      team: null, mvp: null, boxes: {}, begins: [], lastScalar: null };
+    if (!file) { res.error = `${K.file} not found`; return res; }
+    const D = ctx.defines || new Map();
+    const s = new FRE.lexer.Script(file.text, { file: K.file, defines: D, diags: [] });
+    // ReadConfig's locals and their defaults
+    const v = { cost: 0, level: 1, min: 2, max: 30, lives: 10, announce: 10, respawn: 10, prepare: 1, war: 10, cancelCut: 20,
+      rewardId: NULL_ID, reward: 0, top: [0, 0, 0], team: 0, mvp: 0, times: [] };
+    const boxSeen = {};
+    let error = null;
+    const fail = (msg, at) => { if (!error) { error = msg; res.errorAt = at; } };
+    s.getToken();
+    while (!s.eof) {
+      const live = !error;                                // the C++ loop stops at the first error; the rest is read for its spans only
+      const t = s.token, word = t.text;
+      const sc = SCALARS.find(x => word === `${P}_${x[0]}`);
+      if (sc) {
+        const n = s.getNumber();
+        res.keys[sc[2]] = { value: n.value, span: sp(n), key: { start: t.start, end: t.end } };
+        res.lastScalar = { start: t.start, end: n.end };
+        if (live) v[sc[2]] = n.value;
+      } else if (word === `${P}_REWARD`) {
+        const a = s.getNumber(), b = s.getNumber();
+        res.reward = { item: Object.assign(sp(a), { define: a.define }), amount: sp(b), key: { start: t.start, end: t.end } };
+        if (live) { v.rewardId = a.value; v.reward = b.value; }
+      } else if (kindId === 'ffa' && word === 'FFA_TOP_REWARD') {
+        const ns = [s.getNumber(), s.getNumber(), s.getNumber()];
+        res.top = ns.map(sp);
+        if (live) v.top = ns.map(n => n.value);
+      } else if (kindId === 'tdm' && (word === 'TDM_TEAM_REWARD' || word === 'TDM_MVP_REWARD')) {
+        const n = s.getNumber();
+        res[word === 'TDM_TEAM_REWARD' ? 'team' : 'mvp'] = { value: n.value, span: sp(n), key: { start: t.start, end: t.end } };
+        if (live) v[word === 'TDM_TEAM_REWARD' ? 'team' : 'mvp'] = n.value;
+      } else if (kindId === 'tdm' && BOXES.some(b => word === `TDM_${b}`)) {
+        // (float)GetNumber() x5: x2 > x1, z2 > z1, height > 0
+        const ns = [0, 1, 2, 3, 4].map(() => s.getNumber());
+        const [x1, z1, x2, z2, y] = ns.map(n => n.value);
+        const b = word.slice(4);
+        res.boxes[b] = { nums: ns.map(sp), key: { start: t.start, end: t.end }, x1, z1, x2, z2, y };
+        if (live) {
+          if (x2 <= x1 || z2 <= z1) fail(`${word} x1 z1 x2 z2 height: x2 must be > x1 and z2 > z1`, { start: t.start, end: ns[4].end });
+          else if (y <= 0) fail(`${word} x1 z1 x2 z2 height: the height (5th number) is missing or not > 0`, { start: t.start, end: ns[4].end });
+          else boxSeen[b] = { x1, z1, x2, z2, y };
+        }
+      } else if (word === `${P}_BEGIN`) {
+        const ns = [s.getNumber(), s.getNumber(), s.getNumber()];
+        const [day, hour, minute] = ns.map(n => n.value);
+        const ok = !(day < 0 || day > 7 || hour < 0 || hour > 23 || minute < 0 || minute > 59);
+        res.begins.push({ day, hour, minute, ok, key: { start: t.start, end: t.end }, nums: ns.map(sp), stmt: { start: t.start, end: ns[2].end }, used: live && ok });
+        if (live) {
+          if (!ok) fail(`bad ${P}_BEGIN ${day} ${hour} ${minute} (day 0-7, hour 0-23, minute 0-59)`, { start: t.start, end: ns[2].end });
+          else v.times.push({ day, hour, minute });
+        }
+      } else if (live) {
+        fail(`unknown word "${word}"`, { start: t.start, end: t.end });
+      }
+      s.getToken();
+    }
+    // the checks after the loop, in ReadConfig's order
+    const item = v.rewardId === NULL_ID ? null : (ctx.items && ctx.items.get(v.rewardId >>> 0)) || null;
+    const pack = item ? FRE.specItem.get(item, 'dwPackMax') : 0;
+    res.rewardItem = item ? { id: item.id, define: item.define, name: item.name || item.define, packMax: pack } : null;
+    if (!error) {
+      const e = (msg, field) => fail(msg, field && res.keys[field] ? res.keys[field].span : null);
+      if (v.cost < 0) e(`${P}_COST < 0`, 'cost');
+      else if (v.cancelCut < 0 || v.cancelCut > 100) e(`${P}_CANCEL_CUT must be 0 - 100`, 'cancelCut');
+      else if (v.level < 1) e(`${P}_MIN_LEVEL < 1`, 'level');
+      else if (v.min < 2) e(`${P}_MIN_MEMBERS < 2`, 'min');
+      else if (v.max < v.min || v.max > 100) e(`${P}_MAX_MEMBERS must be ${P}_MIN_MEMBERS - 100`, 'max');
+      else if (v.lives < 1) e(`${P}_LIFES < 1`, 'lives');
+      else if (v.announce < 1 || v.announce > 60) e(`${P}_ANNOUNCE_TIME must be 1 - 60 minutes`, 'announce');
+      else if (v.respawn < 0 || v.respawn > 60) e(`${P}_RESPAWN_TIME must be 0 - 60 seconds`, 'respawn');
+      else if (v.prepare < 0 || v.prepare > 30) e(`${P}_PREPARATION_TIME must be 0 - 30 minutes`, 'prepare');
+      else if (v.war < 1 || v.war > 120) e(`${P}_WAR_TIME must be 1 - 120 minutes`, 'war');
+      else if (!item) fail(`${P}_REWARD: unknown item`, res.reward && res.reward.item);
+      else if (v.reward < 0 || v.reward > pack) fail(`${P}_REWARD: amount must be 0 - the item's stack size`, res.reward && res.reward.amount);
+      else if (kindId === 'ffa') {
+        for (let i = 0; i < 3; i++) if (v.top[i] < 0 || v.top[i] > 9999) fail('FFA_TOP_REWARD: amounts must be 0 - 9999', res.top && res.top[i]);
+      } else if (v.team < 0 || v.team > 9999) fail('TDM_TEAM_REWARD must be 0 - 9999', res.team && res.team.span);
+      else if (v.mvp < 0 || v.mvp > 9999) fail('TDM_MVP_REWARD must be 0 - 9999', res.mvp && res.mvp.span);
+      else if (!boxSeen.WAIT || !boxSeen.SPAWN_RED || !boxSeen.SPAWN_BLUE) fail('TDM_WAIT, TDM_SPAWN_RED and TDM_SPAWN_BLUE are all needed', null);
+    }
+    res.error = error;
+    if (!error) {
+      res.cfg = { cost: v.cost, cancelCut: v.cancelCut, level: v.level, min: v.min, max: v.max, lives: v.lives, announce: v.announce,
+        respawn: v.respawn, prepare: v.prepare, war: v.war, rewardId: v.rewardId, reward: v.reward, packMax: pack, times: v.times };
+      if (kindId === 'ffa') res.cfg.top = v.top.slice();
+      else { res.cfg.team = v.team; res.cfg.mvp = v.mvp; res.cfg.boxes = boxSeen; }
+    }
+    return res;
+  }
+
+  // ---------------------------------------------------------------- GuildCombat.txt
+  const GS_STATE = { ALLMSG: 1, GUILDMSG: 2, JOINMSG: 3, WORLDMSG: 4, STATE: 5, WARSTATE: 6, WAIT: 7 };
+  // the WARSTATE commands (eveschool.h): NOTENTER_STATE = 100 …
+  const WAR = { NOTENTER_COUNT: 101, ENTER: 102, MAINTENANCE: 103, WAR_WAR: 104, WAR_CLOSE: 105, WAR_CLOSE_WAIT: 106, WAR_TELEPORT: 107 };
+  // -> { missing, ok (LoadScript's result), error, errorAt, autoOpen: [{ day, hour, minute, nums, row }] (rows as written),
+  //      byDay: [7] (what __AutoOpen holds: the later row of a day), lastDay (m_nDay), block (the AUTO_OPEN_IDC braces),
+  //      joinPenya: { value, span }, minGuild, maxGuild, cancelPct, notPct, open: [{ state, time, command, param }], hang }
+  function readGuildCombat(file, defines) {
+    const res = { file: 'GuildCombat.txt', missing: !file, ok: false, error: null, errorAt: null, autoOpen: [], byDay: [null, null, null, null, null, null, null],
+      lastDay: 0, block: null, joinPenya: null, minGuild: 0, maxGuild: 0, cancelPct: 0, notPct: 0, open: [], hang: false };
+    if (!file) { res.error = 'GuildCombat.txt not found'; return res; }
+    // a bare CScanner (no #define lookup: a name in a number slot is atoi = 0); `defines` is not used
+    const s = new FRE.lexer.Script(file.text, { file: 'GuildCombat.txt', defines: new Map(), diags: [] });
+    const atoi = x => FRE.lexer.atoi(x).value;
+    const fail = (msg, at) => { res.error = msg; res.errorAt = at; return res; };
+    s.getToken();
+    while (!s.eof) {
+      let nCount = -1;
+      const t = s.token, w = t.text;
+      if (w === 'AUTO_OPEN_IDC') {
+        const open = s.getToken();          // {
+        s.getToken();
+        res.block = { key: { start: t.start, end: t.end }, open: { start: open.start, end: open.end }, close: null };
+        while (s.token.text[0] !== '}') {
+          if (s.eof) return fail('AUTO_OPEN_IDC { … } is never closed with "}": the day read at the end of the file is 0 (Day Error)', { start: t.start, end: t.end });
+          if (res.autoOpen.length >= 7) return fail('AUTO_OPEN_IDC has more than 7 rows (the server allows 7: one per weekday)', { start: s.token.start, end: s.token.end });
+          const dTok = s.token, day = atoi(dTok.text);
+          res.lastDay = day;
+          if (day <= 0 || day > 7) return fail(`AUTO_OPEN_IDC day ${day}: must be 1 (Sunday) - 7 (Saturday) (Day Error)`, { start: dTok.start, end: dTok.end });
+          const h = s.getNumber();
+          if (h.value < 0 || h.value > 24) return fail(`AUTO_OPEN_IDC hour ${h.value}: must be 0 - 24 (Time Error)`, sp(h));
+          const m = s.getNumber();
+          if (m.value < 0 || m.value > 59) return fail(`AUTO_OPEN_IDC minute ${m.value}: must be 0 - 59 (Time Error)`, sp(m));
+          const row = { day, hour: h.value, minute: m.value, nums: [{ start: dTok.start, end: dTok.end, value: day }, sp(h), sp(m)],
+            stmt: { start: dTok.start, end: m.end } };
+          res.autoOpen.push(row);
+          res.byDay[day - 1] = row;
+          s.getToken();
+        }
+        res.block.close = { start: s.token.start, end: s.token.end };
+      } else if (w === 'JOINPENYA') { const n = s.getNumber(); res.joinPenya = { value: n.value, span: sp(n) }; }
+      else if (w === 'MINJOINGUILDSIZE') res.minGuild = s.getNumber().value;
+      else if (w === 'MAXJOINGUILDSIZE') res.maxGuild = s.getNumber().value;
+      else if (w === 'REQUESTCANCLEPERCENT') res.cancelPct = s.getNumber().value;
+      else if (w === 'NOTREQUESTPERCENT') res.notPct = s.getNumber().value;
+      else if (w === 'OPEN') nCount = 0;
+      else if (w === 'MAINTENANCE') nCount = 1;
+      else if (w === 'WAR') nCount = 2;
+      if (nCount !== -1) {
+        s.getNumber();
+        s.getToken();                       // {
+        s.getToken();
+        const lines = [];
+        while (s.token.text[0] !== '}') {
+          if (s.eof) { res.hang = true; return fail(`${w} { … } is never closed with "}": the server loops forever at startup`, { start: t.start, end: t.end }); }
+          const state = GS_STATE[s.token.text] || 0;
+          const time = s.getNumber().value >>> 0, command = s.getNumber().value, param = s.getNumber().value;
+          lines.push({ state, time, command, param });
+          s.getToken();
+        }
+        if (nCount === 0) res.open = lines;
+      }
+      s.getToken();
+    }
+    res.ok = true;
+    return res;
+  }
+
+  // the siege's timeline from the OPEN block, in seconds after the start (each line runs, then waits its time)
+  // -> { enter, prepare, fight, end, out } (null: that step is not in the block)
+  function siegeTimeline(gc) {
+    const at = {};
+    let ms = 0;
+    for (const l of gc.open || []) {
+      if (l.state === GS_STATE.WARSTATE) {
+        const k = { [WAR.ENTER]: 'enter', [WAR.MAINTENANCE]: 'prepare', [WAR.WAR_WAR]: 'fight', [WAR.WAR_CLOSE]: 'end', [WAR.WAR_TELEPORT]: 'out' }[l.command];
+        if (k && at[k] === undefined) at[k] = ms / 1000;
+      }
+      ms += l.time;
+    }
+    const g = k => (at[k] === undefined ? null : at[k]);
+    return { enter: g('enter'), prepare: g('prepare'), fight: g('fight'), end: g('end'), out: g('out'), total: ms / 1000 };
+  }
+
+  // ---------------------------------------------------------------- GuildSiegePrize.lua
+  const PRIZE_LISTS = [['SiegePrize', 3, [50, 14, 7]], ['GuildPrize', 5, [600, 300, 180, 72, 48]],
+    ['ClassPrize', 10, [200, 100, 60, 40, 30, 24, 20, 14, 8, 4]], ['ClassPerClassPrize', 10, [100, 50, 30, 20, 15, 12, 10, 7, 4, 2]],
+    ['MvpPrize', 10, [300, 150, 90, 60, 45, 36, 30, 21, 12, 6]]];
+  const PRIZE_DEFAULT = { TokensPerKill: 2, ...Object.fromEntries(PRIZE_LISTS.map(([n, , d]) => [n, d])) };
+  // lua_isnumber + lua_tonumber of a literal (a string holding a number counts), else NaN
+  const luaNumber = raw => FRE.upgradeFees.luaNumber(raw);
+  // GSReadPrizeValue: a whole number nMin..32767 -> it, else null
+  const prizeValue = (d, nMin) => (Number.isFinite(d) && d >= nMin && d <= 32767 && d === Math.trunc(d) ? d : null);
+
+  // -> { missing, failed, errors: [{ start, end, message }], number: { TokensPerKill: { raw, value (read), used, span, stmt } },
+  //      lists: { SiegePrize: { items: [{ raw, read, used, start, end }], open, close, stmt }, … },
+  //      prizes: { TokensPerKill: n, SiegePrize: [..], … } (what the servers end with), bad: [{ name, index, raw, used }] }
+  function readPrizes(file) {
+    const res = { file: 'GuildSiegePrize.lua', missing: !file, failed: false, errors: [], number: {}, lists: {}, prizes: JSON.parse(JSON.stringify(PRIZE_DEFAULT)), bad: [] };
+    if (!file) return res;
+    const text = file.text, bl = FRE.rates.blankLua(text), bt = bl.text;
+    for (const b of bl.bad) res.errors.push({ start: b.start, end: b.end, message: `GuildSiegePrize.lua has ${b.what}` });
+    const stack = [], PAIR = { ')': '(', ']': '[', '}': '{' };
+    for (let i = 0; i < bt.length; i++) {
+      const c = bt[i];
+      if (c === '(' || c === '[' || c === '{') stack.push(i);
+      else if (PAIR[c]) {
+        if (!stack.length || bt[stack[stack.length - 1]] !== PAIR[c]) { res.errors.push({ start: i, end: i + 1, message: `GuildSiegePrize.lua has a "${c}" with nothing to close` }); break; }
+        stack.pop();
+      }
+    }
+    if (stack.length) { const i = stack[stack.length - 1]; res.errors.push({ start: i, end: i + 1, message: `GuildSiegePrize.lua has a "${bt[i]}" that is never closed` }); }
+    res.failed = res.errors.length > 0;
+    // top-level assignments NAME = value / NAME = { … } (blanked text: comments and string insides are spaces); the last one wins
+    const re = /(^|[^\w.:])([A-Za-z_]\w*)\s*=(?!=)\s*(\{[^{}]*\}|"[^"\n]*"|'[^'\n]*'|[^\s;,{}]+)/g;
+    let m;
+    while ((m = re.exec(bt))) {
+      const name = m[2], vs = m.index + m[0].length - m[3].length;
+      const stmt = { start: m.index + m[1].length, end: vs + m[3].length };
+      if (name === 'TokensPerKill') {
+        const raw = text.slice(vs, vs + m[3].length);
+        res.number.TokensPerKill = { raw, read: luaNumber(raw), span: { start: vs, end: vs + raw.length }, stmt };
+      } else if (PRIZE_LISTS.some(x => x[0] === name)) {
+        if (!m[3].startsWith('{')) { res.lists[name] = { notList: true, raw: text.slice(vs, vs + m[3].length), stmt, items: [] }; continue; }
+        const items = [], inner = bt.slice(vs + 1, vs + m[3].length - 1), reI = /[^,;]+/g;
+        let n;
+        while ((n = reI.exec(inner))) {
+          const lead = n[0].length - n[0].trimStart().length, body = n[0].trim();
+          if (!body) continue;
+          const s0 = vs + 1 + n.index + lead, raw = text.slice(s0, s0 + body.length);
+          if (/=/.test(body)) continue;                       // a [n] = / name = entry: not a list position (not modelled)
+          items.push({ raw, read: luaNumber(raw), start: s0, end: s0 + body.length });
+        }
+        res.lists[name] = { items, open: { start: vs, end: vs + 1 }, close: { start: vs + m[3].length - 1, end: vs + m[3].length }, stmt };
+      }
+    }
+    if (res.failed) return res;                                // RunScript != 0: every compiled number
+    const t = res.number.TokensPerKill;
+    if (t) {
+      t.used = t.raw === 'nil' ? null : prizeValue(t.read, 0);
+      if (t.raw !== 'nil' && t.used === null) res.bad.push({ name: 'TokensPerKill', index: 0, raw: t.raw, span: t.span, min: 0, kept: res.prizes.TokensPerKill });
+      if (t.used !== null) res.prizes.TokensPerKill = t.used;
+    }
+    for (const [name, count] of PRIZE_LISTS) {
+      const L = res.lists[name];
+      if (!L) continue;
+      if (L.notList) { if (L.raw !== 'nil') res.bad.push({ name, index: -1, raw: L.raw, span: L.stmt, kept: null }); continue; }
+      L.items.forEach((it, i) => {
+        if (i >= count) { it.extra = true; return; }
+        it.used = it.raw === 'nil' ? null : prizeValue(it.read, 1);
+        if (it.raw !== 'nil' && it.used === null) res.bad.push({ name, index: i, raw: it.raw, span: { start: it.start, end: it.end }, min: 1, kept: res.prizes[name][i] });
+        if (it.used !== null) res.prizes[name][i] = it.used;
+      });
+    }
+    return res;
+  }
+
+  // ---------------------------------------------------------------- rules boards (Client/Client, the game reads them on each click)
+  // FFA Rules = NpcBoard_289.inc (Donaris, MMI 289), TDM Rules = NpcBoard_290.inc (Amos, MMI 290): ASCII, CRLF (8362fbc6).
+  // Guild Siege boards: GuildCombatTEXT_<n>_ENG.inc (UTF-16LE, the one LANG_USA reads: ProjectCmn.cpp:266 GetLangFileName) and
+  // the _USA.inc ANSI twin (kept the same, 3b 4fa49551). Read on each menu click (WndWorld.cpp:4564 / :4600).
+  const BOARDS = {
+    ffa: ['client/npcboard_289.inc'],
+    tdm: ['client/npcboard_290.inc'],
+    gs: [1, 2, 3, 4, 5, 6].flatMap(n => [`client/guildcombattext_${n}_eng.inc`, `client/guildcombattext_${n}_usa.inc`]),
+  };
+  const isPvpBoard = lower => Object.values(BOARDS).some(l => l.includes(lower));
+
+  // ---------------------------------------------------------------- one workspace
+  // ws.cpp (io/source-read.js, FLYFF-V19-SOURCE picked): is part B (GuildSiegePrize.lua prizes) in the source?
+  //   'in-source' | 'missing' | 'unknown' (no source here: test-data)
+  function prizePatch(cpp) {
+    if (!cpp) return 'unknown';
+    const gp = cpp.get ? cpp.get('guildsiegeprize.cpp') : cpp['guildsiegeprize.cpp'];
+    if (!gp) return 'unknown';
+    return /CGuildSiegePrize::ReadPrizes/.test(gp) ? 'in-source' : 'missing';
+  }
+  function fromWorkspace(ws) {
+    const D = ws.defines.defines, ctx = { defines: D, items: ws.items.items };
+    const f = n => ws.files.get(n) || null;
+    const gc = readGuildCombat(f('guildcombat.txt'), D);
+    const boards = {};
+    for (const [k, list] of Object.entries(BOARDS)) boards[k] = list.filter(l => ws.files.has(l)).map(l => ({ lower: l, file: ws.files.get(l) }));
+    return {
+      ffa: readManager(f('ffamanager.inc'), 'ffa', ctx),
+      tdm: readManager(f('tdmmanager.inc'), 'tdm', ctx),
+      gs: gc, timeline: siegeTimeline(gc),
+      prizes: readPrizes(f('guildsiegeprize.lua')),
+      patch: prizePatch(ws.cpp || null),
+      boards,
+    };
+  }
+
+  FRE.pvp = { KINDS, SCALARS, BOXES, WAR, GS_STATE, PRIZE_LISTS, PRIZE_DEFAULT, BOARDS, readManager, readGuildCombat, siegeTimeline,
+    readPrizes, prizeValue, prizePatch, isPvpBoard, fromWorkspace };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/pvp-sim.js ----
+// What happens in game with the PvP Events settings (task "PvP Events"): a port of the code that USES them. No DOM.
+// Times are the server PC's wall clock as seconds (Date.UTC of the wall time: the server runs on Philippine time, no DST).
+//   schedule  CFFAManager / CTDMManager::Process (FFAManager.cpp:284, TDMManager.cpp:306), one tick a second: CLOSED -> when the
+//             next start (GetNextScheduledStart :222: day 0 = every day, 1 = Sunday … 7 = Saturday; the smallest start > now over
+//             today + 7 days) is <= ANNOUNCE_TIME minutes away: Announce (REGISTER); at the start: OpenFFA (fewer than MIN_MEMBERS
+//             registered: CancelFFA = every fee back, CLOSED) -> PREPARE for PREPARATION_TIME minutes -> StartBattle (fewer than 2
+//             inside: cancelled) -> BATTLE for WAR_TIME minutes (may end early) -> ENDING 15 s (FFA_ENDING_SECONDS) -> CLOSED.
+//             A start that falls inside a run is skipped (the next start is looked up only when CLOSED).
+//             Guild Siege: CGuildCombat::Process (eveschool.cpp:3456): while closed, the minute of today's AUTO_OPEN row (by
+//             weekday) opens it when at least MINJOINGUILDSIZE guilds applied (an hour of 24 never matches GetHour 0-23); the
+//             OPEN block's lines then run one after another (each waits its time). GetNextGuildCobmatTime (:2415) = what the
+//             siege window shows as the next siege: it uses only m_nDay (the LAST AUTO_OPEN_IDC row's day) and, on that day
+//             after the time, adds m_nDay days (not 7).
+//   money     RegisterPlayer (:794): GetTotalGold() < fee -> refused, else RemoveTotalGold (Penya + Perin). CancelPlayer (:856,
+//             d267070c): back = paid - (int64)paid × cut / 100, to the purse unless it would pass INT_MAX (then by mail). A
+//             cancelled run: RefundFee (:762) the full fee (purse, else mail). Guild Siege: a cancelled application gets
+//             MulDiv( bid, REQUESTCANCLEPERCENT, 100 ) by mail (eveschool.cpp:512); a bid not selected NOTREQUESTPERCENT.
+//   tokens    FFA: Kill (:980) pays REWARD at each kill (GiveReward :703: stacks of dwPackMax, a full bag mails it); EndBattle
+//             (:644): GetRanking (more kills, then fewer deaths; an insertion sort from the std::map order = player id) and the
+//             top-3 prize (needs 1+ kill). TDM (TDMManager.cpp): MakeTeams (:1108: level high -> low, ties by the higher id,
+//             snake R B B R), a kill counts for the killer's team, an away life lost gives the other team 1 (:560), EndBattle
+//             (:696): the winning team's players with 1+ kill get TEAM_REWARD, rank 1 with 1+ kill MVP_REWARD, a draw: no team
+//             prize. Guild Siege: CGuildCombat::GetPoint (eveschool.cpp:4291) pays TokensPerKill at each kill; the places and the
+//             weekly lists go through loaders/gifts-sim.js (siege / weekly).
+// Not modelled: an early battle end (fewer than 2 with lives / one team out), GM commands (/ffastart, /ffaskip …), the reminders,
+// the purse limit of RemoveTotalGold, a server restart in the middle of a run, the siege's MAINTENANCE / WAR blocks.
+(function (FRE) {
+  'use strict';
+  const DAY = 86400, INT_MAX = 2147483647, ENDING = 15;
+  const dow = t => new Date(t * 1000).getUTCDay() + 1;            // CTime::GetDayOfWeek: 1 = Sunday
+  const midnight = t => Math.floor(t / DAY) * DAY;
+  const DAYS = ['', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  // a Date (the PC's local clock = the server clock) -> wall seconds, and back
+  const wallOf = d => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds()) / 1000;
+  const p2 = n => String(n).padStart(2, '0');
+  const hhmm = t => { const d = new Date(t * 1000); return `${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}`; };
+  const dayName = t => DAYS[dow(t)];
+  const dateText = t => { const d = new Date(t * 1000); return `${dayName(t)} ${d.getUTCFullYear()}-${p2(d.getUTCMonth() + 1)}-${p2(d.getUTCDate())} ${hhmm(t)}`; };
+
+  // ---------------------------------------------------------------- FFA / TDM schedule
+  // GetNextScheduledStart: times [{ day, hour, minute }] -> the smallest start > tNow over today + 7 days, or 0
+  function nextStart(times, tNow) {
+    let next = 0;
+    const today = midnight(tNow);
+    for (let off = 0; off <= 7; off++) {
+      const d = today + off * DAY, w = dow(d + 12 * 3600);
+      for (const x of times) {
+        if (x.day !== 0 && x.day !== w) continue;
+        const t = d + x.hour * 3600 + x.minute * 60;
+        if (t > tNow && (next === 0 || t < next)) next = t;
+      }
+    }
+    return next;
+  }
+  // the runs from `from` to `until`. cfg: readManager's cfg. o: { registered(i) -> players registered by the start (default
+  // MIN_MEMBERS), joined(i) -> players inside at the battle start (default = registered) }
+  // -> [{ announce, start, prepareEnd, battleEnd, closed, cancelled: null | 'registered' | 'joined', skipped: [starts] }]
+  function runs(cfg, from, until, o = {}) {
+    const out = [];
+    if (!cfg) return out;
+    let now = from, last = 0;
+    for (let guard = 0; guard < 10000; guard++) {
+      const tStart = nextStart(cfg.times, now);
+      if (!tStart || tStart === last) break;
+      const announce = Math.max(now, tStart - cfg.announce * 60);
+      if (announce > until) break;
+      last = tStart;
+      const i = out.length;
+      const reg = o.registered ? o.registered(i) : cfg.min;
+      const run = { announce, start: tStart, prepareEnd: null, battleEnd: null, closed: tStart, cancelled: null, skipped: [] };
+      if (reg < cfg.min) run.cancelled = 'registered';
+      else {
+        run.prepareEnd = tStart + cfg.prepare * 60;
+        const joined = o.joined ? o.joined(i) : reg;
+        if (joined < 2) { run.cancelled = 'joined'; run.closed = run.prepareEnd; }
+        else { run.battleEnd = run.prepareEnd + cfg.war * 60; run.closed = run.battleEnd + ENDING; }
+      }
+      // starts that fall inside this run: the next start is looked up only once it is CLOSED again
+      for (let t = nextStart(cfg.times, tStart); t && t <= run.closed; t = nextStart(cfg.times, t)) run.skipped.push(t);
+      out.push(run);
+      now = run.closed;
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- Guild Siege schedule
+  // gc: readGuildCombat; tl: siegeTimeline. o: { guilds: n applied (default MINJOINGUILDSIZE) }
+  // -> [{ start, enter, prepare, fight, end, out, row }] (null fields: the OPEN block has no such step)
+  function sieges(gc, tl, from, until, o = {}) {
+    const out = [];
+    if (!gc || !gc.ok) return out;
+    const guilds = o.guilds === undefined ? gc.minGuild : o.guilds;
+    for (let d = midnight(from); d <= until; d += DAY) {
+      const row = gc.byDay[dow(d + 12 * 3600) - 1];
+      if (!row || row.hour > 23) continue;                         // GetHour() is 0-23: an hour of 24 never matches
+      const t = d + row.hour * 3600 + row.minute * 60;
+      if (t + 59 < from || t > until) continue;                    // the check runs every tick of that minute
+      if (guilds < gc.minGuild) continue;                          // not enough guilds: no siege that day
+      const at = k => (tl[k] === null ? null : t + tl[k]);
+      out.push({ start: t, enter: at('enter'), prepare: at('prepare'), fight: at('fight'), end: at('end'), out: at('out'), closed: t + tl.total, row });
+    }
+    return out;
+  }
+  // GetNextGuildCobmatTime: what the siege window shows as the next siege (m_nDay = the last row's day), or null (no row)
+  function shownNext(gc, tNow) {
+    if (!gc || !gc.ok || !gc.lastDay || !gc.byDay[gc.lastDay - 1]) return null;
+    const row = gc.byDay[gc.lastDay - 1], w = dow(tNow);
+    let base, nDay = gc.lastDay - w;
+    if (nDay > 0) base = tNow + nDay * DAY;
+    else if (nDay === 0) base = (tNow - midnight(tNow)) <= row.hour * 3600 + row.minute * 60 ? tNow : tNow + gc.lastDay * DAY;
+    else base = tNow + (7 + nDay) * DAY;
+    return midnight(base) + row.hour * 3600 + row.minute * 60;
+  }
+
+  // ---------------------------------------------------------------- money
+  // registering: total = Penya + Perin in Penya -> { ok, paid, total (after) }
+  function register(cfg, total) {
+    if (cfg.cost > 0 && total < cfg.cost) return { ok: false, paid: 0, total };
+    return { ok: true, paid: cfg.cost, total: total - (cfg.cost > 0 ? cfg.cost : 0) };
+  }
+  // the Cancel button while registration is open -> { back, kept, where: 'purse' | 'mail' | null, gold (after) }
+  function cancel(cfg, paid, gold) {
+    const back = paid - Math.trunc(paid * cfg.cancelCut / 100);
+    if (back > 0 && gold + back <= INT_MAX) return { back, kept: paid - back, where: 'purse', gold: gold + back };
+    if (back > 0) return { back, kept: paid - back, where: 'mail', gold };
+    return { back: 0, kept: paid, where: null, gold };
+  }
+  // a run cancelled by the server (too few players): the whole fee back
+  function refund(paid, gold) {
+    if (paid <= 0) return { back: 0, where: null, gold };
+    if (gold + paid <= INT_MAX) return { back: paid, where: 'purse', gold: gold + paid };
+    return { back: paid, where: 'mail', gold };
+  }
+  // MulDiv( a, b, c ) for a >= 0: rounded to the nearest
+  const mulDiv = (a, b, c) => Math.floor((a * b + Math.floor(c / 2)) / c);
+  function siegeCancel(gc, bid) { return mulDiv(bid, gc.cancelPct, 100); }
+  function siegeNotSelected(gc, bid) { return mulDiv(bid, gc.notPct, 100); }
+
+  // ---------------------------------------------------------------- tokens
+  // GiveReward: how many stacks an amount is handed out in
+  const stacks = (n, packMax) => { const s = packMax > 0 && packMax < 0x7fff ? packMax : 0x7fff; return n > 0 ? Math.ceil(n / s) : 0; };
+  // GetRanking: players in std::map order (by id), insertion sort: more kills, then fewer deaths
+  function ranking(players) {
+    const v = players.slice().sort((a, b) => a.id - b.id);
+    for (let i = 1; i < v.length; i++) {
+      for (let j = i; j > 0; j--) {
+        const a = v[j - 1], b = v[j];
+        if (b.kills > a.kills || (b.kills === a.kills && b.deaths < a.deaths)) { v[j - 1] = b; v[j] = a; } else break;
+      }
+    }
+    return v;
+  }
+  // FFA: players [{ id, kills, deaths }] -> [{ id, place, kills, deaths, perKill, top, total }] in ranking order
+  function ffaResult(cfg, players) {
+    return ranking(players).map((p, i) => {
+      const top = i < 3 && p.kills > 0 ? cfg.top[i] : 0;
+      return { id: p.id, place: i + 1, kills: p.kills, deaths: p.deaths, perKill: p.kills * cfg.reward, top, total: p.kills * cfg.reward + top };
+    });
+  }
+  // MakeTeams: the players inside -> Map id -> 'red' | 'blue'
+  function makeTeams(players) {
+    const inside = players.filter(p => p.inside !== false).map(p => [p.level, p.id]);
+    inside.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    inside.reverse();
+    const m = new Map();
+    inside.forEach(([, id], i) => { const ph = i % 4; m.set(id, ph === 0 || ph === 3 ? 'red' : 'blue'); });
+    return m;
+  }
+  // TDM: players [{ id, level, inside, kills, deaths, team? }], o: { away: { red: n, blue: n } (lives lost away, per team) }
+  // -> { teams: { red, blue } (team points), winner: 'red' | 'blue' | null, rows: [{ id, team, place, kills, perKill, team: , win, mvp, total }] }
+  function tdmResult(cfg, players, o = {}) {
+    const made = makeTeams(players);
+    const ps = players.map(p => Object.assign({}, p, { team: p.team || made.get(p.id) || null }));
+    const pts = { red: 0, blue: 0 };
+    for (const p of ps) if (p.team) pts[p.team] += p.kills;
+    const away = o.away || {};
+    pts.blue += away.red || 0;                    // a Red life lost away = +1 Blue
+    pts.red += away.blue || 0;
+    const winner = pts.red > pts.blue ? 'red' : pts.blue > pts.red ? 'blue' : null;
+    const rank = ranking(ps), mvp = rank.length && rank[0].kills > 0;
+    const rows = rank.map((p, i) => {
+      const win = winner && p.team === winner && p.kills > 0 ? cfg.team : 0;
+      const mv = i === 0 && mvp ? cfg.mvp : 0;
+      return { id: p.id, team: p.team, place: i + 1, kills: p.kills, deaths: p.deaths, perKill: p.kills * cfg.reward, win, mvp: mv, total: p.kills * cfg.reward + win + mv };
+    });
+    return { teams: pts, winner, rows };
+  }
+  // Guild Siege kills: TokensPerKill at each kill (GWGiveTokens: nothing when 0)
+  const siegeKillTokens = (prizes, kills) => kills * Math.max(0, prizes.TokensPerKill);
+
+  // ---------------------------------------------------------------- the week on the clock (checks)
+  // every run window of one week (Sunday 00:00 + 7 days), each event: [{ ev, from, to, start }] (from: registration / the siege
+  // start; to: everyone back in town), from the real schedulers above (sieges with enough guilds, runs that are not cancelled)
+  const WEEK0 = Date.UTC(2026, 9, 11) / 1000;     // a Sunday
+  function weekWindows(model) {
+    const out = [];
+    const from = WEEK0 - 2 * DAY, until = WEEK0 + 8 * DAY;
+    for (const k of ['ffa', 'tdm']) {
+      const cfg = model[k] && model[k].cfg;
+      if (!cfg) continue;
+      for (const r of runs(cfg, from, until)) out.push({ ev: k, from: r.announce, to: r.closed, start: r.start, skipped: r.skipped });
+    }
+    for (const s of sieges(model.gs, model.timeline, from, until)) out.push({ ev: 'gs', from: s.start, to: s.closed, start: s.start, skipped: [] });
+    return out.filter(w => w.to > WEEK0 && w.from < WEEK0 + 7 * DAY).sort((a, b) => a.from - b.from);
+  }
+  // two events whose windows overlap -> [{ a, b }] (each pair once)
+  function clashes(model) {
+    const w = weekWindows(model), out = [];
+    for (let i = 0; i < w.length; i++) for (let j = i + 1; j < w.length; j++) {
+      if (w[i].ev === w[j].ev) continue;
+      if (w[j].from < w[i].to && w[i].from < w[j].to) out.push({ a: w[i], b: w[j] });
+    }
+    return out;
+  }
+
+  FRE.pvpSim = { DAY, ENDING, DAYS, dow, midnight, wallOf, hhmm, dayName, dateText, nextStart, runs, sieges, shownNext, register, cancel,
+    refund, mulDiv, siegeCancel, siegeNotSelected, stacks, ranking, ffaResult, makeTeams, tdmResult, siegeKillTokens, weekWindows, clashes, WEEK0 };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/pvp-rules.js ----
+// The rules boards follow the data (task "PvP Events"; the user, 2026-10-12: "a change of time, fee or prize also updates the
+// same value in the rules text"). No DOM. Each fact = one sentence of a board, found by its own words (written in 8362fbc6 and
+// the Guild Siege boards of 4fa49551 / 6de6da39), and the value(s) in it that come from the data:
+//   FFA Rules = Client/Client/NpcBoard_289.inc, TDM Rules = NpcBoard_290.inc (ASCII, CRLF)
+//   Guild Siege = GuildCombatTEXT_<n>_ENG.inc (UTF-16LE: the file the game reads) and its _USA.inc twin (ANSI): both are changed.
+// check(): what each board says now against the data (a sentence not found: nothing guessed, the editor says "check it").
+// follow(): the splices that make the boards say the new data, for the facts whose value changes; a sentence not found -> a note.
+(function (FRE) {
+  'use strict';
+  const S = () => FRE.pvpSim;
+  const grp = n => FRE.num.group(n);
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const list = a => (a.length <= 1 ? a.join('') : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`);
+  const t2 = (h, m) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  const DAYS = ['', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+  // FFA / TDM run times as players read them: "Every day at 14:30 and 21:30", "Every Saturday at 20:00", joined with "; "
+  function schedulePhrase(times) {
+    if (!times || !times.length) return null;
+    const by = new Map();
+    for (const x of times.slice().sort((a, b) => a.day - b.day || a.hour - b.hour || a.minute - b.minute)) {
+      if (!by.has(x.day)) by.set(x.day, []);
+      const s = t2(x.hour, x.minute);
+      if (!by.get(x.day).includes(s)) by.get(x.day).push(s);
+    }
+    const parts = [...by].map(([d, ts]) => `${d === 0 ? 'every day' : `every ${DAYS[d]}`} at ${list(ts)}`);
+    const out = parts.join('; ');
+    return out[0].toUpperCase() + out.slice(1);
+  }
+  // the siege rows the server uses (one per weekday, the later row of a day), in weekday order; an hour of 24 never opens
+  const siegeRows = gs => (gs && gs.ok ? gs.byDay.filter(Boolean).filter(r => r.hour <= 23) : []);
+  // hh:mm of (row time + sec) on the clock
+  const at = (row, sec) => { const t = (row.hour * 3600 + row.minute * 60 + Math.floor(sec)) % 86400; return t2(Math.floor(t / 3600), Math.floor(t / 60) % 60); };
+  const one = gs => { const r = siegeRows(gs); return r.length === 1 ? r[0] : null; };
+
+  const BOARD = { ffa: ['client/npcboard_289.inc'], tdm: ['client/npcboard_290.inc'] };
+  const GSB = n => [`client/guildcombattext_${n}_eng.inc`, `client/guildcombattext_${n}_usa.inc`];
+  // m: { ffa: cfg | null, tdm: cfg | null, gs: readGuildCombat, timeline, prizes: the prizes the servers use }
+  // want(m) -> [string per group] or null (the data can not say: the fact is skipped)
+  const F = (ev, id, label, boards, re, want) => ({ ev, id, label, boards, re, want });
+  const ev = (k, fn) => m => (m[k] ? fn(m[k]) : null);
+  const FACTS = [];
+  for (const k of ['ffa', 'tdm']) {
+    const b = BOARD[k], L = k.toUpperCase();
+    FACTS.push(
+      F(k, 'times', `${L} run times`, b, /^ - (.+?) \(Philippine time/m, ev(k, c => { const p = schedulePhrase(c.times); return p ? [p] : null; })),
+      F(k, 'announce', `${L} registration length`, b, /Registration opens (\d+ minutes?) before/, ev(k, c => [plural(c.announce, 'minute', 'minutes')])),
+      F(k, 'cost', `${L} entry fee`, b, /Entry fee: ([\d,]+) Penya/, ev(k, c => [grp(c.cost)])),
+      F(k, 'level', `${L} minimum level`, b, /Level (\d+) or higher/, ev(k, c => [String(c.level)])),
+      F(k, 'cancelCut', `${L} cancel cut`, b, /fee back minus (\d+)%/, ev(k, c => [String(c.cancelCut)])),
+      F(k, 'prepare', `${L} time to Join`, b, /press Join within (\d+ minutes?)/, ev(k, c => [plural(c.prepare, 'minute', 'minutes')])),
+      F(k, 'war', `${L} battle length`, b, /The battle lasts (\d+ minutes?)/, ev(k, c => [plural(c.war, 'minute', 'minutes')])),
+      F(k, 'lives', `${L} lives`, b, /Every player has (\d+ li(?:fe|ves))/, ev(k, c => [plural(c.lives, 'life', 'lives')])),
+      k === 'ffa'
+        ? F(k, 'respawn', 'FFA respawn wait', b, /back into the arena (\d+ seconds?) later/, ev(k, c => [plural(c.respawn, 'second', 'seconds')]))
+        : F(k, 'respawn', 'TDM respawn wait', b, /After a death: (\d+ seconds?) in/, ev(k, c => [plural(c.respawn, 'second', 'seconds')])),
+      F(k, 'reward', `${L} tokens per kill`, b, /(\d+ PVP Tokens?) for every kill/, ev(k, c => [plural(c.reward, 'PVP Token', 'PVP Tokens')])));
+  }
+  FACTS.push(
+    F('ffa', 'top', 'FFA top 3 prizes', BOARD.ffa, /1st \+(\d+), 2nd \+(\d+), 3rd \+(\d+)/, ev('ffa', c => c.top.map(String))),
+    F('tdm', 'team', 'TDM winning team prize', BOARD.tdm, /Winning team: \+(\d+)/, ev('tdm', c => [String(c.team)])),
+    F('tdm', 'mvp', 'TDM MVP prize', BOARD.tdm, /MVP \(most kills\): \+(\d+)/, ev('tdm', c => [String(c.mvp)])),
+    // Guild Siege: GuildCombatTEXT_1 (when, the bid), _5 (rewards)
+    F('gs', 'days', 'Guild Siege day and time', GSB(1), /Siege: (.+?) \(Philippine/, m => { const r = siegeRows(m.gs); return r.length ? [r.map(x => `every ${DAYS[x.day]} ${t2(x.hour, x.minute)}`).join(' and ')] : null; }),
+    F('gs', 'apply', 'Guild Siege: apply before', GSB(1), /any time before (\d\d:\d\d)/, m => { const r = one(m.gs); return r ? [t2(r.hour, r.minute)] : null; }),
+    F('gs', 'schedDay', 'Guild Siege: schedule day', GSB(1), /\* Schedule \((\w+)\)/, m => { const r = one(m.gs); return r ? [DAYS[r.day]] : null; }),
+    F('gs', 'close', 'Guild Siege: applications close', GSB(1), /^ - (\d\d:\d\d) +Applications close/m, m => { const r = one(m.gs); return r ? [at(r, 0)] : null; }),
+    F('gs', 'enter', 'Guild Siege: enter the arena', GSB(1), /^ - (\d\d:\d\d) +Enter the arena/m, m => { const r = one(m.gs); return r && m.timeline.enter !== null ? [at(r, m.timeline.enter)] : null; }),
+    F('gs', 'prep', 'Guild Siege: preparation', GSB(1), /^ - (\d\d:\d\d) +Preparation/m, m => { const r = one(m.gs); return r && m.timeline.prepare !== null ? [at(r, m.timeline.prepare)] : null; }),
+    F('gs', 'fight', 'Guild Siege: combat begins', GSB(1), /^ - (\d\d:\d\d) +Combat begins/m, m => { const r = one(m.gs); return r && m.timeline.fight !== null ? [at(r, m.timeline.fight)] : null; }),
+    F('gs', 'end', 'Guild Siege: combat ends', GSB(1), /^ - (\d\d:\d\d) +Combat ends/m, m => { const r = one(m.gs); return r && m.timeline.end !== null ? [at(r, m.timeline.end)] : null; }),
+    F('gs', 'bid', 'Guild Siege minimum bid', GSB(1), /Minimum bid: ([\d,]+) Penya/, m => (m.gs && m.gs.ok && m.gs.joinPenya ? [grp(m.gs.joinPenya.value)] : null)),
+    F('gs', 'kill', 'Guild Siege tokens per kill', GSB(5), /Every kill in the siege: (\d+ PVP Tokens?)/, m => [plural(m.prizes.TokensPerKill, 'PVP Token', 'PVP Tokens')]),
+    F('gs', 'places', 'Guild Siege places 1st-3rd', GSB(5), /top 3 guilds gets PVP Tokens: (\d+) \/ (\d+) \/ (\d+)/, m => m.prizes.SiegePrize.map(String)),
+    F('gs', 'wGuild', 'Guild Siege weekly: guilds', GSB(5), /top 5: (\d+(?: \/ \d+)*) PVP Tokens into/, m => [m.prizes.GuildPrize.join(' / ')]),
+    F('gs', 'wTotal', 'Guild Siege weekly: players', GSB(5), /Players \(most points\), top 10: (\d+(?: \/ \d+)*) PVP Tokens/, m => [m.prizes.ClassPrize.join(' / ')]),
+    F('gs', 'wClass', 'Guild Siege weekly: each class', GSB(5), /top 10 each: (\d+(?: \/ \d+)*) PVP Tokens/, m => [m.prizes.ClassPerClassPrize.join(' / ')]),
+    F('gs', 'wMvp', 'Guild Siege weekly: MVP', GSB(5), /MVP \(most MVP awards\), top 10: (\d+(?: \/ \d+)*) PVP Tokens/, m => [m.prizes.MvpPrize.join(' / ')]));
+
+  // the regex with indices ('d'): the groups' spans in the text
+  const withIdx = re => new RegExp(re.source, re.flags.replace('g', '') + 'd');
+  // the data a fact reads, from a PvP model (loaders/pvp.js fromWorkspace)
+  const dataOf = model => ({ ffa: model.ffa.cfg, tdm: model.tdm.cfg, gs: model.gs, timeline: model.timeline, prizes: model.prizes.prizes });
+
+  // files: Map lower -> SourceFile (the workspace's) -> [{ fact, board, status: 'ok' | 'differs' | 'notFound', said, want, spans }]
+  function check(model, files) {
+    const d = dataOf(model), out = [];
+    for (const f of FACTS) {
+      const want = f.want(d);
+      if (!want) continue;
+      for (const b of f.boards) {
+        const file = files.get(b);
+        if (!file || !file.text.length) continue;
+        const m = withIdx(f.re).exec(file.text);
+        if (!m) { out.push({ fact: f, board: b, status: 'notFound', said: null, want }); continue; }
+        const said = m.slice(1), spans = m.indices.slice(1).map(([s, e]) => ({ start: s, end: e }));
+        out.push({ fact: f, board: b, status: said.every((x, i) => x === want[i]) ? 'ok' : 'differs', said, want, spans });
+      }
+    }
+    return out;
+  }
+
+  // oldModel / newModel: before and after the data edit; files: Map lower -> SourceFile; editable(lower) -> bool
+  // -> { parts: [{ file, splices }], changed: [{ board, label, from, to }], notes: [text] }
+  function follow(oldModel, newModel, files, editable = () => true) {
+    const a = dataOf(oldModel), b = dataOf(newModel), by = new Map(), changed = [], notes = [];
+    for (const f of FACTS) {
+      const was = f.want(a), now = f.want(b);
+      if (JSON.stringify(was) === JSON.stringify(now)) continue;
+      for (const bd of f.boards) {
+        const file = files.get(bd);
+        if (!file || !file.text.length) continue;
+        if (!now) { notes.push(`${file.name}: "${f.label}" can not be written from the data any more (e.g. several siege days): check the rules text by hand.`); continue; }
+        const m = withIdx(f.re).exec(file.text);
+        if (!m) { notes.push(`${file.name}: the sentence with "${f.label}" was not found: check the rules text by hand.`); continue; }
+        if (!editable(bd)) { notes.push(`${file.name} is read-only here: "${f.label}" was not changed.`); continue; }
+        const sp = [];
+        m.indices.slice(1).forEach(([s, e], i) => { if (file.text.slice(s, e) !== now[i]) sp.push({ start: s, end: e, insert: now[i] }); });
+        if (!sp.length) continue;
+        if (!by.has(bd)) by.set(bd, []);
+        by.get(bd).push(...sp);
+        changed.push({ board: file.name, label: f.label, from: m.slice(1).join(' / '), to: now.join(' / ') });
+      }
+    }
+    const parts = [...by].map(([file, splices]) => ({ file, splices: splices.sort((x, y) => x.start - y.start) }));
+    return { parts, changed, notes };
+  }
+
+  FRE.pvpRules = { FACTS, schedulePhrase, siegeRows, check, follow, dataOf };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- edit/pvp-ops.js ----
+// PvP Events edits (task "PvP Events") as minimal splices: only the number tokens change; comments, spacing and line ends stay.
+// A new line copies the anchor line's indent, separators and EOL. Limits = what the server accepts (loaders/pvp.js), so an edit never
+// switches an event off. plan(): the data edit + the rules boards that follow it (loaders/pvp-rules.js), ONE undo step.
+//   FFAManager.inc / TDMManager.inc (ASCII, CRLF), GuildCombat.txt (CP949 comments, CRLF: ASCII inserts only),
+//   GuildSiegePrize.lua (LF in git, CRLF on the Windows disk: the file's own EOL is kept).
+(function (FRE) {
+  'use strict';
+  const T = FRE.textOps, P = () => FRE.pvp;
+  const INT_MAX = 2147483647;
+  const p2 = n => String(n).padStart(2, '0');
+  // field -> [min, max, label]; max of members: up to 100 (and not under the minimum: checked in setScalar)
+  const LIMITS = {
+    cost: [0, INT_MAX, 'The entry fee (Penya)'], cancelCut: [0, 100, 'The cancel cut (%)'], level: [1, INT_MAX, 'The minimum level'],
+    min: [2, 100, 'The players needed'], max: [2, 100, 'The most players'], lives: [1, INT_MAX, 'The lives'],
+    announce: [1, 60, 'The registration time (minutes)'], respawn: [0, 60, 'The respawn wait (seconds)'],
+    prepare: [0, 30, 'The time to Join (minutes)'], war: [1, 120, 'The battle length (minutes)'],
+  };
+  const keyOf = (mm, field) => `${P().KINDS[mm.kind].P}_${P().SCALARS.find(x => x[2] === field)[0]}`;
+
+  // ---------------------------------------------------------------- FFAManager.inc / TDMManager.inc
+  function setScalar(mm, text, field, v) {
+    const lim = LIMITS[field];
+    if (!lim) throw new Error(`Unknown setting ${field}`);
+    T.checkAmount(v, lim[0], lim[1], lim[2]);
+    if (field === 'min' && mm.keys.max && v > mm.keys.max.value) throw new Error(`The players needed can not be more than the most players (${mm.keys.max.value})`);
+    if (field === 'max' && v < (mm.keys.min ? mm.keys.min.value : 2)) throw new Error(`The most players can not be less than the players needed (${mm.keys.min ? mm.keys.min.value : 2})`);
+    const k = mm.keys[field];
+    if (k) return T.replaceSpan(k.span, v);
+    // no line yet (an older file has no CANCEL_CUT): a new line under the last setting, or at the end
+    const row = `${keyOf(mm, field)}\t\t\t${v}`;
+    if (mm.lastScalar) return T.insertRowAfter(text, mm.lastScalar, row);
+    return appendLine(text, row);
+  }
+  function appendLine(text, row) {
+    const eol = T.dominantEol(text);
+    return [{ start: text.length, end: text.length, insert: (text.length && !/[\r\n]$/.test(text) ? eol : '') + row + eol }];
+  }
+  function setRewardAmount(mm, v) {
+    if (!mm.reward) throw new Error(`${mm.file} has no ${P().KINDS[mm.kind].P}_REWARD line`);
+    const max = mm.rewardItem ? mm.rewardItem.packMax : 0;
+    T.checkAmount(v, 0, Math.max(0, max), `Tokens per kill (the item stacks to ${max})`);
+    return T.replaceSpan(mm.reward.amount, v);
+  }
+  function setTop(mm, i, v) {
+    if (!mm.top || !mm.top[i]) throw new Error('FFAManager.inc has no FFA_TOP_REWARD line');
+    T.checkAmount(v, 0, 9999, `The prize for place ${i + 1}`);
+    return T.replaceSpan(mm.top[i], v);
+  }
+  function setTeamPrize(mm, which, v) {
+    const k = mm[which];
+    if (!k) throw new Error(`TDMManager.inc has no TDM_${which === 'team' ? 'TEAM' : 'MVP'}_REWARD line`);
+    T.checkAmount(v, 0, 9999, which === 'team' ? 'The winning team prize' : 'The MVP prize');
+    return T.replaceSpan(k.span, v);
+  }
+  function checkTime(t, minDay, maxDay) {
+    T.checkAmount(t.day, minDay, maxDay, 'The day');
+    T.checkAmount(t.hour, 0, 23, 'The hour');
+    T.checkAmount(t.minute, 0, 59, 'The minute');
+  }
+  // day / hour / minute spans -> splices for the numbers that change (minutes written with 2 digits: "05")
+  function timeSplices(nums, t) {
+    return [String(t.day), String(t.hour), p2(t.minute)].map((x, k) => ({ start: nums[k].start, end: nums[k].end, insert: x }))
+      .filter((s, k) => Number(s.insert) !== nums[k].value || s.insert.length !== nums[k].end - nums[k].start);
+  }
+  function setBegin(mm, i, t) {
+    const b = mm.begins[i];
+    if (!b) throw new Error('There is no such start time');
+    checkTime(t, 0, 7);
+    return timeSplices(b.nums, t);
+  }
+  function addBegin(mm, text, t) {
+    checkTime(t, 0, 7);
+    const key = `${P().KINDS[mm.kind].P}_BEGIN`;
+    const last = mm.begins[mm.begins.length - 1];
+    if (!last) return appendLine(text, `${key}\t${t.day}\t${t.hour}\t${p2(t.minute)}`);
+    const sep = [text.slice(last.key.end, last.nums[0].start), text.slice(last.nums[0].end, last.nums[1].start), text.slice(last.nums[1].end, last.nums[2].start)]
+      .map(s => (/^[ \t]+$/.test(s) ? s : '\t'));
+    return T.insertRowAfter(text, last.stmt, `${key}${sep[0]}${t.day}${sep[1]}${t.hour}${sep[2]}${p2(t.minute)}`);
+  }
+  function removeBegin(mm, text, i) {
+    const b = mm.begins[i];
+    if (!b) throw new Error('There is no such start time');
+    return T.removeRow(text, b.stmt);
+  }
+
+  // ---------------------------------------------------------------- GuildCombat.txt
+  function setBid(gc, v) {
+    if (!gc.joinPenya) throw new Error('GuildCombat.txt has no JOINPENYA line');
+    T.checkAmount(v, 0, INT_MAX, 'The minimum bid (Penya)');
+    return T.replaceSpan(gc.joinPenya.span, v);
+  }
+  function checkSiegeRow(gc, t, skip) {
+    checkTime(t, 1, 7);
+    const other = gc.autoOpen.find((r, k) => k !== skip && r.day === t.day);
+    if (other) throw new Error(`There is already a siege on ${FRE.pvpSim.DAYS[t.day]}: the server keeps one time per weekday (the later row would replace it)`);
+  }
+  function setSiegeRow(gc, i, t) {
+    if (!gc.ok) throw new Error('GuildCombat.txt does not load: fix it first');
+    const r = gc.autoOpen[i];
+    if (!r) throw new Error('There is no such siege time');
+    checkSiegeRow(gc, t, i);
+    return timeSplices(r.nums, t);
+  }
+  function addSiegeRow(gc, text, t) {
+    if (!gc.ok) throw new Error('GuildCombat.txt does not load: fix it first');
+    if (!gc.block) throw new Error('GuildCombat.txt has no AUTO_OPEN_IDC { … } block');
+    if (gc.autoOpen.length >= 7) throw new Error('The server allows 7 siege times (one per weekday)');
+    checkSiegeRow(gc, t, -1);
+    const last = gc.autoOpen[gc.autoOpen.length - 1];
+    if (!last) return T.insertRowBelowLine(text, gc.block.open.start, `${t.day}\t${t.hour}\t${p2(t.minute)}`);
+    const sep = [text.slice(last.nums[0].end, last.nums[1].start), text.slice(last.nums[1].end, last.nums[2].start)].map(s => (/^[ \t]+$/.test(s) ? s : '\t'));
+    return T.insertRowAfter(text, last.stmt, `${t.day}${sep[0]}${t.hour}${sep[1]}${p2(t.minute)}`);
+  }
+  function removeSiegeRow(gc, text, i) {
+    if (!gc.ok) throw new Error('GuildCombat.txt does not load: fix it first');
+    const r = gc.autoOpen[i];
+    if (!r) throw new Error('There is no such siege time');
+    return T.removeRow(text, r.stmt);
+  }
+
+  // ---------------------------------------------------------------- GuildSiegePrize.lua
+  // name: 'TokensPerKill' or a list name; i: the place (0-based, lists only)
+  function setPrize(pz, text, name, i, v) {
+    if (pz.missing) throw new Error('There is no GuildSiegePrize.lua');
+    if (pz.failed) throw new Error('GuildSiegePrize.lua does not run (see the problems): fix it first');
+    if (name === 'TokensPerKill') {
+      T.checkAmount(v, 0, 32767, 'PVP Tokens per kill');
+      const n = pz.number.TokensPerKill;
+      if (n) return T.replaceSpan(n.span, v);
+      return appendLine(text, `TokensPerKill = ${v}`);
+    }
+    const def = P().PRIZE_LISTS.find(x => x[0] === name);
+    if (!def) throw new Error(`Unknown prize list ${name}`);
+    if (!Number.isInteger(i) || i < 0 || i >= def[1]) throw new Error(`${name} has places 1-${def[1]}`);
+    T.checkAmount(v, 1, 32767, `${name} place ${i + 1} (PVP Tokens)`);
+    const L = pz.lists[name];
+    if (L && !L.notList && L.items[i]) return T.replaceSpan(L.items[i], v);
+    const vals = pz.prizes[name].slice();
+    vals[i] = v;
+    const body = `{ ${vals.join(', ')} }`;
+    if (L && !L.notList) return [{ start: L.open.start, end: L.close.end, insert: body }];
+    if (L && L.notList) return [{ start: L.stmt.start, end: L.stmt.end, insert: `${name} = ${body}` }];
+    return appendLine(text, `${name} = ${body}`);
+  }
+
+  // ---------------------------------------------------------------- one edit + the rules boards, one undo step
+  // ws: the workspace (models.pvp), lower: the data file, splices: its edit -> { parts: [{ file, splices }], changed, notes }
+  function plan(ws, lower, splices) {
+    const model = ws.models.pvp, f = ws.files.get(lower);
+    const text = FRE.SourceFile.spliceText(f.text, splices, f.kind, f.name);
+    const scratch = { name: f.name, text };
+    const ctx = { defines: ws.defines.defines, items: ws.items.items };
+    const next = Object.assign({}, model);
+    if (lower === 'ffamanager.inc') next.ffa = P().readManager(scratch, 'ffa', ctx);
+    else if (lower === 'tdmmanager.inc') next.tdm = P().readManager(scratch, 'tdm', ctx);
+    else if (lower === 'guildcombat.txt') { next.gs = P().readGuildCombat(scratch); next.timeline = P().siegeTimeline(next.gs); }
+    else if (lower === 'guildsiegeprize.lua') next.prizes = P().readPrizes(scratch);
+    const fol = FRE.pvpRules.follow(model, next, ws.files, l => ws.isEditable(l));
+    return { parts: [{ file: lower, splices }, ...fol.parts], changed: fol.changed, notes: fol.notes, next };
+  }
+
+  FRE.pvpOps = { LIMITS, setScalar, setRewardAmount, setTop, setTeamPrize, setBegin, addBegin, removeBegin, setBid, setSiegeRow, addSiegeRow,
+    removeSiegeRow, setPrize, plan };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- validate/pvp.js ----
+// PvP Events checks (task "PvP Events"). Each one cites the C++ it comes from (loaders/pvp.js has the readers, loaders/pvp-sim.js
+// the schedulers, loaders/pvp-rules.js the rules boards).
+(function (FRE) {
+  'use strict';
+  const S = () => FRE.pvpSim;
+  const t2 = (h, m) => `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  const LABEL = { ffa: 'FFA', tdm: 'TDM', gs: 'Guild Siege' };
+
+  function pvpChecks(model, opts) {
+    const out = [], ws = opts.ws;
+    const push = (file, code, severity, sp, message, k) => out.push({ module: 'pvp', file, code, severity, start: sp ? sp.start : 0, end: sp ? sp.end : 0, key: `${code}|${k}`, message });
+    // ---- FFAManager.inc / TDMManager.inc: ReadConfig (FFAManager.cpp:91, TDMManager.cpp:99)
+    for (const k of ['ffa', 'tdm']) {
+      const mm = model[k], K = FRE.pvp.KINDS[k];
+      if (mm.missing) continue;
+      if (mm.error) push(K.file, 'PVP_OFF', 'BLOCK', mm.errorAt, `${K.file}: ${mm.error}. The server writes "${K.label} switched off" in Server\\error_*.txt and no ${K.label} runs until the file is fixed (${K.reload} then, or a restart).`, `${k}|${mm.error}`);
+      else if (!mm.cfg.times.length) push(K.file, 'PVP_NO_TIMES', 'WARN', null, `${K.file} has no ${K.P}_BEGIN line: the ${K.label} never starts on its own (only by the GM command /${k}start).`, k);
+      if (mm.cfg) {
+        const seen = new Set();
+        mm.begins.filter(b => b.used).forEach(b => {
+          const id = `${b.day}|${b.hour}|${b.minute}`;
+          if (seen.has(id)) push(K.file, 'PVP_TIME_TWICE', 'INFO', b.stmt, `${K.P}_BEGIN ${b.day} ${b.hour} ${b.minute} is written twice: it is one run.`, `${k}|${id}`);
+          seen.add(id);
+        });
+      }
+    }
+    // ---- GuildCombat.txt: CGuildCombat::LoadScript (eveschool.cpp:3658)
+    const gc = model.gs;
+    if (!gc.missing) {
+      if (!gc.ok) push('GuildCombat.txt', 'PVP_GS_LOAD', 'BLOCK', gc.errorAt, `${gc.error}. CGuildCombat::LoadScript returns FALSE and the WorldServer stops starting ("[CRITICAL] Missing File ->GuildCombat.txt", ThreadMng.cpp:293).`, gc.error);
+      else {
+        const days = new Map();
+        for (const r of gc.autoOpen) {
+          if (days.has(r.day)) push('GuildCombat.txt', 'PVP_GS_DAY_TWICE', 'WARN', r.stmt, `Two siege times on ${S().DAYS[r.day]}: the server keeps one per weekday (__AutoOpen[day - 1]), so ${t2(days.get(r.day).hour, days.get(r.day).minute)} is replaced by ${t2(r.hour, r.minute)}.`, r.day);
+          days.set(r.day, r);
+          if (r.hour === 24) push('GuildCombat.txt', 'PVP_GS_HOUR24', 'WARN', r.nums[1], `${S().DAYS[r.day]} at hour 24: the loader accepts it, but the clock's hour is 0-23 (eveschool.cpp:3459), so this siege never opens.`, r.day);
+        }
+        if (!FRE.pvpRules.siegeRows(gc).length) push('GuildCombat.txt', 'PVP_GS_NONE', 'WARN', gc.block && gc.block.key, 'No siege time in AUTO_OPEN_IDC: the Guild Siege never opens on its own.', 'none');
+        const sh = shownWrong(gc, model.timeline);
+        if (sh) push('GuildCombat.txt', 'PVP_GS_SHOWN', 'WARN', gc.byDay[gc.lastDay - 1] && gc.byDay[gc.lastDay - 1].stmt,
+          `The Guild Siege window shows the wrong next siege at times: it only knows the last row (${S().DAYS[gc.lastDay]}) and, on that day after the siege, adds ${gc.lastDay} days instead of 7 (GetNextGuildCobmatTime, eveschool.cpp:2415). E.g. ${S().dateText(sh.at)}: it shows ${S().dateText(sh.shown)}, the real next siege is ${S().dateText(sh.real)}.`, `${gc.lastDay}|${gc.autoOpen.length}`);
+      }
+    }
+    // ---- one week on the clock: skipped starts, events overlapping
+    for (const w of S().weekWindows(model)) {
+      if (w.ev === 'gs') continue;
+      const K = FRE.pvp.KINDS[w.ev];
+      for (const t of w.skipped) {
+        if (t < S().WEEK0 || t >= S().WEEK0 + 7 * S().DAY) continue;
+        push(K.file, 'PVP_SKIPPED', 'WARN', null, `The ${K.label} of ${S().dayName(t)} ${S().hhmm(t)} never starts: the run of ${S().hhmm(w.start)} is still going then (from registration to everyone back in town: ${S().hhmm(w.from)} - ${S().hhmm(w.to)}).`, `${w.ev}|${S().dow(t)}|${S().hhmm(t)}`);
+      }
+    }
+    for (const c of S().clashes(model)) {
+      const d = w => `${LABEL[w.ev]} ${S().dayName(w.start)} ${S().hhmm(w.start)} (${S().hhmm(w.from)} - ${S().hhmm(w.to)})`;
+      const fileOf = ev => (ev === 'gs' ? 'GuildCombat.txt' : FRE.pvp.KINDS[ev].file);
+      push(fileOf(c.a.ev), 'PVP_TIME_CLASH', 'WARN', null, `${d(c.a)} and ${d(c.b)} overlap: a player can be in only one of them (Join is refused inside another PvP arena), and both ask for the same players.`,
+        `${c.a.ev}|${S().dow(c.a.start)}|${S().hhmm(c.a.start)}|${c.b.ev}|${S().dow(c.b.start)}|${S().hhmm(c.b.start)}`);
+    }
+    // ---- GuildSiegePrize.lua: CGuildSiegePrize::ReadPrizes (6de6da39)
+    const pz = model.prizes, LUA = 'GuildSiegePrize.lua';
+    if (!pz.missing) {
+      for (const e of pz.errors) push(LUA, 'PVP_PRIZE_LUA', 'BLOCK', e, `${e.message}. The script does not run: the WorldServer and the DatabaseServer use every compiled prize, and the DatabaseServer's weekly payout clock (CheckChangeTime, a function of this script) never fires.`, e.message);
+      for (const b of pz.bad) push(LUA, 'PVP_PRIZE_BAD', 'WARN', b.span, b.index < 0 ? `${b.name} = ${b.raw} is not a list { … }: the compiled prizes are used (an Error line in the log).`
+        : `${b.name}${b.name === 'TokensPerKill' ? '' : `[${b.index + 1}]`} = ${b.raw} is not a whole number ${b.min}-32767: the server keeps ${b.kept} (and writes an Error line).`, `${b.name}|${b.index}`);
+      for (const [name, count] of FRE.pvp.PRIZE_LISTS) {
+        const L = pz.lists[name];
+        if (L && L.items && L.items.length > count) push(LUA, 'PVP_PRIZE_EXTRA', 'INFO', L.items[count], `${name} has ${L.items.length} numbers; the server reads the first ${count}.`, name);
+      }
+      if (model.patch === 'missing' && (pz.number.TokensPerKill || Object.keys(pz.lists).length))
+        push(LUA, 'PVP_PATCH_MISSING', 'WARN', null, 'The game source in this folder has no CGuildSiegePrize::ReadPrizes (PvP events part B, 6de6da39): the servers ignore these prizes and pay the compiled numbers.', 'b');
+    }
+    // ---- the rules boards say what the data says (loaders/pvp-rules.js)
+    if (ws) for (const r of FRE.pvpRules.check(model, ws.files)) {
+      const name = ws.files.get(r.board).name;
+      if (r.status === 'differs') push(name, 'PVP_RULES_DIFF', 'WARN', r.spans[0], `${name} says ${r.said.join(' / ')} for ${r.fact.label}; the data says ${r.want.join(' / ')}. Players read the board: change the value here, or edit the board.`, `${r.board}|${r.fact.id}`);
+      else if (r.status === 'notFound') push(name, 'PVP_RULES_NOTFOUND', 'INFO', null, `${name}: the sentence with ${r.fact.label} was not found (its wording changed), so the editor can not keep it in step: check it by hand after a change.`, `${r.board}|${r.fact.id}`);
+    }
+    return out;
+  }
+
+  // one moment of a week where the siege window's "next siege" differs from the real one -> { at, shown, real } or null
+  function shownWrong(gc, tl) {
+    const rows = FRE.pvpRules.siegeRows(gc);
+    if (!rows.length) return null;
+    const w0 = S().WEEK0;
+    for (let t = w0 + 1; t < w0 + 7 * S().DAY; t += 1800) {
+      const shown = S().shownNext(gc, t);
+      const next = S().sieges(gc, tl, t, t + 8 * S().DAY, { guilds: Infinity }).find(s => s.start >= t);
+      if (shown !== null && next && shown !== next.start) return { at: t, shown, real: next.start };
+    }
+    return null;
+  }
+
+  FRE.pvpChecks = pvpChecks;
+  FRE.pvpChecks.shownWrong = shownWrong;
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- core/workspace.js ----
 // Workspace: the loaded Resource folder as the editor sees it. No DOM here,
 // so it can be tested outside the browser (tests/run-tests.js under gjs).
@@ -13374,13 +14379,26 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
       validate(ws, model) { return FRE.weaponChecks(model, { ws }); },
     },
     {
+      // PvP Events (loaders/pvp.js): FFAManager.inc / TDMManager.inc (ReadConfig: WorldServer start + /ffareload, /tdmreload),
+      // GuildCombat.txt (the siege day / time AUTO_OPEN_IDC and the minimum bid JOINPENYA, CGuildCombat::LoadScript),
+      // GuildSiegePrize.lua (the siege prizes, PvP events part B 6de6da39). Server files only; the rules boards players read are
+      // client-only files in Client/Client (NpcBoard_289 / 290, GuildCombatTEXT_<n>_ENG / _USA: Workspace.setBoardFiles).
+      id: 'pvp', label: 'PvP Events',
+      required: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt'], optional: ['GuildSiegePrize.lua'],
+      editable: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt', 'GuildSiegePrize.lua'],
+      client: [], deps: ['GuildSiegePrize.lua', 'client/npcboard_289.inc', 'client/npcboard_290.inc',
+        ...[1, 2, 3, 4, 5, 6].flatMap(n => [`client/guildcombattext_${n}_eng.inc`, `client/guildcombattext_${n}_usa.inc`])],
+      parse(ws) { return FRE.pvp.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.pvpChecks(model, { ws }); },
+    },
+    {
       // Where is this item from? (task H, loaders/where.js): every model above parsed read-only, nothing editable.
       // Last, so its parse sees the other models. maps: towns of the NPCs, and whether they stand in the game.
       id: 'where', label: 'Item Sources & Uses',
       required: [], editable: [], client: [],
       // part 2 (loaders/gifts.js): level-up gifts (Event.lua), rebirth gifts, couple gifts, the max level (expTable.inc),
       // the Guild Siege config; the prize amounts compiled into the C++ come in as opts.cpp (io/source-read.js)
-      optional: ['Event.lua', 'expTable.inc', '1Rebirth.inc', 'couple.inc', 'GuildCombat.txt'],
+      optional: ['Event.lua', 'expTable.inc', '1Rebirth.inc', 'couple.inc', 'GuildCombat.txt', 'GuildSiegePrize.lua'],
       uses: ['npc', 'donation', 'exchange', 'drops', 'boxes', 'battlepass'],
       maps: true,
       parse(ws) { return FRE.where.index(ws); },
@@ -13515,13 +14533,16 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
     // the Client folder. setBoardFiles: the ones already there (SourceFiles read from Client/Client).
     setBoardFiles(list) {
       for (const f of list || []) this._addBoard(f);
+      if (this.available.pvp && this.available.pvp.ok && (list || []).length) this.reparse('guildsiegeprize.lua');   // the boards it checks
     }
     _addBoard(f) {
       f.clientOnly = true;
       f.dir = 'Client';
       const lower = 'client/' + f.name.toLowerCase();
       this.files.set(lower, f);
-      if (!f.readOnly && this.shown.has('npc')) this.editable.add(lower);     // rules texts are edited in NPC Shops only
+      // rules texts are edited in NPC Shops; the PvP Events task keeps its own boards (FFA / TDM Rules, the Guild Siege boards) in step
+      const pvp = this.shown.has('pvp') && FRE.pvp.isPvpBoard(lower);
+      if (!f.readOnly && ((this.shown.has('npc') && /^client\/npcboard_\d+\.inc$/.test(lower)) || pvp)) this.editable.add(lower);
       return { lower, file: f };
     }
     // -> { lower, file } of NpcBoard_<id>.inc; create: an empty one (no bytes yet) when there is none
@@ -13855,51 +14876,57 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
 //     LoadPreFiles :1593, OpenProject :1573). A loose file in Client/ wins over data.res (file.cpp:273
 //     CResFile::Open, b7645c52). Never reads .dyo (WorldFile.cpp:269-382 is #ifdef __WORLDSERVER).
 //   propMoverEx.inc (Monster Drops): the game reads it at startup but the drop lines are kept only #ifdef __WORLDSERVER
-//     (Project.cpp:3196 / 3218 / 3234), and it has no loose Client copy: a drop change needs only the server restart.
-//   propGiftbox.inc (Boxes): LoadGiftbox is #ifdef __WORLDSERVER (Project.cpp:836-847), no Client copy: server restart only.
-//   propPackItem.inc (Boxes): LoadPackItem (Project.cpp:855) runs in both; the game reads Client/propPackItem.inc (Item Wiki).
+//     (Project.cpp:3231 / 3253 / 3269), and it has no loose Client copy: a drop change needs only the server restart.
+//   propGiftbox.inc (Boxes): LoadGiftbox is #ifdef __WORLDSERVER (Project.cpp:858-869), no Client copy: server restart only.
+//   propPackItem.inc (Boxes): LoadPackItem (Project.cpp:877) runs in both; the game reads Client/propPackItem.inc (Item Wiki).
 //   defineItem.h / propItem.txt.txt / mdlDyna.inc (+ New box): LoadDefines / LoadStrings / the model script, at startup in both.
 //   Client/Client/DonationShopTree.inc: each time the Donation Shop window opens (WndDonationShop.cpp:346; 409 with donation-tree.diff).
 //   Client/Client/NpcBoard_<id>.inc: on every click of the menu, once docs/patches/npc-board.diff is built.
+//   Client/Client/GuildCombatTEXT_<n>_ENG / _USA.inc: the Guild Siege boards, read on every click by the game's own code
+//     (WndWorld.cpp:4600 / :4681 GetLangFileName( FILE_GUILDCOMBAT_TEXT_n ), no patch).
+//   FFAManager.inc / TDMManager.inc: the WorldServer at startup (Project.cpp:920 / :923 ReadConfig) AND the GM commands
+//     /ffareload / /tdmreload (FuncTextCmd.cpp:423 / :517; refused while a run is going), so a save needs one of the two.
+//   GuildCombat.txt: the WorldServer at startup (ThreadMng.cpp:293). GuildSiegePrize.lua: the WorldServer at startup
+//     (eveschool.cpp:3665 LoadPrizes, 6de6da39) and the DatabaseServer (databaseserver/Project.cpp:216 LoadScript).
 // Stop Server.bat closes Neuz and every server; Start Server.bat starts them and then the game
 // (Client\- Start Game.bat copies Source\Output\Neuz\NoGameguard\Neuz.exe first).
 (function (FRE) {
   'use strict';
 
-  const STARTUP = 'startup', WINDOW = 'window', CLICK = 'click';
+  const STARTUP = 'startup', WINDOW = 'window', CLICK = 'click', RELOAD = 'reload';
   // key (lowercase, as in Workspace.files) -> { server, client, cite }
   const READERS = {
-    'spec_item.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:790 LoadPropItem' },
-    'character.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:796 / :3257 LoadCharacter' },
-    'character-etc.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:796 / :3257 LoadCharacter' },
-    'character-school.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:796 / :3257 LoadCharacter' },
+    'spec_item.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:812 LoadPropItem' },
+    'character.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:818 / :3257 LoadCharacter' },
+    'character-etc.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:818 / :3257 LoadCharacter' },
+    'character-school.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:818 / :3257 LoadCharacter' },
     'character.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1256 LoadStrings' },
     'defineneuz.h': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1373 LoadDefines' },
     'definetext.h': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1383 LoadDefines' },
-    'etc.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:830 LoadEtc' },
+    'etc.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:852 LoadEtc' },
     'etc.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1259 LoadStrings' },
     'textclient.inc': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1366 LoadText' },
     'textclient.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1274 LoadStrings' },
-    'exchange_script.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:979 -> Exchange.cpp:34 Load_Script' },
-    'donationshop.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:932 -> ProjectCmn.cpp:1845 LoadDonationShop' },
-    'battlepass.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:907 -> ProjectCmn.cpp:1682 LoadBattlePass' },
+    'exchange_script.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:1014 -> Exchange.cpp:34 Load_Script' },
+    'donationshop.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:967 -> ProjectCmn.cpp:1845 LoadDonationShop' },
+    'battlepass.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:935 -> ProjectCmn.cpp:1682 LoadBattlePass' },
     // the game parses propMoverEx.inc too, but keeps no drop lines: DropItem / DropKind / DropGold are added #ifdef __WORLDSERVER
-    'propmoverex.inc': { server: STARTUP, client: null, cite: 'Project.cpp:828 LoadPropMoverEx (drops #ifdef __WORLDSERVER :3196)' },
-    // random boxes: LoadGiftbox sits in #ifdef __WORLDSERVER (Project.cpp:836-847); sets: the game loads its own copy too (Item Wiki, e08528a5)
-    'propgiftbox.inc': { server: STARTUP, client: null, cite: 'Project.cpp:842 LoadGiftbox (#ifdef __WORLDSERVER :836)' },
-    'proppackitem.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:855 LoadPackItem (the game too: Item Wiki)' },
+    'propmoverex.inc': { server: STARTUP, client: null, cite: 'Project.cpp:850 LoadPropMoverEx (drops #ifdef __WORLDSERVER :3196)' },
+    // random boxes: LoadGiftbox sits in #ifdef __WORLDSERVER (Project.cpp:858-869); sets: the game loads its own copy too (Item Wiki, e08528a5)
+    'propgiftbox.inc': { server: STARTUP, client: null, cite: 'Project.cpp:864 LoadGiftbox (#ifdef __WORLDSERVER :836)' },
+    'proppackitem.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:877 LoadPackItem (the game too: Item Wiki)' },
     // a new box item (J part 2, the 949f2cc2 way): its #define, its name / description, its ground model
     'defineitem.h': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1376 LoadDefines' },
     'propitem.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1261 LoadStrings' },
-    'mdldyna.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:768 m_modelMng.LoadScript (the "model" line of Masquerade.prj)' },
-    // Rates & Buffs: Event.lua (the WorldServer and the DatabaseServer, Project.cpp:983 / databaseserver/Project.cpp:192; the
-    // DatabaseServer menu "Apply now", DatabaseServer.cpp:488, reloads it live), ServerBuff.txt (WorldServer only, Project.cpp:893),
-    // GuildBuff.txt (both, Project.cpp:891; the game shows only what the server sends)
-    'event.lua': { server: STARTUP, client: null, cite: 'Project.cpp:983 m_EventLua.LoadScript (+ databaseserver/Project.cpp:192)' },
-    'serverbuff.txt': { server: STARTUP, client: null, cite: 'Project.cpp:893 loadServerBuffFile (#ifdef __WORLDSERVER)' },
-    'guildbuff.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:891 loadGuildBuffFile' },
-    // rebirth tiers: both load it (Project.cpp:928, #ifdef __REBIRTH_SYSTEM only); the game discards the numbers but reads the file
-    '1rebirth.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:928 LoadRebirthProp' },
+    'mdldyna.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:790 m_modelMng.LoadScript (the "model" line of Masquerade.prj)' },
+    // Rates & Buffs: Event.lua (the WorldServer and the DatabaseServer, Project.cpp:1018 / databaseserver/Project.cpp:192; the
+    // DatabaseServer menu "Apply now", DatabaseServer.cpp:488, reloads it live), ServerBuff.txt (WorldServer only, Project.cpp:915),
+    // GuildBuff.txt (both, Project.cpp:913; the game shows only what the server sends)
+    'event.lua': { server: STARTUP, client: null, cite: 'Project.cpp:1018 m_EventLua.LoadScript (+ databaseserver/Project.cpp:192)' },
+    'serverbuff.txt': { server: STARTUP, client: null, cite: 'Project.cpp:915 loadServerBuffFile (#ifdef __WORLDSERVER)' },
+    'guildbuff.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:913 loadGuildBuffFile' },
+    // rebirth tiers: both load it (Project.cpp:963, #ifdef __REBIRTH_SYSTEM only); the game discards the numbers but reads the file
+    '1rebirth.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:963 LoadRebirthProp' },
     // Upgrade Rates (task K): ItemUpgrade.lua (CItemUpgrade's constructor -> LoadScript, WORLDSERVER/ItemUpgrade.cpp:31 / :59, WorldServer
     // only), s.txt (LoadServerScript Project.cpp:994, WorldServer; the game reads its own copy for the Collector Details window :937),
     // Ultimate_UltimateWeapon.txt (Project.cpp:967 LoadUltimateWeapon -> UltimateWeapon.cpp:116, #ifdef __WORLDSERVER),
@@ -13916,13 +14943,20 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
     'couple.inc': { server: STARTUP, client: STARTUP, cite: 'WORLDSERVER/couplehelper.cpp:44, databaseserver/couplehelper.cpp:158, Neuz/couplehelper.cpp:33 CCoupleProperty::Initialize' },
     // Set Effects (task G part 1): the sets (both: bonuses on the server, the tooltip in the game), their names (LoadStrings' list),
     // the +N armor table (the "expTable" line of Masquerade.prj, both)
-    'propitemetc.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:861 LoadPiercingAvail' },
+    'propitemetc.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:883 LoadPiercingAvail' },
     'propitemetc.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1262 LoadStrings' },
-    'exptable.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:741 LoadExpTable (the "expTable" line of Masquerade.prj)' },
+    'exptable.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:763 LoadExpTable (the "expTable" line of Masquerade.prj)' },
     'client/donationshoptree.inc': { server: null, client: WINDOW, cite: 'WndDonationShop.cpp:346 (409 with donation-tree.diff) LoadTreeScript' },
+    // PvP Events: the FFA / TDM settings (startup or the GM reload command), the siege day / bid and its prizes (startup)
+    'ffamanager.inc': { server: RELOAD, client: null, reload: 'ffa', cite: 'Project.cpp:920 ReadConfig; /ffareload FuncTextCmd.cpp:423' },
+    'tdmmanager.inc': { server: RELOAD, client: null, reload: 'tdm', cite: 'Project.cpp:923 ReadConfig; /tdmreload FuncTextCmd.cpp:517' },
+    'guildcombat.txt': { server: STARTUP, client: null, cite: 'ThreadMng.cpp:293 g_GuildCombatMng.LoadScript' },
+    'guildsiegeprize.lua': { server: STARTUP, client: null, cite: 'eveschool.cpp:3665 LoadPrizes (WorldServer) + databaseserver/Project.cpp:216 LoadScript (DatabaseServer)' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };
   const BOARD = { server: null, client: CLICK, cite: 'npc-board.diff: WndWorld.cpp OnCommand default:' };
+  // the Guild Siege boards: the game's own code reads them on each click (no patch needed)
+  const GS_BOARD = { server: null, client: CLICK, noPatch: true, cite: 'WndWorld.cpp:4600 / :4681 FILE_GUILDCOMBAT_TEXT_n' };
   // a file the table does not know: assume both read it at startup (the safe answer)
   const UNKNOWN = { server: STARTUP, client: STARTUP, cite: '?' };
 
@@ -13931,6 +14965,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
     if (READERS[key]) return READERS[key];
     if (/^world\/.+\.dyo$/.test(key)) return DYO;
     if (/^client\/npcboard_\d+\.inc$/.test(key)) return BOARD;
+    if (/^client\/guildcombattext_\d_(eng|usa)\.inc$/.test(key)) return GS_BOARD;
     return UNKNOWN;
   }
 
@@ -13965,6 +15000,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
       for (const key of c.files) {
         const r = readerOf(key), name = nameOf(key);
         if (r.server === STARTUP) { needs.add('servers'); why.push(`the WorldServer reads ${name} once, at startup (${r.cite})`); }
+        if (r.server === RELOAD) { needs.add('reload:' + r.reload); why.push(`the WorldServer reads ${name} at startup and on /${r.reload}reload (${r.cite})`); }
         if (r.client === STARTUP) {
           const st = client[key] || 'none';
           if (st === 'written' || st === 'created') { needs.add('game'); why.push(`the game reads its own Client/${name} once, at startup`); }
@@ -13981,7 +15017,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
           if (treePatch) { needs.add('patch:donation-tree'); why.push('a category the game\'s code does not know sorts last and gets the wrong card text until donation-tree.diff is built into Neuz'); }
         }
         if (r.patch) { needs.add('patch:' + r.patch); why.push(`the server and the game read ${name} only with ${r.patch}.diff built into the WorldServer and Neuz; without it they keep the fees compiled in the C++`); }
-        if (r.client === CLICK) {
+        if (r.client === CLICK && r.noPatch) { needs.add('click:board'); why.push(`the game reads Client/Client/${name} each time the board menu is clicked (${r.cite})`); }
+        else if (r.client === CLICK) {
           needs.add('click:board'); needs.add('patch:npc-board');
           why.push(`the game reads Client/Client/${name} each time the menu is clicked, but only with npc-board.diff built into Neuz`);
         }
@@ -14005,6 +15042,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
     else {
       if (all.has('reopen:donation')) steps.push({ id: 'reopen:donation', short: 'reopen the Donation Shop window', text: 'Close and reopen the Donation Shop window in the game. No restart is needed: it reads the categories each time it opens.' });
       if (all.has('click:board')) steps.push({ id: 'click:board', short: 'click the rules menu again', text: 'Click the rules menu again in the game. No restart is needed: it reads the text on every click.' });
+    }
+    // FFA / TDM settings: a server restart reads them too; else the GM reload command (refused while a run is going)
+    if (!all.has('servers')) for (const k of ['ffa', 'tdm']) if (all.has('reload:' + k)) {
+      const L = k.toUpperCase();
+      steps.push({ id: 'reload:' + k, short: `type /${k}reload in game`, text: `In the game, as GM, type /${k}reload while no ${L} runs (it is refused during a run; the chat line says how many start times and the fee it read). Or run Stop Server.bat, then Start Server.bat.` });
     }
     return { steps, changes: outChanges, notes, built: Object.keys(PATCHES).filter(id => built.has(id)) };
   }
@@ -14032,7 +15074,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
     return compute({ changes, client, names, patches, codes: ws.diags.map(d => d.code) });
   }
 
-  FRE.afterSave = { READERS, DYO, BOARD, PATCHES, readerOf, compute, forWorkspace };
+  FRE.afterSave = { READERS, DYO, BOARD, GS_BOARD, PATCHES, readerOf, compute, forWorkspace };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- io/fsa.js ----
@@ -19470,18 +20512,21 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
       h('td', `level ${l.level}`, l.reached ? null : h('span.tag.warn', ' never reached')), h('td', `×${group(l.num)}`), h('td.muted.small', extras(l)), h('td', sexText(l.sex)))),
       'From couple.inc: sent by mail to the partners when the couple reaches that level (couples earn points while both are online).'));
     // 🏰 Guild Siege prizes (the amounts are compiled into the C++)
-    const fromText = l => (l.from === 'cpp' ? 'Read from the C++ in FLYFF-V19-SOURCE.' : 'From the C++ (the editor\'s own copy: pick FLYFF-V19-SOURCE to read it).');
+    const fromText = l => (l.fromLua ? 'From GuildSiegePrize.lua (edit it in PvP Events; a server restart reads it).'
+      : l.from === 'cpp' ? 'Read from the C++ in FLYFF-V19-SOURCE.' : 'From the C++ (the editor\'s own copy: pick FLYFF-V19-SOURCE to read it).');
     for (const l of of('siege')) {
       put(section('🏰', 'Guild Siege, after each siege (top 3 guilds)', ['Guilds that applied', 'Rank 1', 'Rank 2', 'Rank 3'], l.table.map(r => h('tr',
-        h('td', String(r[0])), [1, 2, 3].map(k => h('td', r[k] === undefined ? '' : `${group(r[k])} each`)))),
-        `Every lineup member who is online gets this many (bag, or mail when it is full); offline members get none. More guilds that applied give more (JOINPENYA ${group(l.config.joinPenya)} in GuildCombat.txt × guilds × 0.9 × 0.00001 × 0.1, then 70 / 20 / 10% for rank 1 / 2 / 3). Not after a GM stop. ${fromText(l)} A change needs a server rebuild.`));
+        h('td', String(r[0])), [1, 2, 3].map(k => h('td', r[k] === undefined || r[k] < 1 ? '' : `${group(r[k])} each`)))),
+        `Every lineup member who is online gets this many (bag, or mail when it is full); offline members get none. ${l.mode === 'fixed'
+          ? 'The same for any number of guilds (SiegePrize).'
+          : `More guilds that applied give more (JOINPENYA ${group(l.config.joinPenya)} in GuildCombat.txt × guilds × 0.9 × 0.00001 × 0.1, then 70 / 20 / 10% for rank 1 / 2 / 3).`}${l.perKill ? ` Plus ${group(l.perKill)} for every kill in the siege, paid at once.` : ''} Not after a GM stop. ${fromText(l)}${l.fromLua ? '' : ' A change needs a server rebuild.'}`));
     }
     for (const l of of('weekly')) {
       const w = l.weekly, n = Math.max(w.guild.length, w.total.length, w.perClass.length, w.mvp.length);
       const cell = (a, i) => h('td', a[i] === undefined ? '' : group(a[i]));
       put(section('🏰', 'Guild Siege, every week (rankings)', ['Rank', 'Guild (wins) → guild bank', 'Total points', 'Each class board', 'MVP count'],
         Array.from({ length: n }, (_, i) => h('tr', h('td', `#${i + 1}`), cell(w.guild, i), cell(w.total, i), cell(w.perClass, i), cell(w.mvp, i))),
-        `Paid on Monday 00:00 (GuildSiegePrize.lua). Players get theirs by mail and can win on several boards. The guild's chips go into the guild bank: when it is full they are lost (the server only writes a log line). ${fromText(l)} A change needs a server rebuild.`));
+        `Paid on Monday 00:00 (GuildSiegePrize.lua). Players get theirs by mail and can win on several boards. The guild's share goes into the guild bank: when it is full it is lost (the server only writes a log line). ${fromText(l)}${l.fromLua ? '' : ' A change needs a server rebuild.'}`));
     }
     // 🔧 used in
     put(section('🔧', 'Used in an exchange (players give it)', ['NPC', 'Exchange', 'Takes', 'Gives', ''], of('use').map(l => h('tr' + (l.live === false ? '.muted' : ''),
@@ -21497,6 +22542,317 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
   FRE.ui.weapons = { weaponView, familyView };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- ui/pvp.js ----
+// PvP Events (task "PvP Events"): Guild Siege / FFA / TDM. Entry (fees, level, lives, lengths), the schedule (days and times, the
+// next runs from loaders/pvp-sim.js), the PVP Token prizes, "what players get" (a sample battle through the simulator) and the
+// rules boards players read, kept in step with every change (loaders/pvp-rules.js, one undo step). Edits: edit/pvp-ops.js.
+(function (FRE) {
+  'use strict';
+  const { h, fmt, numInput, toast, keepFocus } = FRE.dom;
+  const { diagTags, diagRow } = FRE.ui;
+  const FFA = 'ffamanager.inc', TDM = 'tdmmanager.inc', GC = 'guildcombat.txt', LUA = 'guildsiegeprize.lua';
+  const FILE = { ffa: FFA, tdm: TDM };
+  const st = { sel: 'gs' };
+  const O = () => FRE.pvpOps, S = () => FRE.pvpSim, R = () => FRE.pvpRules;
+  const model = ctx => ctx.ws.models.pvp;
+  const can = (ctx, f) => ctx.ws.isEditable(f);
+  const pDiags = ctx => ctx.ws.diags.filter(d => d.module === 'pvp');
+  const t2 = (h_, m) => `${String(h_).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  const DAYS = ['Every day', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const keyOf = (ev, x) => `pvp|${ev}|${x}`;
+  const now = () => S().wallOf(new Date());
+
+  // which section a problem belongs to
+  function sectionOf(d) {
+    const f = (d.file || '').toLowerCase();
+    if (d.code === 'PVP_TIME_CLASH') return 'week';
+    if (f === FFA || f === 'npcboard_289.inc') return 'ffa';
+    if (f === TDM || f === 'npcboard_290.inc') return 'tdm';
+    return 'gs';
+  }
+  const secDiags = (ctx, id) => pDiags(ctx).filter(d => sectionOf(d) === id);
+  const SECTIONS = [
+    { id: 'gs', label: 'Guild Siege', sub: ctx => { const m = model(ctx), r = R().siegeRows(m.gs); return !m.gs.ok ? 'GuildCombat.txt does not load' : r.length ? r.map(x => `${DAYS[x.day]} ${t2(x.hour, x.minute)}`).join(', ') : 'no siege time'; } },
+    { id: 'ffa', label: 'FFA (Free-For-All)', sub: ctx => runSub(model(ctx).ffa) },
+    { id: 'tdm', label: 'TDM (Team Deathmatch)', sub: ctx => runSub(model(ctx).tdm) },
+    { id: 'week', label: '🗓 The week', sub: ctx => { const n = S().clashes(model(ctx)).length; return n ? `${n} overlap${n === 1 ? '' : 's'}` : 'every event on the clock'; } },
+  ];
+  function runSub(mm) {
+    if (mm.error) return `switched off: ${mm.error}`;
+    const p = R().schedulePhrase(mm.cfg.times);
+    return `${p || 'no start time'} · ${fmt(mm.cfg.cost)} Penya`;
+  }
+
+  const mod = {
+    id: 'pvp', label: 'PvP Events', searchPlaceholder: 'Search events', noItems: true,
+    help: 'PvP Events: Guild Siege, FFA and TDM days and times, entry fees and PVP Token prizes; the rules boards follow every change',
+    st,
+    onLoad() { st.sel = 'gs'; },
+
+    renderList(el, ctx) {
+      const q = ctx.query.toLowerCase();
+      for (const s of SECTIONS) {
+        if (q && !s.label.toLowerCase().includes(q)) continue;
+        const ds = secDiags(ctx, s.id);
+        const b = ds.filter(d => d.severity === 'BLOCK').length, w = ds.filter(d => d.severity === 'WARN').length;
+        el.appendChild(h('div.npc' + (st.sel === s.id ? '.sel' : ''), { 'data-sec': s.id, on: { click: () => { st.sel = s.id; ctx.renderAll(false); } } },
+          h('div.n', h('span', s.label), h('span', [...ctx.edited].some(k => k.startsWith(`pvp|${s.id}|`)) ? h('span.tag.edit', 'edited') : null,
+            b ? h('span.tag.bad', '⛔' + b) : w ? h('span.tag.warn', '⚠' + w) : null)),
+          h('div.k', s.sub(ctx))));
+      }
+    },
+
+    renderEditor(el, ctx) {
+      keepFocus(el, () => {
+        if (st.sel === 'gs') gsView(el, ctx);
+        else if (st.sel === 'week') weekView(el, ctx);
+        else runView(el, ctx, st.sel);
+      });
+    },
+
+    addTarget() { return { ok: false, title: 'Nothing is added in this task' }; },
+
+    locate(d) {
+      if (d.module !== 'pvp') return false;
+      st.sel = sectionOf(d);
+      return true;
+    },
+  };
+
+  // ---------------------------------------------------------------- shared pieces
+  // one data edit + the rules boards that follow it, ONE undo step; typing pauses fold into it (mergeKey)
+  function apply(ctx, lower, make, label, key, mergeKey = null) {
+    let pl;
+    try { pl = O().plan(ctx.ws, lower, make(ctx.ws.files.get(lower).text)); } catch (e) { toast(e.message, 'bad'); return; }
+    // "…, rules board too (was …)": the shell keeps the "(was …)" at the end when typing folds steps together
+    const m = /^(.*?)( \(was [^)]*\))?$/.exec(label);
+    ctx.editGroup(() => pl.parts, pl.changed.length ? `${m[1]}, rules board too${m[2] || ''}` : label, [key], mergeKey);
+    for (const note of pl.notes) toast('⚠ ' + note, 'bad');
+  }
+  function title(el, ctx, text, files) {
+    el.appendChild(h('div.npc-title', h('h2', text), h('span.def', files.map(f => ctx.ws.files.get(f) ? ctx.ws.files.get(f).name : f).join(' · ')),
+      files.every(f => can(ctx, f)) ? null : h('span.tag.bad', 'read-only')));
+  }
+  function problems(el, ctx, sec) {
+    const ds = secDiags(ctx, sec);
+    if (ds.length) { el.appendChild(h('h3', 'Problems')); for (const d of ds) el.appendChild(diagRow(d)); }
+  }
+  function num(ctx, file, value, min, max, key, onCommit, disabled = false) {
+    return numInput({ value, min, max, key, disabled: disabled || !can(ctx, file), onCommit: v => { if (v === null || v === value) return; onCommit(v); } });
+  }
+  function daySelect(value, from, disabled, onChange) {
+    return h('select', { disabled, on: { change: e => onChange(+e.target.value) } },
+      DAYS.map((d, i) => (i < from ? null : h('option', { value: i, selected: i === value }, d))));
+  }
+  const pl = (n, w) => `${fmt(n)} ${w}${n === 1 ? '' : 's'}`;
+  // the boards' sentences for one event: what each says, what the data says
+  function rulesTable(el, ctx, ev) {
+    const rows = R().check(model(ctx), ctx.ws.files).filter(r => r.fact.ev === ev);
+    el.appendChild(h('h3', 'Rules board'));
+    if (!rows.length) {
+      el.appendChild(h('p.muted.small', ctx.ws.files.size && !Object.values(model(ctx).boards).flat().length
+        ? 'The rules boards are client files (Client/Client): pick the folder that holds the Client folder to keep them in step.'
+        : 'No rules board sentence to keep in step.'));
+      return;
+    }
+    el.appendChild(h('p.muted.small', 'Players read these boards in the game. Every change here also rewrites the same value in the board, in the same undo step (the Guild Siege boards: both the ENG and the USA copy).'));
+    const tb = h('table.items.up', h('tr', h('th', 'What'), h('th', 'Board'), h('th', 'It says'), h('th', 'The data')));
+    for (const r of rows) {
+      const name = ctx.ws.files.get(r.board).name;
+      tb.appendChild(h('tr', h('td', r.fact.label), h('td.small.muted', name),
+        h('td', r.status === 'notFound' ? h('span.tag.warn', 'sentence not found') : r.said.join(' / ')),
+        h('td', r.status === 'ok' ? '✓' : h('b', r.want.join(' / ')))));
+    }
+    el.appendChild(tb);
+  }
+
+  // ---------------------------------------------------------------- FFA / TDM
+  function runView(el, ctx, ev) {
+    const m = model(ctx), mm = m[ev], file = FILE[ev], K = FRE.pvp.KINDS[ev];
+    title(el, ctx, ev === 'ffa' ? 'FFA (Free-For-All)' : 'TDM (Team Deathmatch)', [file, ev === 'ffa' ? 'client/npcboard_289.inc' : 'client/npcboard_290.inc'].filter(f => ctx.ws.files.has(f)));
+    el.appendChild(h('p.muted.small', `${K.npc} runs it: registration opens before each start time, then players press Join, wait in the pen, fight, and go back to Flarine. The WorldServer reads ${K.file} at startup and on the GM command ${K.reload} (refused while a run is going).`));
+    if (mm.error) el.appendChild(h('div.banner.bad', `${K.file}: ${mm.error}. The ${K.label} is switched off until this is fixed. See the problems below.`));
+    const c = mm.cfg, off = !c;
+    const val = f => (mm.keys[f] ? mm.keys[f].value : FRE.pvp.SCALARS.find(x => x[2] === f)[1]);
+    const setS = (f, label, unit) => v => apply(ctx, file, t => O().setScalar(model(ctx)[ev], t, f, v), `${K.label} ${label} ${unit(v)} (was ${unit(val(f))})`, keyOf(ev, f), `pvp|${ev}|${f}`);
+    // ---- entry
+    el.appendChild(h('h3', 'Entry'));
+    const rows = [
+      ['cost', 'Entry fee', 'Penya; Penya + Perin are used. Refunded when the server cancels the run.', v => `${fmt(v)} Penya`],
+      ['cancelCut', 'Cancel cut', '% of the fee kept when a player presses Cancel (registration open only)', v => `${v}%`],
+      ['level', 'Minimum level', '', v => `level ${v}`],
+      ['min', 'Players needed', 'registered at the start time, else cancelled (every fee back)', v => pl(v, 'player')],
+      ['max', 'Most players', 'registration cap (up to 100)', v => pl(v, 'player')],
+      ['lives', 'Lives', 'per player; none left = watch from the pen', v => `${fmt(v)} ${v === 1 ? 'life' : 'lives'}`],
+      ['announce', 'Registration', 'minutes before each start time', v => pl(v, 'minute')],
+      ['prepare', 'Time to Join', 'minutes between the start time and the battle', v => pl(v, 'minute')],
+      ['war', 'Battle length', 'minutes', v => pl(v, 'minute')],
+      ['respawn', 'Respawn wait', 'seconds in the pen after a death', v => pl(v, 'second')],
+    ];
+    const tb = h('table.items.up', h('tr', h('th', 'Setting'), h('th', 'Value'), h('th', '')));
+    for (const [f, label, what, unit] of rows) {
+      const lim = O().LIMITS[f], k = mm.keys[f];
+      tb.appendChild(h('tr', h('td', h('b', label), what ? h('div.muted.small', what) : null),
+        h('td', num(ctx, file, val(f), lim[0], lim[1], `pvp|${ev}|${f}`, setS(f, label.toLowerCase(), unit)),
+          h('div.muted.small', k ? `${K.P}_${FRE.pvp.SCALARS.find(x => x[2] === f)[0]} · L${ctx.ws.files.get(file).lineOf(k.span.start) + 1}` : 'not in the file: the default, a line is added on change')),
+        h('td', k ? diagTags(FRE.ui.diagsInSpan(ctx.ws, K.file, k.span.start, k.span.end)) : null)));
+    }
+    el.appendChild(tb);
+    // ---- schedule
+    el.appendChild(h('h3', 'Schedule'));
+    el.appendChild(h('p.muted.small', 'Each line is a start time: registration closes and the arena opens. The server PC clock (Philippine time, GMT+8). Keep runs clear of Free PK Time (00 / 04 / 08 / 12 / 16 / 20 for 60 minutes).'));
+    const ts = h('table.items.up', h('tr', h('th', 'Day'), h('th', 'Time'), h('th', ''), h('th', '')));
+    mm.begins.forEach((b, i) => {
+      const set = t => apply(ctx, file, () => O().setBegin(model(ctx)[ev], i, t), `${K.label} start time ${DAYS[t.day].toLowerCase()} ${t2(t.hour, t.minute)} (was ${DAYS[b.day] ? DAYS[b.day].toLowerCase() : b.day} ${t2(b.hour, b.minute)})`, keyOf(ev, 'times'));
+      const dis = !can(ctx, file);
+      ts.appendChild(h('tr', h('td', daySelect(b.day, 0, dis, d => set({ day: d, hour: b.hour, minute: b.minute }))),
+        h('td', num(ctx, file, b.hour, 0, 23, `pvp|${ev}|h${i}`, v => set({ day: b.day, hour: v, minute: b.minute })), ' : ',
+          num(ctx, file, b.minute, 0, 59, `pvp|${ev}|m${i}`, v => set({ day: b.day, hour: b.hour, minute: v }))),
+        h('td', can(ctx, file) ? h('button.small', { title: 'Remove this start time', on: { click: () => apply(ctx, file, t => O().removeBegin(model(ctx)[ev], t, i), `${K.label} start time ${DAYS[b.day] ? DAYS[b.day].toLowerCase() : b.day} ${t2(b.hour, b.minute)} removed`, keyOf(ev, 'times')) } }, '✕') : null),
+        h('td', diagTags(FRE.ui.diagsInSpan(ctx.ws, K.file, b.stmt.start, b.stmt.end)))));
+    });
+    el.appendChild(ts);
+    if (can(ctx, file)) el.appendChild(h('button', { on: { click: () => {
+      const used = new Set(mm.begins.map(b => b.hour));
+      let hr = 20; while (used.has(hr) && hr < 23) hr++;
+      apply(ctx, file, t => O().addBegin(model(ctx)[ev], t, { day: 0, hour: hr, minute: 0 }), `${K.label} start time every day ${t2(hr, 0)} added`, keyOf(ev, 'times'));
+    } } }, '+ Add a start time'));
+    if (c) {
+      const t0 = now(), runs = S().runs(c, t0, t0 + 7 * S().DAY);
+      el.appendChild(h('h3', 'The next 7 days'));
+      if (!runs.length) el.appendChild(h('p.muted', 'No run in the next 7 days.'));
+      else el.appendChild(h('table.items.up', h('tr', h('th', 'Start'), h('th', 'Registration'), h('th', 'Battle'), h('th', 'Back in town')),
+        runs.map(r => h('tr', h('td', S().dateText(r.start)), h('td', `${S().hhmm(r.announce)} - ${S().hhmm(r.start)}`),
+          h('td', r.battleEnd ? `${S().hhmm(r.prepareEnd)} - ${S().hhmm(r.battleEnd)}` : '—'),
+          h('td', S().hhmm(r.closed), r.skipped.length ? h('div.muted.small', `skips ${r.skipped.map(S().hhmm).join(', ')}`) : null)))));
+    }
+    // ---- prizes
+    el.appendChild(h('h3', 'Prizes (PVP Tokens)'));
+    const pt = h('table.items.up', h('tr', h('th', 'Prize'), h('th', 'PVP Tokens'), h('th', '')));
+    const item = mm.rewardItem;
+    if (mm.reward) pt.appendChild(h('tr', h('td', h('b', 'Every kill'), h('div.muted.small', `paid at once (${item ? item.name : 'unknown item'})`)),
+      h('td', num(ctx, file, mm.reward.amount.value, 0, item ? item.packMax : 0, `pvp|${ev}|reward`, v => apply(ctx, file, () => O().setRewardAmount(model(ctx)[ev], v), `${K.label} tokens per kill ${v} (was ${mm.reward.amount.value})`, keyOf(ev, 'reward'), `pvp|${ev}|reward`))), h('td', '')));
+    if (ev === 'ffa' && mm.top) mm.top.forEach((s, i) => pt.appendChild(h('tr', h('td', h('b', `Place ${i + 1}`), h('div.muted.small', 'at the end, needs 1+ kill')),
+      h('td', num(ctx, file, s.value, 0, 9999, `pvp|ffa|top${i}`, v => apply(ctx, file, () => O().setTop(model(ctx).ffa, i, v), `FFA prize for place ${i + 1}: ${v} (was ${s.value})`, keyOf('ffa', 'top'), `pvp|ffa|top${i}`))), h('td', ''))));
+    if (ev === 'tdm') for (const [w, label, what] of [['team', 'Winning team', 'every player of the winning team with 1+ kill; a draw pays none'], ['mvp', 'MVP', 'the player with the most kills (1+)']]) {
+      const k = mm[w];
+      if (k) pt.appendChild(h('tr', h('td', h('b', label), h('div.muted.small', what)), h('td', num(ctx, file, k.value, 0, 9999, `pvp|tdm|${w}`, v => apply(ctx, file, () => O().setTeamPrize(model(ctx).tdm, w, v), `TDM ${label.toLowerCase()} prize ${v} (was ${k.value})`, keyOf('tdm', w), `pvp|tdm|${w}`))), h('td', '')));
+    }
+    el.appendChild(pt);
+    if (c) sample(el, ctx, ev, c);
+    rulesTable(el, ctx, ev);
+    problems(el, ctx, ev);
+  }
+  // what players get: one sample battle and the money, through the simulator
+  function sample(el, ctx, ev, c) {
+    el.appendChild(h('h3', 'What players get (a sample battle)'));
+    const fee = c.cost, cut = S().cancel(c, fee, 0), money = h('p.small', `Fee ${fmt(fee)} Penya. Cancel while registration is open: ${fmt(cut.back)} back (${fmt(cut.kept)} kept). A run the server cancels (too few players): the whole ${fmt(fee)} back.`);
+    el.appendChild(money);
+    if (ev === 'ffa') {
+      const ps = [{ id: 1, kills: 8, deaths: 3 }, { id: 2, kills: 5, deaths: 4 }, { id: 3, kills: 5, deaths: 6 }, { id: 4, kills: 2, deaths: 7 }, { id: 5, kills: 0, deaths: 10 }];
+      const rows = S().ffaResult(c, ps);
+      el.appendChild(h('table.items.up', h('tr', h('th', 'Place'), h('th', 'Kills / deaths'), h('th', 'Per kill'), h('th', 'Top 3'), h('th', 'Total')),
+        rows.map(r => h('tr', h('td', `${r.place}`), h('td', `${r.kills} / ${r.deaths}`), h('td', fmt(r.perKill)), h('td', fmt(r.top)), h('td', h('b', fmt(r.total)))))));
+      el.appendChild(h('p.muted.small', 'Ties: more kills, then fewer deaths. A top-3 prize needs at least 1 kill.'));
+    } else {
+      const ps = [{ id: 1, level: 150, kills: 7, deaths: 2 }, { id: 2, level: 140, kills: 4, deaths: 5 }, { id: 3, level: 130, kills: 3, deaths: 3 },
+        { id: 4, level: 120, kills: 2, deaths: 4 }, { id: 5, level: 110, kills: 1, deaths: 5 }, { id: 6, level: 100, kills: 0, deaths: 4 }];
+      const r = S().tdmResult(c, ps);
+      el.appendChild(h('p.small', `Teams (level, snake R B B R): Red ${r.teams.red} : ${r.teams.blue} Blue → ${r.winner ? `${r.winner === 'red' ? 'Red' : 'Blue'} wins` : 'draw (no team prize)'}.`));
+      el.appendChild(h('table.items.up', h('tr', h('th', 'Place'), h('th', 'Team'), h('th', 'Kills / deaths'), h('th', 'Per kill'), h('th', 'Team win'), h('th', 'MVP'), h('th', 'Total')),
+        r.rows.map(x => h('tr', h('td', `${x.place}`), h('td', x.team === 'red' ? 'Red' : 'Blue'), h('td', `${x.kills} / ${x.deaths}`), h('td', fmt(x.perKill)), h('td', fmt(x.win)), h('td', fmt(x.mvp)), h('td', h('b', fmt(x.total)))))));
+    }
+  }
+
+  // ---------------------------------------------------------------- Guild Siege
+  function gsView(el, ctx) {
+    const m = model(ctx), gc = m.gs, pz = m.prizes;
+    title(el, ctx, 'Guild Siege', [GC, LUA].filter(f => ctx.ws.files.has(f) && (f !== LUA || !pz.missing)));
+    el.appendChild(h('p.muted.small', 'Guilds apply at Frankie with a bid; at the siege time the siege opens if enough guilds applied. GuildCombat.txt is read when the WorldServer starts; GuildSiegePrize.lua by the WorldServer (per kill, places) and the DatabaseServer (the weekly prizes) when they start.'));
+    if (!gc.ok) el.appendChild(h('div.banner.bad', `GuildCombat.txt: ${gc.error}. The WorldServer does not start with it. See the problems below.`));
+    // ---- times
+    el.appendChild(h('h3', 'Siege times'));
+    el.appendChild(h('p.muted.small', 'One time per weekday, at most 7. The server PC clock (Philippine time, GMT+8). Applications close at the siege time.'));
+    const tl = m.timeline, dis = !can(ctx, GC) || !gc.ok;
+    const tt = h('table.items.up', h('tr', h('th', 'Day'), h('th', 'Time'), h('th', 'Enter / combat / end'), h('th', ''), h('th', '')));
+    gc.autoOpen.forEach((r, i) => {
+      const set = t => apply(ctx, GC, () => O().setSiegeRow(model(ctx).gs, i, t), `Guild Siege ${DAYS[t.day]} ${t2(t.hour, t.minute)} (was ${DAYS[r.day]} ${t2(r.hour, r.minute)})`, keyOf('gs', 'times'));
+      const at = s => (s === null ? '—' : (() => { const x = (r.hour * 3600 + r.minute * 60 + s) % 86400; return t2(Math.floor(x / 3600), Math.floor(x / 60) % 60); })());
+      tt.appendChild(h('tr', h('td', daySelect(r.day, 1, dis, d => set({ day: d, hour: r.hour, minute: r.minute }))),
+        h('td', num(ctx, GC, r.hour, 0, 23, `pvp|gs|h${i}`, v => set({ day: r.day, hour: v, minute: r.minute }), dis), ' : ',
+          num(ctx, GC, r.minute, 0, 59, `pvp|gs|m${i}`, v => set({ day: r.day, hour: r.hour, minute: v }), dis)),
+        h('td.small', `${at(tl.enter)} / ${at(tl.fight)} / ${at(tl.end)}`),
+        h('td', dis ? null : h('button.small', { title: 'Remove this siege time', on: { click: () => apply(ctx, GC, t => O().removeSiegeRow(model(ctx).gs, t, i), `Guild Siege ${DAYS[r.day]} ${t2(r.hour, r.minute)} removed`, keyOf('gs', 'times')) } }, '✕')),
+        h('td', diagTags(FRE.ui.diagsInSpan(ctx.ws, 'GuildCombat.txt', r.stmt.start, r.stmt.end)))));
+    });
+    el.appendChild(tt);
+    if (!dis && gc.autoOpen.length < 7) el.appendChild(h('button', { on: { click: () => {
+      const free = [7, 1, 6, 4, 2, 3, 5].find(d => !gc.autoOpen.some(r => r.day === d));
+      apply(ctx, GC, t => O().addSiegeRow(model(ctx).gs, t, { day: free, hour: 18, minute: 30 }), `Guild Siege ${DAYS[free]} 18:30 added`, keyOf('gs', 'times'));
+    } } }, '+ Add a siege day'));
+    if (gc.ok) {
+      const t0 = now(), list = S().sieges(gc, tl, t0, t0 + 28 * S().DAY, { guilds: Infinity }).slice(0, 6);
+      el.appendChild(h('p.small', list.length ? `Next sieges: ${list.map(s => S().dateText(s.start)).join(' · ')} (when at least ${gc.minGuild} guilds applied).` : 'No siege in the next 4 weeks.'));
+      const shown = S().shownNext(gc, t0);
+      if (shown !== null) el.appendChild(h('p.muted.small', `The siege window shows players: next siege ${S().dateText(shown)}.`));
+    }
+    // ---- entry
+    el.appendChild(h('h3', 'Entry'));
+    const et = h('table.items.up', h('tr', h('th', 'Setting'), h('th', 'Value')));
+    if (gc.joinPenya) et.appendChild(h('tr', h('td', h('b', 'Minimum bid'), h('div.muted.small', 'Penya, paid by the guild leader when applying (JOINPENYA)')),
+      h('td', num(ctx, GC, gc.joinPenya.value, 0, 2147483647, 'pvp|gs|bid', v => apply(ctx, GC, () => O().setBid(model(ctx).gs, v), `Guild Siege minimum bid ${fmt(v)} Penya (was ${fmt(gc.joinPenya.value)})`, keyOf('gs', 'bid'), 'pvp|gs|bid'), dis))));
+    et.appendChild(h('tr', h('td', h('b', 'Cancel / not selected'), h('div.muted.small', 'REQUESTCANCLEPERCENT / NOTREQUESTPERCENT (shown only)')),
+      h('td.small', `${gc.cancelPct}% back on cancel (${fmt(S().siegeCancel(gc, gc.joinPenya ? gc.joinPenya.value : 0))} of the minimum bid) · ${gc.notPct}% back when not selected`)));
+    el.appendChild(et);
+    // ---- prizes
+    el.appendChild(h('h3', 'Prizes (PVP Tokens)'));
+    if (pz.missing) { el.appendChild(h('p.muted', 'GuildSiegePrize.lua not found: the compiled prizes are paid.')); }
+    else {
+      if (m.patch === 'missing') el.appendChild(h('div.banner.bad', 'The game source here has no part B (6de6da39): the servers ignore these numbers and pay the compiled ones.'));
+      const pdis = !can(ctx, LUA) || pz.failed;
+      const setP = (name, i, v, label, was) => apply(ctx, LUA, t => O().setPrize(model(ctx).prizes, t, name, i, v), `Guild Siege ${label} ${v} (was ${was})`, keyOf('gs', name), `pvp|gs|${name}|${i}`);
+      const P = pz.prizes;
+      const pt = h('table.items.up');
+      pt.appendChild(h('tr', h('td', h('b', 'Every kill'), h('div.muted.small', 'paid at once (0 = none)')),
+        h('td', num(ctx, LUA, P.TokensPerKill, 0, 32767, 'pvp|gs|kill', v => setP('TokensPerKill', 0, v, 'tokens per kill', P.TokensPerKill), pdis))));
+      const ladder = (name, label, what, places) => {
+        const L = pz.lists[name];
+        pt.appendChild(h('tr', h('td', h('b', label), h('div.muted.small', what)),
+          h('td', P[name].map((v, i) => h('span.small', `${places(i)} `, num(ctx, LUA, v, 1, 32767, `pvp|gs|${name}|${i}`, x => setP(name, i, x, `${label.toLowerCase()} ${places(i)}`, v), pdis), ' ')),
+            L && L.items ? null : h('div.muted.small', 'not in the file: compiled numbers'))));
+      };
+      const ord = i => ['1st', '2nd', '3rd'][i] || `${i + 1}th`;
+      ladder('SiegePrize', 'Siege places', 'after each siege, every fighter of the guild (online)', ord);
+      ladder('GuildPrize', 'Weekly: guilds', 'most wins, top 5, into the guild bank', ord);
+      ladder('ClassPrize', 'Weekly: players', 'most points, top 10, by mail', ord);
+      ladder('ClassPerClassPrize', 'Weekly: each class', 'Mercenary / Magician / Acrobat / Assist, top 10 each', ord);
+      ladder('MvpPrize', 'Weekly: MVP', 'most MVP awards, top 10', ord);
+      el.appendChild(pt);
+      el.appendChild(h('p.muted.small', `What players get: a fighter with 6 kills in the winning guild gets ${fmt(S().siegeKillTokens(P, 6))} + ${fmt(P.SiegePrize[0])} = ${fmt(S().siegeKillTokens(P, 6) + P.SiegePrize[0])} PVP Tokens from that siege, plus the weekly prizes on Monday 00:00.`));
+    }
+    rulesTable(el, ctx, 'gs');
+    problems(el, ctx, 'gs');
+  }
+
+  // ---------------------------------------------------------------- the week
+  function weekView(el, ctx) {
+    const m = model(ctx);
+    title(el, ctx, 'The week', []);
+    el.appendChild(h('p.muted.small', 'Every run of a week, from registration (or the siege start) to everyone back in town, on the server PC clock. Two events at the same time take players from each other.'));
+    const w = S().weekWindows(m), name = { ffa: 'FFA', tdm: 'TDM', gs: 'Guild Siege' };
+    for (let d = 0; d < 7; d++) {
+      const day0 = S().WEEK0 + d * S().DAY, list = w.filter(x => x.start >= day0 && x.start < day0 + S().DAY);
+      el.appendChild(h('div.small', h('b', `${S().DAYS[d + 1]}: `), list.length ? list.map(x => `${name[x.ev]} ${S().hhmm(x.from)}-${S().hhmm(x.to)}`).join(' · ') : '—'));
+    }
+    const cl = S().clashes(m);
+    el.appendChild(h('h3', cl.length ? `Overlaps (${cl.length})` : 'No overlaps'));
+    for (const c of cl) el.appendChild(h('div.small', `${name[c.a.ev]} ${S().dayName(c.a.start)} ${S().hhmm(c.a.from)}-${S().hhmm(c.a.to)} ⟷ ${name[c.b.ev]} ${S().hhmm(c.b.from)}-${S().hhmm(c.b.to)}`));
+    problems(el, ctx, 'week');
+  }
+
+  FRE.ui.modules.push(mod);
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- ui/app.js ----
 // App shell: toolbar (mode switch, load, save, backup, undo), the left list and
 // centre editor of the active module, the shared item database, the problems
@@ -21805,12 +23161,13 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
       const th = (await FRE.fsa.findFiles(sub, ['DonationShopTree.inc'])).get('donationshoptree.inc');
       if (th) { const { bytes, stamp } = await FRE.fsa.readHandle(th); tree = new FRE.SourceFile(th.name, bytes, { handle: th, stamp, dir: 'Client' }); }
     } catch (e) { if (e.name !== 'NotFoundError' && e.name !== 'TypeMismatchError') toast('DonationShopTree.inc: ' + e.message, 'bad'); }
-    // rules windows (docs/patches/npc-board.diff): Client/Client/NpcBoard_<menu id>.inc, edited in NPC Shops
+    // rules windows (docs/patches/npc-board.diff): Client/Client/NpcBoard_<menu id>.inc, edited in NPC Shops; + the Guild Siege
+    // boards GuildCombatTEXT_<n>_ENG / _USA.inc (the game's own, read on each click), kept in step by PvP Events
     const boards = [];
     try {
       const sub = await dir.getDirectoryHandle('Client');
       for await (const [name, handle] of sub.entries()) {
-        if (handle.kind !== 'file' || !/^npcboard_\d+\.inc$/i.test(name)) continue;
+        if (handle.kind !== 'file' || !/^(npcboard_\d+|guildcombattext_\d_(eng|usa))\.inc$/i.test(name)) continue;
         const { bytes, stamp } = await FRE.fsa.readHandle(handle);
         boards.push(new FRE.SourceFile(name, bytes, { handle, stamp, dir: 'Client' }));
       }
@@ -22151,7 +23508,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when
   }
 
   function locate(d) {
-    const dm = S.ws.moduleOfFile(d.file || '');
+    const dm = S.ws.moduleOfFile(d.file || '') || FRE.Workspace.MODULES.find(x => x.id === d.module && S.ws.shown.has(x.id)) || null;
     // a file of a module this task only checks (Exchange_Script.txt in NPC Shops): the task's own view shows it
     const id = dm && (S.ws.shown.has(dm.id) ? dm.id : S.task);
     const m = id && modules().find(x => x.id === id);

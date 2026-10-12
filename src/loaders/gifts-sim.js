@@ -18,7 +18,8 @@
 //            SEX_SEXLESS); always by mail.
 //   siege    CGuildCombat::GuildCombatResultRanking (eveschool.cpp:1582-1759): the bubble sort (points, then lives,
 //            then the average level of the members still alive and online, int division), then the top 3 guilds:
-//            every ONLINE lineup member gets the chips (bag, else mail). Not after a GM stop (eveschool.cpp:3089).
+//            every ONLINE lineup member gets the prize (bag, else mail): PVP Tokens since 4fa49551 (the item the C++
+//            names), a fixed list since 6de6da39 (a place below 1 is skipped). Not after a GM stop (eveschool.cpp:3089).
 //   weekly   CGuildSiegePrizeDBController::ComputeAndLogWeeklyPrizes (GuildSiegePrize.cpp:353-480, cda3af21): top 5
 //            guilds by wins (> 0) -> the guild bank (full: lost, DPDatabaseClient.cpp:3790); top 10 players by points on
 //            the Total board and on their class board, top 10 by MVP count; ties: the first row; by mail.
@@ -36,7 +37,9 @@
   function envFor(ws, model) {
     const base = X().envFromWorkspace(ws);
     const D = ws.defines.defines;
-    return { gifts: model || G().fromWorkspace(ws), prop: base.prop, text: base.text, redChip: D.has('II_CHP_RED') ? D.get('II_CHP_RED') >>> 0 : null };
+    const gifts = model || G().fromWorkspace(ws), it = gifts.siege ? gifts.siege.comp.item : 'II_CHP_PVP_TOKEN';
+    return { gifts, prop: base.prop, text: base.text, redChip: D.has('II_CHP_RED') ? D.get('II_CHP_RED') >>> 0 : null,
+      prizeItem: D.has(it) ? D.get(it) >>> 0 : null };
   }
   // a bag with `free` empty slots (the rest filled with other items)
   function bag(free = X().MAX_INVENTORY_FREE) {
@@ -191,13 +194,14 @@
       }
     }
     out.order = gs.map(g => g.i);
-    const charged = env.prop(env.redChip) ? env.prop(env.redChip).charged : 0;
+    const id = env.prizeItem, charged = env.prop(id) ? env.prop(id).charged : 0;
     for (let r = 0; r < gs.length && r < 3; r++) {
       const chips = G().siegeChips(cfg.joinPenya, gs.length, r, comp);
+      if (chips < 1) continue;                    // part B: if( itemElem.m_nItemNum < 1 ) continue;
       gs[r].x.lineup.forEach((m, k) => {
         if (!m.online) return;
         const p = bag(m.free === undefined ? X().MAX_INVENTORY_FREE : m.free);
-        out.paid.push({ guild: gs[r].i, rank: r + 1, chips, member: k, where: give(env, p, env.redChip, (chips << 16) >> 16, 0, charged) });
+        out.paid.push({ guild: gs[r].i, rank: r + 1, chips, member: k, where: give(env, p, id, (chips << 16) >> 16, 0, charged) });
       });
     }
     return out;

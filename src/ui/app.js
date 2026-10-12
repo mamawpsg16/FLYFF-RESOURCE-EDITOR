@@ -305,12 +305,13 @@
       const th = (await FRE.fsa.findFiles(sub, ['DonationShopTree.inc'])).get('donationshoptree.inc');
       if (th) { const { bytes, stamp } = await FRE.fsa.readHandle(th); tree = new FRE.SourceFile(th.name, bytes, { handle: th, stamp, dir: 'Client' }); }
     } catch (e) { if (e.name !== 'NotFoundError' && e.name !== 'TypeMismatchError') toast('DonationShopTree.inc: ' + e.message, 'bad'); }
-    // rules windows (docs/patches/npc-board.diff): Client/Client/NpcBoard_<menu id>.inc, edited in NPC Shops
+    // rules windows (docs/patches/npc-board.diff): Client/Client/NpcBoard_<menu id>.inc, edited in NPC Shops; + the Guild Siege
+    // boards GuildCombatTEXT_<n>_ENG / _USA.inc (the game's own, read on each click), kept in step by PvP Events
     const boards = [];
     try {
       const sub = await dir.getDirectoryHandle('Client');
       for await (const [name, handle] of sub.entries()) {
-        if (handle.kind !== 'file' || !/^npcboard_\d+\.inc$/i.test(name)) continue;
+        if (handle.kind !== 'file' || !/^(npcboard_\d+|guildcombattext_\d_(eng|usa))\.inc$/i.test(name)) continue;
         const { bytes, stamp } = await FRE.fsa.readHandle(handle);
         boards.push(new FRE.SourceFile(name, bytes, { handle, stamp, dir: 'Client' }));
       }
@@ -651,7 +652,7 @@
   }
 
   function locate(d) {
-    const dm = S.ws.moduleOfFile(d.file || '');
+    const dm = S.ws.moduleOfFile(d.file || '') || FRE.Workspace.MODULES.find(x => x.id === d.module && S.ws.shown.has(x.id)) || null;
     // a file of a module this task only checks (Exchange_Script.txt in NPC Shops): the task's own view shows it
     const id = dm && (S.ws.shown.has(dm.id) ? dm.id : S.task);
     const m = id && modules().find(x => x.id === id);

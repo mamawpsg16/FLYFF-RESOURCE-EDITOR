@@ -42,6 +42,10 @@ def main():
         data.update({f.relative_to(fx).as_posix(): base64.b64encode(f.read_bytes()).decode()
                      for pat in ('*.dyo', '*.rgn', '*.txt.txt', '*.wld.cnt') for f in sorted(fx.glob('World/*/' + pat))})
         parts.append('FRE.HARNESS_FILES = ' + json.dumps(data) + ';')
+        # the rules boards of PvP Events (Client/Client, client-only): FFA / TDM Rules and the Guild Siege boards
+        cc = ROOT / 'test-data' / 'fixtures' / 'Client' / 'Client'
+        parts.append('FRE.HARNESS_BOARDS = ' + json.dumps({f.name: base64.b64encode(f.read_bytes()).decode() for f in sorted(cc.glob('*.inc'))
+                                                          if f.name.lower().startswith(('npcboard_', 'guildcombattext_'))} if cc.exists() else {}) + ';')
         tree = ROOT / 'test-data' / 'fixtures' / 'Client' / 'Client' / 'DonationShopTree.inc'
         parts.append('FRE.HARNESS_TREE = ' + json.dumps(base64.b64encode(tree.read_bytes()).decode() if tree.exists() else None) + ';')
         ml = ROOT / 'test-data' / 'fixtures' / 'Client' / 'Model.list'          # Client/Model file names (new-NPC model check)

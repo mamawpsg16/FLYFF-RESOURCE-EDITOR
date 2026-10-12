@@ -1,0 +1,239 @@
+diff --git a/Server/Resource/GuildSiegePrize.lua b/Server/Resource/GuildSiegePrize.lua
+index e7d22cd0..ab78a4dd 100644
+--- a/Server/Resource/GuildSiegePrize.lua
++++ b/Server/Resource/GuildSiegePrize.lua
+@@ -8,3 +8,13 @@ WeeklyPrizeTime = "Mon 00:00"
+ -- 0 = use WeeklyPrizeTime above (real weekly schedule)
+ -- N > 0 = fire every N minutes instead - TESTING ONLY, set back to 0 before going live
+ TestIntervalMinutes = 0
++
++-- PVP Token prizes. Whole numbers, rank 1 first; a missing or bad value keeps the old built-in number.
++-- TokensPerKill 0-32767 (0 = none), every list entry 1-32767.
++-- TokensPerKill + SiegePrize: WorldServer, read when it starts. The weekly lists: DatabaseServer, read when it starts.
++TokensPerKill = 2										-- every Guild Siege kill, paid at once
++SiegePrize = { 50, 14, 7 }								-- 1st, 2nd, 3rd guild of each siege, to every member who fought
++GuildPrize = { 600, 300, 180, 72, 48 }					-- weekly, top 5 guilds by wins, into the guild bank
++ClassPrize = { 200, 100, 60, 40, 30, 24, 20, 14, 8, 4 }	-- weekly, top 10 players by points (Total)
++ClassPerClassPrize = { 100, 50, 30, 20, 15, 12, 10, 7, 4, 2 }	-- weekly, top 10 of each class (Mercenary, Magician, Acrobat, Assist)
++MvpPrize = { 300, 150, 90, 60, 45, 36, 30, 21, 12, 6 }	-- weekly, top 10 by MVP count
+diff --git a/Source/Source/_Common/GuildSiegePrize.cpp b/Source/Source/_Common/GuildSiegePrize.cpp
+index 4f27d51a..f94909db 100644
+--- a/Source/Source/_Common/GuildSiegePrize.cpp
++++ b/Source/Source/_Common/GuildSiegePrize.cpp
+@@ -1,23 +1,105 @@
+ #include "stdafx.h"
+ #include "GuildSiegePrize.h"
++#include "LuaBase.h"
+ 
+ #ifdef __WORLDSERVER
+ #include "DPDatabaseClient.h"
+ extern CDPDatabaseClient g_dpDBClient;
+ #endif // __WORLDSERVER
+ 
++// PVP Token prizes. The compiled numbers are the defaults, GuildSiegePrize.lua overrides them (ReadPrizes,
++// PvP events part B 2026-10-12). Per kill + per siege are paid by the WorldServer, the weekly ladders by the DatabaseServer.
++static int s_nTokensPerKill = 2;					// every Guild Siege kill, at once (eveschool.cpp CGuildCombat::GetPoint)
++static int s_nSiegePrize[3] = { 50, 14, 7 };		// 1st-3rd guild of each siege, every member who fought (GuildCombatResultRanking)
++// Weekly ladders, rank 1 first (FFA/TDM step 3b, 2026-10-11: the old Red Chip ladders / 5).
++static int s_nGuildPrize[5]  = { 600, 300, 180, 72, 48 };
++static int s_nClassPrize[10] = { 200, 100, 60, 40, 30, 24, 20, 14, 8, 4 };
++static int s_nClassPerClassPrize[10] = { 100, 50, 30, 20, 15, 12, 10, 7, 4, 2 };
++static int s_nMvpPrize[10]   = { 300, 150, 90, 60, 45, 36, 30, 21, 12, 6 };
++
++// the value on top of the Lua stack: a whole number nMin..32767 (a PVP Token stack) -> nValue, else FALSE
++static BOOL GSReadPrizeValue( lua_State* L, int nMin, int& nValue )
++{
++	if( !lua_isnumber( L, -1 ) )
++		return FALSE;
++	double d = lua_tonumber( L, -1 );
++	if( d < nMin || d > 32767.0 || d != (double)(int)d )
++		return FALSE;
++	nValue = (int)d;
++	return TRUE;
++}
++
++static void GSReadPrizeNumber( lua_State* L, const char* szName, int nMin, int& nValue )
++{
++	lua_getglobal( L, szName );
++	if( !lua_isnil( L, -1 ) && !GSReadPrizeValue( L, nMin, nValue ) )
++		Error( "GuildSiegePrize.lua %s is not a whole number %d-32767, %d is used", szName, nMin, nValue );
++	lua_pop( L, 1 );
++}
++
++// { a, b, c, ... } rank 1 first; a missing or bad entry keeps its number, extra entries are ignored
++static void GSReadPrizeList( lua_State* L, const char* szName, int* pnList, int nCount )
++{
++	lua_getglobal( L, szName );
++	if( lua_istable( L, -1 ) )
++	{
++		for( int i = 0; i < nCount; i++ )
++		{
++			lua_rawgeti( L, -1, i + 1 );
++			if( !lua_isnil( L, -1 ) && !GSReadPrizeValue( L, 1, pnList[i] ) )
++				Error( "GuildSiegePrize.lua %s[%d] is not a whole number 1-32767, %d is used", szName, i + 1, pnList[i] );
++			lua_pop( L, 1 );
++		}
++	}
++	else if( !lua_isnil( L, -1 ) )
++		Error( "GuildSiegePrize.lua %s is not a list { ... }, the compiled prizes are used", szName );
++	lua_pop( L, 1 );
++}
++
++void CGuildSiegePrize::ReadPrizes( CLuaBase& lua )
++{
++	lua_State* L = lua.GetLuaState();
++	GSReadPrizeNumber( L, "TokensPerKill", 0, s_nTokensPerKill );
++	GSReadPrizeList( L, "SiegePrize", s_nSiegePrize, 3 );
++	GSReadPrizeList( L, "GuildPrize", s_nGuildPrize, 5 );
++	GSReadPrizeList( L, "ClassPrize", s_nClassPrize, 10 );
++	GSReadPrizeList( L, "ClassPerClassPrize", s_nClassPerClassPrize, 10 );
++	GSReadPrizeList( L, "MvpPrize", s_nMvpPrize, 10 );
++}
++
++void CGuildSiegePrize::LoadPrizes()
++{
++	FILE* f = fopen( "GuildSiegePrize.lua", "r" );
++	if( f == NULL )
++		return;
++	fclose( f );
++	CLuaBase lua;
++	if( lua.RunScript( "GuildSiegePrize.lua" ) != 0 )
++	{
++		Error( "CGuildSiegePrize::LoadPrizes - GuildSiegePrize.lua Run Failed, the compiled prizes are used" );
++		return;
++	}
++	ReadPrizes( lua );
++}
++
++int CGuildSiegePrize::GetTokensPerKill()
++{
++	return s_nTokensPerKill;
++}
++
++int CGuildSiegePrize::GetSiegePrize( int nPlace )
++{
++	if( nPlace < 0 || nPlace >= 3 )
++		return 0;
++	return s_nSiegePrize[nPlace];
++}
++
+ #ifdef __DBSERVER
+ #include "dptrans.h"
+ #include "post.h"
+ 
+ extern	APP_INFO	g_appInfo;
+ 
+-// Weekly PVP Token prize ladders, rank 1 first (FFA/TDM step 3b, 2026-10-11: the old Red Chip ladders / 5).
+-static const int s_nGuildPrize[5]  = { 600, 300, 180, 72, 48 };
+-static const int s_nClassPrize[10] = { 200, 100, 60, 40, 30, 24, 20, 14, 8, 4 };
+-static const int s_nClassPerClassPrize[10] = { 100, 50, 30, 20, 15, 12, 10, 7, 4, 2 };
+-static const int s_nMvpPrize[10]   = { 300, 150, 90, 60, 45, 36, 30, 21, 12, 6 };
+-
+ // Mercenary/Magician/Acrobat/Assist grouping - mirrors CWndGuildCombatRank_Person::
+ // __GetJobKindWnd() (_Interface/WndField.cpp:20432-20486) exactly, so this pool's
+ // membership always matches what the Class tab's per-class sub-tabs already show.
+@@ -114,6 +196,7 @@ void CGuildSiegePrize::LoadScript()
+ 	}
+ 
+ 	m_nTestIntervalMinutes = static_cast<int>( m_Lua.GetGlobalNumber( "TestIntervalMinutes" ) );
++	ReadPrizes( m_Lua );	// weekly ladders (PvP events part B)
+ 
+ 	m_dbController.PostRequest( QUERY_GSPRIZE_LOAD, 0, 0, 0 );
+ }
+diff --git a/Source/Source/_Common/GuildSiegePrize.h b/Source/Source/_Common/GuildSiegePrize.h
+index 738df17b..b64a633a 100644
+--- a/Source/Source/_Common/GuildSiegePrize.h
++++ b/Source/Source/_Common/GuildSiegePrize.h
+@@ -31,6 +31,8 @@ private:
+ };
+ #endif // __DBSERVER
+ 
++class CLuaBase;
++
+ class CGuildSiegePrize
+ {
+ public:
+@@ -41,6 +43,13 @@ public:
+ 
+ 	void SetApplyPrizeNow();	// GM command hook - WorldServer sends an RPC, DatabaseServer force-fires directly
+ 
++	// PVP Token prizes from GuildSiegePrize.lua (TokensPerKill, SiegePrize, GuildPrize, ClassPrize, ClassPerClassPrize,
++	// MvpPrize). A missing or bad value keeps the compiled number (GuildSiegePrize.cpp). PvP events part B.
++	void	LoadPrizes();					// WorldServer: own Lua state, from CGuildCombat::LoadScript
++	void	ReadPrizes( CLuaBase& lua );	// the keys from a Lua state that ran GuildSiegePrize.lua (DatabaseServer: LoadScript)
++	int		GetTokensPerKill();
++	int		GetSiegePrize( int nPlace );	// nPlace 0-2 = 1st-3rd guild of a siege, else 0
++
+ #ifdef __DBSERVER
+ 	void LoadScript();
+ 	void CheckChangeTime( BOOL bForce = FALSE );
+diff --git a/Source/Source/_Common/eveschool.cpp b/Source/Source/_Common/eveschool.cpp
+index 4d822458..4cb16b3d 100644
+--- a/Source/Source/_Common/eveschool.cpp
++++ b/Source/Source/_Common/eveschool.cpp
+@@ -30,6 +30,10 @@ extern CWorldMng g_WorldMng;
+ #include "playerdata.h"
+ #endif	// __SYS_PLAYER_DATA
+ 
++#ifdef __WORLDSERVER
++#include "GuildSiegePrize.h"	// per kill + per siege PVP Tokens from GuildSiegePrize.lua (PvP events part B)
++#endif	// __WORLDSERVER
++
+ CEveSchool::CEveSchool()
+ {
+ 	m_pSchoolMng	= &g_GuildMng;
+@@ -1808,22 +1812,11 @@ void CGuildCombat::GuildCombatResultRanking()
+ 
+ 		CItemElem itemElem;
+ 		itemElem.m_dwItemId = II_CHP_PVP_TOKEN;		// PVP Tokens since FFA/TDM step 3b (was Red Chips), amount / 5
+-		float fChipNum = m_nJoinPanya * vecGCRanking.size() * 0.9f * 0.00001f * 0.1f * 0.2f;
+-		switch( i )
+-		{
+-			case 0 :	// 1À§ 
+-				fChipNum *= 0.7f;
+-				break;
+-			case 1 :	// 2À§
+-				fChipNum *= 0.2f;
+-				break;
+-			case 2 :	// 3À§
+-				fChipNum *= 0.1f;
+-				break;
+-		}
+-		itemElem.m_nItemNum = (int)fChipNum;
++		// Own setting since PvP events part B (2026-10-12): GuildSiegePrize.lua SiegePrize, default 50 / 14 / 7.
++		// Was from the application fee: JOINPENYA x guilds x 0.9 x 0.00001 x 0.1 x 0.2 x 0.7 / 0.2 / 0.1 (1st / 2nd / 3rd), min 1.
++		itemElem.m_nItemNum = CGuildSiegePrize::GetInstance()->GetSiegePrize( i );
+ 		if( itemElem.m_nItemNum < 1 )
+-			itemElem.m_nItemNum		= 1;
++			continue;
+ 		itemElem.m_bCharged = itemElem.GetProp()->bCharged;
+ 
+ 		LogItemInfo aLogItem;
+@@ -3668,6 +3661,9 @@ BOOL CGuildCombat::LoadScript( LPCSTR lpszFileName )
+ 	
+ 	if( !s.Load( lpszFileName ) )
+ 		return FALSE;
++#ifdef __WORLDSERVER
++	CGuildSiegePrize::GetInstance()->LoadPrizes();	// TokensPerKill + SiegePrize (PvP events part B)
++#endif	// __WORLDSERVER
+ 
+ 	ZeroMemory( m_nProcessCount, sizeof( int ) * 25 );
+ 	ZeroMemory( GuildCombatProcess, sizeof( __GuildCombatProcess ) * 250 );
+@@ -4142,7 +4138,7 @@ void CGuildCombat::SetPlayerChange( CUser* pUser, CUser* pLeader )
+ 	}	// if
+ #endif // __S_BUG_GC
+ }
+-#define GS_TOKEN_PER_KILL	2	// PVP Tokens for every Guild Siege kill, paid at once (FFA/TDM step 3b)
++// PVP Tokens for every Guild Siege kill, paid at once (FFA/TDM step 3b): GuildSiegePrize.lua TokensPerKill, default 2
+ 
+ // PVP Tokens into the bag, mail when it is full (like CFFAManager::GiveReward)
+ static void GWGiveTokens( CUser* pUser, int nAmount )
+@@ -4295,7 +4291,7 @@ void CGuildCombat::GetPoint( CUser* pAttacker, CUser* pDefender )
+ 
+ 	pJoinPlayerAttacker->nPoint += nGetPoint;
+ 	pGCMemberAttacker->nGuildPoint += nGetPoint;
+-	GWGiveTokens( pAttacker, GS_TOKEN_PER_KILL );
++	GWGiveTokens( pAttacker, CGuildSiegePrize::GetInstance()->GetTokensPerKill() );
+ 	
+ 	CGuild* pGuildMsg;
+ 	CGuildMember*	pMember;
