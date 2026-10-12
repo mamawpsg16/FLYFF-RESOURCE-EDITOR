@@ -487,7 +487,7 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "73+", "when": "Mon 12 Oct 2026, 16:03", "rev": "6b2e492", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "74+", "when": "Mon 12 Oct 2026, 16:13", "rev": "05dcfd0", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -19879,7 +19879,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "73+", "when
       row('Amount', false,
         h('label', h('input', { type: 'checkbox', checked: s.free, on: { change: ev => { s.free = ev.target.checked; cnt.disabled = s.free; cntMin.disabled = s.free; refresh(); } } }),
           ' exactly 1, not counted toward the max items per kill'),
-        h('span.muted', '— or untick it for one stack of a random amount: Min'), cntMin, h('span.muted', 'to Max'), cnt),
+        h('span', { style: 'white-space:nowrap' }, h('span.muted', '— or untick it for one stack of a random amount: Min '), cntMin, h('span.muted', ' to Max '), cnt)),
       row('Upgrade (+N)', false, numInput({ value: 0, min: 0, max: O().MAX_UPGRADE, key: 'dr|add|lv', onCommit: v => { s.level = v || 0; debounce(); } }))));
     body.appendChild(h('p.muted.small', `The chance can be at most ${CONV.maxPct}%: the server reads the number with atoi, which stops at 2,147,483,647. For "every kill", add the same line twice.`));
     formFooter({ checks, action: 'Add', previewTitle: 'What will be written / what players get', preview }).forEach(x => body.appendChild(x));
@@ -23503,13 +23503,13 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "73+", "when
 
     // time limit
     const tMin = minOf(v.dwDungeonTime);
-    row('Time limit', Number.isInteger(tMin) ? durationInput({ minutes: tMin, disabled: !edit_, key: `dg|${d.index}|time`, max: O().MAX_MIN,
+    row('Time limit', Number.isInteger(tMin) ? durationInput({ minutes: tMin, disabled: !edit_, key: `dg|${d.index}|time`, liveMs: 1200, max: O().MAX_MIN,
       onCommit: mm => edit(ctx, d, t => O().setTime(t, d, mm), `${name}: time limit ${mm ? durationText(mm) : 'none'} (was ${tMin ? durationText(tMin) : 'none'})`, 'time') })
       : h('span.tag.warn', 'not whole minutes: edit the line by hand'), ' ', own('SetDungeonTime'),
       h('div.muted.small', sv.dwDungeonTime ? `The clock starts when the party's dungeon opens. Warnings at 5 and 1 minute left; at 0 everyone inside is sent out. 0 = no limit.` : 'No time limit: the party can stay as long as they like.'));
     // cooldown
     const cMin = minOf(v.dwCoolTime);
-    row('Cooldown', Number.isInteger(cMin) ? durationInput({ minutes: cMin, disabled: !edit_, key: `dg|${d.index}|cool`, max: O().MAX_MIN,
+    row('Cooldown', Number.isInteger(cMin) ? durationInput({ minutes: cMin, disabled: !edit_, key: `dg|${d.index}|cool`, liveMs: 1200, max: O().MAX_MIN,
       onCommit: mm => edit(ctx, d, t => O().setCool(t, d, mm), `${name}: cooldown ${mm ? durationText(mm) : 'none'} (was ${cMin ? durationText(cMin) : 'none'})`, 'cool') })
       : h('span.tag.warn', 'not whole minutes: edit the line by hand'), ' ', own('SetCoolTime'),
       h('div.muted.small', 'Starts when a player enters. Until it ends that player cannot enter another run of this dungeon (re-entering the same run is fine). Anarchy can shorten it.'));

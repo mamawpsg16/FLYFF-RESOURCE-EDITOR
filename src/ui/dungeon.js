@@ -90,13 +90,13 @@
 
     // time limit
     const tMin = minOf(v.dwDungeonTime);
-    row('Time limit', Number.isInteger(tMin) ? durationInput({ minutes: tMin, disabled: !edit_, key: `dg|${d.index}|time`, max: O().MAX_MIN,
+    row('Time limit', Number.isInteger(tMin) ? durationInput({ minutes: tMin, disabled: !edit_, key: `dg|${d.index}|time`, liveMs: 1200, max: O().MAX_MIN,
       onCommit: mm => edit(ctx, d, t => O().setTime(t, d, mm), `${name}: time limit ${mm ? durationText(mm) : 'none'} (was ${tMin ? durationText(tMin) : 'none'})`, 'time') })
       : h('span.tag.warn', 'not whole minutes: edit the line by hand'), ' ', own('SetDungeonTime'),
       h('div.muted.small', sv.dwDungeonTime ? `The clock starts when the party's dungeon opens. Warnings at 5 and 1 minute left; at 0 everyone inside is sent out. 0 = no limit.` : 'No time limit: the party can stay as long as they like.'));
     // cooldown
     const cMin = minOf(v.dwCoolTime);
-    row('Cooldown', Number.isInteger(cMin) ? durationInput({ minutes: cMin, disabled: !edit_, key: `dg|${d.index}|cool`, max: O().MAX_MIN,
+    row('Cooldown', Number.isInteger(cMin) ? durationInput({ minutes: cMin, disabled: !edit_, key: `dg|${d.index}|cool`, liveMs: 1200, max: O().MAX_MIN,
       onCommit: mm => edit(ctx, d, t => O().setCool(t, d, mm), `${name}: cooldown ${mm ? durationText(mm) : 'none'} (was ${cMin ? durationText(cMin) : 'none'})`, 'cool') })
       : h('span.tag.warn', 'not whole minutes: edit the line by hand'), ' ', own('SetCoolTime'),
       h('div.muted.small', 'Starts when a player enters. Until it ends that player cannot enter another run of this dungeon (re-entering the same run is fine). Anarchy can shorten it.'));

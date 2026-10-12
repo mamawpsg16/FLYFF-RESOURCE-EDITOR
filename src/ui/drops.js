@@ -261,7 +261,7 @@
       row('Amount', false,
         h('label', h('input', { type: 'checkbox', checked: s.free, on: { change: ev => { s.free = ev.target.checked; cnt.disabled = s.free; cntMin.disabled = s.free; refresh(); } } }),
           ' exactly 1, not counted toward the max items per kill'),
-        h('span.muted', '— or untick it for one stack of a random amount: Min'), cntMin, h('span.muted', 'to Max'), cnt),
+        h('span', { style: 'white-space:nowrap' }, h('span.muted', '— or untick it for one stack of a random amount: Min '), cntMin, h('span.muted', ' to Max '), cnt)),
       row('Upgrade (+N)', false, numInput({ value: 0, min: 0, max: O().MAX_UPGRADE, key: 'dr|add|lv', onCommit: v => { s.level = v || 0; debounce(); } }))));
     body.appendChild(h('p.muted.small', `The chance can be at most ${CONV.maxPct}%: the server reads the number with atoi, which stops at 2,147,483,647. For "every kill", add the same line twice.`));
     formFooter({ checks, action: 'Add', previewTitle: 'What will be written / what players get', preview }).forEach(x => body.appendChild(x));
