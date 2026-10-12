@@ -3851,6 +3851,101 @@ section('PvP Events: FFA / TDM / Guild Siege settings, schedules, money, battles
     'PVP_GS_SHOWN', 'PVP_PRIZE_LUA', 'PVP_PRIZE_BAD', 'PVP_PRIZE_EXTRA', 'PVP_PATCH_MISSING', 'PVP_RULES_DIFF', 'PVP_RULES_NOTFOUND']) ok(FRE.diagHelp[k], `help text for ${k}`);
 }
 
+// ---------------------------------------------------------------- Equalized PvP (EqualizedPvP.inc, EqualizedPresets.inc)
+section('Equalized PvP: event switches, class limits, shared presets, what a player gets, edits (JS and Python copies agree)');
+{
+  const J = JSON.stringify;
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} equalized ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py equalized) gave no readable result', e.message); }
+  const base = (() => { const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e)); return new FRE.Workspace(fs, { only: 'pvp' }).load(); })();
+  const D = base.defines.defines, items = base.items.items, Eq = FRE.equalized, Sim = FRE.equalizedSim, O = FRE.equalizedOps;
+  const tf = t => ({ name: 'x', text: t });
+  // the JS result in the Python shape
+  const presJ = pr => Object.fromEntries([...pr.byKey.entries()].sort((a, z) => (a[0] < z[0] ? -1 : 1)).map(([k, b]) => {
+    const s = Sim.enter(b, { defines: D, items });
+    const obj = o => Object.fromEntries(Object.keys(o).map(Number).sort((a, z) => a - z).map(p => [String(p), o[p].item.id]));
+    return [k, { worn: obj(s.worn), attack: obj(s.attack), bag: s.bag.map(x => [x.item.id, x.count]), why: s.placed.map(p => p.why),
+      items: b.order.flatMap(n => b.sections[n].items.map(it => [n, it.id, it.upgrade, it.elem, it.elemLv, it.count, it.awakes.map(a => [a.dst, a.adj]), it.cards])) }];
+  }));
+  if (py) {
+    let same = 0;
+    for (const r of py.reads) {
+      const pr = Eq.readPresets(tf(r.text), { defines: D, items });
+      const a = J([presJ(pr), !!pr.stopped, pr.problems.length]), b = J([r.presets, r.stopped, r.problems]);
+      if (a === b) same++; else print(`   ${J(r.text).slice(0, 90)}:\n     JS ${a.slice(0, 400)}\n     Py ${b.slice(0, 400)}`);
+    }
+    eq(same, py.reads.length, `LoadPresetFile + EqPlaceItem: ${py.reads.length} preset files (the real one, the old event word, rings, unknown / unwearable items, stack cap, bad words, a bad section, a bad header, a later block replacing one, lower case): the same items, slots, sets and bag`);
+    let sameE = 0;
+    for (const r of py.events) {
+      const ev = Eq.readEvents(tf(r.text), D);
+      const a = J(ev.failed ? 'failed' : Object.fromEntries(Eq.EVENTS.map(e => [e, [ev.events[e].on, ev.events[e].caps]])));
+      if (a === J(r.events)) sameE++; else print(`   ${J(r.text)}: JS ${a} | Py ${J(r.events)}`);
+    }
+    eq(sameE, py.events.length, `ReadConfig: ${py.events.length} EqualizedPvP.inc files (the real one, limits <= 0, an unknown event, a repeated event, empty): the same switches and limits`);
+  }
+  // planted bug: the 2nd ring must go to RING2; a sim that forgets it must differ from the Python copy
+  {
+    const t = 'ARCANIST MALE {\r\n HP {\r\n ITEM II_GEN_JEW_RIN_STRRING01\r\n ITEM II_GEN_JEW_RIN_STRRING02\r\n }\r\n}\r\n';
+    const b = Eq.readPresets(tf(t), { defines: D, items }).byKey.get('5|0');
+    const good = Sim.enter(b, { defines: D, items });
+    eq(Object.keys(good.worn).map(Number).sort((a, z) => a - z).join(','), `${D.get('PARTS_RING1')},${D.get('PARTS_RING2')}`, 'two rings: the 2nd goes to the 2nd ring slot');
+    const Dbad = new Map(D); Dbad.set('PARTS_RING1', -99);
+    const bad = Sim.enter(b, { defines: Dbad, items });
+    ok(J(Object.keys(bad.worn)) !== J(Object.keys(good.worn)), 'planted bug (no 2nd ring slot) is caught by the slot check');
+  }
+  // the real files: no BLOCK
+  eq(base.diags.filter(d => /^EQ_/.test(d.code) && d.severity === 'BLOCK').length, 0, 'the real Equalized files have no BLOCK problem');
+  ok(base.diags.some(d => d.code === 'EQ_PRESET_MISSING'), 'classes without a preset are flagged (they enter naked)');
+  // edits: byte-exact, read back as intended
+  const PF = base.files.get('equalizedpresets.inc'), EF = base.files.get('equalizedpvp.inc');
+  const splice = (f, sp) => FRE.SourceFile.spliceText(f.text, sp, f.kind, f.name);
+  {
+    const ev = base.models.pvp.eq.events;
+    const t1 = splice(EF, O.setCap(ev, EF.text, 'FFA', 1, 2));
+    const e1 = Eq.readEvents(tf(t1), D);
+    eq(e1.events.FFA.caps[1], 2, 'setCap: FFA Templar limit 2');
+    eq(t1.length, EF.text.length - 1, 'setCap: only the number changes (99 -> 2)');
+    const t2 = splice(EF, O.setOn(ev, EF.text, 'TDM', true));
+    ok(Eq.readEvents(tf(t2), D).events.TDM.on && t2.length === EF.text.length, 'setOn: TDM on, one digit');
+    throws(() => O.setCap(ev, EF.text, 'FFA', 0, -1), 'setCap refuses a negative limit');
+  }
+  {
+    const pr = base.models.pvp.eq.presets, b = pr.byKey.get('5|0');
+    const nameOf = id => base.itemById(id >>> 0).define, dstOf = v => base.defines.byValue('DST_', v);
+    // copy male -> Templar female, then remove it again: back to the same bytes
+    const t1 = splice(PF, O.addPreset(pr, PF.text, 1, 1, b, nameOf, dstOf));
+    const p1 = Eq.readPresets(tf(t1), { defines: D, items });
+    ok(p1.byKey.has('1|1') && !p1.stopped && !p1.problems.length, 'addPreset: Templar female added (a copy), the file still loads cleanly');
+    eq(J(presJ(p1)['1|1'].items), J(presJ(pr)['5|0'].items), 'addPreset: the copy has the same items, upgrades, elements, awakes');
+    ok(!/[^\r]\n/.test(t1.slice(PF.text.length)) && /\r\n$/.test(t1), 'addPreset: CRLF like the file');
+    const back = splice({ text: t1, kind: PF.kind, name: PF.name }, O.removePreset(p1, t1, p1.byKey.get('1|1')));
+    eq(back, PF.text, 'removePreset after addPreset: the same bytes as before');
+    // add an item to BAG, change it, remove it
+    const spec = { item: 'II_GEN_JEW_RIN_STRRING01', upgrade: 5, elem: 0, elemLv: 0, awakes: [{ dst: 'DST_STR', adj: 7 }], cards: [], count: 1 };
+    const t2 = splice(PF, O.addItem(pr, PF.text, b, 'HP', spec));
+    const b2 = Eq.readPresets(tf(t2), { defines: D, items }).byKey.get('5|0');
+    const ring = b2.sections.HP.items.find(i => i.id === D.get('II_GEN_JEW_RIN_STRRING01'));
+    ok(ring && ring.upgrade === 5 && ring.awakes[0].adj === 7, 'addItem: a +5 ring with STR +7 in the HP set');
+    const t3 = splice({ text: t2, kind: PF.kind, name: PF.name }, O.removeItem(Eq.readPresets(tf(t2), { defines: D, items }), t2, b2, 'HP', b2.sections.HP.items.indexOf(ring)));
+    eq(t3, PF.text, 'removeItem after addItem: the same bytes as before');
+    const t4 = splice(PF, O.setItem(pr, b, 'HP', 0, Object.assign(O.specOf(b.sections.HP.items[0], nameOf, dstOf), { upgrade: 7 })));
+    eq(Eq.readPresets(tf(t4), { defines: D, items }).byKey.get('5|0').sections.HP.items[0].upgrade, 7, 'setItem: the weapon is now +7');
+    const t5 = splice(PF, O.setItem(pr, b, 'HP', 0, O.specOf(b.sections.HP.items[0], nameOf, dstOf)));
+    eq(Eq.readPresets(tf(t5), { defines: D, items }).byKey.get('5|0').sections.HP.items[0].awakes.length, b.sections.HP.items[0].awakes.length, 'setItem with the same values keeps the awakes');
+    throws(() => O.addPreset(pr, PF.text, 5, 0, null, nameOf, dstOf), 'addPreset refuses a class + gender that already has one');
+    throws(() => O.itemLine({ item: 'II_X', upgrade: 21 }), 'itemLine refuses +21');
+    // a section the block does not have yet (BAG on an HP-only preset)
+    const hpOnly = 'ARCANIST\tMALE\r\n{\r\n\tHP\r\n\t{\r\n\t}\r\n}\r\n';
+    const ph = Eq.readPresets(tf(hpOnly), { defines: D, items });
+    const t6 = FRE.SourceFile.spliceText(hpOnly, O.addItem(ph, hpOnly, ph.byKey.get('5|0'), 'BAG', { item: 'II_CHR_POT_DRI_VITALX', count: 50 }));
+    eq(t6, 'ARCANIST\tMALE\r\n{\r\n\tHP\r\n\t{\r\n\t}\r\n\tBAG\r\n\t{\r\n\t\tITEM II_CHR_POT_DRI_VITALX\tCOUNT 50\r\n\t}\r\n}\r\n', 'addItem: a missing BAG section is added with the file\'s tabs and CRLF');
+  }
+  // after save: /eqreload
+  const as = FRE.afterSave.compute({ changes: [{ label: 'x', files: ['equalizedpresets.inc'] }], patches: {} });
+  ok(as.steps.some(s => s.id === 'reload:eq'), 'after saving EqualizedPresets.inc: "type /eqreload in game"');
+}
+
 // ---------------------------------------------------------------- Dungeons (PartyDungeon.lua)
 section('Dungeons: PartyDungeon.lua, entering, the clock, map monsters, edits (JS and Python copies agree)');
 {

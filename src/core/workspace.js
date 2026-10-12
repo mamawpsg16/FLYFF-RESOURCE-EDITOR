@@ -197,12 +197,14 @@
       // GuildSiegePrize.lua (the siege prizes, PvP events part B 6de6da39). Server files only; the rules boards players read are
       // client-only files in Client/Client (NpcBoard_289 / 290, GuildCombatTEXT_<n>_ENG / _USA: Workspace.setBoardFiles).
       id: 'pvp', label: 'PvP Events',
-      required: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt'], optional: ['GuildSiegePrize.lua'],
-      editable: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt', 'GuildSiegePrize.lua'],
-      client: [], deps: ['GuildSiegePrize.lua', 'client/npcboard_289.inc', 'client/npcboard_290.inc',
+      // + Equalized PvP (loaders/equalized.js): EqualizedPvP.inc (which events are equalized, class caps) and EqualizedPresets.inc (the
+      // shared gear presets), WorldServer only, /eqreload (ec3657c7).
+      required: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt'], optional: ['GuildSiegePrize.lua', 'EqualizedPvP.inc', 'EqualizedPresets.inc', 'propItemEtc.inc', 'propItemEtc.txt.txt'],   // propItemEtc: the set bonuses shown on the presets page (read only)
+      editable: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt', 'GuildSiegePrize.lua', 'EqualizedPvP.inc', 'EqualizedPresets.inc'],
+      client: [], deps: ['GuildSiegePrize.lua', 'EqualizedPvP.inc', 'EqualizedPresets.inc', 'client/npcboard_289.inc', 'client/npcboard_290.inc',
         ...[1, 2, 3, 4, 5, 6].flatMap(n => [`client/guildcombattext_${n}_eng.inc`, `client/guildcombattext_${n}_usa.inc`])],
-      parse(ws) { return FRE.pvp.fromWorkspace(ws); },
-      validate(ws, model) { return FRE.pvpChecks(model, { ws }); },
+      parse(ws) { return Object.assign(FRE.pvp.fromWorkspace(ws), { eq: FRE.equalized.fromWorkspace(ws) }); },
+      validate(ws, model) { return FRE.pvpChecks(model, { ws }).concat(FRE.equalizedChecks(model.eq, { ws })); },
     },
     {
       // Dungeons (loaders/dungeon.js): PartyDungeon.lua (WorldServer only, CInstanceDungeonParty::LoadScript, Project.cpp:908) and

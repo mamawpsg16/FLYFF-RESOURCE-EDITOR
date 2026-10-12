@@ -21,6 +21,7 @@
   function sectionOf(d) {
     const f = (d.file || '').toLowerCase();
     if (d.code === 'PVP_TIME_CLASH') return 'week';
+    if (f === 'equalizedpvp.inc' || f === 'equalizedpresets.inc') return 'eq';
     if (f === FFA || f === 'npcboard_289.inc') return 'ffa';
     if (f === TDM || f === 'npcboard_290.inc') return 'tdm';
     return 'gs';
@@ -30,6 +31,7 @@
     { id: 'gs', label: 'Guild Siege', sub: ctx => { const m = model(ctx), r = R().siegeRows(m.gs); return !m.gs.ok ? 'GuildCombat.txt does not load' : r.length ? r.map(x => `${DAYS[x.day]} ${t2(x.hour, x.minute)}`).join(', ') : 'no siege time'; } },
     { id: 'ffa', label: 'FFA (Free-For-All)', sub: ctx => runSub(model(ctx).ffa) },
     { id: 'tdm', label: 'TDM (Team Deathmatch)', sub: ctx => runSub(model(ctx).tdm) },
+    { id: 'eq', label: '⚖ Equalized presets', sub: ctx => { const eq = model(ctx).eq; if (!eq || !eq.present) return 'not in this folder'; const on = FRE.equalized.EVENTS.filter(e => eq.events.events[e].on).map(e => FRE.equalized.EVENT_LABEL[e]); return `${eq.presets.byKey.size} of 16 presets · ${on.length ? `on in ${on.join(', ')}` : 'off everywhere'}`; } },
     { id: 'week', label: '🗓 The week', sub: ctx => { const n = S().clashes(model(ctx)).length; return n ? `${n} overlap${n === 1 ? '' : 's'}` : 'every event on the clock'; } },
   ];
   function runSub(mm) {
@@ -61,6 +63,7 @@
       keepFocus(el, () => {
         if (st.sel === 'gs') gsView(el, ctx);
         else if (st.sel === 'week') weekView(el, ctx);
+        else if (st.sel === 'eq') { FRE.ui.pvpEqualized.presetsView(el, ctx, apply); problems(el, ctx, 'eq'); }
         else runView(el, ctx, st.sel);
       });
     },
@@ -153,6 +156,7 @@
         h('td', k ? diagTags(FRE.ui.diagsInSpan(ctx.ws, K.file, k.span.start, k.span.end)) : null)));
     }
     el.appendChild(tb);
+    FRE.ui.pvpEqualized.eventBlock(el, ctx, ev.toUpperCase(), apply);
     // ---- schedule
     el.appendChild(h('h3', 'Schedule'));
     el.appendChild(h('p.muted.small', 'Each line is a start time: registration closes and the arena opens. The server PC clock (Philippine time, GMT+8). Keep runs clear of Free PK Time (00 / 04 / 08 / 12 / 16 / 20 for 60 minutes).'));
@@ -259,6 +263,7 @@
     et.appendChild(h('tr', h('td', h('b', 'Cancel / not selected'), h('div.muted.small', 'REQUESTCANCLEPERCENT / NOTREQUESTPERCENT (shown only)')),
       h('td.small', `${gc.cancelPct}% back on cancel (${fmt(S().siegeCancel(gc, gc.joinPenya ? gc.joinPenya.value : 0))} of the minimum bid) · ${gc.notPct}% back when not selected`)));
     el.appendChild(et);
+    FRE.ui.pvpEqualized.eventBlock(el, ctx, 'GS', apply);
     // ---- prizes
     el.appendChild(h('h3', 'Prizes (PVP Tokens)'));
     if (pz.missing) { el.appendChild(h('p.muted', 'GuildSiegePrize.lua not found: the compiled prizes are paid.')); }

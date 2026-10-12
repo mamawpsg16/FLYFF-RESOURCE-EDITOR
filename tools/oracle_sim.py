@@ -11367,6 +11367,231 @@ def dg_run(root):
     return out
 
 
+# ---------------------------------------------------------------- Equalized PvP (EqualizedPvP.inc / EqualizedPresets.inc)
+# Written from WORLDSERVER/EqualizedPvP.cpp (CEqualizedPvP::ReadConfig, LoadPresetFile, EqPlaceItem; ec3657c7 + the shared-preset header),
+# not from the JS. CScript words: a #define name reads as its number; EqTokenNumber = a number, or GetDefineNum (-1 when unknown).
+EQ_EVENTS = ['FFA', 'TDM', 'GS']
+EQ_CLASSES = ['SLAYER', 'TEMPLAR', 'HARLEQUIN', 'CRACKSHOOTER', 'MENTALIST', 'ARCANIST', 'FORCEMASTER', 'SERAPH']
+EQ_ELEM = ['FIRE', 'WATER', 'ELECTRICITY', 'WIND', 'EARTH']
+
+
+class EqScan:
+    def __init__(self, text):
+        self.t = [x.decode('latin-1') for x in tokens(text.encode('latin-1'))]
+        self.k = 0
+
+    def get(self):
+        x = self.t[self.k] if self.k < len(self.t) else None
+        self.k += 1
+        return x
+
+
+def eq_num(x, D):
+    """EqTokenNumber: the token as CScript gives it (a known #define = its number), atoi for digits, else GetDefineNum = -1"""
+    if x is None or x == '':
+        return -1
+    if x in D:
+        return s32(D[x])
+    if x[0].isdigit() or x[0] == '-':
+        return atoi(x)
+    return -1
+
+
+def eq_items(root, D):
+    lines = open(os.path.join(root, 'Spec_Item.txt'), 'rb').read().decode('latin-1').split('\r\n')
+    col = {h.lstrip('/'): i for i, h in enumerate(lines[1].split('\t'))}
+    def v(x):
+        x = x.strip().strip('"')
+        if x == '=': return -1
+        if x in D: return s32(D[x])
+        return atoi(x)
+    out = {}
+    for l in lines:
+        if not l.strip() or l.lstrip().startswith('//'):
+            continue
+        c = l.split('\t')
+        if len(c) <= max(col['dwParts'], col['dwPackMax']) or v(c[0]) > 19:
+            continue
+        iid = v(c[col['dwID']])
+        out[iid & 0xFFFFFFFF] = dict(parts=s32(v(c[col['dwParts']])), pack=v(c[col['dwPackMax']]), one=v(c[col['dwHanded']]) == D.get('HD_ONE'),
+                                     vis=v(c[col['dwItemKind3']]) == D.get('IK3_PET') and v(c[col['dwReferStat1']]) == D.get('PET_VIS'))
+    return out
+
+
+def eq_events(text, D):
+    """ReadConfig -> {event: [on, caps]} or 'failed' (an unknown event word: nothing changes)"""
+    if text is None:
+        return None
+    ev = {e: [False, [99] * 8] for e in EQ_EVENTS}
+    s = EqScan(text)
+
+    def num():                                     # CScanner::GetNumber with the defines
+        x = s.get()
+        if x is None:
+            return 0
+        if x == '=':
+            return -1
+        if x in ('-', '+'):
+            y = s.get() or ''
+            y = s32(D[y]) if y in D else atoi(y)
+            return -y if x == '-' else y
+        return s32(D[x]) if x in D else atoi(x)
+    w = s.get()
+    while w is not None:
+        if w.upper() not in EQ_EVENTS:
+            return 'failed'
+        on = num() != 0
+        caps = [num() for _ in range(8)]
+        ev[w.upper()] = [on, [c if c > 0 else 0 for c in caps]]
+        w = s.get()
+    return ev
+
+
+def eq_presets(text, D):
+    """LoadPresetFile -> (presets {'cls|sex': [(section, spec)]}, stopped, problems)"""
+    s = EqScan(text)
+    out, problems, stopped = {}, 0, False
+    w = s.get()
+    while w is not None:
+        if w.upper() in EQ_EVENTS:
+            w = s.get()
+        cls = EQ_CLASSES.index(w.upper()) if w is not None and w.upper() in EQ_CLASSES else -1
+        x = s.get()
+        sex = 0 if x and x.upper() == 'MALE' else 1 if x and x.upper() == 'FEMALE' else -1
+        o = s.get()
+        if cls < 0 or sex < 0 or o != '{':
+            stopped = True
+            break
+        blk, bad = [], False
+        t = s.get()
+        while t is not None and t != '}':
+            sec = t.upper() if t.upper() in ('HP', 'ATTACK', 'BAG') else None
+            o2 = s.get()
+            if sec is None or o2 != '{':
+                problems += 1
+                stopped = bad = True
+                break
+            have = False
+            cur = dict(id=-1, up=0, el=0, lv=0, n=1, aw=[], cards=[])
+            t = s.get()
+            while t is not None:
+                u = t.upper()
+                if t == '}' or u == 'ITEM':
+                    if have:
+                        blk.append((sec, cur))
+                    if t == '}':
+                        break
+                    cur = dict(id=eq_num(s.get(), D), up=0, el=0, lv=0, n=1, aw=[], cards=[])
+                    have = True
+                elif u == 'UPGRADE':
+                    cur['up'] = eq_num(s.get(), D)
+                elif u == 'COUNT':
+                    cur['n'] = eq_num(s.get(), D)
+                elif u == 'ELEMENT':
+                    e = (s.get() or '').upper()
+                    if e in EQ_ELEM:
+                        cur['el'] = EQ_ELEM.index(e) + 1
+                    else:
+                        cur['el'] = 0
+                        problems += 1
+                    cur['lv'] = eq_num(s.get(), D)
+                elif u == 'AWAKE':
+                    a, b = eq_num(s.get(), D), eq_num(s.get(), D)
+                    if a > 0 and len(cur['aw']) < 3:
+                        cur['aw'].append([a, b])
+                    else:
+                        problems += 1
+                elif u == 'CARD':
+                    cur['cards'].append(eq_num(s.get(), D))
+                elif u == 'RAISEDPET':                    # its own entry; the pending ITEM first, then a fresh spec
+                    if have:
+                        blk.append((sec, cur))
+                    have = False
+                    blk.append((sec, dict(id=-2, pet=eq_num(s.get(), D), up=0, el=0, lv=0, n=1, aw=[], cards=[])))
+                    cur = dict(id=-1, up=0, el=0, lv=0, n=1, aw=[], cards=[])
+                else:
+                    problems += 1
+                t = s.get()
+            t = s.get()
+        if bad:
+            break
+        out['%d|%d' % (cls, sex)] = blk
+        w = s.get()
+    return out, stopped, problems
+
+
+def eq_enter(blk, D, items, cls=-1):
+    """EqPlaceItem over a block, then the Attack set keeps the HP item where it has none"""
+    r1, e1 = D['PARTS_RING1'], D['PARTS_EARRING1']
+    sets = {'HP': {}, 'ATTACK': {}}
+    bag, why = [], []
+    pets = {'HP': [0, 0], 'ATTACK': [0, 0]}         # buff pet, raised pet taken
+    for sec, it in blk:
+        if 'pet' in it:
+            if not 0 <= it['pet'] < 7:
+                why.append('badPet'); continue
+            if sec != 'BAG' and not pets[sec][1]:
+                pets[sec][1] = 1; why.append('raisedPet')
+            else:
+                why.append('bag')
+            continue
+        p = items.get(it['id'] & 0xFFFFFFFF) if it['id'] >= 0 else None
+        if p is None:
+            why.append('unknown'); continue
+        if sec != 'BAG' and p['parts'] == -1 and not p['vis']:
+            why.append('notWearable'); continue
+        n = it['n'] if it['n'] > 0 else 1
+        if p['pack'] > 0 and n > p['pack']:
+            n = p['pack']
+        bag.append([it['id'], n])
+        if sec == 'BAG':
+            why.append('bag'); continue
+        if p['vis']:
+            why.append('bag' if pets[sec][0] else 'buffPet'); pets[sec][0] = 1; continue
+        st, part = sets[sec], p['parts']
+        if part in st and part in (r1, e1):
+            part += 1
+        R, L, S = D['PARTS_RWEAPON'], D['PARTS_LWEAPON'], D['PARTS_SHIELD']
+        if cls == 0 and part == R and R in st and S not in st and L not in st and p['one'] and it['id'] != D.get('II_WEA_KNU_ISHOFIST')                 and items[st[R] & 0xFFFFFFFF]['one']:
+            part = L                                    # Slayer: 2nd one-handed weapon in the left hand
+        if part in st:
+            why.append('slotTaken'); continue
+        st[part] = it['id']
+        why.append('set')
+    att = dict(sets['ATTACK'])
+    for k, v in sets['HP'].items():
+        att.setdefault(k, v)
+    return dict(worn={str(k): v for k, v in sorted(sets['HP'].items())}, attack={str(k): v for k, v in sorted(att.items())}, bag=bag, why=why,
+                items=[[sec, it['id'], it['up'], it['el'], it['lv'], it['n'], it['aw'], it['cards']] for sec, it in blk])
+
+
+def eq_run(root):
+    D = defines(root)
+    items = eq_items(root, D)
+    rd = lambda n: open(os.path.join(root, n), 'rb').read().decode('latin-1') if os.path.exists(os.path.join(root, n)) else None
+    evt, pre = rd('EqualizedPvP.inc'), rd('EqualizedPresets.inc') or ''
+    W = 'ARCANIST\tMALE\r\n{\r\n'
+    probes = [pre,
+              'FFA\t' + W + '\tHP\r\n\t{\r\n\t\tITEM II_WEA_STA_FOSHARPEN\tUPGRADE 10\r\n\t}\r\n}\r\n',
+              W + '\tHP\r\n\t{\r\n\t\tITEM II_GEN_JEW_RIN_STRRING01\r\n\t\tITEM II_GEN_JEW_RIN_STRRING01\r\n\t\tITEM II_GEN_JEW_RIN_STRRING02\r\n\t}\r\n}\r\n',
+              W + '\tHP\r\n\t{\r\n\t\tITEM II_CHR_POT_DRI_VITALX\r\n\t\tITEM II_NOT_AN_ITEM\r\n\t}\r\n\tBAG\r\n\t{\r\n\t\tITEM II_CHR_POT_DRI_VITALX\tCOUNT 99999\r\n\t}\r\n}\r\n',
+              W + '\tHP\r\n\t{\r\n\t\tITEM II_WEA_STA_FOSHARPEN\tELEMENT LAVA 3\tAWAKE DST_STR 1\tAWAKE DST_STA 1\tAWAKE DST_DEX 1\tAWAKE DST_INT 1\tFOO\r\n\t}\r\n}\r\n',
+              W + '\tSHOES\r\n\t{\r\n\t}\r\n}\r\nARCANIST FEMALE {\r\n}\r\n',
+              'NOBODY MALE {\r\n}\r\n' + W + '}\r\n',
+              W + '\tATTACK\r\n\t{\r\n\t\tITEM II_WEA_STA_ELFYREN\r\n\t}\r\n\tHP\r\n\t{\r\n\t\tUPGRADE 3\r\n\t\tITEM II_WEA_STA_FOSHARPEN\r\n\t\tITEM II_WEA_STA_ELFYREN\r\n\t}\r\n}\r\n' + W + '}\r\n',
+              W + '\tHP\r\n\t{\r\n\t\tITEM II_WEA_STA_FOSHARPEN\tRAISEDPET PK_DRAGON\tUPGRADE 5\r\n\t\tRAISEDPET PK_LION\r\n\t\tRAISEDPET 9\r\n\t}\r\n\tBAG\r\n\t{\r\n\t\tRAISEDPET PK_FOX\r\n\t}\r\n}\r\n',
+              W + '\tHP\r\n\t{\r\n\t\tITEM II_PET_RACCON\r\n\t\tITEM II_PET_RACCON\r\n\t}\r\n\tATTACK\r\n\t{\r\n\t\tITEM II_PET_RACCON\tCARD II_GEN_MAT_ORICHALCUM01\r\n\t}\r\n}\r\n',
+              'tdm templar female\r\n{\r\n\thp\r\n\t{\r\n\t\titem II_WEA_STA_FOSHARPEN card II_GEN_MAT_ORICHALCUM01 card 7\r\n\t}\r\n}\r\n',
+              ]
+    reads = []
+    for t in probes:
+        ps, stopped, problems = eq_presets(t, D)
+        reads.append(dict(text=t, stopped=stopped, problems=problems, presets={k: eq_enter(v, D, items, int(k.split('|')[0])) for k, v in sorted(ps.items())}))
+    ev_probes = [evt, 'FFA 1 99 99 99 99 99 99 99 99\r\nTDM 1 0 -5 3 99 99 99 99 99\r\n', 'FFA 0\r\nXYZ 1\r\n', 'GS 2 1 2 3 4 5 6 7 8\r\nGS 0 9 9 9 9 9 9 9 9\r\n', '']
+    evs = [dict(text=t, events=eq_events(t, D)) for t in ev_probes if t is not None]
+    return dict(reads=reads, events=evs)
+
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -11418,6 +11643,8 @@ if __name__ == '__main__':
         print(json.dumps(we_run_all(root)))
     elif what == 'dungeon':                     # Dungeons: PartyDungeon.lua (LoadScript), entering, the clock, the map monsters, edits
         print(json.dumps(dg_run(root)))
+    elif what == 'equalized':                   # Equalized PvP: EqualizedPvP.inc, EqualizedPresets.inc, what a player gets on entry
+        print(json.dumps(eq_run(root)))
     elif what == 'pvp':                         # PvP Events: FFA / TDM ReadConfig, GuildCombat.txt, GuildSiegePrize.lua, schedules, money, battles, edits
         print(json.dumps(pv_run(root)))
     elif what == 'dds':                         # a folder of .dds icons -> {file: [w, h, sha256 of the RGBA]}

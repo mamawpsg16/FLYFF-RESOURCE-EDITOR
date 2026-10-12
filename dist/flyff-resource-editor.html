@@ -487,7 +487,7 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "74+", "when": "Mon 12 Oct 2026, 16:13", "rev": "05dcfd0", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "75+", "when": "Tue 13 Oct 2026, 06:46", "rev": "4c1e5ba", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -6334,6 +6334,27 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "74+", "when
     PVP_PATCH_MISSING: ['The servers read the Guild Siege prizes from GuildSiegePrize.lua only with the C++ change of PvP events part B (commit 6de6da39, CGuildSiegePrize::ReadPrizes). This source does not have it, so the compiled numbers are paid.', 'Update FLYFF-V19-SOURCE and rebuild the WorldServer and the DatabaseServer.'],
     PVP_RULES_DIFF: ['The rules board players read (Donaris FFA Rules, Amos TDM Rules, the Guild Siege boards at Frankie) says another value than the data the servers use.', 'Change the board (or the value); the editor keeps them in step when you edit the value here.'],
     PVP_RULES_NOTFOUND: ['The editor finds each value in a board by the words around it. This sentence was reworded, so a change of the value will not reach the board.', 'Check the board by hand after changing that value.'],
+    // Equalized PvP (EqualizedPvP.inc, EqualizedPresets.inc)
+    EQ_NO_EVENTS: ['Without EqualizedPvP.inc the WorldServer keeps FFA, TDM and the Guild Siege normal: players fight with their own characters.', 'Create the file (one line per event: EVENT ON and 8 class limits), or ignore this if equalized fights are not wanted.'],
+    EQ_EVENTS_BAD: ['EqualizedPvP.inc has a word that is not FFA, TDM or GS where an event belongs. /eqreload then changes nothing, and at server start every event stays normal.', 'Fix the line shown.'],
+    EQ_CAP_ZERO: ['A class limit of 0 (or less) means nobody may pick that class in this event: its button in the class window is greyed.', 'Use 99 for no limit, or the most players of that class you want.'],
+    EQ_NO_PRESETS: ['An event is equalized but there is no EqualizedPresets.inc, so every player enters with no gear.', 'Add presets in the Equalized presets page.'],
+    EQ_PRESETS_STOP: ['The server reads EqualizedPresets.inc from the top and stops at a header it does not understand (CLASS MALE|FEMALE {) or a section word that is not HP / ATTACK / BAG. Every preset below it is missing in the game.', 'Fix the line shown.'],
+    EQ_PRESET_WORD: ['A word in a preset the server does not understand (an unknown element, a bad AWAKE, a word that is not ITEM / UPGRADE / ELEMENT / AWAKE / CARD / COUNT). The server skips it and writes an Error line.', 'Fix or remove the word.'],
+    EQ_PRESET_TWICE: ['The same class and gender has two blocks. The server keeps the later one.', 'Remove one block.'],
+    EQ_PRESET_MISSING: ['A class can be picked in an equalized event but has no gear preset for this gender, so a player who picks it enters naked ("No gear preset for this class yet").', 'Add the preset, or set that class limit to 0.'],
+    EQ_ITEM_UNKNOWN: ['The item name or number is not in Spec_Item.txt / defineItem.h. The server skips it.', 'Pick a real item.'],
+    EQ_ITEM_NOT_WORN: ['An item in the HP or ATTACK set must have a body slot (a weapon, armor, jewelry, fashion). Potions, scrolls and food go in BAG; the server skips them here.', 'Move it to BAG.'],
+    EQ_SLOT_TWICE: ['Two items of one set want the same slot (two weapons, two suits; a 3rd ring or earring). The server keeps the first in the set and leaves the other in the bag.', 'Remove one, or move it to the other set.'],
+    EQ_ITEM_WEAR: ['Everyone inside is a level 150 Hero / Legend of the picked class. This item is for another job, the other gender, or a higher level, so the player gets it but can not wear or use it.', 'Pick an item for this class, gender and level.'],
+    EQ_UPGRADE: ['The upgrade levels are 0 - 20 (+10 is the top for weapons and armor, +20 for jewelry). A higher number shows and acts oddly.', 'Use 0 - 10 (armor, weapons) or 0 - 20 (jewelry).'],
+    EQ_ELEMENT: ['Element levels in the game are 0 - 20.', 'Use 0 - 20.'],
+    EQ_ELEMENT_PART: ['The game puts an element only on a suit or a weapon (CItemElem::IsEleRefineryAble). A helmet, gauntlets, boots or shield with one is not something players can make.', 'Remove the element (✎ Edit, Element: none).'],
+    EQ_CARDS: ['An item has only so many sockets: a suit 4, a weapon or shield 10, a buff pet 9 beads, everything else none. Extra cards are not usable.', 'Remove the extra cards.'],
+    EQ_CARD_UNKNOWN: ['A CARD in a preset is not an item.', 'Pick a real card.'],
+    EQ_RAISED_PET: ['RAISEDPET takes a pet kind: PK_TIGER, PK_LION, PK_RABBIT, PK_FOX, PK_DRAGON, PK_GRIFFIN or PK_UNICORN. The server builds a level S pet of that kind.', 'Pick a pet kind.'],
+    EQ_PET_TWICE: ['Each switch set (HP, Attack) holds one buff pet and one raised pet. A 2nd one in the same set is only put in the inventory.', 'Remove it, or put it in the other set.'],
+    EQ_CARD_KIND: ['Each socket takes one kind: suits take suit cards (IK3_SOCKETCARD), weapons and shields weapon cards (IK3_SOCKETCARD2), buff pets beads (IK3_VIS).', 'Pick a card of the right kind.'],
     DG_SYNTAX: ['A line of PartyDungeon.lua uses more than plain numbers, names, true / false and MIN( ) / SEC( ). Lua still runs it, but the editor cannot tell its value and leaves it alone.', 'Check that line by hand, or write it the plain way (for example SetCoolTime( MIN(60) )).'],
     DG_NO_DUNGEON: ['A Set… line comes before any AddDungeon. The Lua stops with an error (there is no dungeon to set yet) and the WorldServer quits at start.', 'Put an AddDungeon( "WI_…" ) line above it, or remove the line.'],
     DG_WORLD: ['AddDungeon names a world that is not in defineWorld.h. The server cannot find the dungeon, so nobody can enter it.', 'Use a WI_INSTANCE_… name from defineWorld.h.'],
@@ -14267,6 +14288,516 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "74+", "when
   FRE.pvpChecks.shownWrong = shownWrong;
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/equalized.js ----
+// Equalized PvP (task "PvP Events", __FL_EQUALIZED_MODE): the two WorldServer files, read the way CEqualizedPvP reads them, with
+// the offsets the edits need. No DOM. C++: FLYFF-V19-SOURCE/Source/Source/WORLDSERVER/EqualizedPvP.cpp (ec3657c7, verified in game
+// 2026-10-12; the shared-preset header is the later change EQ_PRESET_EVENT, not yet tested).
+//   EqualizedPvP.inc      CEqualizedPvP::ReadConfig (EqualizedPvP.cpp:121), a CScript at WorldServer start and on /eqreload.
+//                         One line per event: EVENT ON cap x8. An unknown event word: "Nothing changed" (the old settings stay).
+//                         ON = GetNumber() != 0; a cap <= 0 is 0 (nobody may pick that class); an event with no line is off, caps 99.
+//   EqualizedPresets.inc  CEqualizedPvP::LoadPresetFile (EqualizedPvP.cpp:~806) right after ReadConfig. One shared set per class +
+//                         gender for every event: [EVENT] CLASS MALE|FEMALE { HP { … } ATTACK { … } BAG { … } } (an old event word is
+//                         skipped). A bad header stops the loading (the presets read so far stay). A later block of the same class +
+//                         gender replaces the earlier one. Items: EqPlaceItem (EqualizedPvP.cpp:~739).
+// Not modelled: what the C++ reads after an unknown section word (it breaks out of the preset mid-file; here the reading stops there).
+(function (FRE) {
+  'use strict';
+  const NULL_ID = -1;
+  const EVENTS = ['FFA', 'TDM', 'GS'];
+  const EVENT_LABEL = { FFA: 'FFA', TDM: 'TDM', GS: 'Guild Siege' };
+  // picker order (APP_TMP_CLASS buttons): EqClassFromName / HeroJobOfClass (EqualizedPvP.cpp:245)
+  const CLASSES = [
+    { word: 'SLAYER', label: 'Slayer', hero: 'JOB_STORMBLADE_HERO', chain: ['JOB_VAGRANT', 'JOB_MERCENARY', 'JOB_BLADE', 'JOB_BLADE_MASTER', 'JOB_BLADE_HERO', 'JOB_STORMBLADE_HERO'] },
+    { word: 'TEMPLAR', label: 'Templar', hero: 'JOB_LORDTEMPLER_HERO', chain: ['JOB_VAGRANT', 'JOB_MERCENARY', 'JOB_KNIGHT', 'JOB_KNIGHT_MASTER', 'JOB_KNIGHT_HERO', 'JOB_LORDTEMPLER_HERO'] },
+    { word: 'HARLEQUIN', label: 'Harlequin', hero: 'JOB_WINDLURKER_HERO', chain: ['JOB_VAGRANT', 'JOB_ACROBAT', 'JOB_JESTER', 'JOB_JESTER_MASTER', 'JOB_JESTER_HERO', 'JOB_WINDLURKER_HERO'] },
+    { word: 'CRACKSHOOTER', label: 'Crackshooter', hero: 'JOB_CRACKSHOOTER_HERO', chain: ['JOB_VAGRANT', 'JOB_ACROBAT', 'JOB_RANGER', 'JOB_RANGER_MASTER', 'JOB_RANGER_HERO', 'JOB_CRACKSHOOTER_HERO'] },
+    { word: 'MENTALIST', label: 'Mentalist', hero: 'JOB_MENTALIST_HERO', chain: ['JOB_VAGRANT', 'JOB_MAGICIAN', 'JOB_PSYCHIKEEPER', 'JOB_PSYCHIKEEPER_MASTER', 'JOB_PSYCHIKEEPER_HERO', 'JOB_MENTALIST_HERO'] },
+    { word: 'ARCANIST', label: 'Arcanist', hero: 'JOB_ELEMENTORLORD_HERO', chain: ['JOB_VAGRANT', 'JOB_MAGICIAN', 'JOB_ELEMENTOR', 'JOB_ELEMENTOR_MASTER', 'JOB_ELEMENTOR_HERO', 'JOB_ELEMENTORLORD_HERO'] },
+    { word: 'FORCEMASTER', label: 'Force Master', hero: 'JOB_FORCEMASTER_HERO', chain: ['JOB_VAGRANT', 'JOB_ASSIST', 'JOB_BILLPOSTER', 'JOB_BILLPOSTER_MASTER', 'JOB_BILLPOSTER_HERO', 'JOB_FORCEMASTER_HERO'] },
+    { word: 'SERAPH', label: 'Seraph', hero: 'JOB_FLORIST_HERO', chain: ['JOB_VAGRANT', 'JOB_ASSIST', 'JOB_RINGMASTER', 'JOB_RINGMASTER_MASTER', 'JOB_RINGMASTER_HERO', 'JOB_FLORIST_HERO'] },
+  ];
+  const SEXES = ['MALE', 'FEMALE'];          // SEX_MALE 0, SEX_FEMALE 1
+  const SECTIONS = ['HP', 'ATTACK', 'BAG'];
+  const ELEMENTS = ['FIRE', 'WATER', 'ELECTRICITY', 'WIND', 'EARTH'];   // SAI79::FIRE 1 … EARTH 5 (EqElementFromName)
+  const EQ_LEVEL = 150;
+  // the body slots (defineNeuz.h PARTS_*) a preset fills, in the order the editor shows them
+  const SLOTS = [
+    ['PARTS_RWEAPON', 'Weapon'], ['PARTS_LWEAPON', 'Left weapon'], ['PARTS_SHIELD', 'Shield'], ['PARTS_CAP', 'Helmet'], ['PARTS_UPPER_BODY', 'Suit'],
+    ['PARTS_HAND', 'Gauntlets'], ['PARTS_FOOT', 'Boots'], ['PARTS_NECKLACE1', 'Necklace'], ['PARTS_RING1', 'Ring 1'], ['PARTS_RING2', 'Ring 2'],
+    ['PARTS_EARRING1', 'Earring 1'], ['PARTS_EARRING2', 'Earring 2'], ['PARTS_CLOAK', 'Cloak'], ['PARTS_MASK', 'Mask'], ['PARTS_HAT', 'Fashion hat'],
+    ['PARTS_CLOTH', 'Fashion suit'], ['PARTS_GLOVE', 'Fashion gloves'], ['PARTS_BOOTS', 'Fashion shoes'], ['PARTS_CLOAK2', 'Fashion cloak'],
+    ['PARTS_BULLET', 'Arrows'], ['PARTS_RIDE', 'Board / broom'],
+  ];
+  const sp = n => ({ start: n.start, end: n.end });
+
+  // CScript token -> EqTokenNumber: a number (the lexer already turned a known #define into its number) or -1 (GetDefineNum: unknown)
+  function tokenNumber(t) {
+    if (!t || t.text === '') return -1;
+    const c = t.text[0];
+    if ((c >= '0' && c <= '9') || c === '-') return FRE.lexer.atoi(t.text).value;
+    return -1;
+  }
+  const wordOf = t => (t.define || t.raw || t.text);
+  const eqWord = (t, w) => t.type !== 'eof' && wordOf(t).toUpperCase() === w;
+
+  // ---------------------------------------------------------------- EqualizedPvP.inc
+  // -> { missing, failed (unknown event: nothing changed), error, errorAt, events: { FFA: { on, caps[8], line: { key, on, caps: [span] } } } }
+  function readEvents(file, defines) {
+    const res = { file: 'EqualizedPvP.inc', missing: !file, failed: false, error: null, errorAt: null, events: {}, last: null };
+    for (const e of EVENTS) res.events[e] = { on: false, caps: CLASSES.map(() => 99), line: null };
+    if (!file) { res.error = 'EqualizedPvP.inc not found: every event stays normal'; return res; }
+    const s = new FRE.lexer.Script(file.text, { file: 'EqualizedPvP.inc', defines: defines || new Map(), diags: [] });
+    const read = {};
+    for (const e of EVENTS) read[e] = { on: false, caps: CLASSES.map(() => 99), line: null };
+    s.getToken();
+    while (!s.eof) {
+      const t = s.token, ev = EVENTS.find(e => eqWord(t, e));
+      if (!ev) { res.failed = true; res.error = `unknown event "${t.text}" (FFA, TDM or GS): nothing changed`; res.errorAt = sp(t); return res; }
+      const on = s.getNumber();
+      const caps = CLASSES.map(() => s.getNumber());
+      read[ev] = { on: on.value !== 0, caps: caps.map(n => (n.value > 0 ? n.value : 0)),
+        line: { key: sp(t), on: Object.assign(sp(on), { value: on.value }), caps: caps.map(n => Object.assign(sp(n), { value: n.value })), stmt: { start: t.start, end: caps[7].end } } };
+      res.last = read[ev].line.stmt;
+      s.getToken();
+    }
+    res.events = read;
+    return res;
+  }
+
+  // ---------------------------------------------------------------- EqualizedPresets.inc
+  // ctx: { defines, items: Map id -> Spec_Item record }
+  // -> { missing, stopped: { message, at } | null, presets: [block] (every block as written), byKey: Map 'CLASS|SEX' -> the block the server
+  //      keeps (the later one), problems: [{ message, at, preset }] }
+  // block: { cls, sex, header: span, open, close, eventWord: span|null, sections: { HP: sec, ATTACK: sec, BAG: sec }, order: [names] }
+  // sec: { open, close, items: [item] }; item: { id, define, upgrade, elem, elemLv, count, awakes: [{ dst, adj }], cards: [id], span, problems }
+  function readPresets(file, ctx = {}) {
+    const res = { file: 'EqualizedPresets.inc', missing: !file, stopped: null, presets: [], byKey: new Map(), problems: [] };
+    if (!file) return res;
+    const D = ctx.defines || new Map();
+    const s = new FRE.lexer.Script(file.text, { file: 'EqualizedPresets.inc', defines: D, diags: [] });
+    const stop = (message, at) => { res.stopped = { message, at }; };
+    s.getToken();
+    while (!s.eof) {
+      const head = s.token;
+      let eventWord = null;
+      if (EVENTS.some(e => eqWord(s.token, e))) { eventWord = sp(s.token); s.getToken(); }
+      const cTok = s.token, cls = CLASSES.findIndex(c => eqWord(cTok, c.word));
+      const xTok = s.getToken(), sex = SEXES.findIndex(w => eqWord(xTok, w));
+      const open = s.getToken();
+      if (cls < 0 || sex < 0 || open.text !== '{') {
+        stop(`bad preset header near "${open.text}" (CLASS MALE|FEMALE {): the server stops reading the file here`, { start: head.start, end: open.end });
+        break;
+      }
+      const block = { cls, sex, header: { start: head.start, end: xTok.end }, eventWord, open: sp(open), close: null, sections: {}, order: [], problems: [] };
+      res.presets.push(block);
+      const where = `${CLASSES[cls].label} ${SEXES[sex].toLowerCase()}`;
+      const problem = (message, at) => { const p = { message: `${where}: ${message}`, at, preset: block }; block.problems.push(p); res.problems.push(p); };
+      s.getToken();
+      let broke = false;
+      while (!s.eof && s.token.text !== '}') {
+        const secTok = s.token, name = SECTIONS.find(w => eqWord(secTok, w));
+        const sOpen = s.getToken();
+        if (!name || sOpen.text !== '{') {
+          problem(`expected HP / ATTACK / BAG {, found "${sOpen.text}"`, { start: secTok.start, end: sOpen.end });
+          stop(`${where}: a section word is wrong: the server reads the rest of the file out of step (fix it first)`, { start: secTok.start, end: sOpen.end });
+          broke = true;
+          break;
+        }
+        const sec = { name, word: sp(secTok), open: sp(sOpen), close: null, items: [] };
+        block.sections[name] = sec;
+        block.order.push(name);
+        // the C++ fills one spec from the section start: words before the first ITEM change a spec that is never placed
+        let cur = { dummy: true, awakes: [], cards: [], span: { start: 0, end: 0 } };
+        s.getToken();
+        while (!s.eof) {
+          const t = s.token;
+          const end = t.text === '}';
+          if (end || eqWord(t, 'ITEM')) {
+            if (!cur.dummy) { cur.span.end = cur.lastEnd; sec.items.push(cur); }
+            if (end) break;
+            const idTok = s.getToken();
+            const id = tokenNumber(idTok);
+            cur = { id, define: idTok.define || (id < 0 ? idTok.text : null), idSpan: sp(idTok), upgrade: 0, elem: 0, elemLv: 0, count: 1, awakes: [], cards: [],
+              span: { start: t.start, end: idTok.end }, lastEnd: idTok.end, words: [] };
+          } else if (eqWord(t, 'UPGRADE')) { const n = s.getToken(); cur.upgrade = tokenNumber(n); cur.lastEnd = n.end; }
+          else if (eqWord(t, 'COUNT')) { const n = s.getToken(); cur.count = tokenNumber(n); cur.lastEnd = n.end; }
+          else if (eqWord(t, 'ELEMENT')) {
+            const e = s.getToken(), n = s.getToken();
+            const k = ELEMENTS.findIndex(w => eqWord(e, w));
+            cur.elem = k + 1; cur.elemLv = tokenNumber(n); cur.lastEnd = n.end;
+            if (k < 0) problem(`unknown element "${e.text}" (FIRE, WATER, ELECTRICITY, WIND or EARTH): the item gets no element`, sp(e));
+          } else if (eqWord(t, 'AWAKE')) {
+            const d = s.getToken(), a = s.getToken();
+            const dst = tokenNumber(d), adj = tokenNumber(a);
+            cur.lastEnd = a.end;
+            if (dst > 0 && cur.awakes.length < 3) cur.awakes.push({ dst, adj, define: d.define || null });
+            else problem('bad AWAKE (unknown DST or more than 3): skipped', { start: t.start, end: a.end });
+          } else if (eqWord(t, 'CARD')) { const n = s.getToken(); cur.cards.push(tokenNumber(n)); cur.lastEnd = n.end; }
+          else if (eqWord(t, 'RAISEDPET')) {
+            // its own entry (EqPlaceRaisedPet): the pending ITEM is placed first, the words after it until the next ITEM change nothing
+            if (!cur.dummy) { cur.span.end = cur.lastEnd; sec.items.push(cur); }
+            const k = s.getToken();
+            sec.items.push({ raisedPet: tokenNumber(k), id: -2, define: k.define || k.text, idSpan: sp(k), upgrade: 0, elem: 0, elemLv: 0, count: 1, awakes: [], cards: [], span: { start: t.start, end: k.end } });
+            cur = { dummy: true, awakes: [], cards: [], span: { start: 0, end: 0 } };
+          }
+          else problem(`unknown word "${t.text}": skipped`, sp(t));
+          s.getToken();
+        }
+        sec.close = sp(s.token);
+        s.getToken();
+      }
+      if (broke) break;
+      block.close = sp(s.token);
+      res.byKey.set(`${cls}|${sex}`, block);
+      s.getToken();
+    }
+    return res;
+  }
+
+  // ---------------------------------------------------------------- one workspace
+  function fromWorkspace(ws) {
+    const D = ws.defines.defines, f = n => ws.files.get(n) || null;
+    const events = readEvents(f('equalizedpvp.inc'), D);
+    const presets = readPresets(f('equalizedpresets.inc'), { defines: D, items: ws.items.items });
+    return { events, presets, present: !!(f('equalizedpvp.inc') || f('equalizedpresets.inc')) };
+  }
+
+  FRE.equalized = { NULL_ID, EVENTS, EVENT_LABEL, CLASSES, SEXES, SECTIONS, ELEMENTS, SLOTS, EQ_LEVEL, readEvents, readPresets, fromWorkspace };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/equalized-sim.js ----
+// Equalized PvP simulator (task "PvP Events"): what a player gets on entry from one preset, ported from the C++ (no DOM).
+//   EqPlaceItem (EqualizedPvP.cpp:~739): items in file order; an unknown item is skipped; HP / ATTACK items need a body slot (dwParts),
+//   a BAG item does not; the amount is cut to the stack size; a 2nd ring / earring goes to the 2nd slot; a 2nd item for a taken slot
+//   stays in the bag; HP items are worn. After the block: the Attack set keeps the HP item in every slot it leaves empty (a switch
+//   never undresses the player). CEqualizedPvP::Enter (EqualizedPvP.cpp:~474): level 150 Hero / Legend of the class, every skill maxed,
+//   stats 15 + points to spend, the preset bag, Quick Switch "HP" on key 9 and "Attack" on key 0 (GiveSwitchSets).
+// Not modelled: a full bag (336 slots), DoEquip refusing an item (the server logs "could not equip").
+(function (FRE) {
+  'use strict';
+  const E = () => FRE.equalized;
+  const isNull = v => v === -1 || v === 0xFFFFFFFF || v === undefined || v === null;
+
+  // block: a readPresets block; ctx: { defines, items } -> { worn: { part: item }, attack: { part: item }, bag: [{ item, count }],
+  //   placed: [{ sec, item, part, worn, why }], problems: [{ message, item }] }
+  function enter(block, ctx) {
+    const D = ctx.defines, items = ctx.items, spec = FRE.specItem;
+    const P = n => D.get(n);
+    const out = { worn: {}, attack: {}, bag: [], placed: [], problems: [] };
+    const sets = { HP: out.worn, ATTACK: out.attack };
+    out.buffPet = { HP: null, ATTACK: null }; out.raisedPet = { HP: null, ATTACK: null };
+    for (const name of block.order) {
+      const sec = block.sections[name];
+      for (const it of sec.items) {
+        if (it.raisedPet !== undefined) {           // EqPlaceRaisedPet: a level S pet of that kind
+          const ok = it.raisedPet >= 0 && it.raisedPet < 7;
+          if (!ok) { out.problems.push({ message: 'RAISEDPET needs PK_TIGER … PK_UNICORN', item: it }); out.placed.push({ sec: name, item: it, part: null, worn: false, why: 'badPet' }); continue; }
+          const slot = name === 'BAG' ? null : out.raisedPet[name] ? 'taken' : 'set';
+          if (slot === 'set') out.raisedPet[name] = it;
+          out.placed.push({ sec: name, item: it, part: null, worn: false, why: slot === 'set' ? 'raisedPet' : 'bag' });
+          continue;
+        }
+        const rec = it.id >= 0 ? items.get(it.id >>> 0) : null;
+        if (!rec) { out.problems.push({ message: `unknown item ${it.define || it.id}, skipped`, item: it }); out.placed.push({ sec: name, item: it, part: null, worn: false, why: 'unknown' }); continue; }
+        const parts = spec.get(rec, 'dwParts');
+        const buffPet = name !== 'BAG' && isBuffPet(rec, ctx.defines);
+        if (name !== 'BAG' && isNull(parts) && !buffPet) { out.problems.push({ message: `${rec.name || rec.define} can't be worn (put it in BAG), skipped`, item: it }); out.placed.push({ sec: name, item: it, part: null, worn: false, why: 'notWearable' }); continue; }
+        const pack = spec.get(rec, 'dwPackMax');
+        let count = it.count > 0 ? it.count : 1;
+        if (pack > 0 && count > pack) count = pack;
+        const entry = { rec, item: it, count };
+        out.bag.push(entry);
+        if (name === 'BAG') { out.placed.push({ sec: name, item: it, part: null, worn: false, why: 'bag', count }); continue; }
+        if (buffPet) {                               // the switch set's pet slot (a 2nd one stays in the bag)
+          const first = !out.buffPet[name];
+          if (first) out.buffPet[name] = entry;
+          out.placed.push({ sec: name, item: it, part: null, worn: false, why: first ? 'buffPet' : 'bag' });
+          continue;
+        }
+        const set = sets[name];
+        let part = parts;
+        if (set[part] && (part === P('PARTS_RING1') || part === P('PARTS_EARRING1'))) part++;
+        // Slayer (Blade line): a 2nd one-handed weapon to the left hand (right holds a one-handed one, no shield; MoverEquip.cpp:528)
+        const R = P('PARTS_RWEAPON'), one = r => spec.get(r, 'dwHanded') === D.get('HD_ONE');
+        if (block.cls === 0 && part === R && set[R] && !set[P('PARTS_SHIELD')] && !set[P('PARTS_LWEAPON')] && one(rec) && one(set[R].rec)
+          && rec.id !== D.get('II_WEA_KNU_ISHOFIST')) part = P('PARTS_LWEAPON');
+        if (set[part]) { out.problems.push({ message: `two items for the same slot, ${rec.name || rec.define} stays in the bag`, item: it }); out.placed.push({ sec: name, item: it, part, worn: false, why: 'slotTaken' }); continue; }
+        set[part] = entry;
+        entry.worn = name === 'HP';
+        out.placed.push({ sec: name, item: it, part, worn: name === 'HP', why: 'set' });
+      }
+    }
+    for (const part of Object.keys(out.worn)) if (!out.attack[part]) out.attack[part] = out.worn[part];
+    return out;
+  }
+
+  // an element is only for a suit or a weapon (CItemElem::IsEleRefineryAble, Item.cpp:403)
+  const elementOk = (rec, D) => !!rec && (FRE.specItem.get(rec, 'dwItemKind3') === D.get('IK3_SUIT') || FRE.specItem.get(rec, 'dwItemKind2') === D.get('IK2_WEAPON_MAGIC')
+    || FRE.specItem.get(rec, 'dwItemKind2') === D.get('IK2_WEAPON_DIRECT'));
+  const isBuffPet = (rec, D) => FRE.specItem.get(rec, 'dwItemKind3') === D.get('IK3_PET') && FRE.specItem.get(rec, 'dwReferStat1') === D.get('PET_VIS');
+  // the item's wear rules for a Lv150 Hero / Legend of class c, sex x -> [message] (empty = fine). Spec_Item: dwItemJob (NULL = any job;
+  // else one job of the class's chain), dwItemSex (NULL = both), dwLimitLevel1 (the level needed).
+  function wearIssues(rec, c, x, D) {
+    const spec = FRE.specItem, out = [], cl = E().CLASSES[c];
+    const job = spec.get(rec, 'dwItemJob'), sex = spec.get(rec, 'dwItemSex'), lv = spec.get(rec, 'dwLimitLevel1');
+    if (!isNull(job) && !cl.chain.some(j => D.get(j) === job)) out.push(`it is for another job (${cl.label} can't wear it)`);
+    if (!isNull(sex) && sex !== x && (sex === 0 || sex === 1)) out.push(`it is a ${sex === 0 ? 'male' : 'female'} item`);
+    if (!isNull(lv) && lv > E().EQ_LEVEL) out.push(`it needs level ${lv} (everyone inside is ${E().EQ_LEVEL})`);
+    return out;
+  }
+
+  // sockets of an item and what goes in them: CItemElem::IsPierceAble (Item.cpp:803). Suits (IK3_SUIT) 4 x IK3_SOCKETCARD; weapons
+  // (IK2_WEAPON_DIRECT / _MAGIC) and shields 10 x IK3_SOCKETCARD2; buff pets (IK3_PET + dwReferStat1 PET_VIS) 9 x IK3_VIS beads;
+  // anything else none. -> { cap, kind3 (the card's dwItemKind3), what }
+  function sockets(rec, D) {
+    const g = f => FRE.specItem.get(rec, f);
+    const k2 = g('dwItemKind2'), k3 = g('dwItemKind3');
+    if (k3 === D.get('IK3_SUIT')) return { cap: 4, kind3: D.get('IK3_SOCKETCARD'), what: 'card' };
+    if (k3 === D.get('IK3_SHIELD') || k2 === D.get('IK2_WEAPON_DIRECT') || k2 === D.get('IK2_WEAPON_MAGIC')) return { cap: 10, kind3: D.get('IK3_SOCKETCARD2'), what: 'card' };
+    if (k3 === D.get('IK3_PET') && g('dwReferStat1') === D.get('PET_VIS')) return { cap: 9, kind3: D.get('IK3_VIS'), what: 'bead' };
+    return { cap: 0, kind3: null, what: 'card' };
+  }
+
+  // class caps of one event: how many may still pick each class (0 = greyed in the window)
+  function capsLeft(ev, counts) { return ev.caps.map((cap, c) => Math.max(0, cap - (counts ? counts[c] || 0 : 0))); }
+
+  FRE.equalizedSim = { elementOk, isBuffPet: (r, D) => isBuffPet(r, D), enter, wearIssues, sockets, capsLeft, isNull };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- edit/equalized-ops.js ----
+// Equalized PvP edits (task "PvP Events") as splices: EqualizedPvP.inc (ASCII, CRLF) and EqualizedPresets.inc (ASCII, CRLF).
+// A changed number replaces only its token; an item is one line ITEM … rewritten whole (its indent and the line end stay); new lines
+// copy the indent of the brace they go under and the file's own EOL. Only ASCII is written (define names, numbers, the words the
+// server reads). The readers are loaders/equalized.js.
+(function (FRE) {
+  'use strict';
+  const T = FRE.textOps, E = () => FRE.equalized;
+
+  // ---------------------------------------------------------------- EqualizedPvP.inc
+  function eventLine(word, on, caps) { return `${word}\t${on ? 1 : 0}\t${caps.join('\t')}`; }
+  function appendLine(text, row) {
+    const eol = T.dominantEol(text);
+    return [{ start: text.length, end: text.length, insert: (text.length && !/[\r\n]$/.test(text) ? eol : '') + row + eol }];
+  }
+  function setOn(ev, text, event, on) {
+    if (ev.failed) throw new Error('EqualizedPvP.inc does not load (see the problems): fix it first');
+    const x = ev.events[event];
+    if (!x) throw new Error(`Unknown event ${event}`);
+    if (x.line) return T.replaceSpan(x.line.on, on ? 1 : 0);
+    return appendLine(text, eventLine(event, on, x.caps));
+  }
+  function setCap(ev, text, event, c, v) {
+    if (ev.failed) throw new Error('EqualizedPvP.inc does not load (see the problems): fix it first');
+    const x = ev.events[event];
+    if (!x) throw new Error(`Unknown event ${event}`);
+    T.checkAmount(v, 0, 999, `The ${E().CLASSES[c].label} limit`);
+    if (x.line) return T.replaceSpan(x.line.caps[c], v);
+    const caps = x.caps.slice(); caps[c] = v;
+    return appendLine(text, eventLine(event, x.on, caps));
+  }
+
+  // ---------------------------------------------------------------- EqualizedPresets.inc
+  // spec: { item: 'II_…', upgrade, elem (0 none, 1-5 = FIRE…EARTH), elemLv, awakes: [{ dst: 'DST_…', adj }], cards: ['II_…'], count }
+  function itemLine(spec) {
+    if (spec && spec.raisedPet) { T.checkDefine(spec.raisedPet); return `RAISEDPET ${spec.raisedPet}`; }
+    if (!spec || !spec.item) throw new Error('Pick an item first');
+    T.checkDefine(spec.item);
+    let s = `ITEM ${spec.item}`;
+    if (spec.upgrade) { T.checkAmount(spec.upgrade, 0, 20, 'The upgrade'); s += `\tUPGRADE ${spec.upgrade}`; }
+    if (spec.elem) {
+      if (!(spec.elem >= 1 && spec.elem <= 5)) throw new Error('Unknown element');
+      T.checkAmount(spec.elemLv || 0, 0, 20, 'The element level');
+      s += `\tELEMENT ${E().ELEMENTS[spec.elem - 1]} ${spec.elemLv || 0}`;
+    }
+    const aw = (spec.awakes || []).filter(a => a && a.dst);
+    if (aw.length > 3) throw new Error('At most 3 awakes');
+    for (const a of aw) { T.checkDefine(a.dst); T.checkAmount(a.adj, -2147483647, 2147483647, 'The awake value'); s += `\tAWAKE ${a.dst} ${a.adj}`; }
+    for (const c of (spec.cards || []).filter(Boolean)) { T.checkDefine(c); s += `\tCARD ${c}`; }
+    if (spec.count && spec.count > 1) { T.checkAmount(spec.count, 1, 32767, 'The amount'); s += `\tCOUNT ${spec.count}`; }
+    return s;
+  }
+  // an item of the file -> spec (names from defines / Spec_Item; nameOf(id) = the II_ define, dstOf(n) = the DST_ define)
+  function specOf(it, nameOf, dstOf) {
+    if (it.raisedPet !== undefined) return { raisedPet: it.define, item: '', upgrade: 0, elem: 0, elemLv: 0, awakes: [], cards: [], count: 1 };
+    return { item: it.define && it.id >= 0 ? it.define : nameOf(it.id), upgrade: it.upgrade > 0 ? it.upgrade : 0, elem: it.elem || 0, elemLv: it.elemLv > 0 ? it.elemLv : 0,
+      awakes: it.awakes.map(a => ({ dst: a.define || dstOf(a.dst), adj: a.adj })), cards: it.cards.map(nameOf), count: it.count > 1 ? it.count : 1 };
+  }
+  const lineStartOf = (text, i) => T.lineStart(text, i);
+  // insert full lines right before the line holding `pos` (a closing brace), each indented `ind` + extra tabs
+  function linesBefore(text, pos, rows) {
+    const at = lineStartOf(text, pos), eol = T.eolAt(text, pos) || T.dominantEol(text);
+    if (!T.prefixIsBlank(text, pos)) {        // "… }" on one line: put the rows inline before the brace
+      return [{ start: pos, end: pos, insert: rows.map(r => r.text).join(' ') + ' ' }];
+    }
+    const ind = T.indentOf(text, pos);
+    return [{ start: at, end: at, insert: rows.map(r => ind + '\t'.repeat(r.depth) + r.text + eol).join('') }];
+  }
+  function sectionRows(name, lines) {
+    return [{ depth: 1, text: name }, { depth: 1, text: '{' }, ...lines.map(l => ({ depth: 2, text: l })), { depth: 1, text: '}' }];
+  }
+  function block(pr, b) { if (pr.stopped) throw new Error('EqualizedPresets.inc does not load completely (see the problems): fix it first'); if (!b || !b.close) throw new Error('That preset is not in the file'); return b; }
+
+  function setItem(pr, b, secName, i, spec) {
+    block(pr, b);
+    const it = b.sections[secName] && b.sections[secName].items[i];
+    if (!it) throw new Error('That item is not in the preset');
+    return [{ start: it.span.start, end: it.span.end, insert: itemLine(spec) }];
+  }
+  function addItem(pr, text, b, secName, spec) {
+    block(pr, b);
+    if (!E().SECTIONS.includes(secName)) throw new Error(`Unknown section ${secName}`);
+    const line = itemLine(spec), sec = b.sections[secName];
+    if (sec) return linesBefore(text, sec.close.start, [{ depth: 1, text: line }]);
+    return linesBefore(text, b.close.start, sectionRows(secName, [line]));
+  }
+  function removeItem(pr, text, b, secName, i) {
+    block(pr, b);
+    const it = b.sections[secName] && b.sections[secName].items[i];
+    if (!it) throw new Error('That item is not in the preset');
+    return T.removeRow(text, it.span);
+  }
+  // a whole block as text (CRLF / LF from the file), sections in HP, ATTACK, BAG order
+  function blockText(cls, sex, sections, eol) {
+    const out = [`${E().CLASSES[cls].word}\t${E().SEXES[sex]}`, '{'];
+    for (const name of E().SECTIONS) {
+      const lines = sections[name] || [];
+      if (!lines.length && name !== 'HP') continue;
+      out.push(`\t${name}`, '\t{', ...lines.map(l => `\t\t${l}`), '\t}');
+    }
+    out.push('}');
+    return out.join(eol) + eol;
+  }
+  // a new preset at the end of the file; from: a block to copy (or null: empty HP set)
+  function addPreset(pr, text, cls, sex, from, nameOf, dstOf) {
+    if (pr.stopped) throw new Error('EqualizedPresets.inc does not load completely (see the problems): fix it first');
+    if (!(cls >= 0 && cls < E().CLASSES.length) || !(sex === 0 || sex === 1)) throw new Error('Pick a class and a gender');
+    if (pr.byKey.has(`${cls}|${sex}`)) throw new Error(`${E().CLASSES[cls].label} ${E().SEXES[sex].toLowerCase()} already has a preset`);
+    const sections = {};
+    if (from) for (const name of E().SECTIONS) if (from.sections[name]) sections[name] = from.sections[name].items.map(it => itemLine(specOf(it, nameOf, dstOf)));
+    const eol = T.dominantEol(text);
+    return [{ start: text.length, end: text.length, insert: leadFor(text, eol) + blockText(cls, sex, sections, eol) }];
+  }
+  // the line ends before a block added at the end of the file: one blank line between blocks
+  function leadFor(text, eol) { return !text.length ? '' : /(\r?\n){2}$/.test(text) ? '' : /\r?\n$/.test(text) ? eol : eol + eol; }
+  function removePreset(pr, text, b) {
+    block(pr, b);
+    let s = lineStartOf(text, b.header.start), e = T.lineEnd(text, b.close.end);
+    if (s === lineStartOf(text, b.close.end) || !T.prefixIsBlank(text, b.header.start)) return [{ start: b.header.start, end: b.close.end, insert: '' }];
+    // one blank line after the block goes with it
+    const rest = text.slice(e), m = /^[ \t]*\r?\n/.exec(rest);
+    if (m) e += m[0].length;
+    else { const b = /(\r?\n)[ \t]*\r?\n$/.exec(text.slice(0, s)); if (b) s -= b[0].length - b[1].length; }   // the last block: the blank line before it
+    return [{ start: s, end: e, insert: '' }];
+  }
+
+  // the other gender's twin of an item: II_ARM_M_… <-> II_ARM_F_… (and _M / _F at the end) when that define exists; else the same item
+  function twinOf(define, toSex, has) {
+    if (!define) return define;
+    const [a, b] = toSex === 1 ? ['_M', '_F'] : ['_F', '_M'];
+    const cands = [define.replace(new RegExp(`${a}_`, 'g'), `${b}_`), define.replace(new RegExp(`${a}$`), b)];
+    for (const c of cands) if (c !== define && has(c)) return c;
+    return define;
+  }
+  // the preset of the other gender = this one, every armor piece swapped for its twin. Replaces that preset when it exists.
+  // -> splices; out.swapped / out.kept: how many items got a twin / stayed the same (the caller shows them)
+  function mirrorPreset(pr, text, b, nameOf, dstOf, has, out = {}) {
+    block(pr, b);
+    const toSex = 1 - b.sex, sections = {};
+    out.swapped = 0; out.kept = 0;
+    for (const name of E().SECTIONS) if (b.sections[name]) sections[name] = b.sections[name].items.map(it => {
+      const sp = specOf(it, nameOf, dstOf);
+      if (sp.raisedPet) { out.kept++; return itemLine(sp); }
+      const tw = twinOf(sp.item, toSex, has);
+      if (tw !== sp.item) out.swapped++; else out.kept++;
+      sp.item = tw;
+      return itemLine(sp);
+    });
+    const eol = T.dominantEol(text), body = blockText(b.cls, toSex, sections, eol);
+    const other = pr.byKey.get(`${b.cls}|${toSex}`);
+    if (other) { block(pr, other); return [{ start: other.header.start, end: other.close.end, insert: body.slice(0, body.length - eol.length) }]; }
+    return [{ start: text.length, end: text.length, insert: leadFor(text, eol) + body }];
+  }
+
+  FRE.equalizedOps = { setOn, setCap, itemLine, specOf, setItem, addItem, removeItem, addPreset, removePreset, blockText, twinOf, mirrorPreset };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- validate/equalized.js ----
+// Equalized PvP checks (task "PvP Events"): EqualizedPvP.inc and EqualizedPresets.inc. The readers are loaders/equalized.js, what a
+// player gets loaders/equalized-sim.js; each check cites the C++ (WORLDSERVER/EqualizedPvP.cpp, ec3657c7).
+(function (FRE) {
+  'use strict';
+  const E = () => FRE.equalized, S = () => FRE.equalizedSim;
+  const EV = 'EqualizedPvP.inc', PR = 'EqualizedPresets.inc';
+
+  function equalizedChecks(eq, opts) {
+    const out = [], ws = opts.ws;
+    if (!eq || !eq.present) return out;
+    const D = ws.defines.defines, items = ws.items.items;
+    const push = (file, code, severity, sp, message, k) => out.push({ module: 'pvp', file, code, severity, start: sp ? sp.start : 0, end: sp ? sp.end : 0, key: `${code}|${k}`, message });
+    // ---- EqualizedPvP.inc: ReadConfig (EqualizedPvP.cpp:121)
+    const ev = eq.events;
+    if (ev.missing) push(PR, 'EQ_NO_EVENTS', 'WARN', null, 'EqualizedPvP.inc not found: the WorldServer keeps every event normal (no class picker, own characters).', 'missing');
+    else if (ev.failed) push(EV, 'EQ_EVENTS_BAD', 'BLOCK', ev.errorAt, `EqualizedPvP.inc: ${ev.error}. /eqreload changes nothing (and at server start every event stays normal).`, ev.error);
+    else for (const e of E().EVENTS) {
+      const x = ev.events[e];
+      if (x.line) x.caps.forEach((cap, c) => {
+        if (x.on && cap === 0) push(EV, 'EQ_CAP_ZERO', 'INFO', x.line.caps[c], `${E().EVENT_LABEL[e]}: ${E().CLASSES[c].label} has a limit of 0, so nobody can pick it (its button is greyed).`, `${e}|${c}`);
+      });
+    }
+    const anyOn = !ev.missing && !ev.failed && E().EVENTS.some(e => ev.events[e].on);
+    // ---- EqualizedPresets.inc: LoadPresetFile + EqPlaceItem
+    const pr = eq.presets;
+    if (pr.missing) { if (anyOn) push(EV, 'EQ_NO_PRESETS', 'WARN', null, 'EqualizedPresets.inc not found: everyone enters naked ("No gear preset for this class yet").', 'missing'); return out; }
+    if (pr.stopped) push(PR, 'EQ_PRESETS_STOP', 'BLOCK', pr.stopped.at, `${pr.stopped.message}. Every preset after this point is missing in the game.`, pr.stopped.message);
+    for (const p of pr.problems) push(PR, 'EQ_PRESET_WORD', 'WARN', p.at, `${p.message} (the server writes it to Server\\error_*.txt).`, `${p.preset.header.start}|${p.message}`);
+    const seen = new Map();
+    for (const b of pr.presets) {
+      const k = `${b.cls}|${b.sex}`, where = `${E().CLASSES[b.cls].label} ${E().SEXES[b.sex].toLowerCase()}`;
+      if (seen.has(k)) push(PR, 'EQ_PRESET_TWICE', 'WARN', seen.get(k).header, `${where} is written twice: the server keeps the later block and drops this one.`, k);
+      seen.set(k, b);
+    }
+    for (const b of pr.byKey.values()) {
+      const where = `${E().CLASSES[b.cls].label} ${E().SEXES[b.sex].toLowerCase()}`;
+      const sim = S().enter(b, { defines: D, items });
+      for (const pl of sim.placed) {
+        const it = pl.item, rec = it.id >= 0 ? items.get(it.id >>> 0) : null, at = it.span, key = `${b.cls}|${b.sex}|${it.span.start}`;
+        if (it.raisedPet !== undefined) {
+          if (pl.why === 'badPet') push(PR, 'EQ_RAISED_PET', 'BLOCK', it.idSpan, `${where}: RAISEDPET "${it.define}" is not a pet kind (PK_TIGER, PK_LION, PK_RABBIT, PK_FOX, PK_DRAGON, PK_GRIFFIN, PK_UNICORN): the server skips it.`, key);
+          else if (pl.why === 'bag' && pl.sec !== 'BAG') push(PR, 'EQ_PET_TWICE', 'WARN', at, `${where} ${pl.sec}: a 2nd raised pet in one set stays in the bag (the switch holds one).`, key);
+          continue;
+        }
+        const nm = rec ? (rec.name || rec.define) : (it.define || String(it.id));
+        if (pl.why === 'unknown') { push(PR, 'EQ_ITEM_UNKNOWN', 'BLOCK', it.idSpan, `${where}: "${it.define || it.id}" is not an item: the server skips it.`, key); continue; }
+        if (pl.why === 'notWearable') { push(PR, 'EQ_ITEM_NOT_WORN', 'BLOCK', at, `${where} ${pl.sec}: ${nm} can't be worn, the server skips it (put it in BAG).`, key); continue; }
+        if (pl.why === 'bag' && pl.sec !== 'BAG') push(PR, 'EQ_PET_TWICE', 'WARN', at, `${where} ${pl.sec}: a 2nd buff pet in one set stays in the bag (the switch holds one).`, key);
+        if (pl.why === 'buffPet' || (pl.why === 'bag' && pl.sec !== 'BAG')) continue;
+        if (pl.why === 'slotTaken') push(PR, 'EQ_SLOT_TWICE', 'WARN', at, `${where} ${pl.sec}: two items for the same slot, ${nm} stays in the bag.`, key);
+        if (pl.sec !== 'BAG') for (const w of S().wearIssues(rec, b.cls, b.sex, D)) push(PR, 'EQ_ITEM_WEAR', 'WARN', at, `${where} ${pl.sec}: ${nm}: ${w}. The player gets it but can't use it.`, `${key}|${w}`);
+        if (it.upgrade < 0 || it.upgrade > 20) push(PR, 'EQ_UPGRADE', 'WARN', at, `${where}: ${nm} UPGRADE ${it.upgrade}: the game's upgrades are 0 - 20 (armor and weapons stop at +10).`, key);
+        if (it.elem && !S().elementOk(rec, D)) push(PR, 'EQ_ELEMENT_PART', 'WARN', at, `${where}: ${nm} has an element, but in the game only a suit or a weapon can have one.`, `${key}|ep`);
+        if (it.elem && (it.elemLv < 0 || it.elemLv > 20)) push(PR, 'EQ_ELEMENT', 'WARN', at, `${where}: ${nm} element level ${it.elemLv}: the game's element levels are 0 - 20.`, key);
+        if (it.cards.length) {
+          const so = S().sockets(rec, D);
+          if (it.cards.length > so.cap) push(PR, 'EQ_CARDS', 'WARN', at, `${where}: ${nm} has ${it.cards.length} ${so.what}s; this item takes ${so.cap ? `at most ${so.cap}` : 'none'}.`, key);
+          it.cards.forEach((c, i) => {
+            const cr = c >= 0 ? items.get(c >>> 0) : null;
+            if (!cr) push(PR, 'EQ_CARD_UNKNOWN', 'WARN', at, `${where}: ${nm} socket ${i + 1} is not an item.`, `${key}|${i}`);
+            else if (so.kind3 !== null && FRE.specItem.get(cr, 'dwItemKind3') !== so.kind3) push(PR, 'EQ_CARD_KIND', 'WARN', at, `${where}: ${nm} socket ${i + 1}: ${cr.name || cr.define} does not fit this item (it takes ${so.what === 'bead' ? 'buff pet beads' : so.cap === 4 ? 'suit cards' : 'weapon / shield cards'}).`, `${key}|${i}`);
+          });
+        }
+      }
+    }
+    if (anyOn) for (let c = 0; c < E().CLASSES.length; c++) for (let x = 0; x < 2; x++) {
+      if (pr.byKey.has(`${c}|${x}`)) continue;
+      const pickable = E().EVENTS.some(e => ev.events[e].on && ev.events[e].caps[c] > 0);
+      if (pickable) push(PR, 'EQ_PRESET_MISSING', 'WARN', null, `No preset for ${E().CLASSES[c].label} ${E().SEXES[x].toLowerCase()}: a player who picks it enters naked.`, `${c}|${x}`);
+    }
+    return out;
+  }
+
+  FRE.equalizedChecks = equalizedChecks;
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- loaders/dungeon.js ----
 // Party dungeons: PartyDungeon.lua (time limit, cooldown, levels, classes, kill-all, the SetMonster list).
 //   The file is real Lua, run by the WorldServer at start: CInstanceDungeonParty::LoadScript (Project.cpp:908)
@@ -14887,12 +15418,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "74+", "when
       // GuildSiegePrize.lua (the siege prizes, PvP events part B 6de6da39). Server files only; the rules boards players read are
       // client-only files in Client/Client (NpcBoard_289 / 290, GuildCombatTEXT_<n>_ENG / _USA: Workspace.setBoardFiles).
       id: 'pvp', label: 'PvP Events',
-      required: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt'], optional: ['GuildSiegePrize.lua'],
-      editable: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt', 'GuildSiegePrize.lua'],
-      client: [], deps: ['GuildSiegePrize.lua', 'client/npcboard_289.inc', 'client/npcboard_290.inc',
+      // + Equalized PvP (loaders/equalized.js): EqualizedPvP.inc (which events are equalized, class caps) and EqualizedPresets.inc (the
+      // shared gear presets), WorldServer only, /eqreload (ec3657c7).
+      required: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt'], optional: ['GuildSiegePrize.lua', 'EqualizedPvP.inc', 'EqualizedPresets.inc', 'propItemEtc.inc', 'propItemEtc.txt.txt'],   // propItemEtc: the set bonuses shown on the presets page (read only)
+      editable: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt', 'GuildSiegePrize.lua', 'EqualizedPvP.inc', 'EqualizedPresets.inc'],
+      client: [], deps: ['GuildSiegePrize.lua', 'EqualizedPvP.inc', 'EqualizedPresets.inc', 'client/npcboard_289.inc', 'client/npcboard_290.inc',
         ...[1, 2, 3, 4, 5, 6].flatMap(n => [`client/guildcombattext_${n}_eng.inc`, `client/guildcombattext_${n}_usa.inc`])],
-      parse(ws) { return FRE.pvp.fromWorkspace(ws); },
-      validate(ws, model) { return FRE.pvpChecks(model, { ws }); },
+      parse(ws) { return Object.assign(FRE.pvp.fromWorkspace(ws), { eq: FRE.equalized.fromWorkspace(ws) }); },
+      validate(ws, model) { return FRE.pvpChecks(model, { ws }).concat(FRE.equalizedChecks(model.eq, { ws })); },
     },
     {
       // Dungeons (loaders/dungeon.js): PartyDungeon.lua (WorldServer only, CInstanceDungeonParty::LoadScript, Project.cpp:908) and
@@ -15488,6 +16021,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "74+", "when
     'ffamanager.inc': { server: RELOAD, client: null, reload: 'ffa', cite: 'Project.cpp:920 ReadConfig; /ffareload FuncTextCmd.cpp:423' },
     'tdmmanager.inc': { server: RELOAD, client: null, reload: 'tdm', cite: 'Project.cpp:923 ReadConfig; /tdmreload FuncTextCmd.cpp:517' },
     'guildcombat.txt': { server: STARTUP, client: null, cite: 'ThreadMng.cpp:293 g_GuildCombatMng.LoadScript' },
+    // Equalized PvP (__FL_EQUALIZED_MODE): which events are equalized + the shared gear presets; /eqreload reads both (ec3657c7)
+    'equalizedpvp.inc': { server: RELOAD, client: null, reload: 'eq', cite: 'EqualizedPvP.cpp:121 CEqualizedPvP::ReadConfig; /eqreload' },
+    'equalizedpresets.inc': { server: RELOAD, client: null, reload: 'eq', cite: 'EqualizedPvP.cpp:~806 LoadPresetFile (after ReadConfig); /eqreload' },
     'guildsiegeprize.lua': { server: STARTUP, client: null, cite: 'eveschool.cpp:3672 LoadPrizes (WorldServer) + databaseserver/Project.cpp:216 LoadScript (DatabaseServer)' },
     // Dungeon task: time limit, cooldown, levels, kill-all (WorldServer only, read once at start; no reload command)
     'partydungeon.lua': { server: STARTUP, client: null, cite: 'Project.cpp:908 CInstanceDungeonParty::LoadScript -> InstanceDungeonBase.cpp:384' },
@@ -15587,6 +16123,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "74+", "when
       const L = k.toUpperCase();
       steps.push({ id: 'reload:' + k, short: `type /${k}reload in game`, text: `In the game, as GM, type /${k}reload while no ${L} runs (it is refused during a run; the chat line says how many start times and the fee it read). Or run Stop Server.bat, then Start Server.bat.` });
     }
+    if (!all.has('servers') && all.has('reload:eq')) steps.push({ id: 'reload:eq', short: 'type /eqreload in game', text: 'In the game, as GM, type /eqreload (the chat line says how many presets and problems it read; a battle already running keeps the players it has). Or run Stop Server.bat, then Start Server.bat.' });
     return { steps, changes: outChanges, notes, built: Object.keys(PATCHES).filter(id => built.has(id)) };
   }
 
@@ -17051,7 +17588,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "74+", "when
 
   // wordStart: each typed word must match the START of a word ("ra" finds "Raised pets", not "Upgrade")
   const esc = w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  function combo({ options, value, placeholder = 'Type to search…', onPick, onNew = null, wordStart = false }) {
+  // keepOpen: a multi-pick list (the search text and the list stay after a pick); isPicked(v): those rows get a ✓
+  function combo({ options, value, placeholder = 'Type to search…', onPick, onNew = null, wordStart = false, keepOpen = false, isPicked = null }) {
     const cur = () => options.find(o => String(o.v) === String(value));
     const input = h('input.combo-input', { type: 'text', placeholder, value: cur() ? cur().label : '', autocomplete: 'off' });
     const list = h('div.combo-list');
@@ -17069,7 +17607,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "74+", "when
       shown.slice(0, MAX).forEach((o, i) => {
         if (o.group && o.group !== group) { group = o.group; list.appendChild(h('div.combo-group', group)); }
         list.appendChild(h('div.combo-opt' + (i === hi ? '.hi' : '') + (String(o.v) === String(value) ? '.sel' : ''),
-          { 'data-i': i, on: { mousedown: e => { e.preventDefault(); pick(o); } } }, o.label));
+          { 'data-i': i, on: { mousedown: e => { e.preventDefault(); pick(o); } } }, (isPicked && isPicked(o.v) ? '✓ ' : '') + o.label));
       });
       if (shown.length > MAX) list.appendChild(h('div.combo-more', `${shown.length - MAX} more: type more letters`));
       if (!shown.length) list.appendChild(h('div.combo-more', 'Nothing matches.'));
@@ -17089,9 +17627,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "74+", "when
     const show = () => { if (list.hidden) watch(true); list.hidden = false; place(); };
     const hide = () => { if (!list.hidden) watch(false); list.hidden = true; };
     function open() { hi = -1; paint(''); show(); input.select(); }
-    function close() { hide(); input.value = cur() ? cur().label : ''; }
+    function close() { hide(); if (!keepOpen) input.value = cur() ? cur().label : ''; }
     function pick(o) {
       if (o.typed !== undefined) { hide(); onNew.pick(o.typed); return; }
+      if (keepOpen) { const q = input.value; onPick(o.v); input.value = q; paint(q); show(); return; }
       value = o.v; close(); onPick(o.v);
     }
     function move(d) {
@@ -23099,6 +23638,725 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "74+", "when
   FRE.ui.weapons = { weaponView, familyView };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- ui/pvp-equalized.js ----
+// Equalized PvP pages inside the PvP Events task (ui/pvp.js calls these):
+//   eventBlock    on the FFA / TDM / Guild Siege page: equalized on / off + the most players of each class (EqualizedPvP.inc)
+//   presetsView   "Equalized presets": the shared gear set of each class + gender (EqualizedPresets.inc): the HP set (worn on entry,
+//                 Quick Switch key 9), the Attack set (key 0; empty slots keep the HP item), the bag; what the player gets
+//                 (loaders/equalized-sim.js); add / copy / remove presets; "Edit item" with upgrade, element, awakes and sockets.
+// Edits: edit/equalized-ops.js, through ui/pvp.js apply() (one undo step each).
+(function (FRE) {
+  'use strict';
+  const { h, fmt, numInput, modal, toast } = FRE.dom;
+  const { diagTags, diagRow } = FRE.ui;
+  const E = () => FRE.equalized, S = () => FRE.equalizedSim, O = () => FRE.equalizedOps;
+  const EVF = 'equalizedpvp.inc', PRF = 'equalizedpresets.inc';
+  const eqOf = ctx => ctx.ws.models.pvp.eq;
+  const can = (ctx, f) => ctx.ws.isEditable(f);
+  const st = { cls: 5, sex: 0, same: true };      // same: every preset edit is copied to the other gender (armor swapped _M_ / _F_)
+  const PV_WORD = { FFA: 'ffa', TDM: 'tdm', GS: 'gs' };
+  const SEC_LABEL = { HP: 'HP set · switch key 9', ATTACK: 'Attack set · switch key 0', BAG: 'Inventory extras (every class)' };
+  const SEC_SHORT = { HP: 'HP set', ATTACK: 'Attack set', BAG: 'inventory' };
+  const SEC_HINT = { HP: 'Worn when the player enters. Key 9 switches back to it.', ATTACK: 'Kept in the inventory; key 0 puts it on. Slots it leaves empty keep the HP piece.',
+    BAG: 'Extras only, no switch: premium items, beads for the buff pets, potions, food, scrolls. (The Attack set and the pets are in the inventory too, but you set them in their slots above.)' };
+
+  const nameOfId = (ws, id) => { const it = id >= 0 ? ws.itemById(id >>> 0) : null; return it ? it.define : String(id); };
+  const dstNameOf = (ws, v) => ws.defines.byValue('DST_', v) || String(v);
+  const PET_KINDS = [['PK_TIGER', 'Tiger'], ['PK_LION', 'Lion'], ['PK_RABBIT', 'Rabbit'], ['PK_FOX', 'Fox'], ['PK_DRAGON', 'Dragon'], ['PK_GRIFFIN', 'Griffin'], ['PK_UNICORN', 'Unicorn']];
+  const itemLabel = (ws, it) => { if (it.raisedPet !== undefined) { const k = PET_KINDS[it.raisedPet]; return `${k ? k[1] : it.define} raised pet (level S)`; } const r = it.id >= 0 ? ws.itemById(it.id >>> 0) : null; return r ? (r.name || r.define) : (it.define || String(it.id)); };
+  const partLabel = (ctx, v) => { const n = ctx.ws.defines.byValue('PARTS_', v); const s = E().SLOTS.find(x => x[0] === n); return s ? s[1] : n || `slot ${v}`; };
+  const elemText = it => (it.elem ? ` ${E().ELEMENTS[it.elem - 1][0]}${E().ELEMENTS[it.elem - 1].slice(1).toLowerCase()} +${it.elemLv}` : '');
+  function itemSummary(ctx, it) {
+    if (it.raisedPet !== undefined) return 'level S, every level at the top bonus, full life';
+    const words = FRE.itemTooltip.dstWords(ctx.ws), parts = [];
+    if (it.upgrade > 0) parts.push(`+${it.upgrade}`);
+    if (it.elem) parts.push(`${elemText(it).trim()} element`);
+    for (const a of it.awakes) { const w = words.get(a.dst); parts.push(`${w ? (w.word || w.define).replace(/[:\s]+$/, '') : dstNameOf(ctx.ws, a.dst)} ${a.adj >= 0 ? '+' : ''}${a.adj}${w && w.rate ? '%' : ''}`); }
+    if (it.cards.length) {                              // same cards grouped: "Cards: 10x Fire Card (A)"
+      const n = new Map();
+      for (const c of it.cards) { const l = itemLabel(ctx.ws, { id: c }); n.set(l, (n.get(l) || 0) + 1); }
+      parts.push(`Cards: ${[...n].map(([l, k]) => `${k}x ${l}`).join(', ')}`);
+    }
+    if (it.count > 1) parts.push(`x${fmt(it.count)}`);
+    return parts.join(' · ');
+  }
+
+  // ---------------------------------------------------------------- FFA / TDM / GS page: on / off + class limits
+  function eventBlock(el, ctx, ev, apply) {
+    const eq = eqOf(ctx);
+    if (!eq || !eq.present) return;
+    const evm = eq.events, x = evm.events[ev], dis = !can(ctx, EVF) || evm.failed;
+    el.appendChild(h('h3', 'Equalized'));
+    el.appendChild(h('p.muted.small', 'When on, players pick a class as they enter and fight as a level 150 Hero / Legend of it, every skill maxed, with the shared gear preset of that class (the Equalized presets page). Their own character comes back when they leave. Stats: players spend the points themselves.'));
+    if (evm.failed) el.appendChild(h('div.banner.bad', `EqualizedPvP.inc: ${evm.error}`));
+    const lbl = E().EVENT_LABEL[ev];
+    const set = (make, label, merge = null) => apply(ctx, EVF, make, label, `pvp|${PV_WORD[ev]}|eq`, merge);
+    const box = h('input', { type: 'checkbox', checked: x.on, disabled: dis, on: { change: e => set(t => O().setOn(evm, t, ev, e.target.checked), `${lbl} equalized ${e.target.checked ? 'on' : 'off'} (was ${x.on ? 'on' : 'off'})`) } });
+    el.appendChild(h('label.small', box, ` ${lbl} is equalized`, x.line ? null : h('span.muted', ' (no line yet: one is added on change)')));
+    const tb = h('table.items.up', h('tr', h('th', 'Class'), h('th', 'Most players'), h('th', '')));
+    E().CLASSES.forEach((c, i) => {
+      const v = x.caps[i], sp = x.line ? x.line.caps[i] : null;
+      tb.appendChild(h('tr', h('td', c.label),
+        h('td', numInput({ value: x.line ? x.line.caps[i].value : v, min: 0, max: 999, key: `pvp|eq|${ev}|${i}`, disabled: dis,
+          onCommit: n => { if (n === null || n === v) return; set(t => O().setCap(evm, t, ev, i, n), `${lbl} ${c.label} limit ${n} (was ${v})`, `pvp|eq|${ev}|${i}`); } }),
+          h('span.muted.small', v >= 99 ? ' no limit' : v === 0 ? ' nobody can pick it' : '')),
+        h('td', sp ? diagTags(FRE.ui.diagsInSpan(ctx.ws, 'EqualizedPvP.inc', sp.start, sp.end)) : null)));
+    });
+    el.appendChild(tb);
+    if (ev !== 'FFA') el.appendChild(h('p.muted.small', `Note: the server reads this switch for ${lbl}, but the ${lbl} side is not wired yet (only FFA uses it so far).`));
+  }
+
+  // ---------------------------------------------------------------- the presets page
+  function presetsView(el, ctx, apply) {
+    const eq = eqOf(ctx), ws = ctx.ws;
+    el.appendChild(h('div.npc-title', h('h2', 'Equalized presets'), h('span.def', ['EqualizedPresets.inc', 'EqualizedPvP.inc'].filter(f => ws.files.has(f.toLowerCase())).join(' · ')),
+      can(ctx, PRF) ? null : h('span.tag.bad', 'read-only')));
+    if (!eq || !eq.present) { el.appendChild(h('p.muted', 'EqualizedPvP.inc / EqualizedPresets.inc are not in this folder.')); return; }
+    const pr = eq.presets;
+    el.appendChild(h('p.muted.small', 'One gear set per class and gender, the same in every equalized event (FFA / TDM / Guild Siege switch it on or off on their own pages). Everyone inside is a level 150 Hero / Legend with every skill maxed and spends their own stat points. The WorldServer reads this file at start and on /eqreload.'));
+    if (pr.stopped) el.appendChild(h('div.banner.bad', `${pr.stopped.message}. Fix it first: the editor does not change the file while it does not load completely.`));
+    // one click: every element on a helmet / gauntlets / boots / shield (only suits and weapons take one) goes
+    const wrongEl = ws.diags.filter(d => d.code === 'EQ_ELEMENT_PART').length;
+    if (wrongEl && can(ctx, PRF) && !pr.stopped) el.appendChild(h('div.banner', `${wrongEl} piece${wrongEl === 1 ? ' has' : 's have'} an element the game can't give (only suits and weapons take one). `,
+      h('button.small', { on: { click: () => apply(ctx, PRF, t => {
+        const D = ws.defines.defines, read = x => E().readPresets({ name: 'EqualizedPresets.inc', text: x }, { defines: D, items: ws.items.items });
+        let text = t;
+        for (let guard = 0; guard < 2000; guard++) {
+          const pr1 = read(text);
+          let hit = null;
+          for (const b1 of pr1.presets) for (const n of E().SECTIONS) (b1.sections[n] ? b1.sections[n].items : []).forEach((it, i) => {
+            if (!hit && it.elem && it.id >= 0 && !S().elementOk(ws.itemById(it.id >>> 0), D)) hit = { b1, n, i, it };
+          });
+          if (!hit) break;
+          const sp = Object.assign(O().specOf(hit.it, id => nameOfId(ws, id), v => dstNameOf(ws, v)), { elem: 0, elemLv: 0 });
+          text = FRE.SourceFile.spliceText(text, O().setItem(pr1, hit.b1, hit.n, hit.i, sp));
+        }
+        return diffSplice(t, text);
+      }, `Equalized presets: ${wrongEl} wrong element${wrongEl === 1 ? '' : 's'} removed`, 'pvp|eq|preset') } }, 'Remove wrong elements (all presets)')));
+    // ---- class x gender grid
+    const grid = h('table.items.up', h('tr', h('th', 'Class'), h('th', 'Male'), h('th', 'Female')));
+    E().CLASSES.forEach((c, ci) => {
+      grid.appendChild(h('tr', h('td', c.label), [0, 1].map(x => {
+        const b = pr.byKey.get(`${ci}|${x}`), sel = st.cls === ci && st.sex === x;
+        const ds = b ? presetDiags(ctx, b) : [];
+        const bad = ds.filter(d => d.severity === 'BLOCK').length, warn = ds.filter(d => d.severity === 'WARN').length;
+        return h('td', h('button.small' + (sel ? '.primary' : ''), { on: { click: () => { st.cls = ci; st.sex = x; ctx.renderAll(false); } } },
+          b ? `${countItems(b)} item${countItems(b) === 1 ? '' : 's'}` : 'missing'),
+          bad ? h('span.tag.bad', '⛔' + bad) : warn ? h('span.tag.warn', '⚠' + warn) : null);
+      })));
+    });
+    el.appendChild(grid);
+    const c = E().CLASSES[st.cls], where = `${c.label} ${E().SEXES[st.sex].toLowerCase()}`;
+    const b = pr.byKey.get(`${st.cls}|${st.sex}`), dis = !can(ctx, PRF) || !!pr.stopped;
+    const nameOf = id => nameOfId(ws, id), dstOf = v => dstNameOf(ws, v);
+    const otherSex = E().SEXES[1 - st.sex].toLowerCase();
+    if (!b) {
+      el.appendChild(h('h3', where));
+      el.appendChild(h('p.muted', 'No preset: a player who picks this class enters naked.'));
+      if (!dis) {
+        const others = [...pr.byKey.values()];
+        let from = '';
+        const pick = h('select', { on: { change: e => { from = e.target.value; } } }, h('option', { value: '' }, 'empty (add items after)'),
+          others.map(o => h('option', { value: `${o.cls}|${o.sex}` }, `copy ${E().CLASSES[o.cls].label} ${E().SEXES[o.sex].toLowerCase()}${o.cls === st.cls ? ' (armor swapped to ' + E().SEXES[st.sex].toLowerCase() + ')' : ''}`)));
+        // the other gender of the same class first: copied with each armor piece swapped for its twin (_M_ / _F_)
+        const twin = pr.byKey.get(`${st.cls}|${1 - st.sex}`);
+        if (twin) { from = `${twin.cls}|${twin.sex}`; pick.value = from; }
+        el.appendChild(h('div', pick, ' ', h('button.primary', { on: { click: () => {
+          const src = from ? pr.byKey.get(from) : null;
+          if (src && src.cls === st.cls) { mirror(ctx, apply, src); return; }
+          apply(ctx, PRF, t => {
+            const t1 = FRE.SourceFile.spliceText(t, O().addPreset(pr, t, st.cls, st.sex, src, nameOf, dstOf));
+            const donor = [...pr.byKey.values()].find(x => x.sections.BAG && x.sections.BAG.items.length);
+            if ((src && src.sections.BAG && src.sections.BAG.items.length) || !donor) return diffSplice(t, t1);
+            const pr1 = E().readPresets({ name: 'EqualizedPresets.inc', text: t1 }, { defines: ws.defines.defines, items: ws.items.items });
+            const specs = donor.sections.BAG.items.map(x => O().specOf(x, nameOf, dstOf));        // the shared inventory extras
+            return diffSplice(t, FRE.SourceFile.spliceText(t1, addMany(pr1, t1, pr1.byKey.get(`${st.cls}|${st.sex}`), 'BAG', specs, ws)));
+          }, `Equalized preset ${where} added${src ? ` (copy of ${E().CLASSES[src.cls].label} ${E().SEXES[src.sex].toLowerCase()})` : ''}`, `pvp|eq|preset`);
+        } } }, '+ Create preset')));
+      }
+      return;
+    }
+    el.appendChild(h('div', { style: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px' }, h('h3', { style: 'margin:0' }, where),
+      h('label.small', { title: 'Each change you make here (add, edit, remove a piece) is also made to the other gender: armor becomes its male / female version. Changes made only on the other gender stay.' },
+        h('input', { type: 'checkbox', checked: st.same, on: { change: e => { st.same = e.target.checked; ctx.renderAll(false); } } }), ' Copy my changes to the other gender'),
+      dis ? null : h('button.small', { title: `Make the ${otherSex} preset the same as this one now; each armor piece becomes its ${otherSex} version (_M_ / _F_)`, on: { click: () => mirror(ctx, apply, b) } },
+        `⇄ Copy to ${otherSex}${pr.byKey.has(`${st.cls}|${1 - st.sex}`) ? ' (replaces it)' : ''}`),
+      dis ? null : h('button.small', { title: 'The HP set becomes the Attack set and the other way round', on: { click: () => presetEdit(ctx, apply, b, { kind: 'swap' }, () => swapSplices(b), `${where}: HP and Attack sets swapped`) } }, '⇄ Swap HP and Attack'),
+      dis ? null : h('button.small', { on: { click: () => apply(ctx, PRF, t => O().removePreset(pr, t, b), `Equalized preset ${where} removed`, 'pvp|eq|preset') } }, '✕ Remove preset')));
+    const sim = S().enter(b, { defines: ws.defines.defines, items: ws.items.items });
+    for (const name of E().SECTIONS) section(el, ctx, b, name, sim, dis, apply);
+    el.appendChild(h('h3', 'Pets'));
+    el.appendChild(h('p.muted.small', 'Each switch set has its own buff pet and raised pet: add them with the buttons of the HP set and the Attack set. Key 9 / 0 swaps the gear and the pets.'));
+    // ---- what the player gets
+    el.appendChild(h('h3', 'What the player gets'));
+    const parts = Object.keys(sim.worn).map(Number).sort((a, z) => a - z);
+    const aparts = Object.keys(sim.attack).map(Number).sort((a, z) => a - z);
+    el.appendChild(h('p.small', `A level ${E().EQ_LEVEL} ${c.label} (Hero / Legend), every skill maxed, 15 in each stat and the rest of the points to spend.`));
+    el.appendChild(h('table.items.up', h('tr', h('th', 'Slot'), h('th', 'Key 9: HP set (worn)'), h('th', 'Key 0: Attack set')),
+      [...new Set([...parts, ...aparts])].sort((a, z) => a - z).map(p => h('tr', h('td', partLabel(ctx, p)),
+        h('td', sim.worn[p] ? sim.worn[p].rec.name || sim.worn[p].rec.define : '—'),
+        h('td', sim.attack[p] ? (sim.attack[p] === sim.worn[p] ? h('span.muted', 'same') : sim.attack[p].rec.name || sim.attack[p].rec.define) : '—')))));
+    const petTxt = n => [sim.buffPet[n] ? `${sim.buffPet[n].rec.name || sim.buffPet[n].rec.define} (buff pet)` : null, sim.raisedPet[n] ? itemLabel(ws, sim.raisedPet[n]) : null].filter(Boolean).join(' + ') || 'no pet';
+    el.appendChild(h('p.small', `Pets: key 9 ${petTxt('HP')}; key 0 ${petTxt('ATTACK')}. The key 9 pets come out on entry.`));
+    const bagOnly = sim.bag.filter(x => !x.worn);
+    el.appendChild(h('p.small', `In the inventory: ${bagOnly.length ? bagOnly.map(x => `${x.rec.name || x.rec.define}${x.count > 1 ? ` x${fmt(x.count)}` : ''}`).join(', ') : 'nothing'}.`));
+  }
+  const countItems = b => E().SECTIONS.reduce((n, s) => n + (b.sections[s] ? b.sections[s].items.length : 0), 0);
+  function presetDiags(ctx, b) {
+    return ctx.ws.diags.filter(d => d.module === 'pvp' && d.file === 'EqualizedPresets.inc' && d.start >= b.header.start && d.start < (b.close ? b.close.end : b.header.end + 1));
+  }
+  // the other gender = this preset with every armor piece swapped for its twin (edit/equalized-ops.js mirrorPreset)
+  function mirror(ctx, apply, src) {
+    const ws = ctx.ws, pr = eqOf(ctx).presets, D = ws.defines.defines, out = {};
+    const has = d => D.has(d) && !!ws.itemById(D.get(d) >>> 0);
+    const to = `${E().CLASSES[src.cls].label} ${E().SEXES[1 - src.sex].toLowerCase()}`;
+    apply(ctx, PRF, t => O().mirrorPreset(pr, t, src, id => nameOfId(ws, id), v => dstNameOf(ws, v), has, out),
+      `Equalized preset ${to} = ${E().SEXES[src.sex].toLowerCase()} set (${out.swapped || 0} piece(s) swapped)`, 'pvp|eq|preset');
+    st.sex = 1 - src.sex;
+    ctx.renderAll(false);
+    toast(`${to}: ${out.swapped} piece(s) swapped to the ${E().SEXES[1 - src.sex].toLowerCase()} version, ${out.kept} kept (weapons, jewelry, potions: the same for both).`);
+  }
+
+  // the HP and Attack sets trade places: only the two section words change
+  function swapSplices(b) {
+    const out = [];
+    if (b.sections.HP) out.push({ start: b.sections.HP.word.start, end: b.sections.HP.word.end, insert: 'ATTACK' });
+    if (b.sections.ATTACK) out.push({ start: b.sections.ATTACK.word.start, end: b.sections.ATTACK.word.end, insert: 'HP' });
+    if (!out.length) throw new Error('Nothing to swap');
+    return out;
+  }
+  // one piece to the other set: removed here, added there with the same settings
+  function moveSplices(pr, t, b, name, i, ws) {
+    const it = b.sections[name].items[i], to = name === 'HP' ? 'ATTACK' : 'HP';
+    const sp = O().specOf(it, id => nameOfId(ws, id), v => dstNameOf(ws, v));
+    const t1 = FRE.SourceFile.spliceText(t, O().removeItem(pr, t, b, name, i));
+    const pr1 = E().readPresets({ name: 'EqualizedPresets.inc', text: t1 }, { defines: ws.defines.defines, items: ws.items.items });
+    const t2 = FRE.SourceFile.spliceText(t1, O().addItem(pr1, t1, pr1.byKey.get(`${b.cls}|${b.sex}`), to, sp));
+    return diffSplice(t, t2);
+  }
+
+  // one preset edit; with "Same set for both genders" on, the SAME change is made to the other gender in the same undo step: the item
+  // at the same place, its armor swapped for the twin (_M_ / _F_). Other differences there stay (edit it to make it its own).
+  // op: { kind: 'set' | 'add' | 'remove', name, i, spec }. No preset for the other gender yet: it is created as a full copy.
+  function presetEdit(ctx, apply, b, op, make, label) {
+    if (!st.same) { apply(ctx, PRF, make, label, 'pvp|eq|preset'); return; }
+    const ws = ctx.ws, D = ws.defines.defines, has = d => D.has(d) && !!ws.itemById(D.get(d) >>> 0);
+    const toSex = 1 - b.sex, nameOf = id => nameOfId(ws, id), dstOf = v => dstNameOf(ws, v);
+    apply(ctx, PRF, t => {
+      const t1 = FRE.SourceFile.spliceText(t, make(t));
+      const pr1 = E().readPresets({ name: 'EqualizedPresets.inc', text: t1 }, { defines: D, items: ws.items.items });
+      const b1 = pr1.byKey.get(`${b.cls}|${b.sex}`), o1 = pr1.byKey.get(`${b.cls}|${toSex}`);
+      if (!b1 || pr1.stopped) return make(t);
+      let s2 = [];
+      if (!o1) s2 = O().mirrorPreset(pr1, t1, b1, nameOf, dstOf, has);
+      else {
+        const sec = o1.sections[op.name], tw = op.spec ? Object.assign({}, op.spec, { item: O().twinOf(op.spec.item, toSex, has) }) : null;
+        if (op.kind === 'swap') s2 = swapSplices(o1);
+        else if (op.kind === 'move') { if (o1.sections[op.name] && o1.sections[op.name].items[op.i]) s2 = moveSplices(pr1, t1, o1, op.name, op.i, ws); }
+        else if (op.kind === 'addMany') { const t3 = FRE.SourceFile.spliceText(t1, addMany(pr1, t1, o1, op.name, op.specs.map(x => Object.assign({}, x, { item: O().twinOf(x.item, toSex, has) })), ws)); s2 = diffSplice(t1, t3); }
+        else if (op.kind === 'add') s2 = O().addItem(pr1, t1, o1, op.name, tw);
+        else if (op.kind === 'set' && sec && sec.items[op.i]) s2 = O().setItem(pr1, o1, op.name, op.i, tw);
+        else if (op.kind === 'set') s2 = O().addItem(pr1, t1, o1, op.name, tw);
+        else if (op.kind === 'remove' && sec && sec.items[op.i]) s2 = O().removeItem(pr1, t1, o1, op.name, op.i);
+      }
+      const t2 = FRE.SourceFile.spliceText(t1, s2);
+      let p = 0, q = 0;
+      while (p < t.length && p < t2.length && t[p] === t2[p]) p++;
+      while (q < t.length - p && q < t2.length - p && t[t.length - 1 - q] === t2[t2.length - 1 - q]) q++;
+      return [{ start: p, end: t.length - q, insert: t2.slice(p, t2.length - q) }];
+    }, `${label} (+ ${E().SEXES[toSex].toLowerCase()} too)`, 'pvp|eq|preset');
+  }
+
+  // the pieces of an armor set by name: …_SUIT_… -> …_HELMET_…, …_GAUNTLET_…, …_BOOTS_… (346 of the 350 suits in defineItem.h)
+  const PIECES = ['HELMET', 'SUIT', 'GAUNTLET', 'BOOTS'];
+  function setPieces(define, has) {
+    const m = /_(HELMET|SUIT|GAUNTLET|BOOTS)(?=_|\d|$)/.exec(define || '');
+    if (!m) return [];
+    return PIECES.map(p => define.slice(0, m.index) + '_' + p + define.slice(m.index + m[0].length)).filter(has);
+  }
+  // several items added in turn (each reads the file again) -> one splice
+  function addMany(pr0, t, b, name, specs, ws) {
+    const D = ws.defines.defines;
+    let text = t;
+    for (const sp of specs) {
+      const pr1 = E().readPresets({ name: 'EqualizedPresets.inc', text }, { defines: D, items: ws.items.items });
+      const b1 = pr1.byKey.get(`${b.cls}|${b.sex}`);
+      text = FRE.SourceFile.spliceText(text, O().addItem(pr1, text, b1, name, sp));
+    }
+    return diffSplice(t, text);
+  }
+  function diffSplice(t, t2) {
+    let p = 0, q = 0;
+    while (p < t.length && p < t2.length && t[p] === t2[p]) p++;
+    while (q < t.length - p && q < t2.length - p && t[t.length - 1 - q] === t2[t2.length - 1 - q]) q++;
+    return [{ start: p, end: t.length - q, insert: t2.slice(p, t2.length - q) }];
+  }
+
+  // the inventory extras are one shared list: an edit is made in every preset. fn(pr1, text, b1, i, it) -> splices for that item
+  // (the item of that preset with the same define), or null to leave it. Every preset is read again after each change.
+  function everyBag(ws, t, define, fn) {
+    const D = ws.defines.defines, read = x => E().readPresets({ name: 'EqualizedPresets.inc', text: x }, { defines: D, items: ws.items.items });
+    let text = t;
+    const keys = [...read(t).byKey.keys()];
+    for (const k of keys) {
+      const pr1 = read(text), b1 = pr1.byKey.get(k);
+      const items = b1 && b1.sections.BAG ? b1.sections.BAG.items : [];
+      const i = items.findIndex(x => (x.define || nameOfId(ws, x.id)) === define);
+      if (i < 0) continue;
+      const sp = fn(pr1, text, b1, i, items[i]);
+      if (sp) text = FRE.SourceFile.spliceText(text, sp);
+    }
+    return diffSplice(t, text);
+  }
+
+  function section(el, ctx, b, name, sim, dis, apply) {
+    const pr = eqOf(ctx).presets, sec = b.sections[name], where = `${E().CLASSES[b.cls].label} ${E().SEXES[b.sex].toLowerCase()}`;
+    const add = (label, mode) => h('button.small', { on: { click: () => itemDialog(ctx, b, name, -1, apply, mode) } }, label);
+    el.appendChild(h('div', { style: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px' }, h('h3', { style: 'margin:0' }, SEC_LABEL[name]),
+      dis || name !== 'BAG' ? null : h('button.small', { on: { click: () => inventoryDialog(ctx, b, apply) } }, '+ Add items'),
+      dis || name !== 'BAG' || !(sec && sec.items.length) ? null : h('button.small', { title: 'Every other preset gets these items with these counts (items it has that this one lacks stay)', on: { click: () => apply(ctx, PRF, t => {
+        const ws = ctx.ws, D = ws.defines.defines, read = x => E().readPresets({ name: 'EqualizedPresets.inc', text: x }, { defines: D, items: ws.items.items });
+        const specs = sec.items.map(x => O().specOf(x, id => nameOfId(ws, id), v => dstNameOf(ws, v)));
+        let text = t;
+        for (const k of [...pr.byKey.keys()]) {
+          if (k === `${b.cls}|${b.sex}`) continue;
+          for (const sp of specs) {
+            const pr1 = read(text), b1 = pr1.byKey.get(k), items = b1.sections.BAG ? b1.sections.BAG.items : [];
+            const j = items.findIndex(y => (y.define || nameOfId(ws, y.id)) === sp.item);
+            text = FRE.SourceFile.spliceText(text, j < 0 ? O().addItem(pr1, text, b1, 'BAG', sp) : O().setItem(pr1, b1, 'BAG', j, sp));
+          }
+        }
+        return diffSplice(t, text);
+      }, `Inventory extras: ${where}'s list copied to every preset`, 'pvp|eq|preset') } }, '⇉ Use this list for every class'),
+      dis || name === 'BAG' ? null : h('button.small', { title: 'The HP set becomes the Attack set and the other way round', on: { click: () => presetEdit(ctx, apply, b, { kind: 'swap' }, () => swapSplices(b), `${where}: HP and Attack sets swapped`) } }, name === 'HP' ? '⇄ Swap with Attack' : '⇄ Swap with HP')));
+    el.appendChild(h('p.muted.small', SEC_HINT[name]));
+    if (name !== 'BAG') { slotGrid(el, ctx, b, name, sim, dis, apply); return; }
+    if (!sec || !sec.items.length) { el.appendChild(h('p.muted.small', 'Empty.')); return; }
+    const tb = h('table.items.up', h('tr', h('th', name === 'BAG' ? '' : 'Slot'), h('th', 'Item'), h('th', 'Details'), h('th', ''), h('th', '')));
+    sec.items.forEach((it, i) => {
+      const pl = sim.placed.find(p => p.item === it);
+      const slot = name === 'BAG' ? '' : pl && pl.why === 'buffPet' ? 'Buff pet' : pl && pl.why === 'raisedPet' ? 'Raised pet' : pl && pl.part !== null && pl.part !== undefined ? partLabel(ctx, pl.part) : '—';
+      tb.appendChild(h('tr', h('td.small', slot, pl && pl.why === 'slotTaken' ? h('div.muted.small', 'slot taken: stays in the inventory') : null),
+        h('td', itemLabel(ctx.ws, it), h('div.muted.small', it.define || '')), h('td.small', itemSummary(ctx, it)),
+        h('td', dis ? null : [it.raisedPet !== undefined ? null : h('button.small', { title: 'Edit this item', on: { click: () => itemDialog(ctx, b, name, i, apply) } }, '✎ Edit'), ' ',
+          h('button.small', { title: 'Remove it from every preset', on: { click: () => apply(ctx, PRF, t => everyBag(ctx.ws, t, it.define || nameOfId(ctx.ws, it.id), (pr1, x, b1, k) => O().removeItem(pr1, x, b1, 'BAG', k)),
+            `Inventory extras (all presets): ${itemLabel(ctx.ws, it)} removed`, 'pvp|eq|preset') } }, '✕')]),
+        h('td', diagTags(FRE.ui.diagsInSpan(ctx.ws, 'EqualizedPresets.inc', it.span.start, it.span.end)))));
+    });
+    el.appendChild(tb);
+  }
+
+  // every slot of a switch set, grouped, always in the same order: what key 9 / key 0 puts on. An empty Attack slot = the HP piece stays.
+  const GROUPS = [
+    ['Weapon & shield', [['PARTS_RWEAPON', 'Weapon'], ['PARTS_SHIELD,PARTS_LWEAPON', 'Shield / left hand']]],
+    ['Armor set', [['PARTS_CAP', 'Helmet'], ['PARTS_UPPER_BODY', 'Suit'], ['PARTS_HAND', 'Gauntlets'], ['PARTS_FOOT', 'Boots']]],
+    ['Jewelry', [['PARTS_NECKLACE1', 'Necklace'], ['PARTS_RING1', 'Ring 1'], ['PARTS_RING2', 'Ring 2'], ['PARTS_EARRING1', 'Earring 1'], ['PARTS_EARRING2', 'Earring 2']]],
+    ['Fashion, cloak & mask', [['PARTS_HAT', 'Hat'], ['PARTS_CLOTH', 'Clothes'], ['PARTS_GLOVE', 'Gloves'], ['PARTS_BOOTS', 'Shoes'], ['PARTS_CLOAK', 'Cloak'], ['PARTS_MASK', 'Mask']]],
+    ['Pets', [['buffPet', 'Buff pet'], ['raisedPet', 'Raised pet']]],
+  ];
+  // an item's own stats in one line: attack or defense, then its dwDestParam bonuses (the tooltip's PutBaseItemOpt part)
+  function statLine(ws, rec) {
+    if (!rec) return '';
+    const g = f => FRE.specItem.get(rec, f), D = ws.defines.defines, words = FRE.itemTooltip.dstWords(ws), out = [];
+    const k2 = g('dwItemKind2'), min = g('dwAbilityMin'), max = g('dwAbilityMax');
+    if ((k2 === D.get('IK2_WEAPON_DIRECT') || k2 === D.get('IK2_WEAPON_MAGIC')) && max > 0) out.push(`Attack ${min}-${max}`);
+    else if (max > 0 && !S().isNull(max)) out.push(`Defense ${min}-${max}`);
+    for (let i = 1; i <= 6; i++) {
+      const dst = g('dwDestParam' + i), adj = g('nAdjParamVal' + i);
+      if (S().isNull(dst) || !dst) continue;
+      const w = words.get(dst);
+      out.push(`${w ? (w.word || w.define).replace(/[:\s]+$/, '') : dst} ${adj >= 0 ? '+' : ''}${adj}${w && w.rate ? '%' : ''}`);
+    }
+    return out.join(' · ');
+  }
+  // the set bonuses a switch set gives (propItemEtc.inc, CSetItem; FRE.sets.itemAvail): pieces worn per set -> the bonuses reached
+  function setEffects(ws, worn) {
+    if (!ws.files.has('propitemetc.inc')) return null;
+    if (!ws._eqSets) ws._eqSets = FRE.sets.fromWorkspace(ws);
+    const words = FRE.itemTooltip.dstWords(ws), count = new Map();
+    for (const x of Object.values(worn)) { const st = ws._eqSets.byItem.get(x.rec.id); if (st) count.set(st, (count.get(st) || 0) + 1); }
+    return [...count].map(([st, n]) => ({ name: st.name || st.nameKey || `set ${st.id}`, n, of: st.elems.length,
+      bonus: FRE.sets.itemAvail(st, n, true).map(([d, a]) => { const w = words.get(d); return `${w ? (w.word || w.define).replace(/[:\s]+$/, '') : d} ${a >= 0 ? '+' : ''}${a}${w && w.rate ? '%' : ''}`; }) }));
+  }
+
+  function slotGrid(el, ctx, b, name, sim, dis, apply) {
+    const ws = ctx.ws, D = ws.defines.defines, pr = eqOf(ctx).presets, sec = b.sections[name];
+    const where = `${E().CLASSES[b.cls].label} ${E().SEXES[b.sex].toLowerCase()}`;
+    const items = sec ? sec.items : [];
+    // what fills each slot: the placed item of this set (EqPlaceItem), a pet, or (Attack only) the HP piece kept on
+    const inSlot = key => {
+      if (key === 'buffPet' || key === 'raisedPet') { const pl = sim.placed.find(p => p.sec === name && p.why === key); return pl ? { it: pl.item } : null; }
+      const part = D.get(key.split(',')[0]);
+      const pl = sim.placed.find(p => p.sec === name && p.why === 'set' && (key.split(',').map(k => D.get(k)).includes(p.part)));
+      if (pl) return { it: pl.item };
+      if (name === 'ATTACK' && sim.worn[part]) return { same: sim.worn[part] };
+      return null;
+    };
+    const groupBtn = { 'Armor set': () => itemDialog(ctx, b, name, -1, apply, 'set'), Jewelry: () => jewelryDialog(ctx, b, name, apply), 'Fashion, cloak & mask': () => fashionDialog(ctx, b, name, apply) };
+    const tb = h('table.items.up');
+    for (const [g, slots] of GROUPS) {
+      tb.appendChild(h('tr', h('th', { colspan: 4, style: 'text-align:left;padding-top:10px' }, g, ' ',
+        !dis && groupBtn[g] ? h('button.small', { on: { click: groupBtn[g] } }, g === 'Armor set' ? '+ whole set' : g === 'Jewelry' ? '+ all jewelry' : '+ whole fashion set') : null)));
+      for (const [key, label] of slots) {
+        const x = inSlot(key), it = x && x.it, i = it ? items.indexOf(it) : -1;
+        const pick = () => (key === 'raisedPet' ? raisedPetDialog(ctx, b, name, apply) : itemDialog(ctx, b, name, -1, apply, key === 'buffPet' ? 'pet' : `part:${key.replace(/PARTS_(RING|EARRING)2/, 'PARTS_$11')}`));
+        tb.appendChild(h('tr', h('td.small', { style: 'padding-left:16px' }, label),
+          h('td', it ? [itemLabel(ws, it), h('div.small', { style: 'color:#ffeaa1' }, statLine(ws, it.id >= 0 ? ws.itemById(it.id >>> 0) : null)), h('div.muted.small', itemSummary(ctx, it))] : x && x.same ? h('span.muted', `same as HP: ${x.same.rec.name || x.same.rec.define}`) : h('span.muted', 'empty')),
+          h('td', dis ? null : it ? [it.raisedPet !== undefined ? null : h('button.small', { on: { click: () => itemDialog(ctx, b, name, i, apply) } }, '✎ Edit'), ' ',
+            h('button.small', { title: `Move this piece to the ${name === 'HP' ? 'Attack' : 'HP'} set`, on: { click: () => presetEdit(ctx, apply, b, { kind: 'move', name, i }, t => moveSplices(pr, t, b, name, i, ws), `${where}: ${itemLabel(ws, it)} moved to the ${name === 'HP' ? 'Attack' : 'HP'} set`) } }, name === 'HP' ? '→ Attack' : '→ HP'), ' ',
+            h('button.small', { title: 'Empty this slot', on: { click: () => presetEdit(ctx, apply, b, { kind: 'remove', name, i }, t => O().removeItem(pr, t, b, name, i), `${where} ${SEC_SHORT[name]}: ${itemLabel(ws, it)} removed`) } }, '✕')]
+            : h('button.small', { on: { click: pick } }, '+ Pick')),
+          h('td', it ? diagTags(FRE.ui.diagsInSpan(ws, 'EqualizedPresets.inc', it.span.start, it.span.end)) : null)));
+      }
+    }
+    el.appendChild(tb);
+    const se = setEffects(ws, name === 'HP' ? sim.worn : sim.attack);
+    if (se) el.appendChild(h('div.small', { style: 'margin:6px 0 4px;padding:6px 10px;border-left:3px solid #01ab19' }, h('b', `Set effects (key ${name === 'HP' ? 9 : 0})`),
+      se.length ? se.map(x => h('div', `${x.name} ${x.n}/${x.of}: `, h('span', { style: 'color:#01ab19' }, x.bonus.length ? x.bonus.join(', ') : 'no bonus yet'))) : h('div.muted', 'no set pieces worn')));
+    const extra = sim.placed.filter(p => p.sec === name && (p.why === 'slotTaken' || p.why === 'bag'));
+    if (extra.length) el.appendChild(h('p.small', h('span.tag.warn', '⚠'), ` Extra pieces: ${extra.map(p => itemLabel(ws, p.item)).join(', ')}. Their slot already has another piece, so they are not worn and the switch skips them (they just sit in the inventory). `,
+      dis ? null : h('button.small', { on: { click: () => apply(ctx, PRF, t => {
+        let text = t;
+        for (const sx of st.same ? [b.sex, 1 - b.sex] : [b.sex]) for (;;) {
+          const pr1 = E().readPresets({ name: 'EqualizedPresets.inc', text }, { defines: D, items: ws.items.items }), b1 = pr1.byKey.get(`${b.cls}|${sx}`);
+          if (!b1) break;
+          const s1 = S().enter(b1, { defines: D, items: ws.items.items });
+          const x = s1.placed.filter(p => p.sec === name && (p.why === 'slotTaken' || (p.why === 'bag' && p.sec !== 'BAG'))).map(p => b1.sections[name].items.indexOf(p.item)).filter(i => i >= 0);
+          if (!x.length) break;
+          text = FRE.SourceFile.spliceText(text, O().removeItem(pr1, text, b1, name, Math.max(...x)));
+        }
+        return diffSplice(t, text);
+      }, `${where} ${SEC_SHORT[name]}: extra pieces removed${st.same ? ' (both genders)' : ''}`, 'pvp|eq|preset') } }, 'Remove the extras')));
+  }
+
+  // ---------------------------------------------------------------- raised pet: a kind, level S (EqPlaceRaisedPet)
+  function raisedPetDialog(ctx, b, name, apply) {
+    const pr = eqOf(ctx).presets, where = `${E().CLASSES[b.cls].label} ${E().SEXES[b.sex].toLowerCase()} ${SEC_SHORT[name]}`;
+    let kind = 'PK_DRAGON';
+    const body = h('div.form', { style: 'display:flex;flex-wrap:wrap;align-items:flex-start' },
+      row('Raised pet', [h('select', { on: { change: e => { kind = e.target.value; } } }, PET_KINDS.map(([d, l]) => h('option', { value: d, selected: d === kind }, l)))],
+        'Level S, every level (D to S) at the top bonus, full life and energy. It comes out with this switch set.'));
+    modal({ title: `Add a raised pet: ${where}`, body, buttons: [{ label: 'Cancel' }, { label: 'Apply changes', cls: 'primary', onClick: () => {
+      const spec = { raisedPet: kind };
+      presetEdit(ctx, apply, b, { kind: 'add', name, spec }, t => O().addItem(pr, t, b, name, spec), `${where}: ${PET_KINDS.find(x => x[0] === kind)[1]} raised pet added`);
+      return true;
+    } }] });
+  }
+
+  // the pieces of a set in some slots (PARTS_ values) are taken out, then `specs` go in: a window's slots replace what was there
+  function replaceSlots(text, cls, sex, name, parts, specs, ws) {
+    const D = ws.defines.defines, read = t => E().readPresets({ name: 'EqualizedPresets.inc', text: t }, { defines: D, items: ws.items.items });
+    for (;;) {
+      const pr1 = read(text), b1 = pr1.byKey.get(`${cls}|${sex}`);
+      if (!b1) return text;
+      const sim = S().enter(b1, { defines: D, items: ws.items.items }), sec = b1.sections[name];
+      const hit = sim.placed.filter(p => p.sec === name && p.part !== null && p.part !== undefined && (parts.includes(p.part) || (p.why === 'slotTaken' && parts.includes(p.part)))).map(p => sec.items.indexOf(p.item)).filter(i => i >= 0);
+      if (!hit.length) break;
+      text = FRE.SourceFile.spliceText(text, O().removeItem(pr1, text, b1, name, Math.max(...hit)));
+    }
+    if (!specs.length) return text;
+    const pr2 = read(text);
+    return FRE.SourceFile.spliceText(text, addMany(pr2, text, pr2.byKey.get(`${cls}|${sex}`), name, specs, ws));
+  }
+  // what a set has in a slot now (define, upgrade) -> prefill of the windows
+  function current(ws, b, name, partName) {
+    const D = ws.defines.defines, sim = S().enter(b, { defines: D, items: ws.items.items });
+    const pl = sim.placed.find(p => p.sec === name && p.why === 'set' && p.part === D.get(partName));
+    return pl ? { item: pl.item.define || nameOfId(ws, pl.item.id), upgrade: pl.item.upgrade } : null;
+  }
+
+  // ---------------------------------------------------------------- jewelry: necklace + 2 rings + 2 earrings in one go
+  function jewelryDialog(ctx, b, name, apply) {
+    const ws = ctx.ws, D = ws.defines.defines, pr = eqOf(ctx).presets;
+    const where = `${E().CLASSES[b.cls].label} ${E().SEXES[b.sex].toLowerCase()} ${SEC_SHORT[name]}`;
+    const kinds = [['PARTS_NECKLACE1', 'Necklace', 1], ['PARTS_RING1', 'Rings (both slots)', 2], ['PARTS_EARRING1', 'Earrings (both slots)', 2]];
+    const pick = kinds.map(([part]) => { const c = current(ws, b, name, part); return c ? { item: c.item, upgrade: c.upgrade } : { item: '', upgrade: 20 }; });
+    const start = JSON.stringify(pick);
+    const opts = kinds.map(([part]) => itemOptions(ctx, b, name).filter(o => FRE.specItem.get(ws.itemById(D.get(o.v) >>> 0), 'dwParts') === D.get(part)));
+    const body = h('div.form', { style: 'display:flex;flex-wrap:wrap;align-items:flex-start' });
+    // one piece picked -> the other pieces of its jewelry set (propItemEtc.inc) fill the empty rows
+    const fillFromSet = v => {
+      if (!ws.files.has('propitemetc.inc')) return;
+      if (!ws._eqSets) ws._eqSets = FRE.sets.fromWorkspace(ws);
+      const st = ws._eqSets.byItem.get(D.get(v) >>> 0);
+      if (!st) return;
+      for (const e of st.elems) {
+        const r = ws.itemById(e.id >>> 0), p = r ? FRE.specItem.get(r, 'dwParts') : null;
+        const k = kinds.findIndex(([part]) => D.get(part) === p || (part === 'PARTS_RING1' && p === D.get('PARTS_RING2')) || (part === 'PARTS_EARRING1' && p === D.get('PARTS_EARRING2')));
+        if (k >= 0 && !pick[k].item && r) pick[k].item = r.define;
+      }
+    };
+    function paintJ() {
+      body.textContent = '';
+      kinds.forEach(([, label], k) => {
+        body.appendChild(row(label, [h('div', { style: 'flex:1;min-width:320px' }, FRE.ui.combo({ options: opts[k], value: pick[k].item, placeholder: 'none', onPick: v => { pick[k].item = v; fillFromSet(v); paintJ(); } })),
+          pick[k].item ? h('button.small', { on: { click: () => { pick[k].item = ''; paintJ(); } } }, '✕') : null], k === 0 ? 'Pick any piece: the rest of its jewelry set fills in.' : null, true));
+        body.appendChild(row(`${label.split(' ')[0]} upgrade`, [h('span', '+'), numInput({ value: pick[k].upgrade, min: 0, max: 20, onCommit: v => { pick[k].upgrade = v || 0; } })], 'max +20'));
+      });
+    }
+    paintJ();
+    modal({ title: `Jewelry: ${where}`, body, wide: true, buttons: [{ label: 'Cancel' }, { label: 'Apply changes', cls: 'primary', onClick: () => {
+      const specs = [];
+      kinds.forEach(([, , n], k) => { if (pick[k].item) for (let j = 0; j < n; j++) specs.push({ item: pick[k].item, upgrade: pick[k].upgrade, elem: 0, elemLv: 0, awakes: [], cards: [], count: 1 }); });
+      if (JSON.stringify(pick) === start) return true;            // nothing changed
+      const parts = ['PARTS_NECKLACE1', 'PARTS_RING1', 'PARTS_RING2', 'PARTS_EARRING1', 'PARTS_EARRING2'].map(x => D.get(x));
+      apply(ctx, PRF, t => {
+        let text = replaceSlots(t, b.cls, b.sex, name, parts, specs, ws);
+        if (st.same) { const has = d => D.has(d) && !!ws.itemById(D.get(d) >>> 0); text = replaceSlots(text, b.cls, 1 - b.sex, name, parts, specs.map(x => Object.assign({}, x, { item: O().twinOf(x.item, 1 - b.sex, has) })), ws); }
+        return diffSplice(t, text);
+      }, `${where}: jewelry set (${specs.length} piece${specs.length === 1 ? '' : 's'})${st.same ? ` (+ ${E().SEXES[1 - b.sex].toLowerCase()} too)` : ''}`, 'pvp|eq|preset');
+      return true;
+    } }] });
+  }
+
+  // ---------------------------------------------------------------- inventory extras: several items at once, an amount each
+  function inventoryDialog(ctx, b, apply) {
+    const ws = ctx.ws, D = ws.defines.defines, pr = eqOf(ctx).presets;
+    const where = `${E().CLASSES[b.cls].label} ${E().SEXES[b.sex].toLowerCase()}`;
+    const rows = [];               // { item, count }
+    let all = 1;
+    const packOf = d => { const r = ws.itemById(D.get(d) >>> 0); return Math.max(1, r ? FRE.specItem.get(r, 'dwPackMax') || 1 : 1); };
+    const body = h('div.form', { style: 'display:flex;flex-wrap:wrap;align-items:flex-start' });
+    // the picker is made once: it keeps the search and stays open while rows are added (picking a row again takes it out)
+    const picker = row('Add items', [h('div', { style: 'flex:1;min-width:320px' }, FRE.ui.combo({ options: itemOptions(ctx, b, 'BAG', null), value: '', keepOpen: true,
+      isPicked: v => rows.some(r => r.item === v), placeholder: 'Premium items, beads, potions, food, scrolls… type, then click as many as you want',
+      onPick: v => { const k = rows.findIndex(r => r.item === v); if (k >= 0) rows.splice(k, 1); else rows.push({ item: v, count: Math.min(all, packOf(v)) }); paintI(); } }))],
+      'The list stays open: click every item you want (click again to take it out). ✓ = in the list.', true);
+    const rest = h('div', { style: 'display:flex;flex-wrap:wrap;align-items:flex-start;flex-basis:100%' });
+    body.appendChild(picker); body.appendChild(rest);
+    function paintI() {
+      const body = rest;
+      body.textContent = '';
+      body.appendChild(row('Count for all', [numInput({ value: all, min: 1, max: 32767, onCommit: v => { all = v || 1; } }),
+        h('button.small', { on: { click: () => { rows.forEach(r => { r.count = Math.min(all, packOf(r.item)); }); paintI(); } } }, 'Set all')], 'Each item is capped at its stack size.'));
+      if (!rows.length) body.appendChild(h('p.muted.small', { style: 'flex-basis:100%' }, 'No item picked yet.'));
+      rows.forEach((r, k) => body.appendChild(row(itemLabel(ws, { id: D.get(r.item), define: r.item }), [numInput({ value: r.count, min: 1, max: packOf(r.item), onCommit: v => { r.count = v || 1; } }),
+        h('span.muted.small', `of ${fmt(packOf(r.item))}`), h('button.small', { title: 'Take it out of the list', on: { click: () => { rows.splice(k, 1); paintI(); } } }, '✕')], null, true)));
+    }
+    paintI();
+    modal({ title: 'Add items to the inventory (every class, male and female)', body, wide: true, buttons: [{ label: 'Cancel' }, { label: 'Apply changes', cls: 'primary', onClick: () => {
+      if (!rows.length) { toast('Pick at least one item', 'bad'); return false; }
+      const specs = rows.map(r => ({ item: r.item, upgrade: 0, elem: 0, elemLv: 0, awakes: [], cards: [], count: r.count }));
+      const label = `Inventory extras (all presets): ${specs.length} item${specs.length === 1 ? '' : 's'} added`;
+      apply(ctx, PRF, t => {
+        let text = t;
+        for (const k of [...pr.byKey.keys()]) {
+          const pr1 = E().readPresets({ name: 'EqualizedPresets.inc', text }, { defines: D, items: ws.items.items });
+          const b1 = pr1.byKey.get(k);
+          if (!b1) continue;
+          const have = new Set((b1.sections.BAG ? b1.sections.BAG.items : []).map(x => x.define || nameOfId(ws, x.id)));
+          const add = specs.filter(x => !have.has(x.item));
+          if (add.length) text = FRE.SourceFile.spliceText(text, addMany(pr1, text, b1, 'BAG', add, ws));
+          for (const x of specs.filter(x => have.has(x.item))) {    // already there: the new count
+            const pr2 = E().readPresets({ name: 'EqualizedPresets.inc', text }, { defines: D, items: ws.items.items }), b2 = pr2.byKey.get(k);
+            const j = b2.sections.BAG.items.findIndex(y => (y.define || nameOfId(ws, y.id)) === x.item);
+            text = FRE.SourceFile.spliceText(text, O().setItem(pr2, b2, 'BAG', j, Object.assign(O().specOf(b2.sections.BAG.items[j], id => nameOfId(ws, id), v => dstNameOf(ws, v)), { count: x.count })));
+          }
+        }
+        return diffSplice(t, text);
+      }, label, 'pvp|eq|preset');
+      return true;
+    } }] });
+  }
+
+  // ---------------------------------------------------------------- fashion: hat, clothes, gloves, shoes, cloak, mask; for this preset or every preset
+  function fashionDialog(ctx, b, name, apply) {
+    const ws = ctx.ws, D = ws.defines.defines, pr = eqOf(ctx).presets, has = d => D.has(d) && !!ws.itemById(D.get(d) >>> 0);
+    const where = `${E().CLASSES[b.cls].label} ${E().SEXES[b.sex].toLowerCase()} ${SEC_SHORT[name]}`;
+    const kinds = [['PARTS_HAT', 'Hat'], ['PARTS_CLOTH', 'Clothes'], ['PARTS_GLOVE', 'Gloves'], ['PARTS_BOOTS', 'Shoes'], ['PARTS_CLOAK', 'Cloak'], ['PARTS_MASK', 'Mask']];
+    const pick = kinds.map(([part]) => { const c = current(ws, b, name, part); return c ? c.item : ''; });
+    const start = pick.slice();
+    let all = true;
+    const opts = kinds.map(([part]) => itemOptions(ctx, b, name).filter(o => FRE.specItem.get(ws.itemById(D.get(o.v) >>> 0), 'dwParts') === D.get(part)));
+    const body = h('div.form', { style: 'display:flex;flex-wrap:wrap;align-items:flex-start' });
+    // one piece picked -> the rest of its fashion set in the empty slots: same define before HAT / SUIT / GLOVES / SHOES / CLOAK …
+    const baseOf = d => (d || '').replace(/(HAT|HELMET|CAP|SUIT|CLOTHES|CLOTH|COAT|GLOVES|GLOVE|GAUNTLET|SHOES|SHOE|BOOTS|CLOAK|MASK)\d*$/, '');
+    function paintF() {
+      body.textContent = '';
+      kinds.forEach(([, label], k) => body.appendChild(row(label, [h('div', { style: 'flex:1;min-width:320px' }, FRE.ui.combo({ options: opts[k], value: pick[k], placeholder: 'none', onPick: v => {
+        pick[k] = v;
+        const base = baseOf(v);
+        if (base && base !== v) kinds.forEach((x, j) => { if (!pick[j]) { const o = opts[j].find(op => baseOf(op.v) === base); if (o) pick[j] = o.v; } });
+        paintF();
+      } })), pick[k] ? h('button.small', { title: 'Leave this slot empty', on: { click: () => { pick[k] = ''; paintF(); } } }, '✕') : null], null, true)));
+      body.appendChild(row('Who gets it', [h('label', h('input', { type: 'checkbox', checked: all, on: { change: e => { all = e.target.checked; } } }), ' Put it in every preset (all classes, male and female)')],
+        'Shows what this set wears now; a change here replaces that piece. Pick any piece and the rest of its fashion set fills the empty slots. Each gender gets its own version (_M_ / _F_).', true));
+    }
+    paintF();
+    modal({ title: `Fashion, cloak & mask: ${where}`, body, wide: true, buttons: [{ label: 'Cancel' }, { label: 'Apply changes', cls: 'primary', onClick: () => {
+      const changed = kinds.map((k, j) => j).filter(j => pick[j] !== start[j] || (all && pick[j]));
+      if (!changed.length) return true;
+      const parts = changed.map(j => D.get(kinds[j][0])), items = changed.map(j => pick[j]).filter(Boolean);
+      const targets = all ? [...pr.byKey.values()] : st.same ? [b, { cls: b.cls, sex: 1 - b.sex }] : [b];
+      apply(ctx, PRF, t => {
+        let text = t;
+        for (const tb of targets) text = replaceSlots(text, tb.cls, tb.sex, name, parts, items.map(d => ({ item: O().twinOf(d, tb.sex, has), upgrade: 0, elem: 0, elemLv: 0, awakes: [], cards: [], count: 1 })), ws);
+        return diffSplice(t, text);
+      }, `${all ? 'Every preset' : where}: fashion, cloak & mask set (${items.length} piece${items.length === 1 ? '' : 's'})`, 'pvp|eq|preset');
+      return true;
+    } }] });
+  }
+
+  // ---------------------------------------------------------------- Edit item
+  const isBuffPet = (rec, D) => FRE.specItem.get(rec, 'dwItemKind3') === D.get('IK3_PET') && FRE.specItem.get(rec, 'dwReferStat1') === D.get('PET_VIS');
+  function itemOptions(ctx, b, name, mode) {
+    const ws = ctx.ws, D = ws.defines.defines, key = `_eqOpts|${mode === 'pet' ? 'pet' : name === 'BAG' ? 'bag' : `${b.cls}|${b.sex}`}`;
+    if (mode && mode.startsWith('part:')) {            // one slot of the switch-set grid: only pieces for that slot
+      const want = mode.slice(5).split(',').map(x => D.get(x));
+      // Slayer's left hand: a 2nd one-handed weapon too (EqPlaceItem moves it there; MoverEquip.cpp:528)
+      const dual = b.cls === 0 && want.includes(D.get('PARTS_LWEAPON'));
+      return itemOptions(ctx, b, name, null).filter(o => { const r = ws.itemById(D.get(o.v) >>> 0), p = FRE.specItem.get(r, 'dwParts');
+        return want.includes(p) || (dual && p === D.get('PARTS_RWEAPON') && FRE.specItem.get(r, 'dwHanded') === D.get('HD_ONE') && r.define !== 'II_WEA_KNU_ISHOFIST'); });
+    }
+    if (mode === 'set') {                              // "Add a set": one line per armor set (its suit), level 105-130 sets only
+      const suit = D.get('PARTS_UPPER_BODY');
+      return itemOptions(ctx, b, name, null).filter(o => { const r = ws.itemById(D.get(o.v) >>> 0), lv = FRE.specItem.get(r, 'dwLimitLevel1');
+        return FRE.specItem.get(r, 'dwParts') === suit && lv >= 105 && lv <= 130; });
+    }
+    if (ws[key]) return ws[key];
+    const out = [];
+    for (const rec of ws.items.items.values()) {
+      if (mode === 'pet') { if (!isBuffPet(rec, D)) continue; }
+      else if (name === 'BAG') {                          // Inventory = the extras only: no gear (it goes in the switch slots), no pets
+        if (!S().isNull(FRE.specItem.get(rec, 'dwParts'))) continue;
+        const k3 = FRE.specItem.get(rec, 'dwItemKind3');
+        if (k3 === D.get('IK3_PET') || k3 === D.get('IK3_EGG')) continue;
+      }
+      else {
+        if (S().isNull(FRE.specItem.get(rec, 'dwParts'))) continue;
+        if (S().wearIssues(rec, b.cls, b.sex, D).length) continue;
+      }
+      const info = ws.itemInfo(rec);
+      out.push({ v: rec.define, label: `${info.name} (${rec.define})`, find: `${rec.define} ${(info.name || '').replace(/\s+/g, '')}` });
+    }
+    out.sort((a, z) => a.label.localeCompare(z.label));
+    return (ws[key] = out);
+  }
+  function cardOptions(ctx, kind3) {
+    const ws = ctx.ws, key = `_eqCards|${kind3}`;
+    if (ws[key]) return ws[key];
+    const out = [];
+    for (const rec of ws.items.items.values()) if (FRE.specItem.get(rec, 'dwItemKind3') === kind3) out.push({ v: rec.define, label: `${rec.name || rec.define} (${rec.define})`, find: `${rec.define} ${(rec.name || '').replace(/\s+/g, '')}` });
+    out.sort((a, z) => a.label.localeCompare(z.label));
+    return (ws[key] = out);
+  }
+  function dstOptions(ctx) {
+    const words = FRE.itemTooltip.dstWords(ctx.ws), out = [];
+    for (const [v, w] of words) out.push({ v: w.define, label: `${(w.word || '').replace(/[:\s]+$/, '') || w.define}${w.rate ? ' (%)' : ''} — ${w.define}`, find: `${w.word} ${w.define}`, n: v });
+    return out.sort((a, z) => a.label.localeCompare(z.label));
+  }
+
+  // one form field: a label above, the controls, a grey hint under. Short fields sit side by side; wide = a whole row (pickers).
+  const row = (label, fields, hint, wide = false) => h('div', { style: `display:flex;flex-direction:column;gap:4px;margin:0 22px 12px 0;${wide ? 'flex-basis:100%' : ''}` },
+    h('b.small', label), h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' }, fields), hint ? h('div.muted.small', hint) : null);
+
+  // the most a piece takes: jewelry +20; weapons, shields, armor +10 and an element (0-20); fashion, cloak, mask, pets nothing
+  function limitsOf(ws, rec) {
+    if (!rec) return { up: 10, elem: true };
+    const D = ws.defines.defines, p = FRE.specItem.get(rec, 'dwParts');
+    const is = (...n) => n.some(x => D.get(x) === p);
+    if (is('PARTS_NECKLACE1', 'PARTS_RING1', 'PARTS_RING2', 'PARTS_EARRING1', 'PARTS_EARRING2')) return { up: 20, elem: false };
+    // an element only on a suit or a weapon (CItemElem::IsEleRefineryAble, Item.cpp:403)
+    if (FRE.equalizedSim.elementOk(rec, D)) return { up: 10, elem: true };
+    if (is('PARTS_SHIELD', 'PARTS_CAP', 'PARTS_HAND', 'PARTS_FOOT')) return { up: 10, elem: false };
+    return { up: 0, elem: false };
+  }
+
+  function itemDialog(ctx, b, name, i, apply, mode = null) {
+    const ws = ctx.ws, D = ws.defines.defines, pr = eqOf(ctx).presets;
+    const it = i >= 0 ? b.sections[name].items[i] : null;
+    const spec = it ? O().specOf(it, id => nameOfId(ws, id), v => dstNameOf(ws, v)) : { item: '', upgrade: 0, elem: 1, elemLv: 20, awakes: [], cards: [], count: 1, suitCard: '' };   // new: Fire 20 by default
+    while (spec.awakes.length < 3) spec.awakes.push({ dst: '', adj: 0 });
+    const where = `${E().CLASSES[b.cls].label} ${E().SEXES[b.sex].toLowerCase()} ${SEC_SHORT[name]}`;
+    const body = h('div.form', { style: 'display:flex;flex-wrap:wrap;align-items:flex-start' });
+    const recOf = () => (spec.item && D.has(spec.item) ? ws.itemById(D.get(spec.item) >>> 0) : null);
+    st.mixCards = false;
+    function paint() {
+      body.textContent = '';
+      const rec = recOf(), pet = mode === 'pet' || (rec && isBuffPet(rec, D));
+      body.appendChild(row(pet ? 'Buff pet' : 'Item', [h('div', { style: 'flex:1;min-width:320px' }, FRE.ui.combo({ options: itemOptions(ctx, b, name, mode), value: spec.item,
+        placeholder: mode === 'pet' ? 'Pick a buff pet…' : name === 'BAG' ? 'Premium items, beads, potions, food, scrolls…' : 'Pieces this class + gender can wear at level 150…', onPick: v => { spec.item = v; if (!it) { const lim = limitsOf(ws, recOf()), so0 = recOf() ? S().sockets(recOf(), D) : { cap: 0 }; spec.cards = so0.what === 'card' ? new Array(so0.cap).fill('') : []; spec.upgrade = lim.up; if (!lim.elem) { spec.elem = 0; spec.elemLv = 0; } else if (!spec.elem) { spec.elem = 1; spec.elemLv = 20; } } paint(); } }))],
+        mode === 'set' ? (() => { const ps = setPieces(spec.item, d => D.has(d) && !!ws.itemById(D.get(d) >>> 0)); return spec.item ? (ps.length > 1 ? `Adds the whole set: ${ps.map(d => itemLabel(ws, { id: D.get(d), define: d })).join(', ')}. They all get the + and element below; awakes and cards go on the piece you picked.` : 'Not a helmet / suit / gauntlets / boots set piece: only this item is added.') : 'Pick a set (level 105-130 sets, listed by their suit).'; })() :
+        mode === 'pet' ? 'Buff pets only. Pick its beads below.' : name === 'BAG' ? 'Extras only: premium items, beads, potions, food, scrolls. Gear and pets go in the switch-set slots above.' : 'Only pieces a level 150 Hero / Legend of this class and gender can wear are listed.', true));
+      if (rec) {
+        const tip = FRE.itemTooltip.build(ws, rec).game.filter(l => l.some(x => x.text));
+        body.appendChild(h('div.small', { style: 'flex-basis:100%;background:rgba(0,0,0,.35);border-radius:6px;padding:8px 10px;margin-bottom:12px;max-height:220px;overflow:auto' },
+          tip.map(l => h('div', l.map(x => h('span', { style: `color:${x.color || '#fff'};${x.bold ? 'font-weight:600' : ''}` }, x.text))))));
+      }
+      const wearable = rec && !S().isNull(FRE.specItem.get(rec, 'dwParts'));
+      if (!pet && (name !== 'BAG' || wearable)) {
+        const lim = limitsOf(ws, rec);
+        if (lim.up) body.appendChild(row('Upgrade', [h('span', '+'), numInput({ value: Math.min(spec.upgrade, lim.up), min: 0, max: lim.up, onCommit: v => { spec.upgrade = v || 0; } })], `max +${lim.up}`));
+        if (lim.elem) body.appendChild(row('Element', [h('select', { on: { change: e => { const was = spec.elem; spec.elem = +e.target.value; if (spec.elem && !was) spec.elemLv = 20; paint(); } } },
+          h('option', { value: 0, selected: !spec.elem }, 'none'), E().ELEMENTS.map((w, k) => h('option', { value: k + 1, selected: spec.elem === k + 1 }, w[0] + w.slice(1).toLowerCase()))),
+          spec.elem ? [h('span', 'level'), numInput({ value: spec.elemLv, min: 0, max: 20, onCommit: v => { spec.elemLv = v || 0; } })] : null], spec.elem ? 'max level 20' : null));
+        const dsts = dstOptions(ctx);
+        spec.awakes.forEach((a, k) => body.appendChild(row(`Awake ${k + 1}`, [h('div', { style: 'flex:1;min-width:260px' }, FRE.ui.combo({ options: dsts, value: a.dst, placeholder: 'no awake', onPick: v => { a.dst = v; paint(); } })),
+          a.dst ? [h('span', 'value'), numInput({ value: a.adj, min: -99999, max: 99999, onCommit: v => { a.adj = v || 0; } }), h('button.small', { title: 'No awake here', on: { click: () => { a.dst = ''; a.adj = 0; paint(); } } }, '✕')] : null], null, true)));
+      }
+      if (mode === 'set') {
+        body.appendChild(row('Suit cards (4 sockets)', [h('div', { style: 'flex:1;min-width:320px' }, FRE.ui.combo({ options: cardOptions(ctx, D.get('IK3_SOCKETCARD')), value: spec.suitCard, placeholder: 'no cards', onPick: v => { spec.suitCard = v; } }))],
+          'The suit of the set gets 4 sockets with this card, whichever piece you picked above.', true));
+      }
+      const so = mode === 'set' ? { cap: 0 } : rec ? S().sockets(rec, D) : { cap: 0 };
+      if (pet && name !== 'BAG' && !spec.cards.length) body.appendChild(row('Beads', [h('span', 'all 9 bead slots open')], 'Players put the beads in themselves: add the beads to the Inventory list.', true));
+      else if (so.cap) {
+        const word = so.what === 'bead' ? 'Bead' : 'Socket';
+        body.appendChild(row(so.what === 'bead' ? 'Beads' : 'Sockets', [numInput({ value: spec.cards.length, min: 0, max: so.cap, onCommit: v => { const n = v || 0; while (spec.cards.length < n) spec.cards.push(spec.cards.length ? spec.cards[spec.cards.length - 1] : ''); spec.cards.length = n; paint(); } }), h('span.muted', `of ${so.cap}`)],
+          so.what === 'bead' ? 'How many beads the pet has; pick each one below.' : 'How many sockets the item has; pick the card in each below.', true));
+        const opts = cardOptions(ctx, so.kind3);
+        // one card for every socket (the usual: "all Fire"); "different cards" opens one picker per socket
+        const mixed = st.mixCards || new Set(spec.cards.filter(Boolean)).size > 1;
+        if (!mixed && spec.cards.length) body.appendChild(row(so.what === 'bead' ? 'Bead (every slot)' : 'Card (every socket)', [h('div', { style: 'flex:1;min-width:320px' },
+          FRE.ui.combo({ options: opts, value: spec.cards[0], placeholder: `Pick a ${so.what}…`, onPick: v => { spec.cards.fill(v); } })),
+          h('button.small', { title: `Pick a different ${so.what} for each ${word.toLowerCase()}`, on: { click: () => { st.mixCards = true; paint(); } } }, `different ${so.what}s…`)], null, true));
+        if (mixed) spec.cards.forEach((cd, k) => body.appendChild(row(`${word} ${k + 1}`, [h('div', { style: 'flex:1;min-width:320px' }, FRE.ui.combo({ options: opts, value: cd, placeholder: `Pick a ${so.what}…`, onPick: v => { spec.cards[k] = v; } })),
+          k === 0 ? h('button.small', { title: `Put this ${so.what} in every ${word.toLowerCase()}`, on: { click: () => { if (spec.cards[0]) { spec.cards.fill(spec.cards[0]); st.mixCards = false; paint(); } } } }, `same ${so.what} in all`) : null], null, true)));
+      } else if (rec && !pet && (name !== 'BAG' || wearable)) body.appendChild(row('Sockets', [h('span.muted', 'none: this item has no sockets')]));
+      if (name === 'BAG' && !pet) {
+        const pack = rec ? FRE.specItem.get(rec, 'dwPackMax') : 0;
+        body.appendChild(row('Count', [numInput({ value: spec.count, min: 1, max: Math.max(1, pack || 1), onCommit: v => { spec.count = v || 1; } })], `stacks up to ${fmt(pack || 1)}`));
+      }
+    }
+    paint();
+    const label = it ? `${where}: ${itemLabel(ws, it)} changed` : `${where}: ${mode === 'pet' ? 'buff pet' : 'item'} added`;
+    modal({ title: it ? `Edit item: ${itemLabel(ws, it)}` : mode === 'set' ? `Add a set: ${where}` : mode === 'pet' ? `Add a buff pet: ${where}` : `Add an item: ${where}`, body, wide: true, buttons: [{ label: 'Cancel' },
+      { label: 'Apply changes', cls: 'primary', onClick: () => {
+        const out = Object.assign({}, spec, { awakes: spec.awakes.filter(a => a.dst), cards: spec.cards.filter(Boolean) });
+        if (!out.item) { toast('Pick an item first', 'bad'); return false; }
+        if (spec.cards.every(c => !c)) spec.cards = [];      // sockets left without a card: the item gets no sockets
+        if (spec.cards.some(c => !c)) { toast(`Every socket needs a card (${spec.cards.filter(c => !c).length} empty): pick them, or lower the number of sockets`, 'bad'); return false; }
+        try { O().itemLine(out); } catch (e) { toast(e.message, 'bad'); return false; }
+        if (mode === 'set' && !it) {
+          const has = d => D.has(d) && !!ws.itemById(D.get(d) >>> 0);
+          const taken = new Set((b.sections[name] ? b.sections[name].items : []).map(x => x.define));
+          const elemOf = d => S().elementOk(ws.itemById(D.get(d) >>> 0), D);          // the element only goes on the suit
+          const fire = out.elem || 1, fireLv = out.elem ? out.elemLv : 20;
+          const specs = setPieces(out.item, has).filter(d => d === out.item || !taken.has(d)).map(d => Object.assign(d === out.item ? Object.assign({}, out, { cards: [] }) : { item: d, upgrade: out.upgrade, awakes: [], cards: [], count: 1 },
+            elemOf(d) ? { elem: fire, elemLv: fireLv } : { elem: 0, elemLv: 0 }));
+          const suit = specs.find(x => /_SUIT(?=_|\d|$)/.test(x.item));
+          if (suit && spec.suitCard) suit.cards = [spec.suitCard, spec.suitCard, spec.suitCard, spec.suitCard];
+          if (!specs.length) specs.push(out);
+          const parts = specs.map(x => FRE.specItem.get(ws.itemById(D.get(x.item) >>> 0), 'dwParts'));
+          apply(ctx, PRF, t => {
+            let text = replaceSlots(t, b.cls, b.sex, name, parts, specs, ws);
+            if (st.same) text = replaceSlots(text, b.cls, 1 - b.sex, name, parts, specs.map(x => Object.assign({}, x, { item: O().twinOf(x.item, 1 - b.sex, has) })), ws);
+            return diffSplice(t, text);
+          }, `${where}: set (${specs.length} piece${specs.length === 1 ? '' : 's'})${st.same ? ` (+ ${E().SEXES[1 - b.sex].toLowerCase()} too)` : ''}`, 'pvp|eq|preset');
+          return true;
+        }
+        if (name === 'BAG' && it) {                 // the shared inventory: the same item in every preset changes
+          apply(ctx, PRF, t => everyBag(ws, t, it.define || nameOfId(ws, it.id), (pr1, x, b1, k) => O().setItem(pr1, b1, 'BAG', k, out)), `Inventory extras (all presets): ${itemLabel(ws, it)} changed`, 'pvp|eq|preset');
+          return true;
+        }
+        presetEdit(ctx, apply, b, { kind: it ? 'set' : 'add', name, i, spec: out }, t => (it ? O().setItem(pr, b, name, i, out) : O().addItem(pr, t, b, name, out)), label);
+        return true;
+      } }] });
+  }
+
+  FRE.ui.pvpEqualized = { st, eventBlock, presetsView, presetDiags };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- ui/pvp.js ----
 // PvP Events (task "PvP Events"): Guild Siege / FFA / TDM. Entry (fees, level, lives, lengths), the schedule (days and times, the
 // next runs from loaders/pvp-sim.js), the PVP Token prizes, "what players get" (a sample battle through the simulator) and the
@@ -23123,6 +24381,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "74+", "when
   function sectionOf(d) {
     const f = (d.file || '').toLowerCase();
     if (d.code === 'PVP_TIME_CLASH') return 'week';
+    if (f === 'equalizedpvp.inc' || f === 'equalizedpresets.inc') return 'eq';
     if (f === FFA || f === 'npcboard_289.inc') return 'ffa';
     if (f === TDM || f === 'npcboard_290.inc') return 'tdm';
     return 'gs';
@@ -23132,6 +24391,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "74+", "when
     { id: 'gs', label: 'Guild Siege', sub: ctx => { const m = model(ctx), r = R().siegeRows(m.gs); return !m.gs.ok ? 'GuildCombat.txt does not load' : r.length ? r.map(x => `${DAYS[x.day]} ${t2(x.hour, x.minute)}`).join(', ') : 'no siege time'; } },
     { id: 'ffa', label: 'FFA (Free-For-All)', sub: ctx => runSub(model(ctx).ffa) },
     { id: 'tdm', label: 'TDM (Team Deathmatch)', sub: ctx => runSub(model(ctx).tdm) },
+    { id: 'eq', label: '⚖ Equalized presets', sub: ctx => { const eq = model(ctx).eq; if (!eq || !eq.present) return 'not in this folder'; const on = FRE.equalized.EVENTS.filter(e => eq.events.events[e].on).map(e => FRE.equalized.EVENT_LABEL[e]); return `${eq.presets.byKey.size} of 16 presets · ${on.length ? `on in ${on.join(', ')}` : 'off everywhere'}`; } },
     { id: 'week', label: '🗓 The week', sub: ctx => { const n = S().clashes(model(ctx)).length; return n ? `${n} overlap${n === 1 ? '' : 's'}` : 'every event on the clock'; } },
   ];
   function runSub(mm) {
@@ -23163,6 +24423,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "74+", "when
       keepFocus(el, () => {
         if (st.sel === 'gs') gsView(el, ctx);
         else if (st.sel === 'week') weekView(el, ctx);
+        else if (st.sel === 'eq') { FRE.ui.pvpEqualized.presetsView(el, ctx, apply); problems(el, ctx, 'eq'); }
         else runView(el, ctx, st.sel);
       });
     },
@@ -23255,6 +24516,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "74+", "when
         h('td', k ? diagTags(FRE.ui.diagsInSpan(ctx.ws, K.file, k.span.start, k.span.end)) : null)));
     }
     el.appendChild(tb);
+    FRE.ui.pvpEqualized.eventBlock(el, ctx, ev.toUpperCase(), apply);
     // ---- schedule
     el.appendChild(h('h3', 'Schedule'));
     el.appendChild(h('p.muted.small', 'Each line is a start time: registration closes and the arena opens. The server PC clock (Philippine time, GMT+8). Keep runs clear of Free PK Time (00 / 04 / 08 / 12 / 16 / 20 for 60 minutes).'));
@@ -23361,6 +24623,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "74+", "when
     et.appendChild(h('tr', h('td', h('b', 'Cancel / not selected'), h('div.muted.small', 'REQUESTCANCLEPERCENT / NOTREQUESTPERCENT (shown only)')),
       h('td.small', `${gc.cancelPct}% back on cancel (${fmt(S().siegeCancel(gc, gc.joinPenya ? gc.joinPenya.value : 0))} of the minimum bid) · ${gc.notPct}% back when not selected`)));
     el.appendChild(et);
+    FRE.ui.pvpEqualized.eventBlock(el, ctx, 'GS', apply);
     // ---- prizes
     el.appendChild(h('h3', 'Prizes (PVP Tokens)'));
     if (pz.missing) { el.appendChild(h('p.muted', 'GuildSiegePrize.lua not found: the compiled prizes are paid.')); }

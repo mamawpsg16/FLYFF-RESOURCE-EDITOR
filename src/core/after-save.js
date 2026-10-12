@@ -86,6 +86,9 @@
     'ffamanager.inc': { server: RELOAD, client: null, reload: 'ffa', cite: 'Project.cpp:920 ReadConfig; /ffareload FuncTextCmd.cpp:423' },
     'tdmmanager.inc': { server: RELOAD, client: null, reload: 'tdm', cite: 'Project.cpp:923 ReadConfig; /tdmreload FuncTextCmd.cpp:517' },
     'guildcombat.txt': { server: STARTUP, client: null, cite: 'ThreadMng.cpp:293 g_GuildCombatMng.LoadScript' },
+    // Equalized PvP (__FL_EQUALIZED_MODE): which events are equalized + the shared gear presets; /eqreload reads both (ec3657c7)
+    'equalizedpvp.inc': { server: RELOAD, client: null, reload: 'eq', cite: 'EqualizedPvP.cpp:121 CEqualizedPvP::ReadConfig; /eqreload' },
+    'equalizedpresets.inc': { server: RELOAD, client: null, reload: 'eq', cite: 'EqualizedPvP.cpp:~806 LoadPresetFile (after ReadConfig); /eqreload' },
     'guildsiegeprize.lua': { server: STARTUP, client: null, cite: 'eveschool.cpp:3672 LoadPrizes (WorldServer) + databaseserver/Project.cpp:216 LoadScript (DatabaseServer)' },
     // Dungeon task: time limit, cooldown, levels, kill-all (WorldServer only, read once at start; no reload command)
     'partydungeon.lua': { server: STARTUP, client: null, cite: 'Project.cpp:908 CInstanceDungeonParty::LoadScript -> InstanceDungeonBase.cpp:384' },
@@ -185,6 +188,7 @@
       const L = k.toUpperCase();
       steps.push({ id: 'reload:' + k, short: `type /${k}reload in game`, text: `In the game, as GM, type /${k}reload while no ${L} runs (it is refused during a run; the chat line says how many start times and the fee it read). Or run Stop Server.bat, then Start Server.bat.` });
     }
+    if (!all.has('servers') && all.has('reload:eq')) steps.push({ id: 'reload:eq', short: 'type /eqreload in game', text: 'In the game, as GM, type /eqreload (the chat line says how many presets and problems it read; a battle already running keeps the players it has). Or run Stop Server.bat, then Start Server.bat.' });
     return { steps, changes: outChanges, notes, built: Object.keys(PATCHES).filter(id => built.has(id)) };
   }
 

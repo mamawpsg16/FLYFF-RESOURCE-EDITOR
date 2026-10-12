@@ -1688,9 +1688,9 @@
     {
       await openTask('pvp');
       const ed = () => $('editor'), items = () => [...document.querySelectorAll('#list .npc')];
-      ok(S.mode === 'pvp' && items().map(x => x.querySelector('.n span').textContent).join('|') === 'Guild Siege|FFA (Free-For-All)|TDM (Team Deathmatch)|🗓 The week', 'PvP Events: Guild Siege, FFA, TDM, the week');
+      ok(S.mode === 'pvp' && items().map(x => x.querySelector('.n span').textContent).join('|') === 'Guild Siege|FFA (Free-For-All)|TDM (Team Deathmatch)|⚖ Equalized presets|🗓 The week', 'PvP Events: Guild Siege, FFA, TDM, Equalized presets, the week');
       ok(/Saturday 18:30/.test(items()[0].textContent) && /every Saturday 18:30/.test(ed().textContent) && /50/.test(ed().textContent), 'Guild Siege: Saturday 18:30, the rules board table, the prizes');
-      ok(!S.ws.diags.some(d => d.module === 'pvp'), 'no problem on the real files');
+      ok(!S.ws.diags.some(d => d.module === 'pvp' && d.code !== 'EQ_PRESET_MISSING'), 'no problem on the real files (only the classes with no Equalized preset yet)');
       if (STOP === 'pvp') { $('toasts').textContent = ''; return; }
       click(items()[1]);
       ok(/Every day at 14:30 and 21:30/.test(ed().textContent) && ed().querySelector('input[data-key="pvp|ffa|h0"]'), 'FFA: every day 14:30 and 21:30, the start-time rows');
@@ -1699,6 +1699,16 @@
       const last = [...$('toasts').children].pop().textContent;
       ok(/rules board too/.test(last) && /\(was every day 14:30\)/.test(last), 'FFA 14:30 -> 15:30: one step with the rules board ("rules board too (was every day 14:30)")');
       ok(S.ws.files.get('client/npcboard_289.inc').text.includes('Every day at 15:30 and 21:30') && /FFA_BEGIN\t0\t15\t30/.test(S.ws.files.get('ffamanager.inc').text), '… FFAManager.inc and NpcBoard_289.inc both changed');
+      // Equalized on the FFA page: the switch and a class limit
+      ok(/FFA is equalized/.test(ed().textContent) && ed().querySelector('input[data-key="pvp|eq|FFA|1"]'), 'FFA: the Equalized switch and the class limits');
+      const cap = ed().querySelector('input[data-key="pvp|eq|FFA|1"]');
+      cap.value = '3'; cap.dispatchEvent(new Event('change'));
+      ok(/^FFA\s+1\s+99\s+3\s/m.test(S.ws.files.get('equalizedpvp.inc').text) && /Templar limit 3 \(was 99\)/.test([...$('toasts').children].pop().textContent), 'FFA Templar limit 99 -> 3: the number in EqualizedPvP.inc and the toast');
+      click($('btn-undo'));
+      // the presets page: Arcanist male shown, then Templar female created as a copy and undone
+      click(items().find(x => /Equalized presets/.test(x.textContent)));
+      ok(/Equalized presets/.test(ed().textContent) && /Arcanist male/.test(ed().textContent) && /What the player gets/.test(ed().textContent) && /Fosharpen/.test(ed().textContent), 'Equalized presets: Arcanist male, its items and what the player gets');
+      if (STOP === 'pvpeq') { $('toasts').textContent = ''; return; }
       if (STOP === 'pvpffa') { $('toasts').textContent = ''; return; }
       click($('btn-save'));
       await waitFor(() => btnByText(document, 'Back up and write'), 'review dialog (pvp)');

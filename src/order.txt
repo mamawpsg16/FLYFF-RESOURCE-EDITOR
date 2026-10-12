@@ -75,6 +75,10 @@ loaders/pvp-sim.js
 loaders/pvp-rules.js
 edit/pvp-ops.js
 validate/pvp.js
+loaders/equalized.js
+loaders/equalized-sim.js
+edit/equalized-ops.js
+validate/equalized.js
 loaders/dungeon.js
 loaders/dungeon-sim.js
 edit/dungeon-ops.js
@@ -110,6 +114,7 @@ ui/rates.js
 ui/upgrade.js
 ui/sets.js
 ui/weapons.js
+ui/pvp-equalized.js
 ui/pvp.js
 ui/dungeon.js
 ui/app.js

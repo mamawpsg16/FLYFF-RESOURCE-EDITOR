@@ -10,7 +10,8 @@
 
   // wordStart: each typed word must match the START of a word ("ra" finds "Raised pets", not "Upgrade")
   const esc = w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  function combo({ options, value, placeholder = 'Type to search…', onPick, onNew = null, wordStart = false }) {
+  // keepOpen: a multi-pick list (the search text and the list stay after a pick); isPicked(v): those rows get a ✓
+  function combo({ options, value, placeholder = 'Type to search…', onPick, onNew = null, wordStart = false, keepOpen = false, isPicked = null }) {
     const cur = () => options.find(o => String(o.v) === String(value));
     const input = h('input.combo-input', { type: 'text', placeholder, value: cur() ? cur().label : '', autocomplete: 'off' });
     const list = h('div.combo-list');
@@ -28,7 +29,7 @@
       shown.slice(0, MAX).forEach((o, i) => {
         if (o.group && o.group !== group) { group = o.group; list.appendChild(h('div.combo-group', group)); }
         list.appendChild(h('div.combo-opt' + (i === hi ? '.hi' : '') + (String(o.v) === String(value) ? '.sel' : ''),
-          { 'data-i': i, on: { mousedown: e => { e.preventDefault(); pick(o); } } }, o.label));
+          { 'data-i': i, on: { mousedown: e => { e.preventDefault(); pick(o); } } }, (isPicked && isPicked(o.v) ? '✓ ' : '') + o.label));
       });
       if (shown.length > MAX) list.appendChild(h('div.combo-more', `${shown.length - MAX} more: type more letters`));
       if (!shown.length) list.appendChild(h('div.combo-more', 'Nothing matches.'));
@@ -48,9 +49,10 @@
     const show = () => { if (list.hidden) watch(true); list.hidden = false; place(); };
     const hide = () => { if (!list.hidden) watch(false); list.hidden = true; };
     function open() { hi = -1; paint(''); show(); input.select(); }
-    function close() { hide(); input.value = cur() ? cur().label : ''; }
+    function close() { hide(); if (!keepOpen) input.value = cur() ? cur().label : ''; }
     function pick(o) {
       if (o.typed !== undefined) { hide(); onNew.pick(o.typed); return; }
+      if (keepOpen) { const q = input.value; onPick(o.v); input.value = q; paint(q); show(); return; }
       value = o.v; close(); onPick(o.v);
     }
     function move(d) {
