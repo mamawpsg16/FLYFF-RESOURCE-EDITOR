@@ -205,6 +205,37 @@
       validate(ws, model) { return FRE.pvpChecks(model, { ws }); },
     },
     {
+      // Dungeons (loaders/dungeon.js): PartyDungeon.lua (WorldServer only, CInstanceDungeonParty::LoadScript, Project.cpp:908) and
+      // the drops of each dungeon's monsters, edited with the Monster Drops code (edit/drops-ops.js) on propMoverEx.inc.
+      // maps: the map monsters of each dungeon come from World/<map>/<map>.rgn (CWorld::LoadRespawn, read-only).
+      id: 'dungeon', label: 'Dungeons',
+      required: ['PartyDungeon.lua', 'propMoverEx.inc', 'propMover.txt', 'propMover.txt.txt'],
+      editable: ['PartyDungeon.lua', 'propMoverEx.inc'], client: [],
+      optional: ['propDropEvent.inc', 'except.txt', 'PenyaTable.txt', 'expTable.inc', 'Event.lua', 'propItemEtc.inc'],
+      uses: ['drops'],
+      maps: true,
+      parse(ws) {
+        if (!ws.movers) ws.movers = FRE.propMover.loadPropMover(ws.files.get('propmover.txt'), { defines: ws.defines.defines, strings: ws.strings.map });
+        const m = FRE.dungeon.loadDungeons(ws.files.get('partydungeon.lua'), { defines: ws.defines.defines });
+        m.server = FRE.dungeon.serverMap(m);
+        // the map monsters per dungeon world (null until the maps are read: setMapObjects reparses this module)
+        m.rgn = new Map();
+        const wf = ws.worldFiles || new Map();
+        const list = ws.worldList ? ws.worldList() : [];
+        for (const d of m.dungeons) {
+          const w = list.find(x => x.define === d.world);
+          d.map = w ? w.name : null;
+          if (!w || m.rgn.has(w.name)) continue;
+          const f = wf.get(`world/${w.name}/${w.name}.rgn`.toLowerCase());
+          m.rgn.set(w.name, f ? FRE.dungeon.regionMonsters(f, { defines: ws.defines.defines, movers: ws.movers.movers }) : null);
+        }
+        return m;
+      },
+      validate(ws, model) {
+        return FRE.dungeon.validateDungeons(model, { defines: ws.defines.defines, movers: ws.movers.movers }).map(d => Object.assign({ module: 'dungeon' }, d));
+      },
+    },
+    {
       // Where is this item from? (task H, loaders/where.js): every model above parsed read-only, nothing editable.
       // Last, so its parse sees the other models. maps: towns of the NPCs, and whether they stand in the game.
       id: 'where', label: 'Item Sources & Uses',
@@ -403,6 +434,7 @@
     // worldFiles: Map lowercase path ('world/wdmadrigal/wdmadrigal.rgn') -> SourceFile: each map's .rgn and
     // .txt.txt, and WdMadrigal.wld.cnt (read-only; loaders/area.js names the spots)
     setMapObjects(dyo, worldFiles = new Map()) {
+      this.worldFiles = worldFiles;     // the Dungeons task reads each dungeon's .rgn (its map monsters)
       const placed = new Map();
       for (const [name, bytes] of dyo) for (const key of FRE.world.readDyo(bytes).movers) {
         const k = key.toLowerCase();

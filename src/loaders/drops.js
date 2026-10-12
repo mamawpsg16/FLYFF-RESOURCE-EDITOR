@@ -217,12 +217,20 @@
           const level = s.getNumber();
           toks.push(s.getToken());                               // ,
           const count = s.getNumber();
-          const close = s.getToken();                            // )
+          const close = s.getToken();                            // , or )
           toks.push(close);
-          const e = { kind: 'item', block, start: t.start, end: close.end, id, prob, level, count, toks,
+          // optional 5th value = the lowest amount (V19 b9646b69, Project.cpp DropItem): read after a ",", then one more token (")").
+          // A 6th value and on are skipped token by token like any unknown word (M_EXTRA_ARGS).
+          let min = null, close2 = null;
+          if (close.text === ',') { min = s.getNumber(); close2 = s.getToken(); toks.push(close2); }
+          const number = u32(count.value);
+          // what the server stores in dwNumber2: 0 when missing, < 1 or the amount is -1; above the amount -> the amount
+          let min2 = min ? u32(min.value) : 0;
+          if (number === 0xFFFFFFFF || (min2 | 0) < 1) min2 = 0;
+          else if (min2 > number) min2 = number;
+          const e = { kind: 'item', block, start: t.start, end: (close2 && close2.text === ')' ? close2 : close).end, id, prob, level, count, min, toks,
             itemId: u32(id.value), define: id.define || text.slice(id.start, id.end),
-            probability: u32(prob.value), levelValue: u32(level.value), number: u32(count.value),
-            // a 5th value (",") is skipped token by token like any unknown word: the 4 values are right (M_EXTRA_ARGS)
+            probability: u32(prob.value), levelValue: u32(level.value), number, min2,
             shape: toks[0].text === '(' && toks[1].text === ',' && toks[2].text === ',' && toks[3].text === ',' && (close.text === ')' || close.text === ','),
             gen: genAt(t.start) };
           block.entries.push(e); mon.list.push(e);
@@ -509,8 +517,10 @@
             message: `${who}: ${itemName(e)}'s chance ${text.slice(e.prob.start, e.prob.end)} is above 2,147,483,647. atoi stops there, so it drops ${pct(effChance(e.probability))} of the time, not ${pct(Number(text.slice(e.prob.start, e.prob.end)) / DROP_ONE)}` }));
           else if (e.probability === 0 && e.shape) add(Object.assign(at, { code: 'M_PROB_ZERO', severity: 'WARN', key: `M_PROB_ZERO|${key}`,
             message: `${who}: ${itemName(e)} has chance 0: it never drops` }));
-          if (e.toks[4] && e.toks[4].text === ',') add(Object.assign(at, { code: 'M_EXTRA_ARGS', severity: 'INFO', key: `M_EXTRA_ARGS|${key}`,
-            message: `${who}: this DropItem line has more than 4 values. The server reads the first 4 and skips the rest` }));
+          if (e.toks[5] && e.toks[5].text === ',') add(Object.assign(at, { code: 'M_EXTRA_ARGS', severity: 'INFO', key: `M_EXTRA_ARGS|${key}`,
+            message: `${who}: this DropItem line has more than 5 values. The server reads the first 5 (the 5th is the lowest amount) and skips the rest` }));
+          if (e.min && e.number !== 0xFFFFFFFF && e.number !== 0 && (u32(e.min.value) | 0) > (e.number | 0)) add(Object.assign(at, { code: 'M_MIN_ABOVE', severity: 'WARN', key: `M_MIN_ABOVE|${key}`,
+            message: `${who}: ${itemName(e)}: the lowest amount ${e.min.value | 0} is above the highest ${e.number}. The server uses ${e.number} for both` }));
         } else if (e.kind === 'gold') {
           const key = `${b.define}|gold`;
           if (!e.shape) add(Object.assign(at, { code: 'M_COMMA', severity: 'BLOCK', key: `M_COMMA|${key}`, message: `${who}: this DropGold line is not "DropGold(min, max);"` }));

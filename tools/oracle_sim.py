@@ -4150,7 +4150,7 @@ def db_run(root):
 #     the game's own code, each click: no patch.
 #   FFAManager.inc / TDMManager.inc: Project.cpp:920 / :923 ReadConfig at WorldServer start, and the GM commands /ffareload /
 #     /tdmreload (FuncTextCmd.cpp:423 / :517): a restart OR the command. GuildCombat.txt: ThreadMng.cpp:293, WorldServer start.
-#   GuildSiegePrize.lua: eveschool.cpp:3665 LoadPrizes (WorldServer start) + databaseserver/Project.cpp:216 (DatabaseServer).
+#   GuildSiegePrize.lua: eveschool.cpp:3672 LoadPrizes (WorldServer start) + databaseserver/Project.cpp:216 (DatabaseServer).
 #   Stop Server.bat kills Neuz.exe and all 7 servers; Start Server.bat starts them and then Client\- Start Game.bat.
 AS_SHARED = ['spec_item.txt', 'character.inc', 'character-etc.inc', 'character-school.inc', 'character.txt.txt',
              'defineneuz.h', 'definetext.h', 'etc.inc', 'etc.txt.txt', 'textclient.inc', 'textclient.txt.txt',
@@ -4167,7 +4167,7 @@ AS_CITES = [
     ('_Common/Project.cpp', 968, 'LoadDonationShop( "DonationShop.inc" )'),
     ('_Common/Project.cpp', 1015, 'm_Exchange.Load_Script()'),
     ('_Common/Project.cpp', 851, 'LoadPropMoverEx( "PropMoverEx.inc" )'),
-    ('_Common/Project.cpp', 3232, '#ifdef __WORLDSERVER'),
+    ('_Common/Project.cpp', 3242, '#ifdef __WORLDSERVER'),
     ('_Common/Project.cpp', 865, 'LoadGiftbox( "propGiftbox.inc" )'),
     ('_Common/Project.cpp', 859, '#ifdef __WORLDSERVER'),
     ('_Common/Project.cpp', 878, 'LoadPackItem( "propPackItem.inc" )'),
@@ -4211,8 +4211,9 @@ AS_CITES = [
     ('_Interface/FuncTextCmd.cpp', 423, 'CFFAManager::GetInstance()->ReadConfig( pUser )'),
     ('_Interface/FuncTextCmd.cpp', 517, 'CTDMManager::GetInstance()->ReadConfig( pUser )'),
     ('WORLDSERVER/ThreadMng.cpp', 293, 'g_GuildCombatMng.LoadScript( "GuildCombat.txt" )'),
-    ('_Common/eveschool.cpp', 3665, 'CGuildSiegePrize::GetInstance()->LoadPrizes()'),
+    ('_Common/eveschool.cpp', 3672, 'CGuildSiegePrize::GetInstance()->LoadPrizes()'),
     ('databaseserver/Project.cpp', 216, 'CGuildSiegePrize::GetInstance()->LoadScript()'),
+    ('_Common/Project.cpp', 908, 'CInstanceDungeonParty::GetInstance()->LoadScript("PartyDungeon.lua")'),
     ('_Interface/WndWorld.cpp', 4606, 'FILE_GUILDCOMBAT_TEXT_6'),
     ('_Interface/WndWorld.cpp', 4687, 'FILE_GUILDCOMBAT_TEXT_1'),
 ]
@@ -4229,7 +4230,7 @@ def as_who(key):
         return 'reload:ffa', None
     if key == 'tdmmanager.inc':
         return 'reload:tdm', None
-    if key in ('guildcombat.txt', 'guildsiegeprize.lua'):
+    if key in ('guildcombat.txt', 'guildsiegeprize.lua', 'partydungeon.lua'):
         return True, None
     if re.fullmatch(r'client/guildcombattext_\d_(eng|usa)\.inc', key):
         return False, 'gsclick'
@@ -4310,7 +4311,7 @@ def as_run(root):
     keys = AS_SHARED + [AS_TREE, 'client/npcboard_282.inc', 'client/npcboard_300.inc', 'world/wdmadrigal/wdmadrigal.dyo',
                         'world/wdvolcane/wdvolcane.dyo', 'propmoverex.inc', 'propgiftbox.inc', 'propskill.txt',
                         'event.lua', 'serverbuff.txt', 'guildbuff.txt', '1rebirth.inc', 'couple.inc', 'propitemetc.inc', 'propitemetc.txt.txt', 'exptable.inc', AS_FEES,
-                        'ffamanager.inc', 'tdmmanager.inc', 'guildcombat.txt', 'guildsiegeprize.lua',
+                        'ffamanager.inc', 'tdmmanager.inc', 'guildcombat.txt', 'guildsiegeprize.lua', 'partydungeon.lua',
                         'client/guildcombattext_5_eng.inc', 'client/guildcombattext_1_usa.inc']
     states = ['written', 'created', 'datares', 'different', 'none']
     pstates = ['in-source', 'missing', 'unknown', 'built']
@@ -4838,8 +4839,16 @@ def dr_load(data, D, size):
                 s.get(); prob = s.number() & 0xFFFFFFFF
                 s.get(); lv = s.number() & 0xFFFFFFFF
                 s.get(); num = s.number() & 0xFFFFFFFF
-                s.get()
-                m['list'].append(('item', iid, prob, lv, num))
+                # V19 b9646b69: "," then the lowest amount (dwNumber2) and one more token; else that token was ")"
+                mn = 0
+                if s.get() == ',':
+                    mn = s.number() & 0xFFFFFFFF
+                    s.get()
+                if num == 0xFFFFFFFF or (mn if mn < 0x80000000 else mn - 0x100000000) < 1:
+                    mn = 0
+                elif mn > num:
+                    mn = num
+                m['list'].append(('item', iid, prob, lv, num, mn))
             elif w == 'DropKind':
                 s.get(); ik3 = s.number() & 0xFFFFFFFF
                 s.get(); s.number(); s.get(); s.number(); s.get()
@@ -5285,7 +5294,9 @@ def dr_kill(W, mid, o, R, mons=None, penya=None):
                 if num == 0:
                     out['x'] = i
                     return out
-                n = s16(R(num) + 1)
+                lo = e[5] if len(e) == 6 and e[5] > 1 and e[4] != DR_NONE else 1     # event lines (7 values) have no min
+                lo = min(lo, num)
+                n = s16(lo + R(num - lo + 1))
                 if fly:
                     if o.get('bagFull'):
                         continue
@@ -5392,6 +5403,12 @@ DR_SCRIPTS = [
     ('SetRunAway eats tokens', 'MI_AIBATT1\r\n{\r\n\tSetRunAway(20, 1, Maxitem = 5);\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 1, 0, 1);\r\n}\r\n'),
     ('bad cunning word', 'MI_AIBATT1\r\n{\r\n\tDropGold(1, 2);\r\n\tAI\r\n\t{\r\n\t\t#battle { Attack cunning fly }\r\n\t}\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 1, 0, 1);\r\n}\r\n'),
     ('stray token between blocks', 'MI_AIBATT1\r\n{\r\n\tDropGold(1, 2);\r\n}\r\nII_SYS_SYS_SCR_BXSUHO01\r\nMI_AIBATT2\r\n{\r\n\tDropGold(3, 4);\r\n}\r\n'),
+    # the lowest amount, 5th value (V19 b9646b69): 2-5, min = max, min above max, min 0 / negative, min with "not counted", 6 values
+    ('min-max amounts', 'MI_AIBATT1\r\n{\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 2000000000, 0, 5, 2);\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE_1, 2000000000, 0, 3, 3);\r\n'
+     '\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 2000000000, 0, 4, 9);\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE_1, 2000000000, 0, 6, 0);\r\n'
+     '\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 2000000000, 0, 6, -4);\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE_1, 2000000000, 0, -1, 7);\r\n'
+     '\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 2000000000, 0, 8, 5, 18);\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE_1, 2000000000, 0, 30000, 29990);\r\n}\r\n'),
+    ('min-max flying', 'MI_MOTHBEE1\r\n{\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE, 2000000000, 0, 9, 7);\r\n\tDropItem(II_GEN_GEM_GEM_TWINKLESTONE_1, 2000000000, 0, 2, 2);\r\n}\r\n'),
 ]
 
 
@@ -5450,7 +5467,8 @@ def dre_apply(text, op):
     stm = [(l, k) for l, k in stm if k]
     lastof = lambda f: next((l for l, k in reversed(stm) if f(l, k)), None)
     if op['op'] == 'add':
-        row = 'DropItem(%s, %d, %d, %d);' % (op['define'], op['prob'], op['level'], op['count'])
+        mn = op.get('min', 1) if op['count'] != -1 else 1
+        row = 'DropItem(%s, %d, %d, %d%s);' % (op['define'], op['prob'], op['level'], op['count'], ', %d' % mn if mn > 1 else '')
         a = lastof(lambda l, k: k == 'DropItem' and not ingen(l)) or lastof(lambda l, k: k in ('DropGold', 'Maxitem') and not ingen(l))
         return dre_insert_after(text, a, row) if a else dre_below_open(text, lines, row)
     if op['op'] == 'kind':
@@ -5461,14 +5479,28 @@ def dre_apply(text, op):
     if op['op'] in ('set', 'remove'):
         hits = [l for l, k in stm if k == 'DropItem' and re.match(r'[ \t]*DropItem[ \t]*\([ \t]*' + re.escape(op['item']) + r'[ \t]*,', l[2])]
         s, e, c = hits[op.get('k', 0)]
+        c0 = c
         if op['op'] == 'remove':
             return text[:s] + text[e:]
-        m = re.match(r'([ \t]*DropItem[ \t]*\([ \t]*)([^,]*?)([ \t]*,[ \t]*)([^,]*?)([ \t]*,[ \t]*)([^,]*?)([ \t]*,[ \t]*)([^)]*?)([ \t]*\).*)$', c)
-        g = list(m.groups())
-        for key, at in (('define', 1), ('prob', 3), ('level', 5), ('count', 7)):
-            if key in op:
-                g[at] = str(op[key])
-        return text[:s] + ''.join(g) + text[s + len(c):]
+        # the values as spans inside ( ... ): the 5th is the lowest amount (V19 b9646b69)
+        m = re.match(r'[ \t]*DropItem[ \t]*\(([^)]*)', c)
+        vals = [(m.start(1) + v.start(), m.start(1) + v.end()) for v in re.finditer(r'[^,\s]+', m.group(1))]
+        ed = []
+        for key, at in (('define', 0), ('prob', 1), ('level', 2), ('count', 3)):
+            if key in op and c[vals[at][0]:vals[at][1]] != str(op[key]):
+                ed.append((vals[at][0], vals[at][1], str(op[key])))
+        if 'min' in op:
+            cur = int(c[vals[4][0]:vals[4][1]]) if len(vals) >= 5 else 1
+            if op['min'] != cur:
+                if len(vals) >= 5 and (op['min'] > 1 or len(vals) > 5):
+                    ed.append((vals[4][0], vals[4][1], str(op['min'])))
+                elif len(vals) >= 5:
+                    ed.append((vals[3][1], vals[4][1], ''))
+                else:
+                    ed.append((vals[3][1], vals[3][1], ', %d' % op['min']))
+        for a, b, v in sorted(ed, key=lambda x: (-x[0], -x[1])):
+            c = c[:a] + v + c[b:]
+        return text[:s] + c + text[s + len(c0):]
     if op['op'] == 'gold':
         g = lastof(lambda l, k: k == 'DropGold')
         if g:
@@ -5508,6 +5540,9 @@ def dre_scripts(W, text):
     nomax = pick(lambda d: 'Maxitem' not in body(d) and 'DropItem' in body(d))
     empty = pick(lambda d: 'DropItem' not in body(d) and 'DropGold' not in body(d) and 'Maxitem' not in body(d))
     first = lambda d: re.search(r'DropItem[ \t]*\([ \t]*(\w+)', body(d)).group(1)
+    six_re = r'^[ \t]*DropItem[ \t]*\([ \t]*(\w+)[^,)]*(?:,[^,)]*){5}\)'
+    six = pick(lambda d: re.search(six_re, body(d), re.M) is not None)
+    sixfirst = lambda d: re.search(six_re, body(d), re.M).group(1)
     genfirst = lambda d: re.search(r'\[BossDrop\] begin[^\n]*\n[ \t]*DropItem[ \t]*\([ \t]*(\w+)', body(d)).group(1)
     gens = dre_gen_spans(text)
 
@@ -5534,6 +5569,14 @@ def dre_scripts(W, text):
          {'op': 'kind', 'mon': empty, 'ik3': 'IK3_AXE', 'level': 200}],
         [{'op': 'kind', 'mon': plain, 'ik3': 'IK3_SWD', 'level': 3}, {'op': 'kind', 'mon': plain, 'ik3': 'IK3_AXE', 'level': 70}, {'op': 'remove', 'mon': plain, 'item': 'II_GEN_GEM_GEM_TWINKLESTONE'}],
         [{'op': 'set', 'mon': plain, 'item': 'II_GEN_GEM_GEM_TWINKLESTONE', 'k': 0, 'prob': 3, 'level': 0, 'count': 5}, {'op': 'add', 'mon': plain, 'define': 'II_GEN_GEM_GEM_TWINKLESTONE', 'prob': 9, 'level': 0, 'count': 1}],
+        # the lowest amount (V19 b9646b69): add with a min, set a min, raise it, remove it again, a min on a 6-value line
+        [{'op': 'add', 'mon': plain, 'define': 'II_CHP_RED', 'prob': 3000000, 'level': 0, 'count': 5, 'min': 2},
+         {'op': 'set', 'mon': plain, 'item': 'II_GEN_GEM_GEM_TWINKLESTONE', 'count': 9, 'min': 4}],
+        [{'op': 'set', 'mon': plain, 'item': 'II_GEN_GEM_GEM_TWINKLESTONE', 'count': 6, 'min': 3},
+         {'op': 'set', 'mon': plain, 'item': 'II_GEN_GEM_GEM_TWINKLESTONE', 'min': 5},
+         {'op': 'set', 'mon': plain, 'item': 'II_GEN_GEM_GEM_TWINKLESTONE', 'count': 7, 'min': 1}],
+        [{'op': 'set', 'mon': six, 'item': sixfirst(six), 'count': 4, 'min': 2}],
+        [{'op': 'add', 'mon': nomax, 'define': 'II_CHP_RED', 'prob': 2000000000, 'level': 0, 'count': -1, 'min': 3}],
     ]
     out = []
     for sc in scripts:
@@ -10944,6 +10987,386 @@ def pv_run(root):
     return {'week0': PV_WEEK0, 'reads': reads, 'gc': gcres, 'prizes': prz, 'runs': runs, 'money': money, 'battles': battles, 'edits': eds}
 
 
+# ---- Dungeons (PartyDungeon.lua): an independent copy, written from the C++ and the Lua -------------------------------------
+#   LuaFunc/InstanceDungeonBase.lua: AddDungeon's defaults (class 65535, levels 1-120, cooldown and time limit MIN(30), kill-all 0),
+#     MIN(a) = a * 60 * 1000, SEC(a) = a * 1000; every Set* writes into the last AddDungeon.
+#   CInstanceDungeonBase::LoadScript (InstanceDungeonBase.cpp:384): one entry per world id, insert() keeps the first block's numbers,
+#     every block's SetMonster lines go to that entry; int / DWORD casts truncate.
+#   TeleportToDungeon (:659) + CheckClassLevel (:529): class bit, then the level range, then another run's cooldown
+#     (Anarchy: remain -= (DWORD)(remain * (pct / 100.0f)), float32), the new cooldown = now + dwCoolTime.
+#   ProcessInfoPanel (:1225): once a second, left = (int)(end - now) / 1000 (C division), the clock on the first tick with left > 0,
+#     warnings when left <= 300 and <= 60 (minutes = (left + 59) / 60), out at left <= 0.
+#   The map monsters: CWorld::LoadRespawn (WorldFile.cpp:550) respawn records of OT_MOVER whose monster exists and is not
+#     RANK_MATERIAL; BuildKillAll (:1154) adds m_nMaxcb (when > 0) per monster id.
+#   Edits: the editor's line rules (replace the value; a missing Set* line goes after the nearest earlier one of SetClass, SetLevel,
+#     SetCoolTime, SetDungeonTime, SetKillAll, else after the "--{" line, else after AddDungeon; the block's first Set* line's indent).
+DG_ORDER = ['SetClass', 'SetLevel', 'SetCoolTime', 'SetDungeonTime', 'SetKillAll']
+DG_CONST = {'CLASS_NORMAL': 1, 'CLASS_MASTER': 2, 'CLASS_HERO': 4, 'CLASS_LEGEND_HERO': 8, 'ID_NORMAL': 0, 'ID_MIDBOSS': 1, 'ID_BOSS': 2}
+
+
+def dg_mask(text):
+    """the text with every Lua comment blanked out (same length, newlines kept)"""
+    out, i, n = list(text), 0, len(text)
+    while i < n:
+        if text[i] in '"\'':
+            q, j = text[i], i + 1
+            while j < n and text[j] != q and text[j] != '\n':
+                j += 2 if text[j] == '\\' else 1
+            i = j + 1
+            continue
+        if text.startswith('--', i):
+            m = re.match(r'--\[(=*)\[', text[i:i + 40])
+            if m:
+                e = text.find(']' + m.group(1) + ']', i + len(m.group(0)))
+                e = n if e < 0 else e + len(m.group(1)) + 2
+            else:
+                e = text.find('\n', i)
+                e = n if e < 0 else e
+            for k in range(i, e):
+                if out[k] != '\n':
+                    out[k] = ' '
+            i = e
+            continue
+        i += 1
+    return ''.join(out)
+
+
+def dg_value(s):
+    """one Lua value as written -> number / str / bool / None (not understood)"""
+    s = s.strip()
+    m = re.fullmatch(r'(MIN|SEC)\s*\((.*)\)', s)
+    if m:
+        v = dg_value(m.group(2))
+        return v * (60000 if m.group(1) == 'MIN' else 1000) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    if re.fullmatch(r'-?\d+(\.\d+)?', s):
+        return float(s) if '.' in s else int(s)
+    if re.fullmatch(r'"[^"]*"', s):
+        return s[1:-1]
+    if s in ('true', 'false'):
+        return s == 'true'
+    return DG_CONST.get(s)
+
+
+def dg_args(text, mt, a, b):
+    """the comma-separated values between a and b (inside the parentheses) -> [(start, end, value)] (spans without spaces)"""
+    out, depth, st = [], 0, a
+    for i in range(a, b + 1):
+        c = mt[i] if i < b else ','
+        if c == '(':
+            depth += 1
+        elif c == ')':
+            depth -= 1
+        elif c == ',' and depth == 0:
+            seg = mt[st:i]
+            l = len(seg) - len(seg.lstrip())
+            r = len(seg.rstrip())
+            if seg.strip():
+                out.append((st + l, st + r, dg_value(text[st + l:st + r])))
+            st = i + 1
+    return out
+
+
+def dg_parse(text):
+    mt = dg_mask(text)
+    blocks = []
+    for m in re.finditer(r'\b(AddDungeon|SetClass|SetLevel|SetCoolTime|SetDungeonTime|SetKillAll|SetMonster|SetTeleportPos)[ \t]*\(', mt):
+        depth, j = 1, m.end()
+        while j < len(mt) and depth:
+            depth += {'(': 1, ')': -1}.get(mt[j], 0)
+            j += 1
+        args = dg_args(text, mt, m.end(), j - 1)
+        name = m.group(1)
+        st = {'name': name, 'start': m.start(), 'end': j, 'args': args}
+        if name == 'AddDungeon':
+            blocks.append({'world': args[0][2] if args else None, 'at': st, 'stmts': {}, 'first_set': None, 'first_mon': None, 'mons': []})
+        elif blocks:
+            b = blocks[-1]
+            if name == 'SetMonster':
+                b['mons'].append((args[0][2], args[1][2]))
+                if b['first_mon'] is None:
+                    b['first_mon'] = st
+            elif name != 'SetTeleportPos':
+                if b['first_set'] is None:
+                    b['first_set'] = st
+                b['stmts'][name] = st
+    for b in blocks:
+        v = {'cls': 65535, 'lo': 1, 'hi': 120, 'cool': 1800000, 'kill': 0, 'time': 1800000}
+        s = b['stmts']
+        if 'SetClass' in s:
+            v['cls'] = sum(a[2] for a in s['SetClass']['args'])
+        if 'SetLevel' in s:
+            v['lo'], v['hi'] = s['SetLevel']['args'][0][2], s['SetLevel']['args'][1][2]
+        if 'SetCoolTime' in s:
+            v['cool'] = s['SetCoolTime']['args'][0][2]
+        if 'SetDungeonTime' in s:
+            v['time'] = s['SetDungeonTime']['args'][0][2]
+        if 'SetKillAll' in s:
+            v['kill'] = s['SetKillAll']['args'][0][2]
+        b['v'] = {'dwClass': int(v['cls']) & 0xFFFFFFFF, 'nMinLevel': s32(int(v['lo'])), 'nMaxLevel': s32(int(v['hi'])),
+                  'dwCoolTime': int(v['cool']) & 0xFFFFFFFF, 'dwDungeonTime': int(v['time']) & 0xFFFFFFFF, 'bKillAll': int(v['kill']) != 0}
+    return blocks
+
+
+def dg_server(blocks, D):
+    out = {}
+    for b in blocks:
+        wid = D.get(b['world'], 0) if b['world'] else 0
+        if wid not in out:
+            out[wid] = {'world': b['world'], 'data': dict(b['v']), 'mons': []}
+        out[wid]['mons'] += [(t, D.get(name)) for t, name in b['mons']]
+    return out
+
+
+def dg_worlds(root):
+    raw = open(os.path.join(root, 'World.inc'), 'rb').read()
+    t = raw.decode('utf-16') if raw[:2] in (b'\xff\xfe', b'\xfe\xff') else raw.decode('latin-1')
+    t = re.sub(r'//[^\n]*', '', t)
+    out = {}
+    for m in re.finditer(r'(WI_\w+)[ \t]+"([^"]+)"', t):
+        out.setdefault(m.group(1), m.group(2))
+    return out
+
+
+def dg_rgn(path, D, mv):
+    if not os.path.exists(path):
+        return None
+    raw = open(path, 'rb').read()
+    return dg_rgn_text(raw.decode('utf-16') if raw[:2] in (b'\xff\xfe', b'\xfe\xff') else raw.decode('latin-1'), D, mv)
+
+
+def dg_rgn_text(t, D, mv):
+    t = re.sub(r'//[^\n]*', '', t)
+    tok = t.split()
+    out = []
+    for i, w in enumerate(tok):
+        if not re.fullmatch(r'respawn[2-7]?', w):
+            continue
+        typ, idx, cb = atoi(tok[i + 1]) & 0xFFFFFFFF, atoi(tok[i + 2]) & 0xFFFFFFFF, s32(atoi(tok[i + 6]))
+        if typ != D['OT_MOVER'] or idx not in mv or mv[idx]['rank'] == D.get('RANK_MATERIAL') or cb <= 0:
+            continue
+        for x in out:
+            if x[0] == idx:
+                x[1] += cb
+                break
+        else:
+            out.append([idx, cb])
+    return out
+
+
+def dg_mons(srv_mons, rgn):
+    """SetMonster ones, boss first (a stable sort by type, highest first), then the map ones; merged by id"""
+    role = {0: 'normal', 1: 'mid-boss', 2: 'boss'}
+    out = []
+
+    def add(i, r, n):
+        if i is None:
+            return
+        for x in out:
+            if x[0] == i:
+                if r not in x[1]:
+                    x[1].append(r)
+                x[2] += n
+                return
+        out.append([i, [r], n])
+    for t, i in sorted(srv_mons, key=lambda x: -x[0]):
+        add(i, role.get(t, 'normal'), 1)
+    for i, n in rgn or []:
+        add(i, 'map', n)
+    return out
+
+
+def dg_f32(x):
+    return struct.unpack('f', struct.pack('f', x))[0]
+
+
+def dg_enter(e, cls, level, now, cool, did, anarchy):
+    bit = {'normal': 1, 'master': 2, 'hero': 4, 'legend': 8}.get(cls, 0)
+    if not bit & e['dwClass']:
+        return {'ok': False, 'text': 'TID_GAME_INSTANCE_CLASS', 'args': []}
+    if level < e['nMinLevel'] or level > e['nMaxLevel']:
+        return {'ok': False, 'text': 'TID_GAME_INSTANCE_LEVEL', 'args': [e['nMinLevel'], e['nMaxLevel']]}
+    if cool is not None and cool[0] != did:
+        rem = (cool[1] - now) & 0xFFFFFFFF
+        cut = int(dg_f32(dg_f32(float(rem)) * dg_f32(dg_f32(float(anarchy)) / dg_f32(100.0)))) & 0xFFFFFFFF
+        rem = (rem - cut) & 0xFFFFFFFF
+        if s32(rem) > 0:
+            return {'ok': False, 'text': 'TID_GAME_INSTANCE_COOLTIME', 'args': [rem // 60000, (rem % 60000) // 1000]}
+    newcool = (did, (e['dwCoolTime'] + now) & 0xFFFFFFFF) if cool is None or cool[0] != did else cool
+    return {'ok': True, 'cool': newcool}
+
+
+def dg_clock(ms, tick0=0, until=None):
+    out = []
+    if ms <= 0:
+        return out
+    end = ms & 0xFFFFFFFF
+    until = end + 5000 if until is None else until
+    warn, sent, t = 0, False, tick0
+    while t <= until:
+        d = s32(end - t)
+        left = int(d / 1000)                        # C: toward zero
+        if not sent and left > 0:
+            out.append([t, 'clock', left * 1000, None])
+            sent = True
+        if left <= 0:
+            out.append([t, 'out', None, None])
+            break
+        w = 2 if left <= 60 else 1 if left <= 300 else 0
+        if w > warn:
+            n = (left + 59) // 60
+            out.append([t, 'warn', None, '%d minute%s left in the dungeon!' % (n, '' if n == 1 else 's')])
+            warn = w
+        t += 1000
+    return out
+
+
+def dg_line_end(t, i):
+    j = t.find('\n', i)
+    return len(t) if j < 0 else j + 1
+
+
+def dg_line_start(t, i):
+    return t.rfind('\n', 0, i) + 1
+
+
+def dg_edit(text, op):
+    """one editor change on the text -> the new text (the editor's line rules, see the header)"""
+    b = dg_parse(text)[op['k']]
+    s = b['stmts']
+    t_ = lambda mins: '0' if mins == 0 else 'MIN(%d)' % mins
+
+    def rep(a, z, v):
+        return text[:a] + v + text[z:]
+
+    def insert(name, args):
+        at = None
+        for nm in reversed(DG_ORDER[:DG_ORDER.index(name)]):
+            if nm in s:
+                at = s[nm]['start']
+                break
+        if at is None:
+            nxt = dg_line_end(text, b['at']['end'])
+            at = nxt if re.match(r'[ \t]*--\{', text[nxt:nxt + 20]) else b['at']['start']
+        e = dg_line_end(text, at)
+        anyst = b['first_set'] or b['first_mon']
+        indent = re.match(r'[ \t]*', text[dg_line_start(text, anyst['start']):]).group(0) if anyst else '\t'
+        line = text[dg_line_start(text, at):e]
+        eol = '\r\n' if line.endswith('\r\n') else '\n' if line.endswith('\n') else ''
+        pre = ''
+        if not eol:
+            pre = '\r\n' if '\r\n' in text else '\n'
+        return text[:e] + pre + '%s%s( %s )' % (indent, name, args) + eol + text[e:]
+    if op['op'] in ('time', 'cool'):
+        name = 'SetDungeonTime' if op['op'] == 'time' else 'SetCoolTime'
+        v = t_(op['min'])
+        if name in s:
+            a, z, _ = s[name]['args'][0]
+            return text if text[a:z] == v else rep(a, z, v)
+        return insert(name, v)
+    if op['op'] == 'kill':
+        v = '1' if op['on'] else '0'
+        if 'SetKillAll' in s:
+            a, z, _ = s['SetKillAll']['args'][0]
+            return text if text[a:z] == v else rep(a, z, v)
+        return insert('SetKillAll', v)
+    if op['op'] == 'level':
+        if 'SetLevel' in s:
+            (a0, z0, v0), (a1, z1, v1) = s['SetLevel']['args'][:2]
+            if v1 != op['hi']:
+                text = rep(a1, z1, str(op['hi']))
+            if v0 != op['lo']:
+                text = text[:a0] + str(op['lo']) + text[z0:]
+            return text
+        return insert('SetLevel', '%d, %d' % (op['lo'], op['hi']))
+    if op['op'] == 'class':
+        names = [c for c in ('CLASS_NORMAL', 'CLASS_MASTER', 'CLASS_HERO', 'CLASS_LEGEND_HERO') if c in op['cls']]
+        v = ', '.join(names)
+        if 'SetClass' in s and s['SetClass']['args']:
+            return rep(s['SetClass']['args'][0][0], s['SetClass']['args'][-1][1], v)
+        return insert('SetClass', v)
+    raise ValueError(op)
+
+
+DG_SMALL = [
+    ('defaults only', 'AddDungeon( "WI_INSTANCE_RUSTIA" )\n--{\n\tSetMonster( ID_BOSS, "MI_AIBATT1", true, 1, 2, 3 )\n--}\n'),
+    ('no --{, CRLF, last line has no EOL', 'AddDungeon( "WI_INSTANCE_OMINOUS" )\r\n    SetLevel( 70 , 90 )\r\n    SetCoolTime( SEC(90) )'),
+    ('two blocks of one world, MIN(1.5), a comment block', '--[[\nAddDungeon( "WI_INSTANCE_BEHAMAH" )\n]]\nAddDungeon( "WI_INSTANCE_KALGAS" )\n--{\n'
+     '\tSetLevel( 10, 20 ) -- a comment\n\tSetDungeonTime( MIN(1.5) )\n\tSetMonster( ID_NORMAL, "MI_AIBATT1", false, 1, 2, 3 )\n--}\n'
+     'AddDungeon( "WI_INSTANCE_KALGAS" )\n--{\n\tSetLevel( 50, 60 )\n\tSetKillAll( 1 )\n\tSetMonster( ID_MIDBOSS, "MI_AIBATT2", false, 1, 2, 3 )\n--}\n'),
+    ('classes, 0 time, the last SetX wins', 'AddDungeon( "WI_INSTANCE_HERNEOS" )\n--{\n\tSetClass( CLASS_HERO,CLASS_LEGEND_HERO)\n\tSetDungeonTime( 0 )\n'
+     '\tSetCoolTime( MIN(5) )\n\tSetCoolTime( MIN(7) )\n--}\n'),
+]
+DG_SCRIPTS = [
+    ('PartyDungeon.lua', [{'op': 'time', 'k': 0, 'min': 45}]),
+    ('PartyDungeon.lua', [{'op': 'time', 'k': 6, 'min': 0}, {'op': 'cool', 'k': 6, 'min': 1440}]),
+    ('PartyDungeon.lua', [{'op': 'level', 'k': 3, 'lo': 61, 'hi': 299}, {'op': 'kill', 'k': 3, 'on': False}, {'op': 'class', 'k': 3, 'cls': ['CLASS_HERO', 'CLASS_NORMAL']}]),
+    ('PartyDungeon.lua', [{'op': 'level', 'k': 12, 'lo': 105, 'hi': 200}, {'op': 'time', 'k': 12, 'min': 30}]),
+    ('defaults only', [{'op': 'time', 'k': 0, 'min': 20}, {'op': 'level', 'k': 0, 'lo': 5, 'hi': 9}, {'op': 'kill', 'k': 0, 'on': True},
+                       {'op': 'class', 'k': 0, 'cls': ['CLASS_MASTER']}, {'op': 'cool', 'k': 0, 'min': 15}]),
+    ('no --{, CRLF, last line has no EOL', [{'op': 'time', 'k': 0, 'min': 10}, {'op': 'kill', 'k': 0, 'on': True}, {'op': 'class', 'k': 0, 'cls': ['CLASS_LEGEND_HERO']}]),
+    ('two blocks of one world, MIN(1.5), a comment block', [{'op': 'cool', 'k': 1, 'min': 3}, {'op': 'time', 'k': 0, 'min': 2}, {'op': 'level', 'k': 1, 'lo': 50, 'hi': 70}]),
+    ('classes, 0 time, the last SetX wins', [{'op': 'cool', 'k': 0, 'min': 9}, {'op': 'class', 'k': 0, 'cls': ['CLASS_NORMAL', 'CLASS_MASTER', 'CLASS_HERO', 'CLASS_LEGEND_HERO']}]),
+]
+
+
+def dg_run(root):
+    import hashlib
+    D = dr_defines(root)
+    mv = dr_movers(root, D)
+    worlds = dg_worlds(root)
+    text = open(os.path.join(root, 'PartyDungeon.lua'), 'rb').read().decode('latin-1')
+    out = {'files': [], 'enters': [], 'clocks': [], 'edits': []}
+
+    def facts(t, with_maps):
+        bl = dg_parse(t)
+        srv = dg_server(bl, D)
+        res = {'blocks': [[b['world'], b['v'], [[x, D.get(n)] for x, n in b['mons']]] for b in bl],
+               'server': [[k, v['world'], v['data'], [list(x) for x in v['mons']]] for k, v in srv.items()], 'mons': []}
+        if with_maps:
+            for k, v in srv.items():
+                w = worlds.get(v['world'])
+                rg = dg_rgn(os.path.join(root, 'World', w, w + '.rgn'), D, mv) if w else None
+                res['mons'].append([v['world'], dg_mons(v['mons'], rg)])
+        return srv, res
+    srv, res = facts(text, True)
+    out['files'].append(dict(res, label='PartyDungeon.lua'))
+    for label, t in DG_SMALL:
+        out['files'].append(dict(facts(t, False)[1], label=label, text=t))
+
+    def rec(world, cls, lv, now, cool, did, anarchy, r):
+        out['enters'].append({'world': world, 'cls': cls, 'level': lv, 'now': now, 'cool': list(cool) if cool else None, 'did': did, 'anarchy': anarchy,
+                              'r': {'ok': r['ok'], 'text': r.get('text'), 'args': r.get('args'), 'cool': list(r['cool']) if r.get('cool') else None}})
+    # entering: every dungeon x every class x levels around the range; then tries during / after a cooldown, with Anarchy
+    for k, v in srv.items():
+        e = v['data']
+        for cls in ('normal', 'master', 'hero', 'legend', 'none'):
+            for lv in sorted({1, e['nMinLevel'] - 1, e['nMinLevel'], e['nMaxLevel'], e['nMaxLevel'] + 1, 150}):
+                rec(v['world'], cls, lv, 0, None, 1, 0, dg_enter(e, cls, lv, 0, None, 1, 0))
+        c = e['dwCoolTime']
+        for anarchy in (0, 30, 100, 150):
+            for at in (0, 1000, c // 2, c - 1500, c - 999, c - 1, c, c + 1, 0xFFFFFF00):
+                for did in (1, 2):
+                    rec(v['world'], 'legend', e['nMinLevel'], at, (1, c), did, anarchy, dg_enter(e, 'legend', e['nMinLevel'], at, (1, c), did, anarchy))
+    # a made-up .rgn: a material monster (never added), count 0, another object type, an unknown id, the same monster twice
+    mat = next(i for i in sorted(mv) if mv[i]['rank'] == D['RANK_MATERIAL'])
+    a1, a2 = D['MI_AIBATT1'], D['MI_AIBATT2']
+    rg = ('// made up\nrespawn7 5 %d 1.0 2.0 3.0 4 30 1 0 0\nrespawn7 5 %d 1 2 3 9 30 1 0 0\nrespawn6 5 %d 1 2 3 0 30 1 0 0\n'
+          'respawn7 4 %d 1 2 3 5 30 1 0 0\nrespawn 5 99999 1 2 3 5 30 1 0 0\nrespawn5 5 %d 1 2 3 3 30 1 0 0\nrespawn7 5 %d 1 2 3 -2 30 1 0 0\n') % (a1, mat, a2, a1, a1, a2)
+    out['rgns'] = [{'text': rg, 'r': dg_rgn_text(rg, D, mv)}]
+    for ms in sorted({v['data']['dwDungeonTime'] for v in srv.values()} | {0, 1000, 1001, 59999, 60000, 61000, 300000, 300500, 301000, 1801234}):
+        for t0 in (0, 400, 999):
+            out['clocks'].append({'ms': ms, 'tick0': t0, 'ev': dg_clock(ms, t0)})
+    # edits on the real file and the small ones -> byte-identical files, then what the server reads from them
+    small = dict(DG_SMALL)
+    for name, ops in DG_SCRIPTS:
+        t = text if name == 'PartyDungeon.lua' else small[name]
+        for op in ops:
+            t = dg_edit(t, op)
+        bb = t.encode('latin-1')
+        out['edits'].append({'file': name, 'ops': ops, 'sha256': hashlib.sha256(bb).hexdigest(), 'size': len(bb), 'after': facts(t, False)[1]['blocks']})
+    return out
+
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -10993,6 +11416,8 @@ if __name__ == '__main__':
         print(json.dumps(se_run(root)))
     elif what == 'weapons':                     # weapon effects: each weapon's own stats, rarity, hands, tooltip, edits
         print(json.dumps(we_run_all(root)))
+    elif what == 'dungeon':                     # Dungeons: PartyDungeon.lua (LoadScript), entering, the clock, the map monsters, edits
+        print(json.dumps(dg_run(root)))
     elif what == 'pvp':                         # PvP Events: FFA / TDM ReadConfig, GuildCombat.txt, GuildSiegePrize.lua, schedules, money, battles, edits
         print(json.dumps(pv_run(root)))
     elif what == 'dds':                         # a folder of .dds icons -> {file: [w, h, sha256 of the RGBA]}

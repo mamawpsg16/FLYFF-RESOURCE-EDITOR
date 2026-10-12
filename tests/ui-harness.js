@@ -156,6 +156,28 @@
     await waitFor(() => S.task === id && S.ws && !S.busy, 'task ' + id);
   }
 
+  // the Dungeons task (also reachable alone: ?stop=dungeon jumps here right after the folder is picked)
+  async function dungeonStage() {
+    const S = FRE.app.state;
+    {
+      await openTask('dungeon');
+      const ed = () => $('editor'), items = () => [...document.querySelectorAll('#list .npc')];
+      ok(S.mode === 'dungeon' && items().length === 13, `Dungeons: the 13 party dungeons listed (got ${items().length})`);
+      click(items().find(x => /WI_INSTANCE_KALGAS\b/.test(x.textContent)));
+      ok(/Time limit/.test(ed().textContent) && ed().querySelector('input[data-key="dg|6|time"]') && /lv 135-300/.test(items().find(x => /WI_INSTANCE_KALGAS\b/.test(x.textContent)).textContent), 'Kalgas: the settings, lv 135-300');
+      ok(/Enters\./.test(ed().textContent), 'Try entering: a Legend Hero at level 135 enters');
+      const tIn = ed().querySelector('input[data-key="dg|6|time"]');
+      tIn.value = '60'; tIn.dispatchEvent(new Event('change'));
+      ok(/SetDungeonTime\( MIN\(60\) \)/.test(S.ws.files.get('partydungeon.lua').text) && /time limit 1 hour/.test([...$('toasts').children].pop().textContent), 'time limit 45 -> 60 minutes: the line and the toast');
+      const editBtn = [...ed().querySelectorAll('button')].find(b => b.textContent === 'Edit drops' && !b.disabled);
+      click(editBtn);
+      ok(ed().querySelector('.dg-drops h2') && ed().querySelector('.dg-drops input[data-key$="|min"]'), 'Edit drops: the Monster Drops editor opens inside, with the Min amount field');
+      if (STOP === 'dungeon') { $('toasts').textContent = ''; return; }
+      while (S.ws.history.length) click($('btn-undo'));
+      ok(!S.ws.dirtyFiles().length, 'Undo: nothing left to save');
+    }
+  }
+
   async function scenario() {
     FRE.dom.instant = true;      // the loading window must not wait for a paint (this harness runs in microtasks)
     await waitFor(() => FRE.app.state && $('btn-root'), 'app init');
@@ -167,9 +189,10 @@
     // the cards are drawn after the patch check (io/patch-state.js reads one C++ file per patch)
     await waitFor(() => document.querySelector('.task-card:not(:disabled)'), 'task cards enabled');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
-    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 11 && document.querySelector('.task-card[data-task="pvp"]') && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 11 tasks to pick (PvP Events; Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 12 && document.querySelector('.task-card[data-task="dungeon"]') && document.querySelector('.task-card[data-task="pvp"]') && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 12 tasks to pick (Dungeons; PvP Events; Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
+    if (STOP === 'dungeon') { await dungeonStage(); return; }
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
     click(document.querySelector('.task-card[data-task="npc"]'));
     const card = document.querySelector('.task-card[data-task="npc"]'), lw = document.querySelector('.loading-back');
@@ -1686,6 +1709,9 @@
       while (S.ws.history.length) click($('btn-undo'));
       ok(!S.ws.dirtyFiles().length, 'Undo: nothing left to save');
     }
+
+    // ---- Dungeons (PartyDungeon.lua + the drops of each dungeon's monsters): dungeonStage() above
+    await dungeonStage();
 
     // ---- Battle Pass
     await openTask('battlepass');

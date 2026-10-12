@@ -37,6 +37,8 @@ cp -p $SRC/Client/s.txt $SRC/Client/WeaponRarity.inc "$DST/Client/"
 cp -p $SRC/Server/Resource/FFAManager.inc $SRC/Server/Resource/TDMManager.inc $SRC/Server/Resource/GuildSiegePrize.lua "$DST/Resource/"
 cp -p $SRC/Client/Client/NpcBoard_289.inc $SRC/Client/Client/NpcBoard_290.inc $SRC/Client/Client/GuildCombatTEXT_?_ENG.inc \
   $SRC/Client/Client/GuildCombatTEXT_?_USA.inc "$DST/Client/Client/"
+# Dungeon task: the party dungeons (time limit, cooldown, levels, kill-all); the map monsters come from World/*/*.rgn below
+cp -p $SRC/Server/Resource/PartyDungeon.lua "$DST/Resource/"
 # the buff icons (Client/Icon): all of them in a manual test copy, the two the buff files use for the tests
 mkdir -p "$DST/Client/Icon"
 if [ "$DST" = "test-data/fixtures" ]; then cp -p "$SRC/Client/Icon/Badge_EventPackage.png" "$SRC/Client/Icon/Itm_SysSysScrChaCla1.dds" "$DST/Client/Icon/"

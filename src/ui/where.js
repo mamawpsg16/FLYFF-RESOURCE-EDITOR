@@ -83,7 +83,7 @@
     const byChance = (a, b) => b.perKill - a.perKill;
     put(section('⚔️', 'Dropped by', ['Monster', 'Level', 'Chance', ''], of('drop').sort(byChance).map(l => h('tr',
       h('td', l.who), h('td', l.level === null ? '' : String(l.level)),
-      h('td', `in ${pct(l.perKill)} of kills`, l.number > 1 ? h('span.muted.small', ` · 1–${group(l.number)} at a time`) : null),
+      h('td', `in ${pct(l.perKill)} of kills`, l.number > 1 ? h('span.muted.small', ` · ${group(l.low || 1)}–${group(l.number)} at a time`) : null),
       h('td', openMonster(l.mid)))),
       'For a player at the monster\'s level, with the server rates of Event.lua (as in Monster Drops).'));
     const ev = of('event').sort(byChance);

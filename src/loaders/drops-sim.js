@@ -5,7 +5,8 @@
 //                     the level-gap table and xRandom( 100 ) < nProbability * GetItemDropRateFactor (MoverParam.cpp:4423)
 //   getAt           = CDropItemGenerator::GetAt     (_Common/Project.cpp:184-208): dwRand = xRandom( 3000000000 ) / GetPieceItemDropRateFactor
 //                     (MoverParam.cpp:4440), float32, then dwRand < dwProbability. The x10 item rate only feeds the gate.
-//   item lines      = Mover.cpp:8604-8716 (bag for flying monsters, ground otherwise; Maxitem stops: >= in the bag, == on the ground)
+//   item lines      = Mover.cpp:8604-8716 (bag for flying monsters, ground otherwise; Maxitem stops: >= in the bag, == on the ground);
+//                     amount min..max with the optional 5th DropItem value (V19 b9646b69)
 //   Penya           = Mover.cpp:8717-8746 (roll 0 only) + PenyaTable::Roll (_Common/PenyaTable.cpp:84-136) + CanAdd (DPSrvr.cpp:116);
 //                     __PENYA_TO_INVENTORY: straight to the bag
 //   genRandomOpt    = CRandomOptItemGen::GenRandomOptItem (Project.cpp:4918): weapons / armor dropped on the ground
@@ -152,7 +153,10 @@
         if (e.kind === 'item') {
           const num = e.number === NONE ? 1 : e.number;
           if (num === 0) { res.crash = { at: i, why: 'xRandom(0): amount 0' }; return res; }
-          const n = ((rnd.random(num) + 1) << 16) >> 16;          // (short)
+          // the lowest amount (V19 b9646b69): dwNumber2 when > 1 and the amount is counted, at most the amount; event lines have 0
+          let mn = (e.min2 > 1 && e.number !== NONE) ? e.min2 : 1;
+          if (mn > num) mn = num;
+          const n = ((mn + rnd.random(num - mn + 1)) << 16) >> 16; // (short)( dwMin + xRandom( dwNum - dwMin + 1 ) )
           if (flying) {
             if (o.bagFull) continue;                              // CreateItem failed: no count, no stop check
             res.drops.push({ id: e.itemId, n, plus: e.levelValue, opt: 0, where: 'bag', from: i });

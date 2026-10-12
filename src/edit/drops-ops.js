@@ -34,26 +34,43 @@
   }
   function checkUpgrade(level) { T.checkAmount(level, 0, MAX_UPGRADE, 'The upgrade (+N)'); }
 
-  const dropLine = (define, prob, level, count) => `DropItem(${define}, ${prob}, ${level}, ${count});`;
+  // the 5th value (the lowest amount, V19 b9646b69) is written only when it is above 1, so untouched lines stay as they are
+  const dropLine = (define, prob, level, count, min) => `DropItem(${define}, ${prob}, ${level}, ${count}${min > 1 ? `, ${min}` : ''});`;
+  function checkMin(min, count) {
+    T.checkAmount(min, 1, MAX_COUNT, 'The lowest amount');
+    if (count !== -1 && min > count) throw new Error(`The lowest amount (${min}) must not be above the highest (${count})`);
+  }
+  const rawMin = e => e.min ? (e.min.value | 0) : 1;
 
-  // { define, prob, level, count } -> splices
+  // { define, prob, level, count, min? } -> splices
   function addDrop(text, model, monId, d, defines) {
     checkItem(d.define, defines); checkChance(d.prob); checkCount(d.count); checkUpgrade(d.level);
+    const min = d.min == null || d.count === -1 ? 1 : d.min;
+    checkMin(min, d.count);
     const { b } = lastBlock(model, monId);
-    const row = dropLine(d.define, d.prob, d.level, d.count);
+    const row = dropLine(d.define, d.prob, d.level, d.count, min);
     const anchor = last(b.entries, e => e.kind === 'item' && !e.gen)
       || last(b.entries, e => (e.kind === 'gold' || e.kind === 'maxitem') && !e.gen);
     if (anchor) return T.insertRowAfter(text, anchor, row);
     return T.insertRowBelowLine(text, b.open.start, row);
   }
 
-  // change some of { prob, level, count, define } of one DropItem line
+  // change some of { prob, level, count, min, define } of one DropItem line.
+  // min: a 5th value is replaced (removed when it becomes 1 and the line has exactly 5 values), else ", min" goes after the amount.
   function setDrop(text, e, d, defines) {
     const out = [];
     if (d.define != null && d.define !== e.define) { checkItem(d.define, defines); out.push(...T.replaceSpan(e.id, d.define)); }
     if (d.prob != null && d.prob !== e.probability) { checkChance(d.prob); out.push(...T.replaceSpan(e.prob, d.prob)); }
     if (d.level != null && d.level !== e.levelValue) { checkUpgrade(d.level); out.push(...T.replaceSpan(e.level, d.level)); }
     if (d.count != null && (d.count === -1 ? 0xFFFFFFFF : d.count) !== e.number) { checkCount(d.count); out.push(...T.replaceSpan(e.count, d.count)); }
+    if (d.min != null && d.min !== rawMin(e)) {
+      const count = d.count != null ? d.count : (e.number === 0xFFFFFFFF ? -1 : e.number);
+      checkMin(d.min, count);
+      const sixth = e.toks[5] && e.toks[5].text === ',';
+      if (e.min && (d.min > 1 || sixth)) out.push(...T.replaceSpan(e.min, d.min));
+      else if (e.min) out.push({ start: e.count.end, end: e.min.end, insert: '' });
+      else out.push({ start: e.count.end, end: e.count.end, insert: `, ${d.min}` });
+    }
     return out;
   }
 
@@ -89,5 +106,5 @@
     return anchor ? T.insertRowAfter(text, anchor, row) : T.insertRowBelowLine(text, b.open.start, row);
   }
 
-  FRE.dropsOps = { addDrop, setDrop, removeEntry, setGold, setMaxitem, addKind, dropLine, MAX_COUNT, MAX_UPGRADE, MAX_MAXITEM };
+  FRE.dropsOps = { addDrop, setDrop, removeEntry, setGold, setMaxitem, addKind, dropLine, rawMin, MAX_COUNT, MAX_UPGRADE, MAX_MAXITEM };
 })(globalThis.FRE = globalThis.FRE || {});

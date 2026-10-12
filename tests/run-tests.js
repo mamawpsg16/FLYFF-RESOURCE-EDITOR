@@ -2534,7 +2534,7 @@ section('monster drops: loader, checks, kills (JS and Python copies agree)');
   const penyaJ = T => ({ rows: T.rows.map(r => [r.level, r.min, r.max]), pct: T.rankPct, least: T.rankAtLeast, worlds: T.worlds });
   eq(JSON.stringify(penyaJ(ctx.penya)), JSON.stringify(ora.penya), 'PenyaTable.txt: the same table');
 
-  const monJ = mon => ({ list: mon.list.map(e => e.kind === 'gold' ? ['gold', e.minValue, e.maxValue] : ['item', e.itemId, e.probability, e.levelValue, e.number]),
+  const monJ = mon => ({ list: mon.list.map(e => e.kind === 'gold' ? ['gold', e.minValue, e.maxValue] : ['item', e.itemId, e.probability, e.levelValue, e.number, e.min2]),
     kinds: mon.kinds.map(e => e.ik3Value), max: mon.maxValue });
   let agree = 0, bad = [];
   for (const [id, om] of Object.entries(ora.monsters)) {
@@ -2601,8 +2601,8 @@ section('monster drops: loader, checks, kills (JS and Python copies agree)');
         for (const op of sc.ops) {
           const model = w.models.drops, id = Dm.get(op.mon), mon = model.monsters.get(id);
           const entry = () => mon.list.filter(e => e.kind === 'item' && e.define === op.item)[op.k || 0];
-          const make = t => op.op === 'add' ? O.addDrop(t, model, id, { define: op.define, prob: op.prob, level: op.level, count: op.count }, Dm)
-            : op.op === 'set' ? O.setDrop(t, entry(), { define: op.define, prob: op.prob, level: op.level, count: op.count }, Dm)
+          const make = t => op.op === 'add' ? O.addDrop(t, model, id, { define: op.define, prob: op.prob, level: op.level, count: op.count, min: op.min }, Dm)
+            : op.op === 'set' ? O.setDrop(t, entry(), { define: op.define, prob: op.prob, level: op.level, count: op.count, min: op.min }, Dm)
             : op.op === 'remove' ? O.removeEntry(t, entry())
             : op.op === 'gold' ? O.setGold(t, model, id, op.min, op.max)
             : op.op === 'max' ? O.setMaxitem(t, model, id, op.n)
@@ -3849,6 +3849,115 @@ section('PvP Events: FFA / TDM / Guild Siege settings, schedules, money, battles
   eq(A.compute({ changes: [{ label: 'x', files: ['client/guildcombattext_5_eng.inc'] }] }).steps.map(s => s.id).join(), 'click:board', 'a Guild Siege board alone: click the menu again (no patch)');
   for (const k of ['PVP_OFF', 'PVP_NO_TIMES', 'PVP_TIME_TWICE', 'PVP_SKIPPED', 'PVP_TIME_CLASH', 'PVP_GS_LOAD', 'PVP_GS_DAY_TWICE', 'PVP_GS_HOUR24', 'PVP_GS_NONE',
     'PVP_GS_SHOWN', 'PVP_PRIZE_LUA', 'PVP_PRIZE_BAD', 'PVP_PRIZE_EXTRA', 'PVP_PATCH_MISSING', 'PVP_RULES_DIFF', 'PVP_RULES_NOTFOUND']) ok(FRE.diagHelp[k], `help text for ${k}`);
+}
+
+// ---------------------------------------------------------------- Dungeons (PartyDungeon.lua)
+section('Dungeons: PartyDungeon.lua, entering, the clock, map monsters, edits (JS and Python copies agree)');
+{
+  const J = JSON.stringify;
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} dungeon ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py dungeon) gave no readable result', e.message); }
+  const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e));
+  const W = new FRE.Workspace(fs, { only: 'dungeon' }).load();
+  const { dyo, worldFiles } = loadWorldFiles(FIXTURES, W);
+  W.setMapObjects(dyo, worldFiles);
+  const Dg = FRE.dungeon, S = FRE.dungeonSim, O = FRE.dungeonOps, Dm = W.defines.defines;
+  const m = W.models.dungeon;
+  ok(W.available.dungeon.ok && m.dungeons.length === 13, `the real PartyDungeon.lua: 13 dungeons (the 2 in --[[ ]] comments skipped), got ${m.dungeons.length}`);
+  eq(W.diags.filter(d => d.module === 'dungeon' && d.severity === 'BLOCK').map(d => d.code).join(), '', 'no BLOCK problem on the real file');
+  ok(W.isEditable('partydungeon.lua') && W.isEditable('propmoverex.inc'), 'the task edits PartyDungeon.lua and the drops (propMoverEx.inc)');
+
+  const facts = (text, maps) => {
+    const mm = Dg.loadDungeons({ text }, { defines: Dm });
+    const srv = Dg.serverMap(mm);
+    const r = {
+      blocks: mm.dungeons.map(d => [d.world, d.server, d.monsters.map(x => [x.type, x.id])]),
+      server: [...srv].map(([k, v]) => [k, v.first.world, v.data, v.monsters.map(x => [x.type, x.id])]),
+      mons: [],
+    };
+    if (maps) for (const [, v] of srv) {
+      const d = v.first, rg = m.rgn.get(m.dungeons[d.index].map);
+      r.mons.push([d.world, Dg.monstersOf(d, v, rg ? rg : null).map(x => [x.id, x.roles, x.count])]);
+    }
+    return r;
+  };
+  if (py) {
+    let same = 0;
+    for (const f of py.files) {
+      const text = f.label === 'PartyDungeon.lua' ? W.files.get('partydungeon.lua').text : f.text;
+      const j = J(facts(text, f.label === 'PartyDungeon.lua')), p = J({ blocks: f.blocks, server: f.server, mons: f.mons });
+      if (j === p) same++; else print(`   ${f.label}: js ${j.slice(0, 300)}\n   py ${p.slice(0, 300)}`);
+    }
+    eq(same, py.files.length, `what the server keeps and each dungeon's monsters (SetMonster + the map's .rgn): ${py.files.map(f => f.label).join(', ')}`);
+
+    const srv = Dg.serverMap(m);
+    const byWorld = new Map([...srv.values()].map(v => [v.first.world, v.data]));
+    let es = 0, ebad = [];
+    for (const c of py.enters) {
+      const r = S.enter(byWorld.get(c.world), { cls: c.cls, level: c.level }, { now: c.now, cool: c.cool ? { dungeonId: c.cool[0], endsAt: c.cool[1] } : null, dungeonId: c.did, anarchy: c.anarchy });
+      const j = J({ ok: r.ok, text: r.text || null, args: r.args || null, cool: r.cool ? [r.cool.dungeonId, r.cool.endsAt] : null });
+      if (j === J(c.r)) es++; else if (ebad.length < 3) ebad.push(`${J(c).slice(0, 200)} js ${j}`);
+    }
+    eq(es, py.enters.length, `entering: class, level, cooldown with Anarchy (${py.enters.length} tries)`);
+    ebad.forEach(b => print('   ' + b));
+
+    let cs = 0;
+    for (const c of py.clocks) {
+      const j = J(S.clock(c.ms, { tick0: c.tick0 }).map(x => [x.t, x.kind, x.ms === undefined ? null : x.ms, x.text === undefined ? null : x.text]));
+      if (j === J(c.ev)) cs++; else print(`   clock ${c.ms} tick0 ${c.tick0}: js ${j.slice(0, 200)} py ${J(c.ev).slice(0, 200)}`);
+    }
+    eq(cs, py.clocks.length, `the clock: "Dungeon Time", 5 / 1 minute warnings, sent out (${py.clocks.length} runs)`);
+
+    for (const g of py.rgns) eq(J(Dg.regionMonsters({ text: g.text }, { defines: Dm, movers: W.movers.movers }).map(x => [x.id, x.count])), J(g.r),
+      'a made-up .rgn: materials, count 0, other object types and unknown monsters are left out; the same monster adds up');
+
+    // edits: the editor's ops on the same texts -> byte-identical files, then the same server values
+    const small = new Map(py.files.filter(f => f.text).map(f => [f.label, f.text]));
+    let ed = 0;
+    for (const sc of py.edits) {
+      let text = sc.file === 'PartyDungeon.lua' ? W.files.get('partydungeon.lua').text : small.get(sc.file);
+      try {
+        for (const op of sc.ops) {
+          const d = Dg.loadDungeons({ text }, { defines: Dm }).dungeons[op.k];
+          const sp = op.op === 'time' ? O.setTime(text, d, op.min) : op.op === 'cool' ? O.setCool(text, d, op.min)
+            : op.op === 'level' ? O.setLevels(text, d, op.lo, op.hi) : op.op === 'kill' ? O.setKillAll(text, d, op.on) : O.setClasses(text, d, op.cls);
+          text = FRE.SourceFile.spliceText(text, sp);
+        }
+        const bytes = Uint8Array.from(text, c => c.charCodeAt(0));
+        const sha = GLib.compute_checksum_for_bytes(GLib.ChecksumType.SHA256, new GLib.Bytes(bytes));
+        const after = J(facts(text, false).blocks);
+        if (sha === sc.sha256 && bytes.length === sc.size && after === J(sc.after)) ed++;
+        else print(`   edit ${sc.file} ${J(sc.ops).slice(0, 160)}: js ${bytes.length} bytes, py ${sc.size}${after === J(sc.after) ? '' : `; js reads ${after.slice(0, 200)}`}`);
+      } catch (e) { print(`   edit ${sc.file} ${J(sc.ops).slice(0, 160)}: ${e.message}`); }
+    }
+    eq(ed, py.edits.length, `edits: byte-identical files and the same server values (${py.edits.length} scripts: replace, add missing lines, CRLF, no "--{", last line without EOL, two blocks)`);
+  }
+
+  // through the workspace: one undo step each, the drops of a dungeon monster edited in this task
+  const lua = 'partydungeon.lua';
+  const kal = () => W.models.dungeon.dungeons.find(d => d.world === 'WI_INSTANCE_KALGAS');
+  W.apply(lua, O.setTime(W.files.get(lua).text, kal(), 60), 'Kalgas: time limit 60');
+  eq(kal().server.dwDungeonTime, 3600000, 'Kalgas: time limit 45 -> 60 minutes (the model follows the edit)');
+  ok(/SetDungeonTime\( MIN\(60\) \)/.test(W.files.get(lua).text), 'the line now says SetDungeonTime( MIN(60) )');
+  W.undo();
+  eq(W.files.get(lua).dirty, false, 'undone: PartyDungeon.lua is back to its bytes');
+  const kalE = Dg.serverMap(W.models.dungeon).get(kal().worldId);
+  const boss = Dg.monstersOf(kal(), kalE, null).map(x => W.models.drops.monsters.get(x.id)).find(b => b && b.list.some(e => e.kind === 'item' && e.number !== 0xFFFFFFFF && e.number < 9));
+  const line = boss.list.find(e => e.kind === 'item' && e.number !== 0xFFFFFFFF && e.number < 9);
+  W.apply('propmoverex.inc', FRE.dropsOps.setDrop(null, line, { count: 9, min: 3 }, Dm), 'boss drop 3-9');
+  const after = W.models.drops.monsters.get(boss.id).list.find(e => e.start === line.start);
+  ok(after && after.number === 9 && after.min2 === 3, 'a dungeon boss drop set to 3-9 here: the Monster Drops model reads min 3, max 9');
+  W.undo();
+  throws(() => O.setLevels(W.files.get(lua).text, kal(), 200, 150), 'levels 200-150 are refused (nobody could enter)');
+  throws(() => O.setClasses(W.files.get(lua).text, kal(), []), 'no class at all is refused');
+  throws(() => O.setTime(W.files.get(lua).text, kal(), 40000), 'a time limit past the DWORD (24.8 days) is refused');
+  // after saving
+  eq(FRE.afterSave.compute({ changes: [{ label: 'x', files: [lua] }] }).steps.map(s => s.id).join(), 'servers', 'PartyDungeon.lua: restart the servers (read once at start)');
+  for (const k of ['DG_SYNTAX', 'DG_NO_DUNGEON', 'DG_WORLD', 'DG_DUP', 'DG_LEVEL', 'DG_CLASS', 'DG_TWICE', 'DG_SHORT', 'DG_MONSTER', 'DG_NAME', 'M_MIN_ABOVE']) ok(FRE.diagHelp[k], `help text for ${k}`);
+  // the made-up file's checks
+  const bad = Dg.validateDungeons(Dg.loadDungeons({ text: 'SetLevel( 1, 2 )\nAddDungeon( "WI_NOPE" )\n\tSetLevel( 9, 3 )\n\tSetClass( )\n\tSetMonster( ID_BOSS, "MI_NOPE", true, 1, 2, 3 )\nAddDungeon( "WI_INSTANCE_KALGAS" )\nAddDungeon( "WI_INSTANCE_KALGAS" )\n\tSetDungeonTime( SEC(30) )\n\tSetCoolTime( FOO )\n' }, { defines: Dm }), { defines: Dm, movers: W.movers.movers });
+  eq([...new Set(bad.map(d => d.code))].sort().join(), 'DG_CLASS,DG_DUP,DG_LEVEL,DG_MONSTER,DG_NAME,DG_NO_DUNGEON,DG_SHORT,DG_WORLD', 'a broken file: every check fires');
 }
 
 print(`\n${pass} passed, ${fail} failed`);

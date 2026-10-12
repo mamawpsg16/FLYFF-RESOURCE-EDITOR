@@ -154,10 +154,16 @@
       const iname = itemNameOf(ctx, e);
       const set = (what, d, was) => typed(ctx, mon.id, `${e.start}|${what}`, () => O().setDrop(null, e, d, ws.defines.defines), `${name}: changed the ${what} of ${iname} (was ${was})${genNote(e)}`);
       const free = e.number === 0xFFFFFFFF;
+      const lo = e.min2 > 1 ? e.min2 : 1;               // what the server uses (V19 b9646b69)
+      const was = free ? '1, not counted' : `${lo} to ${e.number}`;
       const amount = h('td.dr-amt', h('label.small', { title: 'Not counted: always exactly 1, and it never uses up the max items per kill' },
-        h('input', { type: 'checkbox', checked: free, disabled: !edit_, on: { change: ev => set('amount', { count: ev.target.checked ? -1 : 1 }, free ? '1, not counted' : `1 to ${e.number}`) } }), ' not counted'),
-        free ? null : h('span', ' 1 to ', numInput({ value: e.number, min: 1, max: O().MAX_COUNT, disabled: !edit_, key: `dr|${mon.id}|${e.start}|n`,
-          onCommit: v => { if (v) set('amount', { count: v }, `1 to ${e.number}`); } })));
+        h('input', { type: 'checkbox', checked: free, disabled: !edit_, on: { change: ev => set('amount', { count: ev.target.checked ? -1 : 1 }, was) } }), ' not counted'),
+        free ? null : h('span', { title: 'Min to Max: each drop is one stack of a random amount in this range, every amount equally likely. Only use more than 1 on items that stack.' }, ' ',
+          numInput({ value: lo, min: 1, max: O().MAX_COUNT, disabled: !edit_, key: `dr|${mon.id}|${e.start}|min`,
+            onCommit: v => { if (v) set('amount', { min: Math.min(v, e.number) }, was); } }),
+          ' to ', numInput({ value: e.number, min: 1, max: O().MAX_COUNT, disabled: !edit_, key: `dr|${mon.id}|${e.start}|n`,
+            onCommit: v => { if (v) set('amount', v < lo ? { count: v, min: v } : { count: v }, was); } })),
+        !free && e.number > 1 ? h('div.muted.small', `each amount ${lo}-${e.number}: ${pctOf(1 / (e.number - lo + 1))}`) : null);
       const reach = l.reach < 0.9995 ? h('div.muted.small', `reached in ${pctOf(l.reach)} of kills (the max stops the list before it)`) : null;
       tb.appendChild(h('tr', itemCell(info, e.define),
         h('td', pctInput({ value: e.probability, disabled: !edit_, key: `dr|${mon.id}|${e.start}|p`, conv: CONV,
@@ -209,7 +215,7 @@
   // ------------------------------------------------------------- + Add a drop
   function addForm(ctx, mon, define) {
     const ws = ctx.ws, name = nameOf(ctx, mon.id);
-    const s = { define: define || null, prob: null, count: 1, free: true, level: 0 };
+    const s = { define: define || null, prob: null, count: 1, min: 1, free: true, level: 0 };
     const body = h('div.nn-form');
     const checks = h('div'), preview = h('div');
     let createBtn = null;
@@ -217,13 +223,14 @@
     ws._itemOpts = itemOpts;
     const plan = () => {
       const f = ws.files.get(FILE);
-      return O().addDrop(f.text, model(ctx), mon.id, { define: s.define, prob: s.prob, level: s.level, count: s.free ? -1 : s.count }, ws.defines.defines);
+      return O().addDrop(f.text, model(ctx), mon.id, { define: s.define, prob: s.prob, level: s.level, count: s.free ? -1 : s.count, min: s.free ? 1 : s.min }, ws.defines.defines);
     };
     function refresh() {
       checks.textContent = ''; preview.textContent = '';
       const probs = [];
       if (!s.define) probs.push(['BLOCK', 'Still needs: the item']);
       if (!s.prob) probs.push(['BLOCK', 'Still needs: the chance']);
+      if (!s.free && s.min > s.count) probs.push(['BLOCK', `The lowest amount (${s.min}) is above the highest (${s.count})`]);
       if (s.define && mon.list.some(e => e.kind === 'item' && e.define === s.define)) probs.push(['WARN', `${name} already drops this item: both lines roll, one after the other`]);
       if (s.define) { const id = ws.defines.defines.get(s.define), it = id === undefined ? null : ws.itemById(id);
         if (it && s.level && ![ws.defines.defines.get('IK1_WEAPON'), ws.defines.defines.get('IK1_ARMOR')].includes(FRE.specItem.get(it, 'dwItemKind1'))) probs.push(['WARN', `+${s.level} on an item that is not a weapon or armor`]); }
@@ -246,14 +253,15 @@
     }
     const debounce = refresh;          // the inputs already wait for a pause in typing (FRE.dom live inputs)
     const cnt = numInput({ value: 1, min: 1, max: O().MAX_COUNT, key: 'dr|add|n', disabled: s.free, onCommit: v => { s.count = v || 1; debounce(); } });
+    const cntMin = numInput({ value: 1, min: 1, max: O().MAX_COUNT, key: 'dr|add|min', disabled: s.free, onCommit: v => { s.min = v || 1; debounce(); } });
     const row = (label, req, ...el) => h('div.nn-row', fieldLabel(label, req), ...el);
     body.appendChild(h('div',
       row('Item', true, h('div', { style: 'flex:1' }, FRE.ui.combo({ options: itemOpts, value: s.define, placeholder: 'Type an item name…', onPick: v => { s.define = v; refresh(); } }))),
       row('Chance (what players get, per roll)', true, pctInput({ value: null, conv: CONV, key: 'dr|add|p', live: true, onCommit: u => { s.prob = u; debounce(); } })),
       row('Amount', false,
-        h('label', h('input', { type: 'checkbox', checked: s.free, on: { change: ev => { s.free = ev.target.checked; cnt.disabled = s.free; refresh(); } } }),
+        h('label', h('input', { type: 'checkbox', checked: s.free, on: { change: ev => { s.free = ev.target.checked; cnt.disabled = s.free; cntMin.disabled = s.free; refresh(); } } }),
           ' exactly 1, not counted toward the max items per kill'),
-        h('span.muted', '— or untick it for a random amount from 1 to'), cnt),
+        h('span.muted', '— or untick it for one stack of a random amount: Min'), cntMin, h('span.muted', 'to Max'), cnt),
       row('Upgrade (+N)', false, numInput({ value: 0, min: 0, max: O().MAX_UPGRADE, key: 'dr|add|lv', onCommit: v => { s.level = v || 0; debounce(); } }))));
     body.appendChild(h('p.muted.small', `The chance can be at most ${CONV.maxPct}%: the server reads the number with atoi, which stops at 2,147,483,647. For "every kill", add the same line twice.`));
     formFooter({ checks, action: 'Add', previewTitle: 'What will be written / what players get', preview }).forEach(x => body.appendChild(x));

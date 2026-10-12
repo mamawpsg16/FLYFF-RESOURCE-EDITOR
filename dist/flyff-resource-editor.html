@@ -487,7 +487,7 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when": "Mon 12 Oct 2026, 13:24", "rev": "0129fb5", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "73+", "when": "Mon 12 Oct 2026, 16:03", "rev": "6b2e492", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -3693,12 +3693,20 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
           const level = s.getNumber();
           toks.push(s.getToken());                               // ,
           const count = s.getNumber();
-          const close = s.getToken();                            // )
+          const close = s.getToken();                            // , or )
           toks.push(close);
-          const e = { kind: 'item', block, start: t.start, end: close.end, id, prob, level, count, toks,
+          // optional 5th value = the lowest amount (V19 b9646b69, Project.cpp DropItem): read after a ",", then one more token (")").
+          // A 6th value and on are skipped token by token like any unknown word (M_EXTRA_ARGS).
+          let min = null, close2 = null;
+          if (close.text === ',') { min = s.getNumber(); close2 = s.getToken(); toks.push(close2); }
+          const number = u32(count.value);
+          // what the server stores in dwNumber2: 0 when missing, < 1 or the amount is -1; above the amount -> the amount
+          let min2 = min ? u32(min.value) : 0;
+          if (number === 0xFFFFFFFF || (min2 | 0) < 1) min2 = 0;
+          else if (min2 > number) min2 = number;
+          const e = { kind: 'item', block, start: t.start, end: (close2 && close2.text === ')' ? close2 : close).end, id, prob, level, count, min, toks,
             itemId: u32(id.value), define: id.define || text.slice(id.start, id.end),
-            probability: u32(prob.value), levelValue: u32(level.value), number: u32(count.value),
-            // a 5th value (",") is skipped token by token like any unknown word: the 4 values are right (M_EXTRA_ARGS)
+            probability: u32(prob.value), levelValue: u32(level.value), number, min2,
             shape: toks[0].text === '(' && toks[1].text === ',' && toks[2].text === ',' && toks[3].text === ',' && (close.text === ')' || close.text === ','),
             gen: genAt(t.start) };
           block.entries.push(e); mon.list.push(e);
@@ -3985,8 +3993,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
             message: `${who}: ${itemName(e)}'s chance ${text.slice(e.prob.start, e.prob.end)} is above 2,147,483,647. atoi stops there, so it drops ${pct(effChance(e.probability))} of the time, not ${pct(Number(text.slice(e.prob.start, e.prob.end)) / DROP_ONE)}` }));
           else if (e.probability === 0 && e.shape) add(Object.assign(at, { code: 'M_PROB_ZERO', severity: 'WARN', key: `M_PROB_ZERO|${key}`,
             message: `${who}: ${itemName(e)} has chance 0: it never drops` }));
-          if (e.toks[4] && e.toks[4].text === ',') add(Object.assign(at, { code: 'M_EXTRA_ARGS', severity: 'INFO', key: `M_EXTRA_ARGS|${key}`,
-            message: `${who}: this DropItem line has more than 4 values. The server reads the first 4 and skips the rest` }));
+          if (e.toks[5] && e.toks[5].text === ',') add(Object.assign(at, { code: 'M_EXTRA_ARGS', severity: 'INFO', key: `M_EXTRA_ARGS|${key}`,
+            message: `${who}: this DropItem line has more than 5 values. The server reads the first 5 (the 5th is the lowest amount) and skips the rest` }));
+          if (e.min && e.number !== 0xFFFFFFFF && e.number !== 0 && (u32(e.min.value) | 0) > (e.number | 0)) add(Object.assign(at, { code: 'M_MIN_ABOVE', severity: 'WARN', key: `M_MIN_ABOVE|${key}`,
+            message: `${who}: ${itemName(e)}: the lowest amount ${e.min.value | 0} is above the highest ${e.number}. The server uses ${e.number} for both` }));
         } else if (e.kind === 'gold') {
           const key = `${b.define}|gold`;
           if (!e.shape) add(Object.assign(at, { code: 'M_COMMA', severity: 'BLOCK', key: `M_COMMA|${key}`, message: `${who}: this DropGold line is not "DropGold(min, max);"` }));
@@ -4171,7 +4181,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
 //                     the level-gap table and xRandom( 100 ) < nProbability * GetItemDropRateFactor (MoverParam.cpp:4423)
 //   getAt           = CDropItemGenerator::GetAt     (_Common/Project.cpp:184-208): dwRand = xRandom( 3000000000 ) / GetPieceItemDropRateFactor
 //                     (MoverParam.cpp:4440), float32, then dwRand < dwProbability. The x10 item rate only feeds the gate.
-//   item lines      = Mover.cpp:8604-8716 (bag for flying monsters, ground otherwise; Maxitem stops: >= in the bag, == on the ground)
+//   item lines      = Mover.cpp:8604-8716 (bag for flying monsters, ground otherwise; Maxitem stops: >= in the bag, == on the ground);
+//                     amount min..max with the optional 5th DropItem value (V19 b9646b69)
 //   Penya           = Mover.cpp:8717-8746 (roll 0 only) + PenyaTable::Roll (_Common/PenyaTable.cpp:84-136) + CanAdd (DPSrvr.cpp:116);
 //                     __PENYA_TO_INVENTORY: straight to the bag
 //   genRandomOpt    = CRandomOptItemGen::GenRandomOptItem (Project.cpp:4918): weapons / armor dropped on the ground
@@ -4318,7 +4329,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
         if (e.kind === 'item') {
           const num = e.number === NONE ? 1 : e.number;
           if (num === 0) { res.crash = { at: i, why: 'xRandom(0): amount 0' }; return res; }
-          const n = ((rnd.random(num) + 1) << 16) >> 16;          // (short)
+          // the lowest amount (V19 b9646b69): dwNumber2 when > 1 and the amount is counted, at most the amount; event lines have 0
+          let mn = (e.min2 > 1 && e.number !== NONE) ? e.min2 : 1;
+          if (mn > num) mn = num;
+          const n = ((mn + rnd.random(num - mn + 1)) << 16) >> 16; // (short)( dwMin + xRandom( dwNum - dwMin + 1 ) )
           if (flying) {
             if (o.bagFull) continue;                              // CreateItem failed: no count, no stop check
             res.drops.push({ id: e.itemId, n, plus: e.levelValue, opt: 0, where: 'bag', from: i });
@@ -6200,7 +6214,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
     M_KIND_MAX: ['A monster has room for 80 random-gear lines (MAX_DROPKIND). The server does not check: line 81 onward writes past the end of the list in memory.', 'Remove random-gear lines.'],
     M_PROB_OVERFLOW: ['The chance is above 2,147,483,647. The server reads it with atoi, which stops there, so the line drops about 80% of the time instead of always.', 'Nothing to do if 80% is fine. For "always", the server cannot do it in one line: repeat the line (c6b006fe did).'],
     M_PROB_ZERO: ['The chance is 0: the item never drops.', 'Type a chance, or remove the drop.'],
-    M_EXTRA_ARGS: ['The DropItem line has more than 4 values (like the event-drop lines of propDropEvent.inc). The server reads the first 4 and skips the rest.', 'Nothing to do; the extra values do nothing.'],
+    M_EXTRA_ARGS: ['The DropItem line has more than 5 values (like the event-drop lines of propDropEvent.inc). The server reads the first 5 (the 5th is the lowest amount, V19 b9646b69; ignored when the amount is "not counted") and skips the rest.', 'Nothing to do; the extra values do nothing.'],
+    M_MIN_ABOVE: ['The lowest amount (the 5th DropItem value) is above the highest amount. The server lowers it to the highest, so the item always drops that many.', 'Lower the lowest amount, or raise the highest.'],
     M_NO_GOLD: ['The monster has no DropGold line, so it gives no Penya. PenyaTable.txt only changes a DropGold roll; it never adds one.', 'Add Penya if players should get some.'],
     M_GOLD_LATE: ['DropGold comes after drop lines that count toward the monster\'s max items per kill. When that many items drop first, the server stops reading the list and the Penya is skipped.', 'Move DropGold up, right after Maxitem.'],
     M_GEN_EDITED: ['This drop was written by one of the gen_*.ps1 scripts. Running that script again rewrites its block and undoes this edit.', 'Change the script too, or don\'t run it again.'],
@@ -6319,6 +6334,16 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
     PVP_PATCH_MISSING: ['The servers read the Guild Siege prizes from GuildSiegePrize.lua only with the C++ change of PvP events part B (commit 6de6da39, CGuildSiegePrize::ReadPrizes). This source does not have it, so the compiled numbers are paid.', 'Update FLYFF-V19-SOURCE and rebuild the WorldServer and the DatabaseServer.'],
     PVP_RULES_DIFF: ['The rules board players read (Donaris FFA Rules, Amos TDM Rules, the Guild Siege boards at Frankie) says another value than the data the servers use.', 'Change the board (or the value); the editor keeps them in step when you edit the value here.'],
     PVP_RULES_NOTFOUND: ['The editor finds each value in a board by the words around it. This sentence was reworded, so a change of the value will not reach the board.', 'Check the board by hand after changing that value.'],
+    DG_SYNTAX: ['A line of PartyDungeon.lua uses more than plain numbers, names, true / false and MIN( ) / SEC( ). Lua still runs it, but the editor cannot tell its value and leaves it alone.', 'Check that line by hand, or write it the plain way (for example SetCoolTime( MIN(60) )).'],
+    DG_NO_DUNGEON: ['A Set… line comes before any AddDungeon. The Lua stops with an error (there is no dungeon to set yet) and the WorldServer quits at start.', 'Put an AddDungeon( "WI_…" ) line above it, or remove the line.'],
+    DG_WORLD: ['AddDungeon names a world that is not in defineWorld.h. The server cannot find the dungeon, so nobody can enter it.', 'Use a WI_INSTANCE_… name from defineWorld.h.'],
+    DG_DUP: ['The same world is added twice. The server keeps the first block\'s settings (time, cooldown, levels, classes, kill-all) and adds the second block\'s monsters to the first.', 'Keep one block per world.'],
+    DG_LEVEL: ['The lowest level is above the highest. No level fits, so nobody can enter.', 'Lower the lowest level or raise the highest.'],
+    DG_CLASS: ['SetClass has none of CLASS_NORMAL, CLASS_MASTER, CLASS_HERO, CLASS_LEGEND_HERO. Every player gets "your class cannot enter".', 'Pick at least one class.'],
+    DG_TWICE: ['The same Set… line appears more than once in one dungeon. Each call overwrites the value, so the last one wins.', 'Remove the extra lines so the file says what the server uses.'],
+    DG_SHORT: ['The time limit is under 5 minutes. When it runs out everyone inside is sent out, cleared or not.', 'Nothing to do if that is on purpose.'],
+    DG_MONSTER: ['A SetMonster line names a monster the server does not know. It logs "Invalid Monster!" at start and that monster never appears, so the dungeon may never move on to its boss.', 'Use an MI_ name that has a row in propMover.txt.'],
+    DG_NAME: ['A value is a name Lua does not know, so it is nil: the server reads 0 or nothing for it.', 'Use a number, MIN( ) / SEC( ), or one of the CLASS_ / ID_ names.'],
   };
 })(globalThis.FRE = globalThis.FRE || {});
 
@@ -7806,26 +7831,43 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
   }
   function checkUpgrade(level) { T.checkAmount(level, 0, MAX_UPGRADE, 'The upgrade (+N)'); }
 
-  const dropLine = (define, prob, level, count) => `DropItem(${define}, ${prob}, ${level}, ${count});`;
+  // the 5th value (the lowest amount, V19 b9646b69) is written only when it is above 1, so untouched lines stay as they are
+  const dropLine = (define, prob, level, count, min) => `DropItem(${define}, ${prob}, ${level}, ${count}${min > 1 ? `, ${min}` : ''});`;
+  function checkMin(min, count) {
+    T.checkAmount(min, 1, MAX_COUNT, 'The lowest amount');
+    if (count !== -1 && min > count) throw new Error(`The lowest amount (${min}) must not be above the highest (${count})`);
+  }
+  const rawMin = e => e.min ? (e.min.value | 0) : 1;
 
-  // { define, prob, level, count } -> splices
+  // { define, prob, level, count, min? } -> splices
   function addDrop(text, model, monId, d, defines) {
     checkItem(d.define, defines); checkChance(d.prob); checkCount(d.count); checkUpgrade(d.level);
+    const min = d.min == null || d.count === -1 ? 1 : d.min;
+    checkMin(min, d.count);
     const { b } = lastBlock(model, monId);
-    const row = dropLine(d.define, d.prob, d.level, d.count);
+    const row = dropLine(d.define, d.prob, d.level, d.count, min);
     const anchor = last(b.entries, e => e.kind === 'item' && !e.gen)
       || last(b.entries, e => (e.kind === 'gold' || e.kind === 'maxitem') && !e.gen);
     if (anchor) return T.insertRowAfter(text, anchor, row);
     return T.insertRowBelowLine(text, b.open.start, row);
   }
 
-  // change some of { prob, level, count, define } of one DropItem line
+  // change some of { prob, level, count, min, define } of one DropItem line.
+  // min: a 5th value is replaced (removed when it becomes 1 and the line has exactly 5 values), else ", min" goes after the amount.
   function setDrop(text, e, d, defines) {
     const out = [];
     if (d.define != null && d.define !== e.define) { checkItem(d.define, defines); out.push(...T.replaceSpan(e.id, d.define)); }
     if (d.prob != null && d.prob !== e.probability) { checkChance(d.prob); out.push(...T.replaceSpan(e.prob, d.prob)); }
     if (d.level != null && d.level !== e.levelValue) { checkUpgrade(d.level); out.push(...T.replaceSpan(e.level, d.level)); }
     if (d.count != null && (d.count === -1 ? 0xFFFFFFFF : d.count) !== e.number) { checkCount(d.count); out.push(...T.replaceSpan(e.count, d.count)); }
+    if (d.min != null && d.min !== rawMin(e)) {
+      const count = d.count != null ? d.count : (e.number === 0xFFFFFFFF ? -1 : e.number);
+      checkMin(d.min, count);
+      const sixth = e.toks[5] && e.toks[5].text === ',';
+      if (e.min && (d.min > 1 || sixth)) out.push(...T.replaceSpan(e.min, d.min));
+      else if (e.min) out.push({ start: e.count.end, end: e.min.end, insert: '' });
+      else out.push({ start: e.count.end, end: e.count.end, insert: `, ${d.min}` });
+    }
     return out;
   }
 
@@ -7861,7 +7903,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
     return anchor ? T.insertRowAfter(text, anchor, row) : T.insertRowBelowLine(text, b.open.start, row);
   }
 
-  FRE.dropsOps = { addDrop, setDrop, removeEntry, setGold, setMaxitem, addKind, dropLine, MAX_COUNT, MAX_UPGRADE, MAX_MAXITEM };
+  FRE.dropsOps = { addDrop, setDrop, removeEntry, setGold, setMaxitem, addKind, dropLine, rawMin, MAX_COUNT, MAX_UPGRADE, MAX_MAXITEM };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- edit/boxes-ops.js ----
@@ -10778,6 +10820,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
       const mv = moverOf(mid);
       lines.push({ kind: 'drop', mid, who: mv ? mv.name : String(mid), level: mv ? mv.level : null, perKill,
         number: Math.max(...mine.map(l => (l.entry.number === 0xFFFFFFFF ? 1 : l.entry.number))),
+        low: Math.min(...mine.map(l => (l.entry.min2 > 1 ? l.entry.min2 : 1))),
         facts: { kind: 'drop', monster: mid, perKill: round12(perKill) } });
     }
     const evs = refs.filter(r => r.k === 'event').map(r => r.e);
@@ -14224,6 +14267,426 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
   FRE.pvpChecks.shownWrong = shownWrong;
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/dungeon.js ----
+// Party dungeons: PartyDungeon.lua (time limit, cooldown, levels, classes, kill-all, the SetMonster list).
+//   The file is real Lua, run by the WorldServer at start: CInstanceDungeonParty::LoadScript (Project.cpp:908)
+//   -> CInstanceDungeonBase::LoadScript (_Common/InstanceDungeonBase.cpp:384). It first runs LuaFunc/InstanceDungeonBase.lua,
+//   whose AddDungeon sets the defaults: dwClass 65535, levels 1-120, dwCoolTime MIN(30), nKillAll 0, dwDungeonTime MIN(30)
+//   (__DUNGEON_INFO, V19 214324ad / f078fc52). A dungeon without SetDungeonTime gets 30 minutes, not "no limit"; 0 = no limit.
+//   MIN( a ) = a * 60000 ms, SEC( a ) = a * 1000 ms. Set* functions write into the LAST AddDungeon (#tDungeon).
+//   LoadScript: the world id from the define name (GetDefineNum), the numbers cast from Lua doubles (static_cast<int> / <DWORD>:
+//   truncation), nKillAll != 0, m_mapDungeonData.insert: a second AddDungeon of the same world keeps the FIRST one's settings,
+//   but its SetMonster lines are added to the first one's list (the iterator points at the existing entry).
+// Map monsters (kill-all, and the drop list of the Dungeon task): the world's region respawns, World/<map>/<map>.rgn
+//   (CWorld::LoadRespawn, _Common/WorldFile.cpp:550: respawnN dwType dwIndex x y z nMaxcb ...; OT_MOVER only; RANK_MATERIAL is
+//   never added, WorldFile.cpp:601), counted the way BuildKillAll does (InstanceDungeonBase.cpp:1154: max( m_nMaxcb, m_cb ), m_cb = 0
+//   at load). Not modelled: the guard skip (no guard stands in a dungeon), RI_ records of other types.
+// Only this Lua subset is read: AddDungeon / Set* calls whose values are numbers, strings, true / false, the CLASS_ / ID_ names,
+// MIN( ) / SEC( ) and + - * /; -- and --[[ ]] comments. Anything else is reported (DG_SYNTAX) and that value is left unknown.
+(function (FRE) {
+  'use strict';
+  const FILE = 'PartyDungeon.lua';
+  const CONST = { CLASS_NORMAL: 1, CLASS_MASTER: 2, CLASS_HERO: 4, CLASS_LEGEND_HERO: 8, ID_NORMAL: 0, ID_MIDBOSS: 1, ID_BOSS: 2 };
+  const DEFAULTS = { dwClass: 65535, nMinLevel: 1, nMaxLevel: 120, dwCoolTime: 30 * 60000, nKillAll: 0, dwDungeonTime: 30 * 60000 };
+  const STMTS = ['SetClass', 'SetLevel', 'SetCoolTime', 'SetDungeonTime', 'SetKillAll', 'SetMonster', 'SetTeleportPos'];
+  // the order new lines are written in (the order of the header comment and of every block in the file)
+  const ORDER = ['SetClass', 'SetLevel', 'SetCoolTime', 'SetDungeonTime', 'SetKillAll'];
+
+  // Lua tokens: { t: 'name' | 'num' | 'str' | 'op', v, start, end }. Comments are skipped.
+  function tokenize(text) {
+    const out = [];
+    let i = 0;
+    const n = text.length;
+    while (i < n) {
+      const c = text[i];
+      if (c === ' ' || c === '\t' || c === '\r' || c === '\n') { i++; continue; }
+      if (c === '-' && text[i + 1] === '-') {
+        const m = /^--\[(=*)\[/.exec(text.slice(i, i + 40));
+        if (m) {
+          const close = ']' + m[1] + ']';
+          const e = text.indexOf(close, i + m[0].length);
+          i = e < 0 ? n : e + close.length;
+        } else {
+          while (i < n && text[i] !== '\n') i++;
+        }
+        continue;
+      }
+      if (/[A-Za-z_]/.test(c)) {
+        let j = i + 1;
+        while (j < n && /[A-Za-z0-9_]/.test(text[j])) j++;
+        out.push({ t: 'name', v: text.slice(i, j), start: i, end: j }); i = j; continue;
+      }
+      if (/[0-9]/.test(c) || (c === '.' && /[0-9]/.test(text[i + 1] || ''))) {
+        const m = /^(0[xX][0-9A-Fa-f]+|[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)/.exec(text.slice(i, i + 64));
+        out.push({ t: 'num', v: Number(m[0]), start: i, end: i + m[0].length }); i += m[0].length; continue;
+      }
+      if (c === '"' || c === "'") {
+        let j = i + 1;
+        while (j < n && text[j] !== c && text[j] !== '\n') j += text[j] === '\\' ? 2 : 1;
+        out.push({ t: 'str', v: text.slice(i + 1, j), start: i, end: Math.min(j + 1, n) }); i = j + 1; continue;
+      }
+      out.push({ t: 'op', v: c, start: i, end: i + 1 }); i++;
+    }
+    return out;
+  }
+
+  // An expression from tokens[k] -> { value (number | string | boolean | null = not understood), end index, start, endPos }
+  function expr(toks, k) {
+    const start = toks[k] ? toks[k].start : 0;
+    let r = term(toks, k);
+    while (r.ok && toks[r.k] && toks[r.k].t === 'op' && (toks[r.k].v === '+' || toks[r.k].v === '-')) {
+      const op = toks[r.k].v, b = term(toks, r.k + 1);
+      if (!b.ok) return { ok: false, k: b.k };
+      r = { ok: true, k: b.k, value: typeof r.value === 'number' && typeof b.value === 'number' ? (op === '+' ? r.value + b.value : r.value - b.value) : null };
+    }
+    return Object.assign(r, { start, endPos: toks[r.k - 1] ? toks[r.k - 1].end : start });
+  }
+  function term(toks, k) {
+    let r = unary(toks, k);
+    while (r.ok && toks[r.k] && toks[r.k].t === 'op' && (toks[r.k].v === '*' || toks[r.k].v === '/')) {
+      const op = toks[r.k].v, b = unary(toks, r.k + 1);
+      if (!b.ok) return { ok: false, k: b.k };
+      r = { ok: true, k: b.k, value: typeof r.value === 'number' && typeof b.value === 'number' ? (op === '*' ? r.value * b.value : r.value / b.value) : null };
+    }
+    return r;
+  }
+  function unary(toks, k) {
+    const t = toks[k];
+    if (!t) return { ok: false, k };
+    if (t.t === 'op' && t.v === '-') { const r = unary(toks, k + 1); return r.ok ? { ok: true, k: r.k, value: typeof r.value === 'number' ? -r.value : null } : r; }
+    if (t.t === 'op' && t.v === '(') {
+      const r = expr(toks, k + 1);
+      if (!r.ok || !toks[r.k] || toks[r.k].v !== ')') return { ok: false, k: r.k };
+      return { ok: true, k: r.k + 1, value: r.value };
+    }
+    if (t.t === 'num') return { ok: true, k: k + 1, value: t.v };
+    if (t.t === 'str') return { ok: true, k: k + 1, value: t.v };
+    if (t.t === 'name') {
+      if (t.v === 'true') return { ok: true, k: k + 1, value: true };
+      if (t.v === 'false' || t.v === 'nil') return { ok: true, k: k + 1, value: t.v === 'false' ? false : null };
+      if ((t.v === 'MIN' || t.v === 'SEC') && toks[k + 1] && toks[k + 1].v === '(') {
+        const r = expr(toks, k + 2);
+        if (!r.ok || !toks[r.k] || toks[r.k].v !== ')') return { ok: false, k: r.k };
+        return { ok: true, k: r.k + 1, value: typeof r.value === 'number' ? r.value * (t.v === 'MIN' ? 60000 : 1000) : null };
+      }
+      if (t.v in CONST) return { ok: true, k: k + 1, value: CONST[t.v] };
+      return { ok: true, k: k + 1, value: null, unknown: t.v };
+    }
+    return { ok: false, k };
+  }
+
+  // C casts of a Lua number: static_cast<int> / <DWORD> truncate toward zero
+  const toInt = v => (typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) | 0 : 0);
+  const toDword = v => (typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) >>> 0 : 0);
+
+  // PartyDungeon.lua -> { dungeons: [ { world, at, stmts: { SetLevel: { start, end, args: [{ value, start, end }] }, … }, monsters,
+  //   values (after the defaults) } ], diags, eol }
+  function loadDungeons(file, opts = {}) {
+    const text = file ? file.text : '';
+    const toks = tokenize(text);
+    const diags = [];
+    const dungeons = [];
+    let k = 0;
+    while (k < toks.length) {
+      const t = toks[k];
+      if (t.t === 'name' && (t.v === 'AddDungeon' || STMTS.includes(t.v)) && toks[k + 1] && toks[k + 1].v === '(') {
+        const args = [];
+        let j = k + 2, bad = false;
+        if (toks[j] && toks[j].v === ')') j++;
+        else for (;;) {
+          const r = expr(toks, j);
+          if (!r.ok) { bad = true; break; }
+          args.push({ value: r.value, unknown: r.unknown || null, start: r.start, end: r.endPos });
+          j = r.k;
+          if (toks[j] && toks[j].v === ',') { j++; continue; }
+          if (toks[j] && toks[j].v === ')') { j++; break; }
+          bad = true; break;
+        }
+        const stmt = { name: t.v, start: t.start, end: toks[j - 1] ? toks[j - 1].end : t.end, args };
+        if (bad) {
+          diags.push({ code: 'DG_SYNTAX', severity: 'WARN', start: t.start, end: stmt.end, key: `DG_SYNTAX|${t.v}|${dungeons.length}`,
+            message: `${t.v}( … ): this line is not plain numbers, names and MIN( ) / SEC( ). The editor leaves it alone; check it by hand` });
+          while (j < toks.length && toks[j].v !== ')') j++;
+          k = j + 1; continue;
+        }
+        if (t.v === 'AddDungeon') {
+          const w = args[0] && typeof args[0].value === 'string' ? args[0].value : null;
+          dungeons.push({ world: w, worldArg: args[0] || null, at: stmt, stmts: {}, monsters: [], index: dungeons.length });
+        } else if (!dungeons.length) {
+          diags.push({ code: 'DG_NO_DUNGEON', severity: 'WARN', start: t.start, end: stmt.end, key: `DG_NO_DUNGEON|${t.v}`,
+            message: `${t.v} comes before any AddDungeon: the Lua stops with an error (tDungeon[0] is nil) and the WorldServer quits at start` });
+        } else {
+          const d = dungeons[dungeons.length - 1];
+          if (t.v === 'SetMonster') d.monsters.push({ type: toInt(args[0] && args[0].value), define: args[1] && typeof args[1].value === 'string' ? args[1].value : null,
+            red: !!(args[2] && args[2].value), stmt });
+          else if (t.v === 'SetTeleportPos') { /* positions: not edited */ }
+          else { if (d.stmts[t.v]) d.stmts[t.v].dup = (d.stmts[t.v].dup || 0) + 1; d.stmts[t.v] = stmt; }   // the last call wins (it overwrites the field)
+        }
+        k = j; continue;
+      }
+      k++;
+    }
+    const defines = opts.defines || new Map();
+    for (const d of dungeons) {
+      const v = Object.assign({}, DEFAULTS);
+      const num = (s, i) => (s && s.args[i] && typeof s.args[i].value === 'number' ? s.args[i].value : (s && s.args[i] ? NaN : undefined));
+      const s = d.stmts;
+      if (s.SetClass) v.dwClass = s.SetClass.args.reduce((a, x) => a + (typeof x.value === 'number' ? x.value : NaN), 0);
+      if (s.SetLevel) { v.nMinLevel = num(s.SetLevel, 0); v.nMaxLevel = num(s.SetLevel, 1); }
+      if (s.SetCoolTime) v.dwCoolTime = num(s.SetCoolTime, 0);
+      if (s.SetDungeonTime) v.dwDungeonTime = num(s.SetDungeonTime, 0);
+      if (s.SetKillAll) v.nKillAll = num(s.SetKillAll, 0);
+      d.lua = v;
+      d.worldId = d.world && defines.has(d.world) ? defines.get(d.world) : null;
+      for (const m of d.monsters) m.id = m.define && defines.has(m.define) ? defines.get(m.define) : null;
+      // what LoadScript keeps
+      d.server = { dwClass: toDword(v.dwClass), nMinLevel: toInt(v.nMinLevel), nMaxLevel: toInt(v.nMaxLevel), dwCoolTime: toDword(v.dwCoolTime),
+        dwDungeonTime: toDword(v.dwDungeonTime), bKillAll: toDword(v.nKillAll) !== 0 && v.nKillAll !== 0 };
+    }
+    return { file: FILE, dungeons, diags, eol: /\r\n/.test(text) ? '\r\n' : '\n' };
+  }
+
+  // LoadScript's map: world id -> { first dungeon, its settings, every SetMonster of every block with that world }
+  function serverMap(model) {
+    const map = new Map();
+    for (const d of model.dungeons) {
+      const id = d.worldId === null ? 0 : d.worldId;          // GetDefineNum of an unknown name = -1 in CScript, 0 when cast? see DG_WORLD
+      if (!map.has(id)) map.set(id, { first: d, data: Object.assign({}, d.server), monsters: [], blocks: [] });
+      const e = map.get(id);
+      e.blocks.push(d);
+      e.monsters.push(...d.monsters);
+    }
+    return map;
+  }
+
+  // The map monsters of a world's .rgn (CWorld::LoadRespawn), counted like BuildKillAll: [{ id, count }] in first-seen order
+  function regionMonsters(rgnFile, opts) {
+    if (!rgnFile) return null;
+    const defines = opts.defines, movers = opts.movers || new Map();
+    const s = new FRE.lexer.Script(rgnFile.text, { defines, strings: opts.strings || new Map(), diags: [] });
+    const OT_MOVER = defines.get('OT_MOVER'), MATERIAL = defines.get('RANK_MATERIAL');
+    const out = [];
+    for (let t = s.getToken(); t.type !== 'eof'; t = s.getToken()) {
+      if (!/^respawn[2-7]?$/.test(t.text)) continue;
+      const type = s.getNumber().value >>> 0;
+      const index = s.getNumber().value >>> 0;
+      s.getFloat(); s.getFloat(); s.getFloat();
+      const maxcb = s.getNumber().value | 0;
+      if (type !== OT_MOVER) continue;
+      const mv = movers.get(index);
+      if (!mv) continue;                                  // !prj.GetMoverProp: not added
+      if (MATERIAL !== undefined && mv.rankId === MATERIAL) continue;
+      if (maxcb <= 0) continue;
+      const have = out.find(x => x.id === index);
+      if (have) have.count += maxcb; else out.push({ id: index, count: maxcb });
+    }
+    return out;
+  }
+
+  // Every monster of a dungeon, merged: SetMonster ones (boss / mid-boss / normal) first, then the map monsters. For the drop list.
+  function monstersOf(d, entry, rgn) {
+    const out = [];
+    const add = (id, role, n) => {
+      if (id === null || id === undefined) return;
+      const have = out.find(x => x.id === id);
+      if (have) { if (!have.roles.includes(role)) have.roles.push(role); have.count += n; } else out.push({ id, roles: [role], count: n });
+    };
+    const ROLE = ['normal', 'mid-boss', 'boss'];
+    for (const m of (entry ? entry.monsters : d.monsters).slice().sort((a, b) => b.type - a.type)) add(m.id, ROLE[m.type] || 'normal', 1);
+    for (const r of rgn || []) add(r.id, 'map', r.count);
+    return out;
+  }
+
+  function validateDungeons(model, opts = {}) {
+    const out = model.diags.map(d => Object.assign({ file: FILE }, d));
+    const defines = opts.defines || new Map(), movers = opts.movers || new Map();
+    const seen = new Map();
+    const push = (d, code, sev, span, msg) => out.push({ code, severity: sev, file: FILE, start: span.start, end: span.end, key: `${code}|${d.world}|${d.index}`, message: msg });
+    for (const d of model.dungeons) {
+      const who = d.world || `dungeon ${d.index + 1}`;
+      if (d.worldId === null) push(d, 'DG_WORLD', 'BLOCK', d.at, `${who}: "${d.world}" is not a world in defineWorld.h. The server reads it as an unknown world: nobody can enter it`);
+      else if (seen.has(d.worldId)) push(d, 'DG_DUP', 'WARN', d.at, `${who} is added twice. The server keeps the first block's settings and adds this block's monsters to it`);
+      else seen.set(d.worldId, d);
+      const v = d.server;
+      if (d.stmts.SetLevel && d.lua.nMinLevel > d.lua.nMaxLevel) push(d, 'DG_LEVEL', 'BLOCK', d.stmts.SetLevel, `${who}: the lowest level ${d.lua.nMinLevel} is above the highest ${d.lua.nMaxLevel}: nobody can enter`);
+      if (!(v.dwClass & 15)) push(d, 'DG_CLASS', 'BLOCK', d.stmts.SetClass || d.at, `${who}: no class can enter (SetClass has none of CLASS_NORMAL / MASTER / HERO / LEGEND_HERO)`);
+      for (const [name, s] of Object.entries(d.stmts)) if (s.dup) push(d, 'DG_TWICE', 'INFO', s, `${who}: ${name} is called ${s.dup + 1} times; the last one wins`);
+      if (d.stmts.SetDungeonTime && d.lua.dwDungeonTime > 0 && d.lua.dwDungeonTime < 5 * 60000) push(d, 'DG_SHORT', 'WARN', d.stmts.SetDungeonTime, `${who}: a time limit under 5 minutes; everyone is sent out when it runs out`);
+      for (const m of d.monsters) {
+        if (m.id === null) push(d, 'DG_MONSTER', 'BLOCK', m.stmt, `${who}: SetMonster "${m.define}" is not a monster in defineObj.h. The server logs "Invalid Monster!" and that monster never appears`);
+        else if (!movers.has(m.id)) push(d, 'DG_MONSTER', 'BLOCK', m.stmt, `${who}: ${m.define} has no row in propMover.txt. The server logs "Invalid Monster!"`);
+      }
+      for (const [name, s] of Object.entries(d.stmts)) for (const a of s.args) if (a.unknown && !(a.unknown in CONST)) push(d, 'DG_NAME', 'WARN', s, `${who}: ${name} uses "${a.unknown}", which Lua does not know (nil): the value is lost`);
+    }
+    return out;
+  }
+
+  FRE.dungeon = { FILE, CONST, DEFAULTS, ORDER, tokenize, loadDungeons, serverMap, regionMonsters, monstersOf, validateDungeons, toInt, toDword };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/dungeon-sim.js ----
+// What a party dungeon's settings do in game (the WorldServer side). A port of:
+//   enter     CInstanceDungeonBase::TeleportToDungeon (_Common/InstanceDungeonBase.cpp:659) up to the cooldown check:
+//             CheckClassLevel (:529: the legend class bit & dwClass, then nMinLevel <= level <= nMaxLevel, else
+//             TID_GAME_INSTANCE_LEVEL "%d %d" / TID_GAME_INSTANCE_CLASS), then the cooldown of ANOTHER dungeon id
+//             (dwRemain = dwCoolTime - now; Anarchy dungeonCooldown % taken off in float32; (int)dwRemain > 0 ->
+//             TID_GAME_INSTANCE_COOLTIME "%d %d" = minutes, seconds). On entry the cooldown is set to now + GetCoolTime (:781)
+//             when the player had none or it was for another dungeon id.
+//   clock     CreateDungeonLayer (:143): dwEndTick = open + dwDungeonTime when dwDungeonTime > 0 (0 = no clock);
+//             CInstanceDungeonHelper::ProcessInfoPanel (:1225, once a second): nSecLeft = (int)( dwEndTick - now ) / 1000;
+//             the "Dungeon Time" clock when the panel is first sent; "N minute(s) left in the dungeon!" once at <= 300 s and
+//             once at <= 60 s (N = ( nSecLeft + 59 ) / 60); at nSecLeft <= 0 everyone inside is sent out.
+// Not modelled: disguise buffs, the channel check, the layer limit (nMaxInstanceDungeon), the teleport position, a cleared
+// dungeon's 30 s exit clock (it only shortens dwEndTick), the 3-minute party-leave timer, the DWORD wrap of GetTickCount.
+(function (FRE) {
+  'use strict';
+  const f32 = Math.fround;
+  const LEGEND = { normal: 1, master: 2, hero: 4, legend: 8 };   // GetLegendChar -> CLASS_* (the switch at :535)
+
+  // e: serverMap entry data ({ dwClass, nMinLevel, nMaxLevel, dwCoolTime }); p: { cls: 'normal'|'master'|'hero'|'legend', level }
+  // cool: { dungeonId, endsAt } | null (this player's cooldown for this world); now: ms; anarchy: % (0 = off)
+  function enter(e, p, o = {}) {
+    const now = o.now >>> 0, cool = o.cool || null, dungeonId = o.dungeonId == null ? 1 : o.dungeonId;
+    const w = LEGEND[p.cls] || 0;
+    if (!(w & e.dwClass)) return { ok: false, text: 'TID_GAME_INSTANCE_CLASS', args: [] };
+    if (p.level < e.nMinLevel || p.level > e.nMaxLevel) return { ok: false, text: 'TID_GAME_INSTANCE_LEVEL', args: [e.nMinLevel, e.nMaxLevel] };
+    if (cool && cool.dungeonId !== dungeonId) {
+      let remain = (cool.endsAt - now) >>> 0;
+      const a = o.anarchy >>> 0;
+      remain = (remain - (Math.trunc(f32(f32(remain) * f32(f32(a) / f32(100)))) >>> 0)) >>> 0;
+      if ((remain | 0) > 0) return { ok: false, text: 'TID_GAME_INSTANCE_COOLTIME', args: [Math.floor(remain / 60000), Math.floor((remain % 60000) / 1000)] };
+    }
+    const setCool = !cool || cool.dungeonId !== dungeonId;
+    return { ok: true, cool: setCool ? { dungeonId, endsAt: (e.dwCoolTime + now) >>> 0 } : cool };
+  }
+
+  // The clock of one run: the dungeon opens at 0, the panel loop ticks at tick0, tick0 + 1000, …; until the kick or `until` ms.
+  // -> [{ t, kind: 'clock' | 'warn' | 'out', ms?, text? }]
+  function clock(dwDungeonTime, o = {}) {
+    const out = [];
+    if (!(dwDungeonTime > 0)) return out;
+    const end = dwDungeonTime >>> 0;
+    const until = o.until == null ? end + 5000 : o.until;
+    let warn = 0, sent = false;
+    for (let t = o.tick0 || 0; t <= until; t += 1000) {
+      const left = Math.trunc(((end - t) | 0) / 1000);
+      if (!sent && left > 0) { out.push({ t, kind: 'clock', ms: left * 1000 }); sent = true; }
+      if (left <= 0) { out.push({ t, kind: 'out' }); break; }
+      const nw = left <= 60 ? 2 : left <= 300 ? 1 : 0;
+      if (nw > warn) {
+        const n = Math.trunc((left + 59) / 60);
+        out.push({ t, kind: 'warn', text: `${n} minute${n === 1 ? '' : 's'} left in the dungeon!` });
+        warn = nw;
+      }
+    }
+    return out;
+  }
+
+  // A party's day: players try to enter at the given times (ms); -> one result per try, with the cooldown carried over.
+  // tries: [{ at, dungeonId, player }]
+  function day(e, tries, o = {}) {
+    let cool = null;
+    return tries.map(tr => {
+      const r = enter(e, tr.player, { now: tr.at, cool, dungeonId: tr.dungeonId, anarchy: o.anarchy || 0 });
+      if (r.ok) cool = r.cool;
+      return { at: tr.at, ok: r.ok, text: r.text || null, args: r.args || null };
+    });
+  }
+
+  FRE.dungeonSim = { enter, clock, day, LEGEND };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- edit/dungeon-ops.js ----
+// PartyDungeon.lua edits as minimal splices (ASCII only; the file is LF in git, CRLF-safe: new lines copy the anchor's EOL).
+//   A value that has its line: only the value is replaced (SetDungeonTime( MIN(30) ) -> SetDungeonTime( MIN(45) )).
+//   A value without a line: a new "\tSetX( … )" line is written in the file's order (SetClass, SetLevel, SetCoolTime,
+//   SetDungeonTime, SetKillAll) after the nearest line before it, else after the "--{" line under AddDungeon, else after AddDungeon.
+//   Times are written as MIN(n) (whole minutes), 0 as 0 (no time limit / no cooldown).
+// Only blocks whose line could be read are edited (DG_SYNTAX lines are left alone).
+(function (FRE) {
+  'use strict';
+  const MAX_MIN = 35791;              // MIN(n) in ms must fit a DWORD: 35,791 minutes ≈ 24.8 days
+  const MAX_LEVEL = 300;
+
+  const lineStart = (t, i) => t.lastIndexOf('\n', i - 1) + 1;
+  const lineEnd = (t, i) => { const j = t.indexOf('\n', i); return j < 0 ? t.length : j + 1; };
+  const eolOf = (t, i) => { const e = lineEnd(t, i); return t.slice(e - 2, e) === '\r\n' ? '\r\n' : (t[e - 1] === '\n' ? '\n' : ''); };
+  const indentOf = (t, i) => /^[ \t]*/.exec(t.slice(lineStart(t, i)))[0];
+
+  const timeText = min => (min === 0 ? '0' : `MIN(${min})`);
+  function checkMinutes(min, what) {
+    if (!Number.isInteger(min) || min < 0 || min > MAX_MIN) throw new Error(`${what} must be whole minutes from 0 to ${FRE.num.group(MAX_MIN)}`);
+  }
+
+  // the line to write after: the nearest earlier statement of ORDER, else "--{", else AddDungeon
+  function anchorFor(text, d, name) {
+    const order = FRE.dungeon.ORDER;
+    for (let i = order.indexOf(name) - 1; i >= 0; i--) if (d.stmts[order[i]]) return d.stmts[order[i]].start;
+    const after = lineEnd(text, d.at.end);
+    if (/^[ \t]*--\{/.test(text.slice(after, after + 20))) return after;
+    return d.at.start;
+  }
+  function insertLine(text, d, name, args) {
+    const at = anchorFor(text, d, name);
+    const end = lineEnd(text, at);
+    // indent: a Set* line of this block, else a tab
+    const any = Object.values(d.stmts)[0] || d.monsters[0] && d.monsters[0].stmt;
+    const indent = any ? indentOf(text, any.start) : '\t';
+    let eol = eolOf(text, at), prefix = '';
+    if (!eol) { eol = /\r\n/.test(text) ? '\r\n' : '\n'; prefix = eol; }
+    return [{ start: end, end, insert: prefix + `${indent}${name}( ${args} )` + (prefix ? '' : eol) }];
+  }
+  function setArg(text, d, name, i, value, args) {
+    const s = d.stmts[name];
+    if (s && s.args[i]) return text.slice(s.args[i].start, s.args[i].end) === String(value) ? [] : [{ start: s.args[i].start, end: s.args[i].end, insert: String(value) }];
+    if (s) throw new Error(`${name} in ${d.world} has no value ${i + 1}: fix the line by hand`);
+    return insertLine(text, d, name, args);
+  }
+
+  // minutes: 0 = no limit
+  function setTime(text, d, minutes) {
+    checkMinutes(minutes, 'The time limit');
+    return setArg(text, d, 'SetDungeonTime', 0, timeText(minutes), timeText(minutes));
+  }
+  function setCool(text, d, minutes) {
+    checkMinutes(minutes, 'The cooldown');
+    return setArg(text, d, 'SetCoolTime', 0, timeText(minutes), timeText(minutes));
+  }
+  function setLevels(text, d, lo, hi) {
+    for (const [v, w] of [[lo, 'The lowest level'], [hi, 'The highest level']])
+      if (!Number.isInteger(v) || v < 1 || v > MAX_LEVEL) throw new Error(`${w} must be a whole number from 1 to ${MAX_LEVEL}`);
+    if (lo > hi) throw new Error(`The lowest level (${lo}) is above the highest (${hi}): nobody could enter`);
+    const s = d.stmts.SetLevel;
+    if (s && s.args.length >= 2) {
+      const out = [];
+      if (s.args[1].value !== hi) out.push({ start: s.args[1].start, end: s.args[1].end, insert: String(hi) });
+      if (s.args[0].value !== lo) out.push({ start: s.args[0].start, end: s.args[0].end, insert: String(lo) });
+      return out;
+    }
+    if (s) throw new Error(`SetLevel in ${d.world} does not have two values: fix the line by hand`);
+    return insertLine(text, d, 'SetLevel', `${lo}, ${hi}`);
+  }
+  function setKillAll(text, d, on) {
+    return setArg(text, d, 'SetKillAll', 0, on ? 1 : 0, on ? '1' : '0');
+  }
+  // classes: a subset of ['CLASS_NORMAL', 'CLASS_MASTER', 'CLASS_HERO', 'CLASS_LEGEND_HERO'], in that order
+  function setClasses(text, d, names) {
+    const all = ['CLASS_NORMAL', 'CLASS_MASTER', 'CLASS_HERO', 'CLASS_LEGEND_HERO'];
+    const list = all.filter(n => names.includes(n));
+    if (!list.length) throw new Error('Pick at least one class: with none, nobody can enter');
+    const s = d.stmts.SetClass;
+    const args = list.join(', ');
+    if (s && s.args.length) return [{ start: s.args[0].start, end: s.args[s.args.length - 1].end, insert: args }];
+    if (s) {                                    // SetClass( ) with no value: dwClass 0
+      const open = text.indexOf('(', s.start);
+      return [{ start: open + 1, end: s.end - 1, insert: ` ${args} ` }];
+    }
+    return insertLine(text, d, 'SetClass', args);
+  }
+
+  FRE.dungeonOps = { setTime, setCool, setLevels, setKillAll, setClasses, timeText, MAX_MIN, MAX_LEVEL };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- core/workspace.js ----
 // Workspace: the loaded Resource folder as the editor sees it. No DOM here,
 // so it can be tested outside the browser (tests/run-tests.js under gjs).
@@ -14432,6 +14895,37 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
       validate(ws, model) { return FRE.pvpChecks(model, { ws }); },
     },
     {
+      // Dungeons (loaders/dungeon.js): PartyDungeon.lua (WorldServer only, CInstanceDungeonParty::LoadScript, Project.cpp:908) and
+      // the drops of each dungeon's monsters, edited with the Monster Drops code (edit/drops-ops.js) on propMoverEx.inc.
+      // maps: the map monsters of each dungeon come from World/<map>/<map>.rgn (CWorld::LoadRespawn, read-only).
+      id: 'dungeon', label: 'Dungeons',
+      required: ['PartyDungeon.lua', 'propMoverEx.inc', 'propMover.txt', 'propMover.txt.txt'],
+      editable: ['PartyDungeon.lua', 'propMoverEx.inc'], client: [],
+      optional: ['propDropEvent.inc', 'except.txt', 'PenyaTable.txt', 'expTable.inc', 'Event.lua', 'propItemEtc.inc'],
+      uses: ['drops'],
+      maps: true,
+      parse(ws) {
+        if (!ws.movers) ws.movers = FRE.propMover.loadPropMover(ws.files.get('propmover.txt'), { defines: ws.defines.defines, strings: ws.strings.map });
+        const m = FRE.dungeon.loadDungeons(ws.files.get('partydungeon.lua'), { defines: ws.defines.defines });
+        m.server = FRE.dungeon.serverMap(m);
+        // the map monsters per dungeon world (null until the maps are read: setMapObjects reparses this module)
+        m.rgn = new Map();
+        const wf = ws.worldFiles || new Map();
+        const list = ws.worldList ? ws.worldList() : [];
+        for (const d of m.dungeons) {
+          const w = list.find(x => x.define === d.world);
+          d.map = w ? w.name : null;
+          if (!w || m.rgn.has(w.name)) continue;
+          const f = wf.get(`world/${w.name}/${w.name}.rgn`.toLowerCase());
+          m.rgn.set(w.name, f ? FRE.dungeon.regionMonsters(f, { defines: ws.defines.defines, movers: ws.movers.movers }) : null);
+        }
+        return m;
+      },
+      validate(ws, model) {
+        return FRE.dungeon.validateDungeons(model, { defines: ws.defines.defines, movers: ws.movers.movers }).map(d => Object.assign({ module: 'dungeon' }, d));
+      },
+    },
+    {
       // Where is this item from? (task H, loaders/where.js): every model above parsed read-only, nothing editable.
       // Last, so its parse sees the other models. maps: towns of the NPCs, and whether they stand in the game.
       id: 'where', label: 'Item Sources & Uses',
@@ -14630,6 +15124,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
     // worldFiles: Map lowercase path ('world/wdmadrigal/wdmadrigal.rgn') -> SourceFile: each map's .rgn and
     // .txt.txt, and WdMadrigal.wld.cnt (read-only; loaders/area.js names the spots)
     setMapObjects(dyo, worldFiles = new Map()) {
+      this.worldFiles = worldFiles;     // the Dungeons task reads each dungeon's .rgn (its map monsters)
       const placed = new Map();
       for (const [name, bytes] of dyo) for (const key of FRE.world.readDyo(bytes).movers) {
         const k = key.toLowerCase();
@@ -14929,7 +15424,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
 //   FFAManager.inc / TDMManager.inc: the WorldServer at startup (Project.cpp:920 / :923 ReadConfig) AND the GM commands
 //     /ffareload / /tdmreload (FuncTextCmd.cpp:423 / :517; refused while a run is going), so a save needs one of the two.
 //   GuildCombat.txt: the WorldServer at startup (ThreadMng.cpp:293). GuildSiegePrize.lua: the WorldServer at startup
-//     (eveschool.cpp:3665 LoadPrizes, 6de6da39) and the DatabaseServer (databaseserver/Project.cpp:216 LoadScript).
+//     (eveschool.cpp:3672 LoadPrizes, 6de6da39) and the DatabaseServer (databaseserver/Project.cpp:216 LoadScript).
 // Stop Server.bat closes Neuz and every server; Start Server.bat starts them and then the game
 // (Client\- Start Game.bat copies Source\Output\Neuz\NoGameguard\Neuz.exe first).
 (function (FRE) {
@@ -14953,7 +15448,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
     'donationshop.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:967 -> ProjectCmn.cpp:1845 LoadDonationShop' },
     'battlepass.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:935 -> ProjectCmn.cpp:1682 LoadBattlePass' },
     // the game parses propMoverEx.inc too, but keeps no drop lines: DropItem / DropKind / DropGold are added #ifdef __WORLDSERVER
-    'propmoverex.inc': { server: STARTUP, client: null, cite: 'Project.cpp:850 LoadPropMoverEx (drops #ifdef __WORLDSERVER :3196)' },
+    'propmoverex.inc': { server: STARTUP, client: null, cite: 'Project.cpp:850 LoadPropMoverEx (drops #ifdef __WORLDSERVER :3242; a lowest amount, the 5th DropItem value, needs the WorldServer built with V19 b9646b69)' },
     // random boxes: LoadGiftbox sits in #ifdef __WORLDSERVER (Project.cpp:858-869); sets: the game loads its own copy too (Item Wiki, e08528a5)
     'propgiftbox.inc': { server: STARTUP, client: null, cite: 'Project.cpp:864 LoadGiftbox (#ifdef __WORLDSERVER :836)' },
     'proppackitem.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:877 LoadPackItem (the game too: Item Wiki)' },
@@ -14993,7 +15488,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
     'ffamanager.inc': { server: RELOAD, client: null, reload: 'ffa', cite: 'Project.cpp:920 ReadConfig; /ffareload FuncTextCmd.cpp:423' },
     'tdmmanager.inc': { server: RELOAD, client: null, reload: 'tdm', cite: 'Project.cpp:923 ReadConfig; /tdmreload FuncTextCmd.cpp:517' },
     'guildcombat.txt': { server: STARTUP, client: null, cite: 'ThreadMng.cpp:293 g_GuildCombatMng.LoadScript' },
-    'guildsiegeprize.lua': { server: STARTUP, client: null, cite: 'eveschool.cpp:3665 LoadPrizes (WorldServer) + databaseserver/Project.cpp:216 LoadScript (DatabaseServer)' },
+    'guildsiegeprize.lua': { server: STARTUP, client: null, cite: 'eveschool.cpp:3672 LoadPrizes (WorldServer) + databaseserver/Project.cpp:216 LoadScript (DatabaseServer)' },
+    // Dungeon task: time limit, cooldown, levels, kill-all (WorldServer only, read once at start; no reload command)
+    'partydungeon.lua': { server: STARTUP, client: null, cite: 'Project.cpp:908 CInstanceDungeonParty::LoadScript -> InstanceDungeonBase.cpp:384' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };
   const BOARD = { server: null, client: CLICK, cite: 'npc-board.diff: WndWorld.cpp OnCommand default:' };
@@ -19275,10 +19772,16 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
       const iname = itemNameOf(ctx, e);
       const set = (what, d, was) => typed(ctx, mon.id, `${e.start}|${what}`, () => O().setDrop(null, e, d, ws.defines.defines), `${name}: changed the ${what} of ${iname} (was ${was})${genNote(e)}`);
       const free = e.number === 0xFFFFFFFF;
+      const lo = e.min2 > 1 ? e.min2 : 1;               // what the server uses (V19 b9646b69)
+      const was = free ? '1, not counted' : `${lo} to ${e.number}`;
       const amount = h('td.dr-amt', h('label.small', { title: 'Not counted: always exactly 1, and it never uses up the max items per kill' },
-        h('input', { type: 'checkbox', checked: free, disabled: !edit_, on: { change: ev => set('amount', { count: ev.target.checked ? -1 : 1 }, free ? '1, not counted' : `1 to ${e.number}`) } }), ' not counted'),
-        free ? null : h('span', ' 1 to ', numInput({ value: e.number, min: 1, max: O().MAX_COUNT, disabled: !edit_, key: `dr|${mon.id}|${e.start}|n`,
-          onCommit: v => { if (v) set('amount', { count: v }, `1 to ${e.number}`); } })));
+        h('input', { type: 'checkbox', checked: free, disabled: !edit_, on: { change: ev => set('amount', { count: ev.target.checked ? -1 : 1 }, was) } }), ' not counted'),
+        free ? null : h('span', { title: 'Min to Max: each drop is one stack of a random amount in this range, every amount equally likely. Only use more than 1 on items that stack.' }, ' ',
+          numInput({ value: lo, min: 1, max: O().MAX_COUNT, disabled: !edit_, key: `dr|${mon.id}|${e.start}|min`,
+            onCommit: v => { if (v) set('amount', { min: Math.min(v, e.number) }, was); } }),
+          ' to ', numInput({ value: e.number, min: 1, max: O().MAX_COUNT, disabled: !edit_, key: `dr|${mon.id}|${e.start}|n`,
+            onCommit: v => { if (v) set('amount', v < lo ? { count: v, min: v } : { count: v }, was); } })),
+        !free && e.number > 1 ? h('div.muted.small', `each amount ${lo}-${e.number}: ${pctOf(1 / (e.number - lo + 1))}`) : null);
       const reach = l.reach < 0.9995 ? h('div.muted.small', `reached in ${pctOf(l.reach)} of kills (the max stops the list before it)`) : null;
       tb.appendChild(h('tr', itemCell(info, e.define),
         h('td', pctInput({ value: e.probability, disabled: !edit_, key: `dr|${mon.id}|${e.start}|p`, conv: CONV,
@@ -19330,7 +19833,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
   // ------------------------------------------------------------- + Add a drop
   function addForm(ctx, mon, define) {
     const ws = ctx.ws, name = nameOf(ctx, mon.id);
-    const s = { define: define || null, prob: null, count: 1, free: true, level: 0 };
+    const s = { define: define || null, prob: null, count: 1, min: 1, free: true, level: 0 };
     const body = h('div.nn-form');
     const checks = h('div'), preview = h('div');
     let createBtn = null;
@@ -19338,13 +19841,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
     ws._itemOpts = itemOpts;
     const plan = () => {
       const f = ws.files.get(FILE);
-      return O().addDrop(f.text, model(ctx), mon.id, { define: s.define, prob: s.prob, level: s.level, count: s.free ? -1 : s.count }, ws.defines.defines);
+      return O().addDrop(f.text, model(ctx), mon.id, { define: s.define, prob: s.prob, level: s.level, count: s.free ? -1 : s.count, min: s.free ? 1 : s.min }, ws.defines.defines);
     };
     function refresh() {
       checks.textContent = ''; preview.textContent = '';
       const probs = [];
       if (!s.define) probs.push(['BLOCK', 'Still needs: the item']);
       if (!s.prob) probs.push(['BLOCK', 'Still needs: the chance']);
+      if (!s.free && s.min > s.count) probs.push(['BLOCK', `The lowest amount (${s.min}) is above the highest (${s.count})`]);
       if (s.define && mon.list.some(e => e.kind === 'item' && e.define === s.define)) probs.push(['WARN', `${name} already drops this item: both lines roll, one after the other`]);
       if (s.define) { const id = ws.defines.defines.get(s.define), it = id === undefined ? null : ws.itemById(id);
         if (it && s.level && ![ws.defines.defines.get('IK1_WEAPON'), ws.defines.defines.get('IK1_ARMOR')].includes(FRE.specItem.get(it, 'dwItemKind1'))) probs.push(['WARN', `+${s.level} on an item that is not a weapon or armor`]); }
@@ -19367,14 +19871,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
     }
     const debounce = refresh;          // the inputs already wait for a pause in typing (FRE.dom live inputs)
     const cnt = numInput({ value: 1, min: 1, max: O().MAX_COUNT, key: 'dr|add|n', disabled: s.free, onCommit: v => { s.count = v || 1; debounce(); } });
+    const cntMin = numInput({ value: 1, min: 1, max: O().MAX_COUNT, key: 'dr|add|min', disabled: s.free, onCommit: v => { s.min = v || 1; debounce(); } });
     const row = (label, req, ...el) => h('div.nn-row', fieldLabel(label, req), ...el);
     body.appendChild(h('div',
       row('Item', true, h('div', { style: 'flex:1' }, FRE.ui.combo({ options: itemOpts, value: s.define, placeholder: 'Type an item name…', onPick: v => { s.define = v; refresh(); } }))),
       row('Chance (what players get, per roll)', true, pctInput({ value: null, conv: CONV, key: 'dr|add|p', live: true, onCommit: u => { s.prob = u; debounce(); } })),
       row('Amount', false,
-        h('label', h('input', { type: 'checkbox', checked: s.free, on: { change: ev => { s.free = ev.target.checked; cnt.disabled = s.free; refresh(); } } }),
+        h('label', h('input', { type: 'checkbox', checked: s.free, on: { change: ev => { s.free = ev.target.checked; cnt.disabled = s.free; cntMin.disabled = s.free; refresh(); } } }),
           ' exactly 1, not counted toward the max items per kill'),
-        h('span.muted', '— or untick it for a random amount from 1 to'), cnt),
+        h('span.muted', '— or untick it for one stack of a random amount: Min'), cntMin, h('span.muted', 'to Max'), cnt),
       row('Upgrade (+N)', false, numInput({ value: 0, min: 0, max: O().MAX_UPGRADE, key: 'dr|add|lv', onCommit: v => { s.level = v || 0; debounce(); } }))));
     body.appendChild(h('p.muted.small', `The chance can be at most ${CONV.maxPct}%: the server reads the number with atoi, which stops at 2,147,483,647. For "every kill", add the same line twice.`));
     formFooter({ checks, action: 'Add', previewTitle: 'What will be written / what players get', preview }).forEach(x => body.appendChild(x));
@@ -20519,7 +21024,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
     const byChance = (a, b) => b.perKill - a.perKill;
     put(section('⚔️', 'Dropped by', ['Monster', 'Level', 'Chance', ''], of('drop').sort(byChance).map(l => h('tr',
       h('td', l.who), h('td', l.level === null ? '' : String(l.level)),
-      h('td', `in ${pct(l.perKill)} of kills`, l.number > 1 ? h('span.muted.small', ` · 1–${group(l.number)} at a time`) : null),
+      h('td', `in ${pct(l.perKill)} of kills`, l.number > 1 ? h('span.muted.small', ` · ${group(l.low || 1)}–${group(l.number)} at a time`) : null),
       h('td', openMonster(l.mid)))),
       'For a player at the monster\'s level, with the server rates of Event.lua (as in Monster Drops).'));
     const ev = of('event').sort(byChance);
@@ -22900,6 +23405,175 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when
     el.appendChild(h('h3', cl.length ? `Overlaps (${cl.length})` : 'No overlaps'));
     for (const c of cl) el.appendChild(h('div.small', `${name[c.a.ev]} ${S().dayName(c.a.start)} ${S().hhmm(c.a.from)}-${S().hhmm(c.a.to)} ⟷ ${name[c.b.ev]} ${S().hhmm(c.b.from)}-${S().hhmm(c.b.to)}`));
     problems(el, ctx, 'week');
+  }
+
+  FRE.ui.modules.push(mod);
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- ui/dungeon.js ----
+// Dungeons (PartyDungeon.lua + propMoverEx.inc): pick a party dungeon, set its time limit, cooldown, levels, classes and
+// kill-all, see what players get ("Try entering", the clock), and edit the drops of every monster in it with the
+// Monster Drops editor itself (ui/drops.js renders inside this screen; edits go through edit/drops-ops.js).
+// Loader: loaders/dungeon.js, simulator: loaders/dungeon-sim.js, edits: edit/dungeon-ops.js.
+(function (FRE) {
+  'use strict';
+  const { h, fmt, numInput, keepFocus, durationInput, durationText } = FRE.dom;
+  const { diagRow } = FRE.ui;
+  const FILE = 'partydungeon.lua';
+  const st = { sel: null, mon: null, tryCls: 'legend', tryLevel: null };
+  const D = () => FRE.dungeon, O = () => FRE.dungeonOps, S = () => FRE.dungeonSim;
+  const model = ctx => ctx.ws.models.dungeon;
+  const can = ctx => ctx.ws.isEditable(FILE);
+  const keyOf = d => `dg|${d.index}`;
+  const dDiags = ctx => ctx.ws.diags.filter(x => x.module === 'dungeon');
+  const blockDiags = (ctx, d) => {
+    const m = model(ctx), next = m.dungeons[d.index + 1];
+    return dDiags(ctx).filter(x => x.start >= d.at.start && (!next || x.start < next.at.start));
+  };
+  const CLASSES = [['CLASS_NORMAL', 'Normal (1st job)'], ['CLASS_MASTER', 'Master'], ['CLASS_HERO', 'Hero'], ['CLASS_LEGEND_HERO', 'Legend Hero']];
+  const minOf = ms => (typeof ms === 'number' && Number.isFinite(ms) ? ms / 60000 : null);
+  const ROLE_WORD = { boss: 'boss', 'mid-boss': 'mid-boss', normal: 'dungeon monster', map: 'map monster' };
+
+  function titleOf(ctx, d) {
+    const w = ctx.ws.area && d.worldId !== null ? ctx.ws.area.worlds.get(d.worldId) : null;
+    return (w && w.title) || d.map || d.world || `Dungeon ${d.index + 1}`;
+  }
+  function edit(ctx, d, make, label, field) {
+    ctx.editGroup(() => [{ file: FILE, splices: make(ctx.ws.files.get(FILE).text) }], label, [keyOf(d)], `dg|${d.index}|${field}`);
+  }
+
+  const mod = {
+    id: 'dungeon', label: 'Dungeons', searchPlaceholder: 'Search dungeons',
+    help: 'Dungeons: time limit, cooldown, levels, classes and kill-all of each party dungeon (PartyDungeon.lua), and the drops of its monsters',
+    st,
+    onLoad() { st.sel = null; st.mon = null; },
+
+    renderList(el, ctx) {
+      const q = ctx.query.toLowerCase();
+      let shown = 0;
+      for (const d of model(ctx).dungeons) {
+        const name = titleOf(ctx, d);
+        if (q && !name.toLowerCase().includes(q) && !String(d.world).toLowerCase().includes(q)) continue;
+        shown++;
+        const ds = blockDiags(ctx, d), b = ds.filter(x => x.severity === 'BLOCK').length, w = ds.filter(x => x.severity === 'WARN').length;
+        const v = d.server;
+        el.appendChild(h('div.npc' + (st.sel === d.index ? '.sel' : ''), { on: { click: () => { st.sel = d.index; st.mon = null; ctx.renderAll(false); } } },
+          h('div.n', h('span', name), h('span', ctx.edited.has(keyOf(d)) ? h('span.tag.edit', 'edited') : null,
+            b ? h('span.tag.bad', '⛔' + b) : w ? h('span.tag.warn', '⚠' + w) : null)),
+          h('div.k', `lv ${v.nMinLevel}-${v.nMaxLevel} · ${v.dwDungeonTime ? durationText(Math.round(v.dwDungeonTime / 60000)) : 'no time limit'} · ${d.world}`)));
+      }
+      if (!shown) el.appendChild(h('div.pad.muted', 'No dungeons match.'));
+    },
+
+    renderEditor(el, ctx) {
+      const d = st.sel !== null ? model(ctx).dungeons[st.sel] : null;
+      if (!d) { el.appendChild(h('p.empty-state', 'Select a dungeon on the left.')); return; }
+      keepFocus(el, () => dungeonView(el, ctx, d));
+    },
+
+    // + item from the item list: a drop of the monster shown below (the Monster Drops form)
+    addTarget(ctx) {
+      const dm = FRE.ui.modules.find(m => m.id === 'drops');
+      if (st.mon === null || !dm) return { ok: false, title: 'Pick a monster of the dungeon first (Drops, below)' };
+      return dm.addTarget(ctx);
+    },
+
+    locate(x, ctx) {
+      if (x.module !== 'dungeon') return false;
+      const m = model(ctx);
+      for (let i = m.dungeons.length - 1; i >= 0; i--) if (x.start >= m.dungeons[i].at.start) { st.sel = i; break; }
+      return true;
+    },
+  };
+
+  function dungeonView(el, ctx, d) {
+    const ws = ctx.ws, edit_ = can(ctx), f = ws.files.get(FILE), m = model(ctx);
+    const entry = m.server.get(d.worldId === null ? 0 : d.worldId);
+    const first = !entry || entry.first === d;
+    const name = titleOf(ctx, d);
+    el.appendChild(h('div.npc-title', h('h2', name), h('span.def', d.world || '?'), h('span.line', `${f.name} L${f.lineOf(d.at.start) + 1}`),
+      edit_ ? null : h('span.tag.bad', 'read-only')));
+    if (!first) el.appendChild(h('div.banner.bad', `This world is added twice. The server uses the first block (line ${f.lineOf(entry.first.at.start) + 1}) for every setting below; only this block's monsters count.`));
+    el.appendChild(h('p.muted.small', 'The WorldServer reads PartyDungeon.lua once, at start: after saving, run Stop Server.bat, then Start Server.bat. ',
+      'A setting without its own line uses the default of InstanceDungeonBase.lua (30 min time limit, 30 min cooldown, levels 1-120, every class, no kill-all).'));
+
+    const v = d.lua, sv = d.server, own = n => (d.stmts[n] ? null : h('span.tag.info', { title: 'No line in the file: the default is used. A change writes the line.' }, 'default'));
+    const rows = h('table.items.dg-set');
+    const row = (label, ...cells) => rows.appendChild(h('tr', h('th', label), h('td', ...cells)));
+
+    // time limit
+    const tMin = minOf(v.dwDungeonTime);
+    row('Time limit', Number.isInteger(tMin) ? durationInput({ minutes: tMin, disabled: !edit_, key: `dg|${d.index}|time`, max: O().MAX_MIN,
+      onCommit: mm => edit(ctx, d, t => O().setTime(t, d, mm), `${name}: time limit ${mm ? durationText(mm) : 'none'} (was ${tMin ? durationText(tMin) : 'none'})`, 'time') })
+      : h('span.tag.warn', 'not whole minutes: edit the line by hand'), ' ', own('SetDungeonTime'),
+      h('div.muted.small', sv.dwDungeonTime ? `The clock starts when the party's dungeon opens. Warnings at 5 and 1 minute left; at 0 everyone inside is sent out. 0 = no limit.` : 'No time limit: the party can stay as long as they like.'));
+    // cooldown
+    const cMin = minOf(v.dwCoolTime);
+    row('Cooldown', Number.isInteger(cMin) ? durationInput({ minutes: cMin, disabled: !edit_, key: `dg|${d.index}|cool`, max: O().MAX_MIN,
+      onCommit: mm => edit(ctx, d, t => O().setCool(t, d, mm), `${name}: cooldown ${mm ? durationText(mm) : 'none'} (was ${cMin ? durationText(cMin) : 'none'})`, 'cool') })
+      : h('span.tag.warn', 'not whole minutes: edit the line by hand'), ' ', own('SetCoolTime'),
+      h('div.muted.small', 'Starts when a player enters. Until it ends that player cannot enter another run of this dungeon (re-entering the same run is fine). Anarchy can shorten it.'));
+    // levels
+    const lv = (i, val) => numInput({ value: val, min: 1, max: O().MAX_LEVEL, disabled: !edit_, key: `dg|${d.index}|lv${i}`,
+      onCommit: x => { if (!x) return; const lo = i ? sv.nMinLevel : x, hi = i ? x : sv.nMaxLevel;
+        if (lo > hi) { FRE.dom.toast(`The lowest level (${lo}) cannot be above the highest (${hi}).`, 'bad'); ctx.renderAll(false); return; }
+        edit(ctx, d, t => O().setLevels(t, d, lo, hi), `${name}: levels ${lo}-${hi} (was ${sv.nMinLevel}-${sv.nMaxLevel})`, 'lv'); } });
+    row('Levels', lv(0, sv.nMinLevel), ' to ', lv(1, sv.nMaxLevel), ' ', own('SetLevel'));
+    // classes
+    const have = CLASSES.filter(([c]) => sv.dwClass & D().CONST[c]).map(([c]) => c);
+    row('Classes', ...CLASSES.map(([c, label]) => h('label.small', { style: 'margin-right:10px' }, h('input', { type: 'checkbox', checked: have.includes(c), disabled: !edit_,
+      on: { change: e => { const next = e.target.checked ? [...have, c] : have.filter(x => x !== c);
+        if (!next.length) { FRE.dom.toast('Keep at least one class: with none, nobody can enter.', 'bad'); ctx.renderAll(false); return; }
+        edit(ctx, d, t => O().setClasses(t, d, next), `${name}: classes ${next.map(x => CLASSES.find(y => y[0] === x)[1]).join(', ')}`, 'cls'); } } }), ' ', label)), own('SetClass'));
+    // kill-all
+    row('Kill all first', h('label', h('input', { type: 'checkbox', checked: sv.bKillAll, disabled: !edit_,
+      on: { change: e => edit(ctx, d, t => O().setKillAll(t, d, e.target.checked), `${name}: kill-all ${e.target.checked ? 'on' : 'off'}`, 'kill') } }),
+      ' every map monster must be killed before the final boss appears'), ' ', own('SetKillAll'));
+    el.appendChild(rows);
+
+    // try entering
+    el.appendChild(h('h3', 'Try entering'));
+    const level = st.tryLevel === null ? sv.nMinLevel : st.tryLevel;
+    const r = S().enter(entry ? entry.data : sv, { cls: st.tryCls, level }, { now: 0 });
+    const msg = r.ok ? `Enters. Cooldown ${durationText(Math.round(sv.dwCoolTime / 60000)) || 'none'} starts now.`
+      : r.text === 'TID_GAME_INSTANCE_LEVEL' ? `Refused: "only levels ${r.args[0]} to ${r.args[1]} can enter".` : 'Refused: "your class cannot enter this dungeon".';
+    el.appendChild(h('div.dr-line', h('select', { on: { change: e => { st.tryCls = e.target.value; ctx.renderAll(false); } } },
+      [['normal', 'Normal'], ['master', 'Master'], ['hero', 'Hero'], ['legend', 'Legend Hero']].map(([x, l]) => h('option', { value: x, selected: x === st.tryCls }, l))),
+      h('span', 'level'), numInput({ value: level, min: 1, max: 300, onCommit: x => { if (x) { st.tryLevel = x; ctx.renderAll(false); } } }),
+      h('span' + (r.ok ? '' : '.bad'), msg)));
+    if (sv.dwDungeonTime) {
+      const ev = S().clock(sv.dwDungeonTime);
+      el.appendChild(h('p.small.muted', 'The clock of one run: ', ev.map(x => `${x.t ? `after ${durationText(Math.round(x.t / 60000))}` : 'at the start'}: ${x.kind === 'clock' ? `"Dungeon Time" ${fmt(x.ms / 1000)} s` : x.kind === 'warn' ? `"${x.text}"` : 'everyone sent out'}`).join(' · ')));
+    }
+
+    // drops of every monster in it
+    const rgn = m.rgn.get(d.map);
+    const mons = D().monstersOf(d, first ? entry : null, rgn);
+    el.appendChild(h('h3', `Drops (${mons.length} monsters)`));
+    if (rgn === null || rgn === undefined) el.appendChild(h('p.muted.small', ws.worldFiles && ws.worldFiles.size ? `No ${d.map || '?'}.rgn: only the SetMonster monsters are listed.` : 'Reading the maps… (the map monsters show when the World folder is read).'));
+    const dm = FRE.ui.modules.find(x => x.id === 'drops');
+    const dropsModel = ws.models.drops;
+    const tb = h('table.items', h('tr', h('th', 'Monster'), h('th', 'In this dungeon'), h('th', 'Drop lines'), h('th', '')));
+    for (const x of mons) {
+      const mv = ws.movers.movers.get(x.id), blk = dropsModel && dropsModel.monsters.get(x.id);
+      const n = blk ? blk.list.filter(e => e.kind === 'item').length : 0;
+      tb.appendChild(h('tr' + (st.mon === x.id ? '.sel' : ''),
+        h('td', mv ? mv.name : String(x.id), h('div.muted.small', `${mv ? `lv ${mv.level} · ` : ''}${mv ? mv.define : ''}`)),
+        h('td', x.roles.map(r2 => ROLE_WORD[r2]).join(', '), x.roles.includes('map') ? h('span.muted.small', ` · ${fmt(x.count)} on the map`) : null),
+        h('td', blk ? String(n) : h('span.muted', 'no drop block')),
+        h('td', h('button.small', { disabled: !blk, title: blk ? 'Edit its drops here' : 'This monster has no block in propMoverEx.inc: add one by hand first',
+          on: { click: () => { st.mon = st.mon === x.id ? null : x.id; ctx.renderAll(false); } } }, st.mon === x.id ? 'Close' : 'Edit drops'))));
+    }
+    el.appendChild(tb);
+    if (st.mon !== null && dm && dropsModel && dropsModel.monsters.get(st.mon)) {
+      const box = h('div.dg-drops', { style: 'border-top:2px solid var(--line, #ccc); margin-top:12px; padding-top:8px' });
+      dm.st.sel = st.mon;
+      dm.renderEditor(box, ctx);
+      el.appendChild(box);
+    }
+
+    const ds = blockDiags(ctx, d);
+    if (ds.length) { el.appendChild(h('h3', 'Problems')); for (const x of ds) el.appendChild(diagRow(x)); }
   }
 
   FRE.ui.modules.push(mod);

@@ -22,7 +22,7 @@
 //   FFAManager.inc / TDMManager.inc: the WorldServer at startup (Project.cpp:920 / :923 ReadConfig) AND the GM commands
 //     /ffareload / /tdmreload (FuncTextCmd.cpp:423 / :517; refused while a run is going), so a save needs one of the two.
 //   GuildCombat.txt: the WorldServer at startup (ThreadMng.cpp:293). GuildSiegePrize.lua: the WorldServer at startup
-//     (eveschool.cpp:3665 LoadPrizes, 6de6da39) and the DatabaseServer (databaseserver/Project.cpp:216 LoadScript).
+//     (eveschool.cpp:3672 LoadPrizes, 6de6da39) and the DatabaseServer (databaseserver/Project.cpp:216 LoadScript).
 // Stop Server.bat closes Neuz and every server; Start Server.bat starts them and then the game
 // (Client\- Start Game.bat copies Source\Output\Neuz\NoGameguard\Neuz.exe first).
 (function (FRE) {
@@ -46,7 +46,7 @@
     'donationshop.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:967 -> ProjectCmn.cpp:1845 LoadDonationShop' },
     'battlepass.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:935 -> ProjectCmn.cpp:1682 LoadBattlePass' },
     // the game parses propMoverEx.inc too, but keeps no drop lines: DropItem / DropKind / DropGold are added #ifdef __WORLDSERVER
-    'propmoverex.inc': { server: STARTUP, client: null, cite: 'Project.cpp:850 LoadPropMoverEx (drops #ifdef __WORLDSERVER :3196)' },
+    'propmoverex.inc': { server: STARTUP, client: null, cite: 'Project.cpp:850 LoadPropMoverEx (drops #ifdef __WORLDSERVER :3242; a lowest amount, the 5th DropItem value, needs the WorldServer built with V19 b9646b69)' },
     // random boxes: LoadGiftbox sits in #ifdef __WORLDSERVER (Project.cpp:858-869); sets: the game loads its own copy too (Item Wiki, e08528a5)
     'propgiftbox.inc': { server: STARTUP, client: null, cite: 'Project.cpp:864 LoadGiftbox (#ifdef __WORLDSERVER :836)' },
     'proppackitem.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:877 LoadPackItem (the game too: Item Wiki)' },
@@ -86,7 +86,9 @@
     'ffamanager.inc': { server: RELOAD, client: null, reload: 'ffa', cite: 'Project.cpp:920 ReadConfig; /ffareload FuncTextCmd.cpp:423' },
     'tdmmanager.inc': { server: RELOAD, client: null, reload: 'tdm', cite: 'Project.cpp:923 ReadConfig; /tdmreload FuncTextCmd.cpp:517' },
     'guildcombat.txt': { server: STARTUP, client: null, cite: 'ThreadMng.cpp:293 g_GuildCombatMng.LoadScript' },
-    'guildsiegeprize.lua': { server: STARTUP, client: null, cite: 'eveschool.cpp:3665 LoadPrizes (WorldServer) + databaseserver/Project.cpp:216 LoadScript (DatabaseServer)' },
+    'guildsiegeprize.lua': { server: STARTUP, client: null, cite: 'eveschool.cpp:3672 LoadPrizes (WorldServer) + databaseserver/Project.cpp:216 LoadScript (DatabaseServer)' },
+    // Dungeon task: time limit, cooldown, levels, kill-all (WorldServer only, read once at start; no reload command)
+    'partydungeon.lua': { server: STARTUP, client: null, cite: 'Project.cpp:908 CInstanceDungeonParty::LoadScript -> InstanceDungeonBase.cpp:384' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };
   const BOARD = { server: null, client: CLICK, cite: 'npc-board.diff: WndWorld.cpp OnCommand default:' };

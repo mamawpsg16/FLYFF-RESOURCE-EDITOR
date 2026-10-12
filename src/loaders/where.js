@@ -258,6 +258,7 @@
       const mv = moverOf(mid);
       lines.push({ kind: 'drop', mid, who: mv ? mv.name : String(mid), level: mv ? mv.level : null, perKill,
         number: Math.max(...mine.map(l => (l.entry.number === 0xFFFFFFFF ? 1 : l.entry.number))),
+        low: Math.min(...mine.map(l => (l.entry.min2 > 1 ? l.entry.min2 : 1))),
         facts: { kind: 'drop', monster: mid, perKill: round12(perKill) } });
     }
     const evs = refs.filter(r => r.k === 'event').map(r => r.e);
