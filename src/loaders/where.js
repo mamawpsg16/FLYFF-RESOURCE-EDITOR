@@ -21,7 +21,7 @@
   const toInt = v => (Number.isNaN(v) || v >= 2147483648 || v < -2147483648) ? INT_MIN : Math.trunc(v);
   const PROB_TOTAL = 1000000;
   const DROP_ONE = 3000000000;
-  const CURRENCY = ['Penya', 'Red Chips', 'Donate Chips'];
+  const CURRENCY = ['Penya', 'Red Chips', 'Donate Chips', 'PVP Tokens', 'Perins'];
   const round12 = x => Number(x.toPrecision(12));
 
   // ---------------------------------------------------------------- exact chances
@@ -211,7 +211,7 @@
       const key = `${r.npc.file}|${r.npc.key}|${r.slot}|${r.dropped ? 'x' : ''}`;
       if (shopSeen.has(key)) continue;
       shopSeen.add(key);
-      const npc = r.npc, chip = npc.venderType === 1 || npc.venderType === 2;
+      const npc = r.npc, chip = FRE.shopOps.isChipType(npc.venderType);
       const status = ws.placed ? FRE.world.npcStatus(npc, ws.placed) : { inGame: null, why: 'map files not read' };
       const base = { kind: 'shop', npc, slot: r.slot, who: npc.name || npc.key, tab: npc.slotTitles[r.slot], where: ws.whereOf(npc.key),
         inGame: status.inGame, why: status.why, currency: chip ? npc.venderType : 0 };

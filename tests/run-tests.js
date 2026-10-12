@@ -322,11 +322,11 @@ editCase('chip price: one token, round trip', w => {
 
 editCase('chip price is shared with the Donation Shop', w => {
   const id = itemOfDef(w, 'II_SYS_SYS_SCR_BLESSEDNESS').id;
-  eq(FRE.itemOps.chipUses(w, id).length, 1, 'today only Waforu sells it for chips');
+  eq(FRE.itemOps.chipUses(w, id).map(u => u.npc.key).sort().join(), 'MaFl_Amos,MaFl_Waforu', 'today Waforu (Red Chips) and Amos (PVP Tokens, 5035ab0f) sell it for chips');
   const d = w.files.get('donationshop.inc');
   w.apply('donationshop.inc', FRE.donationOps.addItem(d.text, w.models.donation, w.models.donation.rows.find(r => /^[ -~]+$/.test(r.category)).category, 'II_SYS_SYS_SCR_BLESSEDNESS'), 'ds');
   const uses = FRE.itemOps.chipUses(w, id);
-  eq(uses.length, 2, 'Waforu + Donation Shop');
+  eq(uses.length, 3, 'Waforu + Amos + Donation Shop');
   ok(uses.some(u => u.kind === 'donation') && uses.some(u => u.kind === 'npc' && u.npc.key === 'MaFl_Waforu'), 'both places named');
 });
 
@@ -1600,6 +1600,7 @@ section('add new NPC: bytes, rules, simulator (JS and Python copies agree)');
   const codes = ['NN_KEY', 'NN_KEY_DUP', 'NN_KEY_NAME', 'NN_TEXT', 'NN_IDS_TAKEN', 'NN_MENU', 'NN_MENU_NEW', 'NN_MENU_TWICE', 'NN_DIALOG', 'NN_MODEL', 'NN_MODEL_FILES', 'NN_MODEL_UNPROVEN', 'NN_NO_MENU', 'NN_IMAGE', 'NN_STRUCTURE',
     'NN_TAG_FILES', 'NN_TAG_FULL', 'NN_TAG_CHARS', 'NN_TAG_LONG', 'NN_TAG_DUP', 'NN_TAG_ICON',
     'NN_SHOP_NO_TRADE', 'NN_SHOP_EMPTY', 'NN_TAB', 'NN_RULE', 'NN_RULE_EMPTY', 'NN_ITEM', 'NN_ITEM_TWICE', 'NN_PRICE', 'NN_PRICE_GLOBAL', 'NN_PRICE_CONFLICT', 'NN_TAB_FULL',
+    'NN_SHOP_TYPE', 'NN_CHIP_RULE', 'NN_CHIP_NO_PRICE', 'NN_CHIP_SHARED',
     'NN_MAP', 'NN_POS', 'NN_OVERLAP', 'NN_HEIGHT'];
   ok(codes.every(c => FRE.diagHelp[c]), 'every NN_ code has help text', codes.filter(c => !FRE.diagHelp[c]).join(', '));
 
@@ -1621,7 +1622,8 @@ section('add new NPC: bytes, rules, simulator (JS and Python copies agree)');
       const part = n => p.parts.find(x => x.file === n).splices[0];
       const t = p.tag;
       mine.build = { incTail: part('character.inc').insert, txtTail: part('character.txt.txt').insert, insertAt: p.insertAt, record: hex(p.record), dyoLen: dyoFile.serialize().length + 200,
-        tag: t && { id: t.id, define: t.define, defLine: part('defineneuz.h').insert, defAt: part('defineneuz.h').start, incLine: part('etc.inc').insert, incAt: part('etc.inc').start, txtTail: part('etc.txt.txt').insert } };
+        tag: t && { id: t.id, define: t.define, defLine: part('defineneuz.h').insert, defAt: part('defineneuz.h').start, incLine: part('etc.inc').insert, incAt: part('etc.inc').start, txtTail: part('etc.txt.txt').insert },
+        chips: p.chips };
       built++;
       if (c.game) {
         w.applyGroup(p.parts, 'case');

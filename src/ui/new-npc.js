@@ -284,7 +284,13 @@
 
       // --- shop
       if (form.menus.includes('MMI_TRADE')) {
-        body.appendChild(h('h3', 'Shop tabs (Penya)'));
+        // currency (SetVenderType); Donate Chip is left out: Donate Chips are spent in the Donation Shop window (7d7df4f9)
+        const cur = form.shopType || 0, chip = FRE.shopOps.isChipType(cur), money = chip ? FRE.shopOps.CHIPS[cur] : 'Penya';
+        const sel = h('select.shop-type', { title: 'What players pay with in this shop.' },
+          [[0, 'Penya shop'], [1, 'Red Chip shop'], [3, 'PVP Token shop'], [4, 'Perin shop']].map(([v, l]) => h('option', { value: v, selected: v === cur }, l)));
+        sel.addEventListener('change', () => { form.shopType = Number(sel.value); render(); });
+        body.appendChild(h('h3', `Shop tabs (${money}) `, sel));
+        if (chip) body.appendChild(h('p.muted.small', 'Chip shop: a price here is the item\'s chip price (dwReferValue1 in Spec_Item.txt), the same number in every chip shop and the Donation Shop. Rule rows do not work here.'));
         form.tabs.forEach((t, k) => {
           const box = h('div.nn-tab');
           box.appendChild(h('div.nn-row', label(`Tab ${t.slot + 1}`, true),
@@ -293,13 +299,15 @@
             h('span.muted.small', `${t.items.length} / 100`),
             h('button.icon.danger', { title: 'Remove this tab', on: { click: () => { form.tabs.splice(k, 1); render(); } } }, '✕')));
           if (t.items.length) {
-            const tb = h('table.items.nn-items', h('tr', h('th', 'Item'), h('th.num', 'Price (Penya)'), h('th', '')));
+            const tb = h('table.items.nn-items', h('tr', h('th', 'Item'), h('th.num', `Price (${money})`), h('th', '')));
             t.items.forEach((it, j) => {
               const info = ws.items && ws.defines.defines.has(it.define) ? ws.itemById(ws.defines.defines.get(it.define)) : null;
               const ii = info ? ws.itemInfo(info) : null;
+              const now = ii ? (chip ? (ii.chipCost >= 1 ? FRE.dom.fmt(ii.chipCost) : 'no chip price') : FRE.dom.fmt(ii.cost)) : '';
               tb.appendChild(h('tr', FRE.ui.itemCell(ii, it.define),
-                h('td.num', FRE.dom.numInput({ value: it.cost || null, placeholder: ii ? `${FRE.dom.fmt(ii.cost)} (item)` : '',
-                  title: 'Empty = the item\'s own price. A price here changes the item\'s price in EVERY shop.',
+                h('td.num', FRE.dom.numInput({ value: it.cost || null, placeholder: ii ? `${now} (item)` : '',
+                  title: chip ? 'Empty = the item\'s chip price now. A price here changes it in EVERY chip shop and the Donation Shop.'
+                    : 'Empty = the item\'s own price. A price here changes the item\'s price in EVERY shop.',
                   onCommit: v => { if (v === null) delete it.cost; else it.cost = v; refresh(); } })),
                 h('td', h('button.icon.danger', { title: 'Remove', on: { click: () => { t.items.splice(j, 1); render(); } } }, '✕'))));
             });

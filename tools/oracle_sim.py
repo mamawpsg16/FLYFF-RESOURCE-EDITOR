@@ -1598,7 +1598,7 @@ def nn_fill(I, npc):
     tabs = []
     for tab in range(4):
         ent, dropped = [], 0
-        if npc['vtype'] in (1, 2):
+        if npc['vtype'] in (1, 2, 3, 4):
             for s in npc['shop']:
                 if s[0] == 'chip' and s[1] == tab:
                     p = props.get(U32(s[2]))
@@ -1812,6 +1812,9 @@ def nn_check(A, form):
     trade = 'MMI_TRADE' in menus
     tabs = form.get('tabs') or []
     has = lambda t: bool(t.get('items') or t.get('rules'))
+    st = form.get('shopType', 0)
+    if trade and st not in (0, 1, 2, 3, 4): add('NN_SHOP_TYPE', 'tabs')
+    chip = st in (1, 2, 3, 4)
     if not trade and any(has(t) for t in tabs): add('NN_SHOP_NO_TRADE', 'tabs')
     if trade and not any(has(t) for t in tabs): add('NN_SHOP_EMPTY', 'tabs')
     slots = set()
@@ -1821,7 +1824,8 @@ def nn_check(A, form):
         slots.add(t['slot'])
         if nn_text_problem(t.get('title')): add('NN_TEXT', f)
         seen, count = set(), 0
-        for r in t.get('rules') or []:
+        if chip and t.get('rules'): add('NN_CHIP_RULE', f)
+        for r in ([] if chip else t.get('rules') or []):
             ik3 = D.get(r['ik3'])
             ints = all(isinstance(r[k], int) and not isinstance(r[k], bool) for k in ('min', 'max', 'job'))
             if ik3 is None or not r['ik3'].startswith('IK3_') or not ints or r['min'] < 0 or r['max'] < r['min'] or r['job'] < -1:
@@ -1837,6 +1841,12 @@ def nn_check(A, form):
             if iid in seen: add('NN_ITEM_TWICE', f)
             seen.add(iid); count += 1
             c = it.get('cost')
+            if chip:
+                now, priced = A.I[0][iid]['chip'], c is not None and c != ''
+                if priced and not (isinstance(c, int) and 1 <= c <= 2147483647): add('NN_PRICE', f)
+                elif priced and now >= 1 and now != c: add('NN_CHIP_SHARED', f)
+                elif not priced and not now >= 1: add('NN_CHIP_NO_PRICE', f)
+                continue
             if c is not None and c != '':
                 if not (isinstance(c, int) and 1 <= c <= 2147483647): add('NN_PRICE', f)
                 else:
@@ -1859,6 +1869,22 @@ def nn_check(A, form):
             if best is None or d < best[0]: best = (d, p)
         if best and abs(best[1][2] - form['y']) > 30: add('NN_HEIGHT', 'position')
     return sorted(out)
+
+
+def nn_chip(form):
+    """a chip shop: SetVenderType 1-4 (GetVenderCurrency != 0, 5035ab0f added 3 = PVP Token, then 4 = Perin) and a shop to write"""
+    return bool(nn_tabs(form)) and form.get('shopType') in (1, 2, 3, 4)
+
+
+def nn_chip_prices(A, form):
+    """chip shop: [(define, price)] for dwReferValue1, in tab order, the last price of an item wins, only changed ones"""
+    if not nn_chip(form): return []
+    want = {}
+    for t in nn_tabs(form):
+        for it in t.get('items') or []:
+            if it.get('cost') is not None and it.get('cost') != '':
+                want.pop(it['define'], None); want[it['define']] = it['cost']
+    return [(d, v) for d, v in want.items() if A.I[0][U32(A.D[d])]['chip'] != v]
 
 
 def nn_build(A, form):
@@ -1888,7 +1914,12 @@ def nn_build(A, form):
         files = dict(defLine=def_line, header=h[:last.end()] + def_line + h[last.end():], etc=etc[:inc_at] + inc_line + etc[inc_at:], etctxt=et + txt_tail)
         form = dict(form, structure=define)
     L = [form['key'], '{', '\tsetting', '\t{'] + [f'\t\tAddMenu( {m} );' for m in form.get('menus') or []]
+    chip = nn_chip(form)
+    if chip: L.append(f"\t\tSetVenderType({form['shopType']});")
     for t in nn_tabs(form):
+        if chip:
+            L += [f"\t\tAddVenderItem2( {t['slot']}, {it['define']} );" for it in t.get('items') or []]
+            continue
         L += [f"\t\tAddVendorItem( {t['slot']}, {r['ik3']}, {r['job']}, {r['min']}, {r['max']}, 100 );" for r in t.get('rules') or []]
         L += [f"\t\tAddShopItem( {t['slot']}, {it['define']}{', ' + str(it['cost']) if it.get('cost') else ''} );" for it in t.get('items') or []]
     if form.get('structure'): L.append(f"\t\tm_nStructure= {form['structure']};")
@@ -1904,7 +1935,9 @@ def nn_build(A, form):
     b = A.dyo[form['map']]
     at = nn_dyo(b)[1]
     rec = nn_record(form, A.D[form['model']])
-    return dict(incTail=inc_tail, txtTail=txt_tail, insertAt=at, record=rec.hex(), dyoLen=len(b) + 200, tag=tag), \
+    chips = nn_chip_prices(A, form)
+    files['chips'] = chips
+    return dict(incTail=inc_tail, txtTail=txt_tail, insertAt=at, record=rec.hex(), dyoLen=len(b) + 200, tag=tag, chips=[list(x) for x in chips]), \
         inc_old + inc_tail, txt_old + txt_tail, b[:at] + rec + b[at:], files
 
 
@@ -1927,7 +1960,12 @@ def nn_game(A, form, inc, txt, dyo, files=None):
         return None
     npc = mine[-1]
     tabs = []
-    for slot, (ids, dropped) in enumerate(nn_fill(A.I, npc)):
+    I = A.I
+    if files.get('chips'):                              # the new chip prices written to Spec_Item.txt
+        props = dict(I[0])
+        for d, v in files['chips']: props[U32(D[d])] = dict(props[U32(D[d])], chip=v)
+        I = (props,) + tuple(I[1:])
+    for slot, (ids, dropped) in enumerate(nn_fill(I, npc)):
         title = npc['slots'].get(slot)
         if title is not None or ids:
             tabs.append(dict(slot=slot, title=title, items=ids, dropped=dropped))
@@ -2078,6 +2116,23 @@ def nn_cases(A):
     case('new tag, MAX_STRUCTURE 19', game=True, defs={'MAX_STRUCTURE': 19}, **tag('Dungeon Pieces'))
     case('new tag, MAX_STRUCTURE 18', defs={'MAX_STRUCTURE': 18}, **tag('Dungeon Pieces'))
     case('existing tag', game=True, structure='SRT_REDCHIPMERCHANT')
+    # chip shops (SetVenderType 1 / 3): items with and without a chip price, a new price, rules, a bad currency
+    chipped = next(d for d in ('II_SYS_SYS_SCR_BLESSEDNESS',) if A.I[0][U32(A.D[d])]['chip'] >= 1)
+    nochip = next(p['define'] for i, p in sorted(A.I[0].items()) if p['chip'] < 1 and p['define'] in A.D and p['define'].startswith('II_SYS_SYS_SCR'))
+    case('pvp token shop', game=True, shopType=3, tabs=tab0(items=[dict(define=chipped)]))
+    case('red chip shop', game=True, shopType=1, tabs=tab0(items=[dict(define=chipped)]))
+    case('pvp new price', game=True, shopType=3, tabs=tab0(items=[dict(define=chipped, cost=7)]))
+    case('pvp same price', game=True, shopType=3, tabs=tab0(items=[dict(define=chipped, cost=A.I[0][U32(A.D[chipped])]['chip'])]))
+    case('pvp no chip price', shopType=3, tabs=tab0(items=[dict(define=nochip)]))
+    case('pvp priced new item', game=True, shopType=3, tabs=tab0(items=[dict(define=nochip, cost=25)]))
+    case('pvp price twice', game=True, shopType=3, tabs=[dict(slot=0, title='A', rules=[], items=[dict(define=nochip, cost=5)]),
+                                                         dict(slot=1, title='B', rules=[], items=[dict(define=nochip, cost=9)])])
+    case('pvp price 0', shopType=3, tabs=tab0(items=[dict(define=chipped, cost=0)]))
+    case('pvp rule', shopType=3, tabs=tab0(rules=[dict(ik3='IK3_SCROLL', job=-1, min=1, max=10)]))
+    case('perin shop', game=True, shopType=4, tabs=tab0(items=[dict(define=chipped)]))
+    case('shop type 5', shopType=5)
+    case('penya shop type 0', game=True, shopType=0)
+    case('no trade, chip type', shopType=3, menus=['MMI_BANKING'], tabs=[])
     case('four tabs', game=True, tabs=[dict(slot=s, title=f'Tab {s}', rules=[], items=[dict(define='II_SYS_SYS_SCR_BLESSEDNESS')]) for s in (3, 1, 0, 2)])
     return C
 
@@ -2125,7 +2180,8 @@ def nn_struct_cases(A):
 
 NN_BLOCKING = {'NN_KEY', 'NN_KEY_DUP', 'NN_KEY_NAME', 'NN_TEXT', 'NN_IDS_TAKEN', 'NN_MENU', 'NN_MODEL', 'NN_MODEL_FILES', 'NN_STRUCTURE',
                'NN_TAG_FILES', 'NN_TAG_FULL', 'NN_TAG_CHARS', 'NN_TAG_LONG', 'NN_TAG_DUP',
-               'NN_SHOP_EMPTY', 'NN_TAB', 'NN_RULE', 'NN_ITEM', 'NN_PRICE', 'NN_PRICE_CONFLICT', 'NN_MAP', 'NN_POS'}
+               'NN_SHOP_EMPTY', 'NN_TAB', 'NN_RULE', 'NN_ITEM', 'NN_PRICE', 'NN_PRICE_CONFLICT', 'NN_MAP', 'NN_POS',
+               'NN_SHOP_TYPE', 'NN_CHIP_RULE', 'NN_CHIP_NO_PRICE'}
 
 
 # ---------------------------------------------------------------------------------------------- newmenu
@@ -2928,7 +2984,7 @@ def sh_run(root):
     npcs = sh_npcs(texts, D, A.S)
     final = sh_costs(npcs, props)
     cost_of = lambda iid: final[iid][0] if iid in final else props[iid]['cost']
-    penya = lambda x: x['vtype'] not in (1, 2)
+    penya = lambda x: x['vtype'] not in (1, 2, 3, 4)
     # 1. every item of every Penya shop: dwCost, pay / get back at each rate, refused
     shops = []
     for f, x in npcs:
@@ -4104,17 +4160,17 @@ AS_TREE = 'client/donationshoptree.inc'
 # (path, line, text that must be on that line): the loads this table relies on
 AS_CITES = [
     ('WORLDSERVER/WorldServer.cpp', 397, 'OpenProject( "Masquerade.prj" )'),
-    ('_Common/Project.cpp', 812, 'LoadPropItem( "Spec_Item.txt"'),
-    ('_Common/Project.cpp', 818, '"character"'),
-    ('_Common/Project.cpp', 852, 'LoadEtc( "etc.inc" )'),
-    ('_Common/Project.cpp', 935, 'LoadBattlePass( "BattlePass.inc" )'),
-    ('_Common/Project.cpp', 967, 'LoadDonationShop( "DonationShop.inc" )'),
-    ('_Common/Project.cpp', 1014, 'm_Exchange.Load_Script()'),
-    ('_Common/Project.cpp', 850, 'LoadPropMoverEx( "PropMoverEx.inc" )'),
-    ('_Common/Project.cpp', 3231, '#ifdef __WORLDSERVER'),
-    ('_Common/Project.cpp', 864, 'LoadGiftbox( "propGiftbox.inc" )'),
-    ('_Common/Project.cpp', 858, '#ifdef __WORLDSERVER'),
-    ('_Common/Project.cpp', 877, 'LoadPackItem( "propPackItem.inc" )'),
+    ('_Common/Project.cpp', 813, 'LoadPropItem( "Spec_Item.txt"'),
+    ('_Common/Project.cpp', 819, '"character"'),
+    ('_Common/Project.cpp', 853, 'LoadEtc( "etc.inc" )'),
+    ('_Common/Project.cpp', 936, 'LoadBattlePass( "BattlePass.inc" )'),
+    ('_Common/Project.cpp', 968, 'LoadDonationShop( "DonationShop.inc" )'),
+    ('_Common/Project.cpp', 1015, 'm_Exchange.Load_Script()'),
+    ('_Common/Project.cpp', 851, 'LoadPropMoverEx( "PropMoverEx.inc" )'),
+    ('_Common/Project.cpp', 3232, '#ifdef __WORLDSERVER'),
+    ('_Common/Project.cpp', 865, 'LoadGiftbox( "propGiftbox.inc" )'),
+    ('_Common/Project.cpp', 859, '#ifdef __WORLDSERVER'),
+    ('_Common/Project.cpp', 878, 'LoadPackItem( "propPackItem.inc" )'),
     ('_Common/ProjectCmn.cpp', 1256, '"character.txt.txt"'),
     ('_Common/ProjectCmn.cpp', 1259, '"etc.txt.txt"'),
     ('_Common/ProjectCmn.cpp', 1274, '"textClient.txt.txt"'),
@@ -4123,7 +4179,7 @@ AS_CITES = [
     ('_Common/ProjectCmn.cpp', 1383, '"defineText.h"'),
     ('_Common/ProjectCmn.cpp', 1376, '"defineItem.h"'),
     ('_Common/ProjectCmn.cpp', 1261, '"propItem.txt.txt"'),
-    ('_Common/Project.cpp', 790, 'm_modelMng.LoadScript( scanner.token )'),
+    ('_Common/Project.cpp', 791, 'm_modelMng.LoadScript( scanner.token )'),
     ('_Common/WorldFile.cpp', 269, '#ifdef __WORLDSERVER'),
     ('_Common/WorldFile.cpp', 305, '.dyo'),
     ('_Common/WorldFile.cpp', 382, '#endif'),
@@ -4131,34 +4187,34 @@ AS_CITES = [
     ('Neuz/Neuz.cpp', 1573, 'prj.OpenProject( "Masquerade.prj" )'),
     ('Neuz/Neuz.cpp', 1593, 'prj.LoadPreFiles()'),
     ('_Common/file.cpp', 273, 'CResFile::Open'),
-    ('_Common/Project.cpp', 1018, 'prj.m_EventLua.LoadScript()'),
-    ('_Common/Project.cpp', 1017, 'defined(__WORLDSERVER)'),
-    ('_Common/Project.cpp', 913, 'GuildBuffManage::loadGuildBuffFile()'),
-    ('_Common/Project.cpp', 915, 'ServerBuffManage::loadServerBuffFile()'),
-    ('_Common/Project.cpp', 914, '#ifdef __WORLDSERVER'),
-    ('_Common/Project.cpp', 963, 'LoadRebirthProp()'),
-    ('_Common/Project.cpp', 883, 'LoadPiercingAvail( "propItemEtc.inc" )'),
+    ('_Common/Project.cpp', 1019, 'prj.m_EventLua.LoadScript()'),
+    ('_Common/Project.cpp', 1018, 'defined(__WORLDSERVER)'),
+    ('_Common/Project.cpp', 914, 'GuildBuffManage::loadGuildBuffFile()'),
+    ('_Common/Project.cpp', 916, 'ServerBuffManage::loadServerBuffFile()'),
+    ('_Common/Project.cpp', 915, '#ifdef __WORLDSERVER'),
+    ('_Common/Project.cpp', 964, 'LoadRebirthProp()'),
+    ('_Common/Project.cpp', 884, 'LoadPiercingAvail( "propItemEtc.inc" )'),
     ('_Common/ProjectCmn.cpp', 1262, '"propItemEtc.txt.txt"'),
-    ('_Common/Project.cpp', 763, 'LoadExpTable( scanner.token )'),
+    ('_Common/Project.cpp', 764, 'LoadExpTable( scanner.token )'),
     # upgrade-fees: the 8 fee lines (in V19 since 6af3976a)
     ('WORLDSERVER/ItemUpgrade.cpp', 232, 'int nCost = '),
     ('WORLDSERVER/ItemUpgrade.cpp', 450, 'int nPayPenya = '),
     ('WORLDSERVER/ItemUpgrade.cpp', 804, 'int nCost = '),
-    ('WORLDSERVER/DPSrvr.cpp', (6960, 6959), 'int nPayPenya = '),
-    ('WORLDSERVER/DPSrvr.cpp', (12700, 12699), 'nCost\t= '),
+    ('WORLDSERVER/DPSrvr.cpp', (6975, 6974), 'int nPayPenya = '),
+    ('WORLDSERVER/DPSrvr.cpp', (12715, 12714), 'nCost\t= '),
     ('_Interface/WndPiercing.cpp', 112, 'nCost = '),
     ('_Interface/WndField.cpp', 28246, 'GetGold() < '),
     ('_Interface/WndField.cpp', 28296, 'GetGold() < '),
     # PvP Events
-    ('_Common/Project.cpp', 920, 'CFFAManager::GetInstance()->ReadConfig()'),
-    ('_Common/Project.cpp', 923, 'CTDMManager::GetInstance()->ReadConfig()'),
+    ('_Common/Project.cpp', 921, 'CFFAManager::GetInstance()->ReadConfig()'),
+    ('_Common/Project.cpp', 924, 'CTDMManager::GetInstance()->ReadConfig()'),
     ('_Interface/FuncTextCmd.cpp', 423, 'CFFAManager::GetInstance()->ReadConfig( pUser )'),
     ('_Interface/FuncTextCmd.cpp', 517, 'CTDMManager::GetInstance()->ReadConfig( pUser )'),
     ('WORLDSERVER/ThreadMng.cpp', 293, 'g_GuildCombatMng.LoadScript( "GuildCombat.txt" )'),
     ('_Common/eveschool.cpp', 3665, 'CGuildSiegePrize::GetInstance()->LoadPrizes()'),
     ('databaseserver/Project.cpp', 216, 'CGuildSiegePrize::GetInstance()->LoadScript()'),
-    ('_Interface/WndWorld.cpp', 4600, 'FILE_GUILDCOMBAT_TEXT_6'),
-    ('_Interface/WndWorld.cpp', 4681, 'FILE_GUILDCOMBAT_TEXT_1'),
+    ('_Interface/WndWorld.cpp', 4606, 'FILE_GUILDCOMBAT_TEXT_6'),
+    ('_Interface/WndWorld.cpp', 4687, 'FILE_GUILDCOMBAT_TEXT_1'),
 ]
 AS_PATCHES = ('npc-board', 'donation-tree', 'upgrade-fees')
 # UpgradeFees.lua: read by _Common/UpgradeFees.h CUpgradeFees (upgrade-fees.diff) in the WorldServer AND Neuz, once per run;
@@ -6736,7 +6792,7 @@ def wh_facts(root, rates=None):
     for f, x in npcs:
         if not x['shop']:
             continue
-        chip = x['vtype'] in (1, 2)
+        chip = x['vtype'] in (1, 2, 3, 4)
         for tab in range(4):
             ent = []
             if chip:

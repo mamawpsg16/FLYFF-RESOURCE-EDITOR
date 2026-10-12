@@ -70,7 +70,7 @@
         const e = shopEntry(rec);
         if (!e) continue;
         shopCount++;
-        const chipShop = npc.venderType === 1 || npc.venderType === 2;
+        const chipShop = FRE.shopOps.isChipType(npc.venderType);
         if (e.kind === 'generated' && chipShop) {
           const ik3 = e.ik3.define || e.ik3.value;
           add(Object.assign({ code: 'C_RULE_IGNORED', severity: 'INFO', start: rec.start, end: rec.end,
@@ -103,7 +103,7 @@
           if (e.kind === 'chip' && !chipShop) {
             add(Object.assign({ code: 'C_CHIP_TYPE', severity: 'WARN', start: rec.start, end: rec.end,
               key: `C_CHIP_TYPE|${npc.file}|${npc.key}|${itemName}`,
-              message: `${npc.key}: ${rec.cmd} only works in chip shops (SetVenderType(1) or (2)); the server ignores it here` }, at));
+              message: `${npc.key}: ${rec.cmd} only works in chip shops (SetVenderType 1-4); the server ignores it here` }, at));
           }
           if (e.kind === 'chip' && prop) {
             const chip = FRE.specItem.get(prop, 'dwReferValue1');
@@ -168,7 +168,7 @@
     const costs = ctx.costs ? ctx.costs() : null;
     if (costs && ctx.simulate) {
       for (const npc of chars.npcs) {
-        if (npc.venderType === 1 || npc.venderType === 2) continue;
+        if (FRE.shopOps.isChipType(npc.venderType)) continue;
         const at = { file: npc.file, npcKey: npc.key };
         ctx.simulate(npc).tabs.forEach((tab, t) => {
           for (const en of tab.entries) {

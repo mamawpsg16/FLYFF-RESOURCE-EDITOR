@@ -109,6 +109,10 @@
       add('NN_SHOP_NO_TRADE', 'WARN', 'tabs', 'Shop is off: the items in its tabs won\'t be added. Turn Shop on again to keep them.');
     if (trade && !tabs.some(t => (t.items || []).length || (t.rules || []).length))
       add('NN_SHOP_EMPTY', 'BLOCK', 'tabs', 'Trade is ticked but no tab has an item: Trade would open an empty shop.');
+    const shopType = form.shopType === undefined ? 0 : form.shopType;
+    if (trade && !(shopType === 0 || FRE.shopOps.isChipType(shopType)))
+      add('NN_SHOP_TYPE', 'BLOCK', 'tabs', `Shop currency ${shopType} does not exist: 0 Penya, 1 Red Chip, 2 Donate Chip, 3 PVP Token or 4 Perin.`);
+    const chip = FRE.shopOps.isChipType(shopType);
     const slots = new Set();
     const index = ws.vendorIndex;
     const fixedPrices = new Map();       // item id -> [{ npc, cost }] from the other NPCs' AddShopItem lines
@@ -127,7 +131,8 @@
       if (tp) add('NN_TEXT', 'BLOCK', f, `Tab ${t.slot + 1} title ${tp}.`);
       const seen = new Set();
       let count = 0;
-      for (const r of t.rules || []) {
+      if (chip && (t.rules || []).length) add('NN_CHIP_RULE', 'BLOCK', f, `Tab ${t.slot + 1}: chip shops only sell hand-picked items; the server ignores rule rows there.`);
+      for (const r of chip ? [] : t.rules || []) {
         const ik3 = D.get(r.ik3);
         if (ik3 === undefined || !/^IK3_/.test(String(r.ik3))) { add('NN_RULE', 'BLOCK', f, `Rule kind ${r.ik3} is not in defineItemkind.h.`); continue; }
         if (!(Number.isInteger(r.min) && Number.isInteger(r.max) && r.min >= 0 && r.max >= r.min))
@@ -146,7 +151,15 @@
         if (seen.has(item.id)) add('NN_ITEM_TWICE', 'WARN', f, `${item.name || it.define} is in tab ${t.slot + 1} twice: it shows twice.`);
         seen.add(item.id);
         count++;
-        if (it.cost !== undefined && it.cost !== null && it.cost !== '') {
+        const priced = it.cost !== undefined && it.cost !== null && it.cost !== '';
+        if (chip) {
+          const now = ws.itemInfo(item).chipCost;
+          if (priced && !(Number.isInteger(it.cost) && it.cost >= 1 && it.cost <= INT_MAX)) add('NN_PRICE', 'BLOCK', f, `Price of ${it.define} must be a whole number 1-2,147,483,647.`);
+          else if (priced && now >= 1 && now !== it.cost) add('NN_CHIP_SHARED', 'WARN', f, `${it.define} costs ${now} chips now: ${it.cost} changes it in every chip shop and the Donation Shop.`);
+          else if (!priced && !(now >= 1)) add('NN_CHIP_NO_PRICE', 'BLOCK', f, `${it.define} has no chip price: the server leaves it out of a chip shop. Give it a price.`);
+          continue;
+        }
+        if (priced) {
           if (!(Number.isInteger(it.cost) && it.cost >= 1 && it.cost <= INT_MAX)) add('NN_PRICE', 'BLOCK', f, `Price of ${it.define} must be a whole number 1-2,147,483,647.`);
           else {
             add('NN_PRICE_GLOBAL', 'WARN', f, `A price on ${it.define} changes its price in every shop, not only here.`);

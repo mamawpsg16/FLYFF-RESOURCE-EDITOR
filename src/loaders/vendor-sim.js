@@ -93,7 +93,7 @@
 
   // Returns { tabs: [ {entries, dropped, rules} x4 ], chip }
   function simulateNpc(index, npc) {
-    const chip = npc.venderType === 1 || npc.venderType === 2;
+    const chip = FRE.shopOps.isChipType(npc.venderType);
     const tabs = [0, 1, 2, 3].map(() => ({ entries: [], dropped: [], rules: [] }));
     for (const rec of npc.statements) {
       const e = FRE.character.shopEntry(rec);
@@ -235,7 +235,7 @@
   // edits: { omit: Set(id), price: Map(id -> cost), slot: Map(id -> tab) } applied on the new lines.
   function ruleToFixedPlan(index, npc, slot, sim, edits = {}) {
     const plan = { slot, rules: [], items: [], anchor: null, blocked: null };
-    if (npc.venderType === 1 || npc.venderType === 2) { plan.blocked = 'chip shops ignore AddVendorItem rules'; return plan; }
+    if (FRE.shopOps.isChipType(npc.venderType)) { plan.blocked = 'chip shops ignore AddVendorItem rules'; return plan; }
     const tab = sim.tabs[slot];
     for (const rec of npc.statements) {
       const e = FRE.character.shopEntry(rec);

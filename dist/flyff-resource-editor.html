@@ -487,7 +487,7 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when": "Mon 12 Oct 2026, 09:49", "rev": "2c8e2b8", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "72+", "when": "Mon 12 Oct 2026, 13:24", "rev": "0129fb5", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -2604,7 +2604,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
 
   // Returns { tabs: [ {entries, dropped, rules} x4 ], chip }
   function simulateNpc(index, npc) {
-    const chip = npc.venderType === 1 || npc.venderType === 2;
+    const chip = FRE.shopOps.isChipType(npc.venderType);
     const tabs = [0, 1, 2, 3].map(() => ({ entries: [], dropped: [], rules: [] }));
     for (const rec of npc.statements) {
       const e = FRE.character.shopEntry(rec);
@@ -2746,7 +2746,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
   // edits: { omit: Set(id), price: Map(id -> cost), slot: Map(id -> tab) } applied on the new lines.
   function ruleToFixedPlan(index, npc, slot, sim, edits = {}) {
     const plan = { slot, rules: [], items: [], anchor: null, blocked: null };
-    if (npc.venderType === 1 || npc.venderType === 2) { plan.blocked = 'chip shops ignore AddVendorItem rules'; return plan; }
+    if (FRE.shopOps.isChipType(npc.venderType)) { plan.blocked = 'chip shops ignore AddVendorItem rules'; return plan; }
     const tab = sim.tabs[slot];
     for (const rec of npc.statements) {
       const e = FRE.character.shopEntry(rec);
@@ -6030,9 +6030,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
       'Narrow the AddVendorItem rules of that tab or move items to another tab.'],
     C_RULE_EMPTY: ['This AddVendorItem rule matches no item: no item of that type has a rarity (dwItemRare) inside the range. The server logs a VENDORITEM error and adds nothing.',
       'Check the item type and the rarity range, or remove the rule.'],
-    C_CHIP_TYPE: ['AddVenderItem2 only works in chip shops (SetVenderType(1) Red Chip or (2) Donate Chip). In a Penya shop the server ignores it.',
+    C_CHIP_TYPE: ['AddVenderItem2 only works in chip shops (SetVenderType 1 Red Chip, 2 Donate Chip, 3 PVP Token or 4 Perin). In a Penya shop the server ignores it.',
       'Use AddShopItem for Penya shops, or make the NPC a chip shop.'],
-    C_RULE_IGNORED: ['Chip shops (SetVenderType(1) or (2)) only sell their AddVenderItem2 items. The server ignores AddVendorItem rules there; they come back if the NPC becomes a Penya shop again.',
+    C_RULE_IGNORED: ['Chip shops (SetVenderType 1-4) only sell their AddVenderItem2 items. The server ignores AddVendorItem rules there; they come back if the NPC becomes a Penya shop again.',
       'Nothing to do. Remove the rule if the NPC stays a chip shop for good.'],
     C_FIXED_IN_CHIP: ['AddShopItem items are added to every kind of shop. In a chip shop they are bought with chips, but without the check AddVenderItem2 gets: an item with chip price 0 is free, and one with no chip price breaks the payment. Its Penya price still changes the item\'s price server-wide.',
       'Use AddVenderItem2 in chip shops (switching the shop type in the dropdown does this).'],
@@ -6175,6 +6175,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
     NN_ITEM: ['The item is not in defineItem.h, or not in Spec_Item.txt. The shop would leave it out.', 'Pick an item from the item list.'],
     NN_ITEM_TWICE: ['The item is in this tab twice (once by a rule, or twice by hand). Players see it twice.', 'Remove one.'],
     NN_PRICE: ['A price must be a whole number from 1 to 2,147,483,647 (the server reads it with atoi into an int).', 'Fix the price, or leave it empty to use the item\'s own price.'],
+    NN_SHOP_TYPE: ['The server knows shop currencies 0 Penya, 1 Red Chip, 2 Donate Chip, 3 PVP Token and 4 Perin (CHARACTER::GetVenderCurrency).', 'Pick one of them.'],
+    NN_CHIP_RULE: ['Chip shops only sell their AddVenderItem2 items; the server ignores AddVendorItem rule rows there (Mover.cpp ProcessRegenItem).', 'Remove the rules, or make it a Penya shop.'],
+    NN_CHIP_NO_PRICE: ['A chip shop skips an item whose chip price (dwReferValue1) is empty: players would not see it.', 'Type a price for it.'],
+    NN_CHIP_SHARED: ['An item has one chip price (dwReferValue1) for every chip shop and the Donation Shop. A new price here changes it there too.', 'Keep the current price if the other shops should stay the same.'],
     NN_PRICE_GLOBAL: ['AddShopItem\'s price changes the item\'s price in EVERY shop, not only this one.', 'Leave the price empty unless you want that.'],
     NN_PRICE_CONFLICT: ['Another NPC already sets a different price for this item. The last NPC loaded wins everywhere, so the price players see is hard to predict.', 'Use the same price as the other NPC, or leave the price empty.'],
     NN_TAB_FULL: ['A tab shows at most 100 items (MAX_VENDOR_INVENTORY); the rest are silently left out (rule items first, then the hand-picked ones in order).', 'Narrow the rules or move items to another tab.'],
@@ -6391,7 +6395,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
         const e = shopEntry(rec);
         if (!e) continue;
         shopCount++;
-        const chipShop = npc.venderType === 1 || npc.venderType === 2;
+        const chipShop = FRE.shopOps.isChipType(npc.venderType);
         if (e.kind === 'generated' && chipShop) {
           const ik3 = e.ik3.define || e.ik3.value;
           add(Object.assign({ code: 'C_RULE_IGNORED', severity: 'INFO', start: rec.start, end: rec.end,
@@ -6424,7 +6428,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
           if (e.kind === 'chip' && !chipShop) {
             add(Object.assign({ code: 'C_CHIP_TYPE', severity: 'WARN', start: rec.start, end: rec.end,
               key: `C_CHIP_TYPE|${npc.file}|${npc.key}|${itemName}`,
-              message: `${npc.key}: ${rec.cmd} only works in chip shops (SetVenderType(1) or (2)); the server ignores it here` }, at));
+              message: `${npc.key}: ${rec.cmd} only works in chip shops (SetVenderType 1-4); the server ignores it here` }, at));
           }
           if (e.kind === 'chip' && prop) {
             const chip = FRE.specItem.get(prop, 'dwReferValue1');
@@ -6489,7 +6493,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
     const costs = ctx.costs ? ctx.costs() : null;
     if (costs && ctx.simulate) {
       for (const npc of chars.npcs) {
-        if (npc.venderType === 1 || npc.venderType === 2) continue;
+        if (FRE.shopOps.isChipType(npc.venderType)) continue;
         const at = { file: npc.file, npcKey: npc.key };
         ctx.simulate(npc).tabs.forEach((tab, t) => {
           for (const en of tab.entries) {
@@ -6751,7 +6755,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
   function addItem(text, npc, slot, define, cost) {
     T.checkDefine(define);
     checkSlot(slot);
-    const chip = npc.venderType === 1 || npc.venderType === 2;
+    const chip = isChipType(npc.venderType);
     let stmt;
     if (chip) stmt = formatStmt('AddVenderItem2', [slot, define], text);
     else {
@@ -6789,19 +6793,22 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
     return T.replaceSpan(rec.args.slot, slot);
   }
 
-  // Shop currency (SetVenderType: 0 Penya, 1 Red Chip, 2 Donate Chip; CProject::LoadCharacter,
-  // Project.cpp:3518). Chip shops sell AddVenderItem2 entries for chips (Mover.cpp:1651);
+  // Shop currency (SetVenderType: 0 Penya, 1 Red Chip, 2 Donate Chip, 3 PVP Token since 5035ab0f, 4 Perin (V19 Project.cpp case 4);
+  // CProject::LoadCharacter, Project.cpp:3518; CHARACTER::GetVenderCurrency / IsChipVender, Project.cpp:191). Chip shops sell AddVenderItem2 entries for chips (Mover.cpp:1651);
   // Penya shops sell AddShopItem entries. Converting renames only the command word and
   // keeps the "( tab, II_X )" text as written, so converting back gives identical bytes.
   // AddShopItem's Penya price cannot exist on AddVenderItem2 and is dropped.
   // Returns every splice at once, so the whole change is one undo step.
-  const shopType = v => (v === 1 || v === 2 ? v : 0);
+  const shopType = v => (v >= 1 && v <= 4 ? v : 0);
+  const isChipType = v => shopType(v) !== 0;
+  const CHIPS = { 1: 'Red chips', 2: 'Donate chips', 3: 'PVP Tokens', 4: 'Perins' };
+  const SHOP_NAME = { 1: 'Red Chip', 2: 'Donate Chip', 3: 'PVP Token', 4: 'Perin' };
   const isChipItem = r => r.cmd === 'AddVenderItem2' || r.cmd === 'AddVendorItem2';
 
   // penyaPrices (optional, converting to Penya): Map rec.start -> price written as
   // AddShopItem( tab, II_X, price ). Chip prices live in Spec_Item.txt (itemOps.setChipPrice).
   function setShopType(text, npc, type, penyaPrices) {
-    if (type !== 0 && type !== 1 && type !== 2) throw new Error('shop type must be 0 (Penya), 1 (Red Chip) or 2 (Donate Chip)');
+    if (!(type === 0 || isChipType(type))) throw new Error('shop type must be 0 (Penya), 1 (Red Chip), 2 (Donate Chip), 3 (PVP Token) or 4 (Perin)');
     const from = shopType(npc.venderType);
     const splices = [];
     const rename = (rec, cmd) => splices.push({ start: rec.start, end: rec.start + rec.cmd.length, insert: cmd });
@@ -6959,7 +6966,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
     return out;
   }
 
-  FRE.shopOps = { otherPriceParts, mergeParts, formatStmt, addItem, removeStatement, setCost, setSlot, setShopType, shopTypePlan, shopType, stmtExtent: T.stmtExtent,
+  FRE.shopOps = { otherPriceParts, mergeParts, formatStmt, addItem, removeStatement, setCost, setSlot, setShopType, shopTypePlan, shopType, isChipType, CHIPS, SHOP_NAME, stmtExtent: T.stmtExtent,
     convertRules, addRule, setRule };
 })(globalThis.FRE = globalThis.FRE || {});
 
@@ -7187,8 +7194,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
       for (const rec of npc.statements) {
         const e = FRE.character.shopEntry(rec);
         if (!e || (e.kind !== 'chip' && e.kind !== 'fixed') || (e.item.value >>> 0) !== id) continue;
-        out.push({ kind: 'npc', npc, slot: e.slot, chips: type === 2 ? 'Donate chips' : 'Red chips',
-          label: `${npc.name || npc.key} (${type === 2 ? 'Donate Chip' : 'Red Chip'} shop), ${npc.slotTitles[e.slot] || 'tab ' + e.slot}` });
+        out.push({ kind: 'npc', npc, slot: e.slot, chips: FRE.shopOps.CHIPS[type],
+          label: `${npc.name || npc.key} (${FRE.shopOps.SHOP_NAME[type]} shop), ${npc.slotTitles[e.slot] || 'tab ' + e.slot}` });
       }
     }
     const ds = ws.models && ws.models.donation;
@@ -8188,7 +8195,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
 //
 // form: { key, name, model: 'MI_X', image: 'IDS_..' | null, structure: 'SRT_X' | null, map, x, y, z, angle,
 //         newTag: 'Dungeon Pieces' | null (a new building tag instead of structure),
-//         menus: ['MMI_X', ...], tabs: [{ slot, title, rules: [{ ik3, job, min, max }], items: [{ define, cost }] }] }
+//         menus: ['MMI_X', ...], tabs: [{ slot, title, rules: [{ ik3, job, min, max }], items: [{ define, cost }] }],
+//         shopType: 0 Penya (default) | 1 Red Chip | 2 Donate Chip | 3 PVP Token | 4 Perin }
+// A chip shop (shopType 1-4) gets SetVenderType(n); after the menus and AddVenderItem2 lines, like Donaris /
+// Amos (5035ab0f); an item's cost there is its chip price (dwReferValue1 in Spec_Item.txt, shared by every chip shop).
 // x / z are what /position prints in game (world units); the file stores them / OLD_MPU (4).
 (function (FRE) {
   'use strict';
@@ -8215,6 +8225,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
     for (const t of tabsOf(form)) out.push({ what: 'tab', slot: t.slot, text: t.title, key: idsKey(++n) });
     return out;
   }
+  const isChipShop = form => tabsOf(form).length > 0 && FRE.shopOps.isChipType(form.shopType);
   const tabsOf = form => (form.menus || []).includes('MMI_TRADE') ? [...(form.tabs || [])].sort((a, b) => a.slot - b.slot) : [];
 
   // The character.inc block (handoff §5.2: TAB indent, the file's EOL).
@@ -8223,7 +8234,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
     const S = strings.find(s => s.what === 'name').key;
     L.push(form.key, '{', '\tsetting', '\t{');
     for (const m of form.menus || []) L.push(`\t\tAddMenu( ${m} );`);
+    const chip = isChipShop(form);
+    if (chip) L.push(`\t\tSetVenderType(${form.shopType});`);
     for (const t of tabsOf(form)) {
+      if (chip) { for (const it of t.items || []) L.push(`\t\tAddVenderItem2( ${t.slot}, ${it.define} );`); continue; }
       for (const r of t.rules || []) L.push(`\t\tAddVendorItem( ${t.slot}, ${r.ik3}, ${r.job}, ${r.min}, ${r.max}, 100 );`);
       for (const it of t.items || []) L.push(`\t\tAddShopItem( ${t.slot}, ${it.define}${it.cost ? ', ' + it.cost : ''} );`);
     }
@@ -8330,18 +8344,31 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
     if (at === null) throw new Error(`${form.map}: the server does not read this map's NPC list to its end marker`);
     const record = buildRecord({ angle: form.angle, x: form.x, y: form.y, z: form.z, model, key: form.key });
     const lower = n => n.toLowerCase();
+    const chips = chipPrices(ws, form);
+    const spec = ws.files.get('spec_item.txt');
+    const specSplices = chips.flatMap(([define, v]) => FRE.itemOps.setChipPrice(spec.text, ws.itemById(ws.defines.defines.get(define)), v, ws.defines.defines));
     return {
-      strings, block, record, insertAt: at, dyo, tag,
+      strings, block, record, insertAt: at, dyo, tag, chips,
       parts: [
         ...(tag ? tag.parts : []),          // defineNeuz.h first: the NPC block names the new SRT_
         { file: lower(inc.name), splices: [appendSplice(inc.text, block, eol)] },
         { file: lower(txt.name), splices: [appendSplice(txt.text, lines)] },
         { file: ws.mapFiles.get(form.map), splices: [{ start: at, end: at, insert: FRE.bytes.bytesToBinaryString(record) }] },
+        ...(specSplices.length ? [{ file: 'spec_item.txt', splices: specSplices.sort((x, y) => x.start - y.start) }] : []),
       ],
     };
   }
 
-  FRE.npcOps = { FIELD, appendSplice, newNpcPlan, newTagPlan, tagText, tagDefine, lastEtcId, buildRecord, insertPoint, blockText, newStrings, lastStringId, idsKey, RECORD };
+  // Chip shop: the new chip prices [define, price], items in tab order, the last price of an item wins,
+  // only the ones that differ from the item's dwReferValue1 now.
+  function chipPrices(ws, form) {
+    if (!isChipShop(form)) return [];
+    const want = new Map();
+    for (const t of tabsOf(form)) for (const it of t.items || []) if (it.cost !== undefined && it.cost !== null && it.cost !== '') { want.delete(it.define); want.set(it.define, it.cost); }
+    return [...want].filter(([d, v]) => { const it = ws.itemById(ws.defines.defines.get(d)); return it && ws.itemInfo(it).chipCost !== v; });
+  }
+
+  FRE.npcOps = { isChipShop, chipPrices, FIELD, appendSplice, newNpcPlan, newTagPlan, tagText, tagDefine, lastEtcId, buildRecord, insertPoint, blockText, newStrings, lastStringId, idsKey, RECORD };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- edit/npcedit-ops.js ----
@@ -9398,6 +9425,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
       add('NN_SHOP_NO_TRADE', 'WARN', 'tabs', 'Shop is off: the items in its tabs won\'t be added. Turn Shop on again to keep them.');
     if (trade && !tabs.some(t => (t.items || []).length || (t.rules || []).length))
       add('NN_SHOP_EMPTY', 'BLOCK', 'tabs', 'Trade is ticked but no tab has an item: Trade would open an empty shop.');
+    const shopType = form.shopType === undefined ? 0 : form.shopType;
+    if (trade && !(shopType === 0 || FRE.shopOps.isChipType(shopType)))
+      add('NN_SHOP_TYPE', 'BLOCK', 'tabs', `Shop currency ${shopType} does not exist: 0 Penya, 1 Red Chip, 2 Donate Chip, 3 PVP Token or 4 Perin.`);
+    const chip = FRE.shopOps.isChipType(shopType);
     const slots = new Set();
     const index = ws.vendorIndex;
     const fixedPrices = new Map();       // item id -> [{ npc, cost }] from the other NPCs' AddShopItem lines
@@ -9416,7 +9447,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
       if (tp) add('NN_TEXT', 'BLOCK', f, `Tab ${t.slot + 1} title ${tp}.`);
       const seen = new Set();
       let count = 0;
-      for (const r of t.rules || []) {
+      if (chip && (t.rules || []).length) add('NN_CHIP_RULE', 'BLOCK', f, `Tab ${t.slot + 1}: chip shops only sell hand-picked items; the server ignores rule rows there.`);
+      for (const r of chip ? [] : t.rules || []) {
         const ik3 = D.get(r.ik3);
         if (ik3 === undefined || !/^IK3_/.test(String(r.ik3))) { add('NN_RULE', 'BLOCK', f, `Rule kind ${r.ik3} is not in defineItemkind.h.`); continue; }
         if (!(Number.isInteger(r.min) && Number.isInteger(r.max) && r.min >= 0 && r.max >= r.min))
@@ -9435,7 +9467,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
         if (seen.has(item.id)) add('NN_ITEM_TWICE', 'WARN', f, `${item.name || it.define} is in tab ${t.slot + 1} twice: it shows twice.`);
         seen.add(item.id);
         count++;
-        if (it.cost !== undefined && it.cost !== null && it.cost !== '') {
+        const priced = it.cost !== undefined && it.cost !== null && it.cost !== '';
+        if (chip) {
+          const now = ws.itemInfo(item).chipCost;
+          if (priced && !(Number.isInteger(it.cost) && it.cost >= 1 && it.cost <= INT_MAX)) add('NN_PRICE', 'BLOCK', f, `Price of ${it.define} must be a whole number 1-2,147,483,647.`);
+          else if (priced && now >= 1 && now !== it.cost) add('NN_CHIP_SHARED', 'WARN', f, `${it.define} costs ${now} chips now: ${it.cost} changes it in every chip shop and the Donation Shop.`);
+          else if (!priced && !(now >= 1)) add('NN_CHIP_NO_PRICE', 'BLOCK', f, `${it.define} has no chip price: the server leaves it out of a chip shop. Give it a price.`);
+          continue;
+        }
+        if (priced) {
           if (!(Number.isInteger(it.cost) && it.cost >= 1 && it.cost <= INT_MAX)) add('NN_PRICE', 'BLOCK', f, `Price of ${it.define} must be a whole number 1-2,147,483,647.`);
           else {
             add('NN_PRICE_GLOBAL', 'WARN', f, `A price on ${it.define} changes its price in every shop, not only here.`);
@@ -10501,7 +10541,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
   const toInt = v => (Number.isNaN(v) || v >= 2147483648 || v < -2147483648) ? INT_MIN : Math.trunc(v);
   const PROB_TOTAL = 1000000;
   const DROP_ONE = 3000000000;
-  const CURRENCY = ['Penya', 'Red Chips', 'Donate Chips'];
+  const CURRENCY = ['Penya', 'Red Chips', 'Donate Chips', 'PVP Tokens', 'Perins'];
   const round12 = x => Number(x.toPrecision(12));
 
   // ---------------------------------------------------------------- exact chances
@@ -10691,7 +10731,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
       const key = `${r.npc.file}|${r.npc.key}|${r.slot}|${r.dropped ? 'x' : ''}`;
       if (shopSeen.has(key)) continue;
       shopSeen.add(key);
-      const npc = r.npc, chip = npc.venderType === 1 || npc.venderType === 2;
+      const npc = r.npc, chip = FRE.shopOps.isChipType(npc.venderType);
       const status = ws.placed ? FRE.world.npcStatus(npc, ws.placed) : { inGame: null, why: 'map files not read' };
       const base = { kind: 'shop', npc, slot: r.slot, who: npc.name || npc.key, tab: npc.slotTitles[r.slot], where: ws.whereOf(npc.key),
         inGame: status.inGame, why: status.why, currency: chip ? npc.venderType : 0 };
@@ -14678,8 +14718,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
         this.exchangeMenus = new Set(ex ? (ex.text.match(/^MMI_\w+/gm) || []) : []);
       }
       if (names.some(n => /\.dyo$/.test(n))) this.refreshMaps();
-      if (names.includes('spec_item.txt')) this.reparse('spec_item.txt');   // reparses every module
-      else names.forEach(n => this.reparse(n));
+      // spec_item.txt reparses every module, but not the string tables: the group's other files
+      // (a new NPC's character.txt.txt names) are read first, or their names show as IDS_ keys
+      names.filter(n => n !== 'spec_item.txt').forEach(n => this.reparse(n));
+      if (names.includes('spec_item.txt')) this.reparse('spec_item.txt');
     }
 
     // Fold the last step into the one before it (typing in one field = one undo step): only when both changed
@@ -16069,7 +16111,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
   let listWs = null;
   const hasExchanges = npc => !!listWs && exMenusOf(listWs, npc).length > 0
     && (!listWs.placed || FRE.world.npcStatus(npc, listWs.placed).inGame !== false);
-  const TYPES = [{ v: 0, label: 'Penya shop' }, { v: 1, label: 'Red Chip shop' }, { v: 2, label: 'Donate Chip shop' }];
+  const TYPES = [{ v: 0, label: 'Penya shop' }, { v: 1, label: 'Red Chip shop' }, { v: 2, label: 'Donate Chip shop' }, { v: 3, label: 'PVP Token shop' }, { v: 4, label: 'Perin shop' }];
   // NPC list filter: which NPCs to list
   // editable = has fixed items (AddShopItem / AddVenderItem2). Rule items are editable too (ui/shop-rules.js),
   // but listing every rule shop here would hide the few shops with hand-set prices.
@@ -16080,6 +16122,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
     { v: 'penya', label: 'Penya shops', test: n => isShopNpc(n) && FRE.shopOps.shopType(n.venderType) === 0 },
     { v: 'red', label: 'Red Chip shops', test: n => FRE.shopOps.shopType(n.venderType) === 1 },
     { v: 'donate', label: 'Donate Chip shops', test: n => FRE.shopOps.shopType(n.venderType) === 2 },
+    { v: 'pvp', label: 'PVP Token shops', test: n => FRE.shopOps.shopType(n.venderType) === 3 },
+    { v: 'perin', label: 'Perin shops', test: n => FRE.shopOps.shopType(n.venderType) === 4 },
     { v: 'exchange', label: 'NPCs with exchanges', test: hasExchanges },
     { v: 'all', label: 'All NPCs', test: () => true },
   ];
@@ -16162,7 +16206,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
     if (to === from) return;
     const itemOf = id => { const it = ws.itemById(id); return it ? ws.itemInfo(it) : null; };
     const plan = FRE.shopOps.shopTypePlan(npc, to, itemOf);
-    const label = TYPES[to].label, chips = to === 2 ? 'Donate chips' : 'Red chips';
+    const label = TYPES[to].label, chips = FRE.shopOps.CHIPS[to];
     const toChips = to !== 0;
     const specOk = ws.isEditable('spec_item.txt');
     const prices = new Map();     // to chips: itemId -> chip price; to Penya: rec.start -> Penya price
@@ -16292,7 +16336,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
         shown++;
         el.appendChild(h('div.npc' + (id === st.sel ? '.sel' : ''), { on: { click: () => { st.sel = id; st.tab = firstTab(ctx.ws, npc); if (FRE.ui.exchangeView) FRE.ui.exchangeView.clearPick(); ctx.renderAll(false); } } },
           h('div.n', h('span', label),
-            h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : null,
+            h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : npc.venderType === 3 ? h('span.tag.chip', 'PVP Token') : npc.venderType === 4 ? h('span.tag.chip', 'Perin') : null,
               ctx.edited.has('npc|' + id) || exMenusOf(ctx.ws, npc).some(m => ctx.edited.has('ex|' + m)) ? h('span.tag.edit', 'edited') : null,
               dg && dg.b ? h('span.tag.bad', '⛔' + dg.b) : dg && dg.w ? h('span.tag.warn', '⚠' + dg.w) : null)),
           h('div.k', `${npc.key} · ${npc.file}`),
@@ -16306,8 +16350,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
       if (!npc) { el.appendChild(h('p.empty-state', 'Select an NPC on the left.')); return; }
       const f = ws.fileOfNpc(npc);
       const canEdit = ws.isEditable(f.name.toLowerCase());
-      const chip = npc.venderType === 1 || npc.venderType === 2;
-      const chipName = npc.venderType === 2 ? 'Donate' : 'Red';
+      const chip = FRE.shopOps.isChipType(npc.venderType);
+      const chipName = FRE.shopOps.CHIPS[npc.venderType] || '';
       const D = ws.defines;
       const entries = npc.statements.map(r => ({ r, e: FRE.character.shopEntry(r) })).filter(x => x.e);
       const line = pos => 'L' + (f.lineOf(pos) + 1);
@@ -16407,7 +16451,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
       if (!rows.length) el.appendChild(h('p.muted', `Empty. Add items with the + button next to an item in the list on the right: they go to "${tabLabel(st.tab)}".`));
       else {
         const tb = h('table.items', h('tr', h('th.num', '#'), h('th', 'Item'), h('th', 'Job'),
-          h('th.num', chip ? `Price (${chipName} chips)` : 'Price (Penya)'), h('th', 'Tab'), h('th', ''), h('th', 'From')));
+          h('th.num', chip ? `Price (${chipName})` : 'Price (Penya)'), h('th', 'Tab'), h('th', ''), h('th', 'From')));
         const priced = chip ? [] : ws.pricedTab(npc, st.tab);
         const ruleRow = row => row.kind === 'generated' && !chip && canEdit && named(st.tab);
         const convert = (row, edits, what) => SR.editAuto(ctx, npc, st.tab, edits, what);
@@ -16470,7 +16514,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
       const title = npc.slotTitles[st.tab];
       if (title === undefined || title === '') return { ok: false, title: `Tab ${st.tab + 1} has no name, so players can't see it: name it with + Tab first` };
       return {
-        ok: true, title: `Add to ${npc.name || npc.key} → tab ${st.tab + 1} "${title}"`, usesPrice: !(npc.venderType === 1 || npc.venderType === 2),
+        ok: true, title: `Add to ${npc.name || npc.key} → tab ${st.tab + 1} "${title}"`, usesPrice: !FRE.shopOps.isChipType(npc.venderType),
         add(info, cost) { edit(ctx, npc, text => FRE.shopOps.addItem(text, npc, st.tab, info.define, cost), `${npc.name || npc.key}: added ${info.name} to tab ${st.tab + 1} "${title}"`); },
       };
     },
@@ -17099,7 +17143,13 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
 
       // --- shop
       if (form.menus.includes('MMI_TRADE')) {
-        body.appendChild(h('h3', 'Shop tabs (Penya)'));
+        // currency (SetVenderType); Donate Chip is left out: Donate Chips are spent in the Donation Shop window (7d7df4f9)
+        const cur = form.shopType || 0, chip = FRE.shopOps.isChipType(cur), money = chip ? FRE.shopOps.CHIPS[cur] : 'Penya';
+        const sel = h('select.shop-type', { title: 'What players pay with in this shop.' },
+          [[0, 'Penya shop'], [1, 'Red Chip shop'], [3, 'PVP Token shop'], [4, 'Perin shop']].map(([v, l]) => h('option', { value: v, selected: v === cur }, l)));
+        sel.addEventListener('change', () => { form.shopType = Number(sel.value); render(); });
+        body.appendChild(h('h3', `Shop tabs (${money}) `, sel));
+        if (chip) body.appendChild(h('p.muted.small', 'Chip shop: a price here is the item\'s chip price (dwReferValue1 in Spec_Item.txt), the same number in every chip shop and the Donation Shop. Rule rows do not work here.'));
         form.tabs.forEach((t, k) => {
           const box = h('div.nn-tab');
           box.appendChild(h('div.nn-row', label(`Tab ${t.slot + 1}`, true),
@@ -17108,13 +17158,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
             h('span.muted.small', `${t.items.length} / 100`),
             h('button.icon.danger', { title: 'Remove this tab', on: { click: () => { form.tabs.splice(k, 1); render(); } } }, '✕')));
           if (t.items.length) {
-            const tb = h('table.items.nn-items', h('tr', h('th', 'Item'), h('th.num', 'Price (Penya)'), h('th', '')));
+            const tb = h('table.items.nn-items', h('tr', h('th', 'Item'), h('th.num', `Price (${money})`), h('th', '')));
             t.items.forEach((it, j) => {
               const info = ws.items && ws.defines.defines.has(it.define) ? ws.itemById(ws.defines.defines.get(it.define)) : null;
               const ii = info ? ws.itemInfo(info) : null;
+              const now = ii ? (chip ? (ii.chipCost >= 1 ? FRE.dom.fmt(ii.chipCost) : 'no chip price') : FRE.dom.fmt(ii.cost)) : '';
               tb.appendChild(h('tr', FRE.ui.itemCell(ii, it.define),
-                h('td.num', FRE.dom.numInput({ value: it.cost || null, placeholder: ii ? `${FRE.dom.fmt(ii.cost)} (item)` : '',
-                  title: 'Empty = the item\'s own price. A price here changes the item\'s price in EVERY shop.',
+                h('td.num', FRE.dom.numInput({ value: it.cost || null, placeholder: ii ? `${now} (item)` : '',
+                  title: chip ? 'Empty = the item\'s chip price now. A price here changes it in EVERY chip shop and the Donation Shop.'
+                    : 'Empty = the item\'s own price. A price here changes the item\'s price in EVERY shop.',
                   onCommit: v => { if (v === null) delete it.cost; else it.cost = v; refresh(); } })),
                 h('td', h('button.icon.danger', { title: 'Remove', on: { click: () => { t.items.splice(j, 1); render(); } } }, '✕'))));
             });
@@ -17878,7 +17930,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "71+", "when
 
   // The three kinds, in the user's words; the same cards in + Menu and in + NPC (ui/new-npc.js)
   const TEXT = {
-    shop: 'Sells items. Players buy with Penya.',
+    shop: 'Sells items for Penya, Red Chips, PVP Tokens or Perins.',
     exchange: 'Players give items and get rewards (like Collins).',
     rules: 'A window with your text (like the Guild Siege rules).',
   };

@@ -20,7 +20,7 @@
   function addItem(text, npc, slot, define, cost) {
     T.checkDefine(define);
     checkSlot(slot);
-    const chip = npc.venderType === 1 || npc.venderType === 2;
+    const chip = isChipType(npc.venderType);
     let stmt;
     if (chip) stmt = formatStmt('AddVenderItem2', [slot, define], text);
     else {
@@ -58,19 +58,22 @@
     return T.replaceSpan(rec.args.slot, slot);
   }
 
-  // Shop currency (SetVenderType: 0 Penya, 1 Red Chip, 2 Donate Chip; CProject::LoadCharacter,
-  // Project.cpp:3518). Chip shops sell AddVenderItem2 entries for chips (Mover.cpp:1651);
+  // Shop currency (SetVenderType: 0 Penya, 1 Red Chip, 2 Donate Chip, 3 PVP Token since 5035ab0f, 4 Perin (V19 Project.cpp case 4);
+  // CProject::LoadCharacter, Project.cpp:3518; CHARACTER::GetVenderCurrency / IsChipVender, Project.cpp:191). Chip shops sell AddVenderItem2 entries for chips (Mover.cpp:1651);
   // Penya shops sell AddShopItem entries. Converting renames only the command word and
   // keeps the "( tab, II_X )" text as written, so converting back gives identical bytes.
   // AddShopItem's Penya price cannot exist on AddVenderItem2 and is dropped.
   // Returns every splice at once, so the whole change is one undo step.
-  const shopType = v => (v === 1 || v === 2 ? v : 0);
+  const shopType = v => (v >= 1 && v <= 4 ? v : 0);
+  const isChipType = v => shopType(v) !== 0;
+  const CHIPS = { 1: 'Red chips', 2: 'Donate chips', 3: 'PVP Tokens', 4: 'Perins' };
+  const SHOP_NAME = { 1: 'Red Chip', 2: 'Donate Chip', 3: 'PVP Token', 4: 'Perin' };
   const isChipItem = r => r.cmd === 'AddVenderItem2' || r.cmd === 'AddVendorItem2';
 
   // penyaPrices (optional, converting to Penya): Map rec.start -> price written as
   // AddShopItem( tab, II_X, price ). Chip prices live in Spec_Item.txt (itemOps.setChipPrice).
   function setShopType(text, npc, type, penyaPrices) {
-    if (type !== 0 && type !== 1 && type !== 2) throw new Error('shop type must be 0 (Penya), 1 (Red Chip) or 2 (Donate Chip)');
+    if (!(type === 0 || isChipType(type))) throw new Error('shop type must be 0 (Penya), 1 (Red Chip), 2 (Donate Chip), 3 (PVP Token) or 4 (Perin)');
     const from = shopType(npc.venderType);
     const splices = [];
     const rename = (rec, cmd) => splices.push({ start: rec.start, end: rec.start + rec.cmd.length, insert: cmd });
@@ -228,6 +231,6 @@
     return out;
   }
 
-  FRE.shopOps = { otherPriceParts, mergeParts, formatStmt, addItem, removeStatement, setCost, setSlot, setShopType, shopTypePlan, shopType, stmtExtent: T.stmtExtent,
+  FRE.shopOps = { otherPriceParts, mergeParts, formatStmt, addItem, removeStatement, setCost, setSlot, setShopType, shopTypePlan, shopType, isChipType, CHIPS, SHOP_NAME, stmtExtent: T.stmtExtent,
     convertRules, addRule, setRule };
 })(globalThis.FRE = globalThis.FRE || {});

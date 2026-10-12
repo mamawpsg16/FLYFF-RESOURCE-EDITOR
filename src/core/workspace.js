@@ -491,8 +491,10 @@
         this.exchangeMenus = new Set(ex ? (ex.text.match(/^MMI_\w+/gm) || []) : []);
       }
       if (names.some(n => /\.dyo$/.test(n))) this.refreshMaps();
-      if (names.includes('spec_item.txt')) this.reparse('spec_item.txt');   // reparses every module
-      else names.forEach(n => this.reparse(n));
+      // spec_item.txt reparses every module, but not the string tables: the group's other files
+      // (a new NPC's character.txt.txt names) are read first, or their names show as IDS_ keys
+      names.filter(n => n !== 'spec_item.txt').forEach(n => this.reparse(n));
+      if (names.includes('spec_item.txt')) this.reparse('spec_item.txt');
     }
 
     // Fold the last step into the one before it (typing in one field = one undo step): only when both changed

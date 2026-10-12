@@ -43,8 +43,8 @@
       for (const rec of npc.statements) {
         const e = FRE.character.shopEntry(rec);
         if (!e || (e.kind !== 'chip' && e.kind !== 'fixed') || (e.item.value >>> 0) !== id) continue;
-        out.push({ kind: 'npc', npc, slot: e.slot, chips: type === 2 ? 'Donate chips' : 'Red chips',
-          label: `${npc.name || npc.key} (${type === 2 ? 'Donate Chip' : 'Red Chip'} shop), ${npc.slotTitles[e.slot] || 'tab ' + e.slot}` });
+        out.push({ kind: 'npc', npc, slot: e.slot, chips: FRE.shopOps.CHIPS[type],
+          label: `${npc.name || npc.key} (${FRE.shopOps.SHOP_NAME[type]} shop), ${npc.slotTitles[e.slot] || 'tab ' + e.slot}` });
       }
     }
     const ds = ws.models && ws.models.donation;

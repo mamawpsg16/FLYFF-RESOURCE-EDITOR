@@ -18,7 +18,7 @@
   let listWs = null;
   const hasExchanges = npc => !!listWs && exMenusOf(listWs, npc).length > 0
     && (!listWs.placed || FRE.world.npcStatus(npc, listWs.placed).inGame !== false);
-  const TYPES = [{ v: 0, label: 'Penya shop' }, { v: 1, label: 'Red Chip shop' }, { v: 2, label: 'Donate Chip shop' }];
+  const TYPES = [{ v: 0, label: 'Penya shop' }, { v: 1, label: 'Red Chip shop' }, { v: 2, label: 'Donate Chip shop' }, { v: 3, label: 'PVP Token shop' }, { v: 4, label: 'Perin shop' }];
   // NPC list filter: which NPCs to list
   // editable = has fixed items (AddShopItem / AddVenderItem2). Rule items are editable too (ui/shop-rules.js),
   // but listing every rule shop here would hide the few shops with hand-set prices.
@@ -29,6 +29,8 @@
     { v: 'penya', label: 'Penya shops', test: n => isShopNpc(n) && FRE.shopOps.shopType(n.venderType) === 0 },
     { v: 'red', label: 'Red Chip shops', test: n => FRE.shopOps.shopType(n.venderType) === 1 },
     { v: 'donate', label: 'Donate Chip shops', test: n => FRE.shopOps.shopType(n.venderType) === 2 },
+    { v: 'pvp', label: 'PVP Token shops', test: n => FRE.shopOps.shopType(n.venderType) === 3 },
+    { v: 'perin', label: 'Perin shops', test: n => FRE.shopOps.shopType(n.venderType) === 4 },
     { v: 'exchange', label: 'NPCs with exchanges', test: hasExchanges },
     { v: 'all', label: 'All NPCs', test: () => true },
   ];
@@ -111,7 +113,7 @@
     if (to === from) return;
     const itemOf = id => { const it = ws.itemById(id); return it ? ws.itemInfo(it) : null; };
     const plan = FRE.shopOps.shopTypePlan(npc, to, itemOf);
-    const label = TYPES[to].label, chips = to === 2 ? 'Donate chips' : 'Red chips';
+    const label = TYPES[to].label, chips = FRE.shopOps.CHIPS[to];
     const toChips = to !== 0;
     const specOk = ws.isEditable('spec_item.txt');
     const prices = new Map();     // to chips: itemId -> chip price; to Penya: rec.start -> Penya price
@@ -241,7 +243,7 @@
         shown++;
         el.appendChild(h('div.npc' + (id === st.sel ? '.sel' : ''), { on: { click: () => { st.sel = id; st.tab = firstTab(ctx.ws, npc); if (FRE.ui.exchangeView) FRE.ui.exchangeView.clearPick(); ctx.renderAll(false); } } },
           h('div.n', h('span', label),
-            h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : null,
+            h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : npc.venderType === 3 ? h('span.tag.chip', 'PVP Token') : npc.venderType === 4 ? h('span.tag.chip', 'Perin') : null,
               ctx.edited.has('npc|' + id) || exMenusOf(ctx.ws, npc).some(m => ctx.edited.has('ex|' + m)) ? h('span.tag.edit', 'edited') : null,
               dg && dg.b ? h('span.tag.bad', '⛔' + dg.b) : dg && dg.w ? h('span.tag.warn', '⚠' + dg.w) : null)),
           h('div.k', `${npc.key} · ${npc.file}`),
@@ -255,8 +257,8 @@
       if (!npc) { el.appendChild(h('p.empty-state', 'Select an NPC on the left.')); return; }
       const f = ws.fileOfNpc(npc);
       const canEdit = ws.isEditable(f.name.toLowerCase());
-      const chip = npc.venderType === 1 || npc.venderType === 2;
-      const chipName = npc.venderType === 2 ? 'Donate' : 'Red';
+      const chip = FRE.shopOps.isChipType(npc.venderType);
+      const chipName = FRE.shopOps.CHIPS[npc.venderType] || '';
       const D = ws.defines;
       const entries = npc.statements.map(r => ({ r, e: FRE.character.shopEntry(r) })).filter(x => x.e);
       const line = pos => 'L' + (f.lineOf(pos) + 1);
@@ -356,7 +358,7 @@
       if (!rows.length) el.appendChild(h('p.muted', `Empty. Add items with the + button next to an item in the list on the right: they go to "${tabLabel(st.tab)}".`));
       else {
         const tb = h('table.items', h('tr', h('th.num', '#'), h('th', 'Item'), h('th', 'Job'),
-          h('th.num', chip ? `Price (${chipName} chips)` : 'Price (Penya)'), h('th', 'Tab'), h('th', ''), h('th', 'From')));
+          h('th.num', chip ? `Price (${chipName})` : 'Price (Penya)'), h('th', 'Tab'), h('th', ''), h('th', 'From')));
         const priced = chip ? [] : ws.pricedTab(npc, st.tab);
         const ruleRow = row => row.kind === 'generated' && !chip && canEdit && named(st.tab);
         const convert = (row, edits, what) => SR.editAuto(ctx, npc, st.tab, edits, what);
@@ -419,7 +421,7 @@
       const title = npc.slotTitles[st.tab];
       if (title === undefined || title === '') return { ok: false, title: `Tab ${st.tab + 1} has no name, so players can't see it: name it with + Tab first` };
       return {
-        ok: true, title: `Add to ${npc.name || npc.key} → tab ${st.tab + 1} "${title}"`, usesPrice: !(npc.venderType === 1 || npc.venderType === 2),
+        ok: true, title: `Add to ${npc.name || npc.key} → tab ${st.tab + 1} "${title}"`, usesPrice: !FRE.shopOps.isChipType(npc.venderType),
         add(info, cost) { edit(ctx, npc, text => FRE.shopOps.addItem(text, npc, st.tab, info.define, cost), `${npc.name || npc.key}: added ${info.name} to tab ${st.tab + 1} "${title}"`); },
       };
     },

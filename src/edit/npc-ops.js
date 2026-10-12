@@ -14,7 +14,10 @@
 //
 // form: { key, name, model: 'MI_X', image: 'IDS_..' | null, structure: 'SRT_X' | null, map, x, y, z, angle,
 //         newTag: 'Dungeon Pieces' | null (a new building tag instead of structure),
-//         menus: ['MMI_X', ...], tabs: [{ slot, title, rules: [{ ik3, job, min, max }], items: [{ define, cost }] }] }
+//         menus: ['MMI_X', ...], tabs: [{ slot, title, rules: [{ ik3, job, min, max }], items: [{ define, cost }] }],
+//         shopType: 0 Penya (default) | 1 Red Chip | 2 Donate Chip | 3 PVP Token | 4 Perin }
+// A chip shop (shopType 1-4) gets SetVenderType(n); after the menus and AddVenderItem2 lines, like Donaris /
+// Amos (5035ab0f); an item's cost there is its chip price (dwReferValue1 in Spec_Item.txt, shared by every chip shop).
 // x / z are what /position prints in game (world units); the file stores them / OLD_MPU (4).
 (function (FRE) {
   'use strict';
@@ -41,6 +44,7 @@
     for (const t of tabsOf(form)) out.push({ what: 'tab', slot: t.slot, text: t.title, key: idsKey(++n) });
     return out;
   }
+  const isChipShop = form => tabsOf(form).length > 0 && FRE.shopOps.isChipType(form.shopType);
   const tabsOf = form => (form.menus || []).includes('MMI_TRADE') ? [...(form.tabs || [])].sort((a, b) => a.slot - b.slot) : [];
 
   // The character.inc block (handoff §5.2: TAB indent, the file's EOL).
@@ -49,7 +53,10 @@
     const S = strings.find(s => s.what === 'name').key;
     L.push(form.key, '{', '\tsetting', '\t{');
     for (const m of form.menus || []) L.push(`\t\tAddMenu( ${m} );`);
+    const chip = isChipShop(form);
+    if (chip) L.push(`\t\tSetVenderType(${form.shopType});`);
     for (const t of tabsOf(form)) {
+      if (chip) { for (const it of t.items || []) L.push(`\t\tAddVenderItem2( ${t.slot}, ${it.define} );`); continue; }
       for (const r of t.rules || []) L.push(`\t\tAddVendorItem( ${t.slot}, ${r.ik3}, ${r.job}, ${r.min}, ${r.max}, 100 );`);
       for (const it of t.items || []) L.push(`\t\tAddShopItem( ${t.slot}, ${it.define}${it.cost ? ', ' + it.cost : ''} );`);
     }
@@ -156,16 +163,29 @@
     if (at === null) throw new Error(`${form.map}: the server does not read this map's NPC list to its end marker`);
     const record = buildRecord({ angle: form.angle, x: form.x, y: form.y, z: form.z, model, key: form.key });
     const lower = n => n.toLowerCase();
+    const chips = chipPrices(ws, form);
+    const spec = ws.files.get('spec_item.txt');
+    const specSplices = chips.flatMap(([define, v]) => FRE.itemOps.setChipPrice(spec.text, ws.itemById(ws.defines.defines.get(define)), v, ws.defines.defines));
     return {
-      strings, block, record, insertAt: at, dyo, tag,
+      strings, block, record, insertAt: at, dyo, tag, chips,
       parts: [
         ...(tag ? tag.parts : []),          // defineNeuz.h first: the NPC block names the new SRT_
         { file: lower(inc.name), splices: [appendSplice(inc.text, block, eol)] },
         { file: lower(txt.name), splices: [appendSplice(txt.text, lines)] },
         { file: ws.mapFiles.get(form.map), splices: [{ start: at, end: at, insert: FRE.bytes.bytesToBinaryString(record) }] },
+        ...(specSplices.length ? [{ file: 'spec_item.txt', splices: specSplices.sort((x, y) => x.start - y.start) }] : []),
       ],
     };
   }
 
-  FRE.npcOps = { FIELD, appendSplice, newNpcPlan, newTagPlan, tagText, tagDefine, lastEtcId, buildRecord, insertPoint, blockText, newStrings, lastStringId, idsKey, RECORD };
+  // Chip shop: the new chip prices [define, price], items in tab order, the last price of an item wins,
+  // only the ones that differ from the item's dwReferValue1 now.
+  function chipPrices(ws, form) {
+    if (!isChipShop(form)) return [];
+    const want = new Map();
+    for (const t of tabsOf(form)) for (const it of t.items || []) if (it.cost !== undefined && it.cost !== null && it.cost !== '') { want.delete(it.define); want.set(it.define, it.cost); }
+    return [...want].filter(([d, v]) => { const it = ws.itemById(ws.defines.defines.get(d)); return it && ws.itemInfo(it).chipCost !== v; });
+  }
+
+  FRE.npcOps = { isChipShop, chipPrices, FIELD, appendSplice, newNpcPlan, newTagPlan, tagText, tagDefine, lastEtcId, buildRecord, insertPoint, blockText, newStrings, lastStringId, idsKey, RECORD };
 })(globalThis.FRE = globalThis.FRE || {});

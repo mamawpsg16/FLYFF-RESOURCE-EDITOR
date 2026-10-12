@@ -13,7 +13,7 @@
 
   // The three kinds, in the user's words; the same cards in + Menu and in + NPC (ui/new-npc.js)
   const TEXT = {
-    shop: 'Sells items. Players buy with Penya.',
+    shop: 'Sells items for Penya, Red Chips, PVP Tokens or Perins.',
     exchange: 'Players give items and get rewards (like Collins).',
     rules: 'A window with your text (like the Guild Siege rules).',
   };
