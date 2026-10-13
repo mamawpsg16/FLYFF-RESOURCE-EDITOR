@@ -44,6 +44,25 @@
     return { splices: T.replaceSpan(row[field], v), value: v };
   }
 
+  // ---------------------------------------------------------------- Baruna.lua (EnchantBaruna)
+  // the real success chance of +level -> +level+1 typed in % -> tBarunaUpgrade's value (fail if r > p: count = p + 1)
+  function setBarunaChance(model, level, pct) {
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) throw new Error('Type a chance from 0 to 100 %');
+    const sp = model.baruna.up[level];
+    if (!sp) throw new Error(`Baruna.lua has no tBarunaUpgrade value for +${level} → +${level + 1}`);
+    const count = Math.max(0, Math.min(10000, Math.round(pct / 100 * 10000)));
+    return { splices: T.replaceSpan(sp, count - 1), value: count - 1, was: sp.value };
+  }
+  // the chance a failed try with a normal Blessing drops a level, in % -> tBarunaDowngrade's value (drops when r >= d: count = 10000 - d)
+  function setBarunaDrop(model, level, pct) {
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) throw new Error('Type a chance from 0 to 100 %');
+    if (level <= 0) throw new Error('+0 never drops a level');
+    const sp = model.baruna.down[level];
+    if (!sp) throw new Error(`Baruna.lua has no tBarunaDowngrade value for +${level}`);
+    const count = Math.max(0, Math.min(10000, Math.round(pct / 100 * 10000)));
+    return { splices: T.replaceSpan(sp, 10000 - count), value: 10000 - count, was: sp.value };
+  }
+
   // ---------------------------------------------------------------- WeaponRarity.inc
   function setRarityNumber(blk, key, v) {
     const sp = blk.spans[key];
@@ -104,5 +123,5 @@
     return [{ start: feeText.start + n.start, end: feeText.start + n.end, insert: FRE.num.group(v) }];
   }
 
-  FRE.upgradeOps = { setFee, setFeeText, FEE_HEAD, setNumber, setChance, setAttrField, setSingle, setMakeGem, setRarityNumber, setRarityName, setRarityColor, setDropLuck, colorHex };
+  FRE.upgradeOps = { setBarunaChance, setBarunaDrop, setFee, setFeeText, FEE_HEAD, setNumber, setChance, setAttrField, setSingle, setMakeGem, setRarityNumber, setRarityName, setRarityColor, setDropLuck, colorHex };
 })(globalThis.FRE = globalThis.FRE || {});

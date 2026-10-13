@@ -158,10 +158,11 @@
       id: 'upgrade', label: 'Upgrade Rates',
       // Part 2: UpgradeFees.lua (docs/patches/upgrade-fees.diff: the WorldServer and the game read it; created by the editor when
       // there is none: `creates`) and the remove-element text in textClient.txt.txt that names its fee.
-      required: ['ItemUpgrade.lua'], optional: ['s.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc', 'UpgradeFees.lua', 'textClient.txt.txt'],
-      editable: ['ItemUpgrade.lua', 's.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc', 'UpgradeFees.lua', 'textClient.txt.txt'],
+      // Baruna.lua: the Baruna upgrade chances (LoadScriptBaruna, WorldServer only, V19 ad93a9af)
+      required: ['ItemUpgrade.lua'], optional: ['s.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc', 'UpgradeFees.lua', 'textClient.txt.txt', 'Baruna.lua'],
+      editable: ['ItemUpgrade.lua', 's.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc', 'UpgradeFees.lua', 'textClient.txt.txt', 'Baruna.lua'],
       client: ['s.txt', 'WeaponRarity.inc', 'UpgradeFees.lua', 'textClient.txt.txt'],
-      deps: ['s.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc', 'UpgradeFees.lua'],
+      deps: ['s.txt', 'Ultimate_UltimateWeapon.txt', 'WeaponRarity.inc', 'UpgradeFees.lua', 'Baruna.lua'],
       creates: ['UpgradeFees.lua'],
       parse(ws) { return FRE.upgrade.fromWorkspace(ws); },
       validate(ws, model) { return FRE.upgradeChecks(model, { ws }); },

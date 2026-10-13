@@ -39,7 +39,11 @@
 // Materials per try: orichalcum (general), the element card (attr), a moonstone (piercing, accessory, collector), shining orichalcum
 // (ult), the gems (transform). Not modelled: which items may be upgraded or pierced at all (IsDiceRefineryAble, IsPierceAble and the
 // item's own slot limit), the element-card level check (WhatEleCard), equipped / trading refusals, the 15.5 safe element window
-// (compiled out), Baruna.
+// (compiled out). Baruna: its own two functions below (`barunaAttempt` / `barunaRun`).
+//   baruna   CItemUpgrade::EnchantBaruna (ItemUpgrade.cpp:1315, V19 ad93a9af): refused at level >= min( table size, 10 ) with no roll;
+//            fail if xRandom( 10000 ) > (int)( (float)p × Udi ); no protect: destroyed; BARUNASMELPROT: level > 0 &&
+//            xRandom( 10000 ) >= tBarunaDowngrade -> level - 1, else kept; BARUNASMELPROT02: kept; then on any fail, when Udi's
+//            level < the fail table's size, fails + 1 >= the next level's need -> Udi + 1 and fails 0, else fails + 1.
 (function (FRE) {
   'use strict';
   const U = () => FRE.upgrade;
@@ -196,5 +200,54 @@
     return { rows, reach, triesPerItem: tries, per, never };
   }
 
-  FRE.upgradeSim = { PIERCE_PENYA, ACTION_KEY, feeKeyOf, penyaPerTry, charge, gameView, plan, maxLevel, attempt, run, expect, chanceOf };
+  // ---------------------------------------------------------------- Baruna (EnchantBaruna)
+  // one try. st: [level, udiLevel, udiFails]; protect: 0 none, 1 BARUNASMELPROT (Blessing), 2 BARUNASMELPROT02 (Ultimate Blessing)
+  // -> { result: 'max'|'up'|'keep'|'down'|'break', rolls, st (after) }
+  function barunaAttempt(model, st, protect, rng) {
+    const B = model.baruna, [lv, udi, fails] = st;
+    if (lv >= U().barunaTop(B)) return { result: 'max', rolls: [], st };
+    const r = rng.random(10000), rolls = [r];
+    if (!(r > U().barunaP(B, lv, udi))) return { result: 'up', rolls, st: [lv + 1, udi, fails] };
+    let result = 'break';
+    if (protect === 1) {
+      result = 'keep';
+      if (lv > 0) {
+        const d = B.down[lv] ? B.down[lv].value : 0, r2 = rng.random(10000);
+        rolls.push(r2);
+        if (r2 >= d) result = 'down';
+      }
+    } else if (protect === 2) result = 'keep';
+    let u = udi, f = fails;
+    if (u < B.petFail.length) {
+      if (f + 1 >= U().barunaFailsFor(B, u)) { u++; f = 0; } else f++;
+    }
+    return { result, rolls, st: [result === 'down' ? lv - 1 : lv, u, f] };
+  }
+  // `count` weapons from `from` to `to` with one Udi (its level carries over); a destroyed weapon -> the next one
+  // -> { totals: { tries, reached, broke, downs }, log: [first 40: [item, level, rolls, result, udi, fails]], items: [[tries, reached, broke, end]], pet }
+  function barunaRun(model, from, to, protect, seed, count = 1, pet0 = [0, 0], cap = 2000) {
+    const rng = FRE.xRandom.rng(seed);
+    let pet = [...pet0];
+    const log = [], items = [], totals = { tries: 0, reached: 0, broke: 0, downs: 0 };
+    for (let i = 0; i < count; i++) {
+      let st = [from, pet[0], pet[1]], n = 0, broke = false;
+      while (st[0] < to && n < cap) {
+        const a = barunaAttempt(model, st, protect, rng);
+        if (a.result === 'max') break;
+        n++;
+        if (log.length < 40) log.push([i, st[0], a.rolls, a.result, a.st[1], a.st[2]]);
+        if (a.result === 'down') totals.downs++;
+        st = a.st;
+        if (a.result === 'break') { broke = true; break; }
+      }
+      pet = [st[1], st[2]];
+      totals.tries += n;
+      if (st[0] >= to) totals.reached++;
+      if (broke) totals.broke++;
+      items.push([n, st[0] >= to, broke, st[0]]);
+    }
+    return { totals, log, items, pet };
+  }
+
+  FRE.upgradeSim = { barunaAttempt, barunaRun, PIERCE_PENYA, ACTION_KEY, feeKeyOf, penyaPerTry, charge, gameView, plan, maxLevel, attempt, run, expect, chanceOf };
 })(globalThis.FRE = globalThis.FRE || {});

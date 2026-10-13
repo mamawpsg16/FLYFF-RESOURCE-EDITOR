@@ -1,11 +1,12 @@
 // Upgrade Rates (task K part 1): every upgrade chance as the REAL chance players get (the rolls' off-by-one and the overseas ×0.9
 // from +3 included, loaders/upgrade.js), typed in %, with what a fail costs; Weapon Rarity tiers; 🧮 an upgrade calculator
-// (loaders/upgrade-sim.js). Edits: edit/upgrade-ops.js. User decisions (2026-10-09): core ladders + Ultimate + Weapon Rarity, no Baruna.
+// (loaders/upgrade-sim.js). Edits: edit/upgrade-ops.js. User decisions (2026-10-09): core ladders + Ultimate + Weapon Rarity;
+// 2026-10-13: + Baruna upgrade (Baruna.lua, Udi's window).
 (function (FRE) {
   'use strict';
   const { h, fmt, numInput, pctInput, toast, keepFocus } = FRE.dom;
   const { diagTags, diagRow } = FRE.ui;
-  const LUA = 'itemupgrade.lua', ST = 's.txt', ULT = 'ultimate_ultimateweapon.txt', WR = 'weaponrarity.inc', FEE = 'upgradefees.lua', TXT = 'textclient.txt.txt';
+  const LUA = 'itemupgrade.lua', ST = 's.txt', ULT = 'ultimate_ultimateweapon.txt', WR = 'weaponrarity.inc', FEE = 'upgradefees.lua', TXT = 'textclient.txt.txt', BAR = 'baruna.lua';
   const PATCH = 'upgrade-fees';
   const st = { sel: 'general', calc: null };
   const U = () => FRE.upgrade, O = () => FRE.upgradeOps, Sim = () => FRE.upgradeSim;
@@ -27,6 +28,7 @@
     { id: 'acc', label: 'Accessory upgrade', sub: ctx => (model(ctx).s.missing ? 's.txt not found' : ladderSub(ctx, 'acc', 'moonstone, +0 → +')) },
     { id: 'coll', label: 'Collector upgrade', sub: ctx => (model(ctx).s.missing ? 's.txt not found' : ladderSub(ctx, 'coll', 'moonstone, +0 → +')) },
     { id: 'ult', label: 'Ultimate weapons', sub: ctx => (model(ctx).ult.missing ? 'Ultimate_UltimateWeapon.txt not found' : 'transforms, +1 → +10, gems') },
+    { id: 'baruna', label: 'Baruna upgrade', sub: ctx => (model(ctx).baruna.missing ? 'Baruna.lua not found' : ladderSub(ctx, 'baruna', 'Udi, +0 → +')) },
     { id: 'rarity', label: 'Weapon Rarity', sub: ctx => (model(ctx).rarity.missing ? 'WeaponRarity.inc not found' : `${model(ctx).rarity.tiers.size} tiers (Weapon Rarity Scroll)`) },
     { id: 'fees', label: 'Upgrade fees', sub: ctx => feesSub(ctx) },
     { id: 'calc', label: '🧮 Upgrade calculator', sub: () => 'Tries, scrolls and Penya to reach +N' },
@@ -36,7 +38,7 @@
     if (!lad.length) return 'no chances';
     return `${what}${lad.length}; last step ${pc(lad[lad.length - 1].chance)}`;
   }
-  const sectionFiles = { general: [LUA], attr: [LUA], pierce: [LUA], acc: [ST], coll: [ST], ult: [ULT], rarity: [WR], fees: [FEE, TXT, LUA] };
+  const sectionFiles = { general: [LUA], attr: [LUA], pierce: [LUA], acc: [ST], coll: [ST], ult: [ULT], baruna: [BAR], rarity: [WR], fees: [FEE, TXT, LUA] };
   const SEC_CODES = { attr: /^UP_ATTR_/ };
   function sectionDiags(ctx, id) {
     const fs = sectionFiles[id];
@@ -50,6 +52,7 @@
     if (f === ST) return /coll|COLL/.test(k) || d.code === 'UP_COLL_EMPTY' ? 'coll' : 'acc';
     if (f === ULT) return 'ult';
     if (f === WR) return 'rarity';
+    if (f === BAR) return 'baruna';
     if (SEC_CODES.attr.test(d.code) || /\|attr\|/.test('|' + k) || /tAttribute/.test(k)) return 'attr';
     if (/\|(weapon|suit)\||tSuitProb|tWeaponProb/.test('|' + k)) return 'pierce';
     return 'general';
@@ -83,6 +86,7 @@
         else if (st.sel === 'rarity') rarityView(el, ctx);
         else if (st.sel === 'calc') calcView(el, ctx);
         else if (st.sel === 'fees') feesView(el, ctx);
+        else if (st.sel === 'baruna') barunaView(el, ctx);
         else ladderView(el, ctx, st.sel);
       });
     },
@@ -167,6 +171,75 @@
         sys === 'attr' ? ` · ${itemName(ctx, 'II_SYS_SYS_SCR_SMELTING2')} +10% below +10` : ''));
     }
     problems(el, ctx, sys);
+  }
+
+  // ------------------------------------------------------------- Baruna upgrade (Baruna.lua, EnchantBaruna)
+  const BARUNA_ULT_DEFAULT_TEXT = () => { const d = U().BARUNA_ULT_DEFAULT; return `${d[0] / 100}% with ${d[1]} + ${d[2]}`; };
+  function barunaView(el, ctx) {
+    const m = model(ctx), B = m.baruna, edit_ = can(ctx, BAR);
+    title(el, ctx, 'Baruna upgrade', BAR, 'Baruna.lua · tBarunaUpgrade / tBarunaDowngrade');
+    if (B.missing) { el.appendChild(h('p.empty-state', 'Baruna.lua is not in Server/Resource.')); return; }
+    if (B.lua.failed) el.appendChild(h('div.banner.bad', 'Baruna.lua would not run: the server then refuses every Baruna upgrade. See the problems below.'));
+    const f = ctx.ws.files.get(BAR), udiMax = B.pet.length;
+    el.appendChild(h('p.muted.small', `Baruna weapons in Udi's Baruna Upgrade window, with a Stone of Balance (+1 to +${U().BARUNA_MAX}; the server stops at +10 even when the table is longer). `
+      + `Udi levels up from failed tries and multiplies the chance (right column: Udi at its highest level, ${udiMax}). WorldServer only: restart the server after saving.`));
+    const tb = h('table.items.up', h('tr', h('th', 'Step'), h('th', 'Chance'), h('th', `With Udi Lv ${udiMax}`), h('th', 'Tries on average'), h('th', 'Blessing: drops a level'), h('th', 'If it fails'), h('th', '')));
+    for (const r of U().ladder(m, 'baruna')) {
+      const key = keyOf('baruna', r.level), drop = U().barunaDrop(B, r.level);
+      const conv = { toPct: u => U().countOf('le', u, 10000) / 100, fromPct: p => Math.max(0, Math.min(10000, Math.round(p * 100))) - 1, maxPct: 100, tip: u => `In the file: ${u} of 10,000` };
+      const chance = pctInput({ value: r.value, key: `up|baruna|${r.level}`, disabled: !edit_, conv,
+        onCommit: u => typed(ctx, BAR, `baruna|${r.level}`, () => O().setNumber(r.span, u, -1, 2147483647, 'The chance'),
+          `Baruna +${r.level} → +${r.level + 1} ${pc(conv.toPct(u) / 100)} (was ${pc(r.chance)})`, key) });
+      const dconv = { toPct: d => (10000 - Math.max(0, Math.min(d, 10000))) / 100, fromPct: p => 10000 - Math.max(0, Math.min(10000, Math.round(p * 100))), maxPct: 100, tip: d => `In the file: ${d} of 10,000 keep the level` };
+      const dropBox = r.level === 0 ? h('span.small.muted', 'never (+0)')
+        : r.down ? pctInput({ value: r.down.value, key: `up|baruna|d|${r.level}`, disabled: !edit_, conv: dconv,
+            onCommit: d => typed(ctx, BAR, `baruna|d|${r.level}`, () => O().setNumber(r.down, d, -2147483648, 2147483647, 'The keep chance'),
+              `Baruna +${r.level}: a Blessing fail drops a level ${pc(dconv.toPct(d) / 100)} (was ${pc(drop / 10000)})`, key) })
+        : h('span.small.muted', '100% (no tBarunaDowngrade value)');
+      tb.appendChild(h('tr', h('td', h('b', `+${r.level} → +${r.level + 1}`)), h('td', chance),
+        h('td.small', pc(U().barunaCount(B, r.level, udiMax) / 10000)),
+        h('td.small', r.count ? fmt(Math.round(10000 / r.count * 10) / 10) : 'never'),
+        h('td', dropBox),
+        h('td.small.muted', `no Blessing: the weapon is destroyed · ${itemName(ctx, 'II_SYS_SYS_SCR_BARUNASMELPROT')}: kept, or drops a level · ${itemName(ctx, 'II_SYS_SYS_SCR_BARUNASMELPROT02')}: kept`),
+        h('td', diagTags(spanDiags(ctx, BAR, r.span.start, r.span.end)), h('span.line', `L${f.lineOf(r.span.start) + 1}`))));
+    }
+    el.appendChild(tb);
+    if (B.up.length > U().BARUNA_MAX) el.appendChild(h('p.muted.small', `tBarunaUpgrade has ${B.up.length} values; only the first ${U().BARUNA_MAX} are used (the +10 cap).`));
+    // Udi levels (read-only here: the fail counts and bonuses)
+    if (udiMax || B.petFail.length) {
+      el.appendChild(h('h3', 'Udi levels'));
+      const ut = h('table.items.up', h('tr', h('th', 'Udi level'), h('th', 'Failed tries to reach it'), h('th', 'Chance bonus')));
+      for (let L = 0; L <= B.petFail.length; L++) {
+        const v = L >= 1 && B.pet[L - 1] ? B.pet[L - 1].value : null;
+        ut.appendChild(h('tr', h('td', h('b', `Lv ${L}`)), h('td.small', L === 0 ? 'start' : fmt(U().barunaFailsFor(B, L - 1))),
+          h('td.small', v === null ? '×1 (no bonus)' : `+${v}% (×${Number((1 + v / 100).toFixed(2))})`)));
+      }
+      el.appendChild(ut);
+      el.appendChild(h('p.muted.small', 'tBarunaNeedFailForPetUp / tBarunaPetMultiplicator. Udi counts every failed try; the fail count starts again at each new level.'));
+    }
+    // Make Ultimate Baruna (tBarunaUltimate = { chance, crystals, stones })
+    el.appendChild(h('h3', 'Make Ultimate Baruna'));
+    const UB = U().barunaUltimate(B), pf = k => fmt(FRE.upgradeFees.feeOf(m.fees, k, patched(ctx)));
+    el.appendChild(h('p.muted.small', `Udi's "Make Ultimate Baruna" menu: a +10 Baruna weapon becomes an Ultimate Baruna at +0 (3 rune slots: 1 now, 2 at +5, 3 at +10; jewels from +6). `
+      + `Every try uses the ${itemName(ctx, 'II_GEN_MAT_CID')} and ${itemName(ctx, 'II_GEN_MAT_OPERCID')} below plus ${pf('nMakeUltimateBarunaPenya')} Penya (Upgrade fees); a fail keeps the weapon.`));
+    if (!B.hasUlt) el.appendChild(h('p.muted.small', `Baruna.lua has no tBarunaUltimate line: the server uses ${BARUNA_ULT_DEFAULT_TEXT()}. Add "tBarunaUltimate = { 3000, 10, 10 };" to edit it here.`));
+    else {
+      const ut = h('table.items.up', h('tr', h('th', 'What'), h('th', 'Value'), h('th', 'Notes'), h('th', '')));
+      const [spC, spX, spS] = UB.spans;
+      const conv = { toPct: u => Math.max(0, Math.min(u, 10000)) / 100, fromPct: p => Math.max(0, Math.min(10000, Math.round(p * 100))), maxPct: 100, tip: u => `In the file: ${u} of 10,000` };
+      const row = (label, sp, box, note) => ut.appendChild(h('tr', h('td', h('b', label)), h('td', sp ? box : h('span.tag.warn', 'missing (default)')), h('td.small.muted', note),
+        h('td', sp ? diagTags(spanDiags(ctx, BAR, sp.start, sp.end)) : null, sp ? h('span.line', `L${f.lineOf(sp.start) + 1}`) : null)));
+      row('Chance', spC, spC && pctInput({ value: spC.value, key: 'up|baruna|ult|0', disabled: !edit_, conv,
+        onCommit: u => typed(ctx, BAR, 'baruna|ult|0', () => O().setNumber(spC, u, -2147483648, 2147483647, 'The chance'), `Make Ultimate Baruna ${pc(conv.toPct(u) / 100)} (was ${pc(UB.count / 10000)})`, keyOf('baruna', 'ult0')) }),
+        UB.count ? `${fmt(Math.round(10000 / UB.count * 10) / 10)} tries on average` : 'never works');
+      for (const [i, sp, what] of [[1, spX, itemName(ctx, 'II_GEN_MAT_CID')], [2, spS, itemName(ctx, 'II_GEN_MAT_OPERCID')]]) {
+        row(what, sp, sp && numInput({ value: sp.value, min: 1, max: 32767, disabled: !edit_, key: `up|baruna|ult|${i}`,
+          onCommit: v => { if (v === null) return; typed(ctx, BAR, `baruna|ult|${i}`, () => O().setNumber(sp, v, 1, 32767, 'The amount'), `Make Ultimate Baruna: ${v} × ${what} per try`, keyOf('baruna', `ult${i}`)); } }),
+          'per try, from one stack (the server needs that many in the stack put in the window)');
+      }
+      el.appendChild(ut);
+    }
+    problems(el, ctx, 'baruna');
   }
 
   // ------------------------------------------------------------- piercing

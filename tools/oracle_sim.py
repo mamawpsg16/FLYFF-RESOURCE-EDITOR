@@ -4381,7 +4381,11 @@ FEE_DEF = [('nAwakeningPenya', 100000), ('nRemoveAttributePenya', 100000), ('nPi
 FEE_NEW = ['nEnchantGeneral', 'nEnchantAttribute', 'nEnchantAccessory', 'nEnchantCollector', 'nSafeGeneral', 'nSafeAccessory',
            'nSafeUltimate', 'nChangeAttribute', 'nPiercingCard', 'nUltimateMakeItem', 'nUltimateMakeGem', 'nUltimateToUnique',
            'nUltimateToUltimate', 'nUltimateSetGem', 'nUltimateRemoveGem', 'nUltimateEnchant', 'nBlessingCancel', 'nRemoveLevelDown',
-           'nFastAwakeRoll', 'nPetAwakeningCancel', 'nRemoveVis', 'nSwapVis', 'nRemoveAura', 'nLookChange']
+           'nFastAwakeRoll', 'nPetAwakeningCancel', 'nRemoveVis', 'nSwapVis', 'nRemoveAura', 'nLookChange',
+           'nEnchantBaruna', 'nEnchantBarunaAttribute',   # UpgradeFees.h:46-47, Read() :125-126 (V19 ad93a9af)
+           'nMakeUltimateBaruna',   # UpgradeFees.h:48, Read() :127 (Ultimate Baruna)
+           'nBarunaExtractChaos', 'nBarunaCreateChaosGem', 'nBarunaCreateCrystal', 'nBarunaCreateStone',
+           'nBarunaSocketRune', 'nBarunaRemoveRune']   # the other Udi menus (UpgradeFees.h, after nMakeUltimateBaruna)
 FEE_DEF += [(n + 'Penya', 0) for n in FEE_NEW]
 FEE_HEAD = ['-- UpgradeFees.lua: the Penya fees of the upgrade windows (FLYFF-RESOURCE-EDITOR docs/patches/upgrade-fees.diff).',
             '-- Read once at startup by the WorldServer (Server/Resource) and by the game (Client): keep both copies the same.',
@@ -4510,6 +4514,7 @@ def fees_run():
         'nPiercingPenya = 5000',
         'nEnchantGeneralPenya = 1000\r\nnBlessingCancelPenya = 5000\r\nnRemoveVisPenya = 777\r\nnUltimateToUltimatePenya = 2000000\r\nnLookChangePenya = -3\r\nnFastAwakeRollPenya = "250"\r\n',
         'nSafeGeneralPenya = 0\nnSafeAccessoryPenya = 1.9\nnSafeUltimatePenya = 2147483647\nnUltimateMakeItemPenya = 0x100\nnSwapVisPenya = 2147483648\n',
+        'nEnchantBarunaPenya = 50000\r\nnEnchantBarunaAttributePenya = "25000"\r\nnEnchantBarunaPenya = -1\r\n',
     ]
     reads = []
     for t in files:
@@ -4532,6 +4537,7 @@ def fees_run():
         ('a = 1\nb = 2\r\nc = 3\r\n', [['nRemoveAttributePenya', 2147483647]]),
         ('', [['nEnchantGeneralPenya', 1000], ['nBlessingCancelPenya', 5000], ['nEnchantGeneralPenya', 0]]),
         ('nPiercingPenya = 250000\r\n', [['nUltimateToUltimatePenya', 2000000], ['nPetAwakeningCancelPenya', 1]]),
+        ('nEnchantBarunaPenya = 0\r\nnEnchantBarunaAttributePenya = 0\r\n', [['nEnchantBarunaPenya', 300000], ['nEnchantBarunaAttributePenya', 150000]]),
     ]
     edits = []
     for start, ops in scripts:
@@ -9443,6 +9449,150 @@ def up_run_all(root):
         out['edits'].append({'base': base, 'ops': ops, 'texts': T})
     return out
 
+# ---------------------------------------------------------------- baruna: the Baruna upgrade (Upgrade Rates, Baruna section)
+# Written from the C++ (V19 ad93a9af, WORLDSERVER/ItemUpgrade.cpp):
+#   LoadScriptBaruna (:125): Baruna.lua is run; tBarunaUpgrade, tBarunaDowngrade, tBarunaPetMultiplicator, tBarunaNeedFailForPetUp
+#   go into maps by Lua key (static_cast<int>( lua_tonumber )). A script that fails to run leaves them empty.
+#   EnchantBaruna (:1315): refused when level >= min( tBarunaUpgrade's size, nBarunaMaxLevel = 10 ) (no roll);
+#   p = GetBarunaEnchantProp( level ) (:1462, key level + 1, else 0); d = GetBarunaEnchantDowngradeProp( level ) (key level + 1, else 0);
+#   p = (int)( (float)p * GetBarunaPetMultiplicator( petLevel ) ) (:1478, key petLevel: v / 100.0f + 1.0f, else 1.0f);
+#   fail if xRandom( 10000 ) > p. No protect: destroyed. BARUNASMELPROT: level > 0 && xRandom( 10000 ) >= d -> level - 1, else kept
+#   (no second roll at +0). BARUNASMELPROT02: kept. Then, on any fail, when petLevel < tBarunaNeedFailForPetUp's size:
+#   fails + 1 >= GetBarunaFailForNextLevel( petLevel ) (:1487, key petLevel + 1, else 0) -> petLevel + 1, fails 0; else fails + 1.
+BAR_MAX = 10
+
+
+def bar_model(t):
+    L = up_lua(t)
+    g = lambda n: [x[0] for x in L['tables'].get(n, [])] if L['ok'] else []
+    return {'ok': L['ok'], 'L': L, 'up': g('tBarunaUpgrade'), 'down': g('tBarunaDowngrade'), 'pet': g('tBarunaPetMultiplicator'),
+            'fail': g('tBarunaNeedFailForPetUp')}
+
+
+def bar_top(M):
+    return min(len(M['up']), BAR_MAX)
+
+
+def bar_p(M, lv, pet):
+    p = M['up'][lv] if 0 <= lv < len(M['up']) else 0
+    mult = up_f32(up_f32(up_f32(M['pet'][pet - 1]) / up_f32(100.0)) + up_f32(1.0)) if 1 <= pet <= len(M['pet']) else 1.0
+    return int(up_f32(up_f32(p) * mult))
+
+
+def bar_count(M, lv, pet):
+    return max(0, min(10000, bar_p(M, lv, pet) + 1))
+
+
+def bar_drop(M, lv):
+    if lv <= 0:
+        return 0
+    d = M['down'][lv] if lv < len(M['down']) else 0
+    return 10000 - max(0, min(d, 10000))
+
+
+def bar_try(M, st, protect, rnd):
+    lv, pet, fails = st
+    if lv >= bar_top(M):
+        return 'max', [], st
+    r = rnd(10000)
+    rolls = [r]
+    if not (r > bar_p(M, lv, pet)):
+        return 'up', rolls, [lv + 1, pet, fails]
+    res = 'break'
+    if protect == 1:
+        res = 'keep'
+        if lv > 0:
+            d = M['down'][lv] if lv < len(M['down']) else 0
+            r2 = rnd(10000)
+            rolls.append(r2)
+            if r2 >= d:
+                res = 'down'
+    elif protect == 2:
+        res = 'keep'
+    if pet < len(M['fail']):
+        need = M['fail'][pet] if pet < len(M['fail']) else 0
+        if fails + 1 >= need:
+            pet, fails = pet + 1, 0
+        else:
+            fails += 1
+    return res, rolls, [lv - 1 if res == 'down' else lv, pet, fails]
+
+
+def bar_run(M, a, b, protect, seed, count, pet0, cap=2000):
+    rnd = Rand(seed)
+    pet = list(pet0)
+    log, items = [], []
+    tot = {'tries': 0, 'reached': 0, 'broke': 0, 'downs': 0}
+    for i in range(count):
+        st, n, broke = [a, pet[0], pet[1]], 0, False
+        while st[0] < b and n < cap:
+            res, rolls, nst = bar_try(M, st, protect, rnd)
+            if res == 'max':
+                break
+            n += 1
+            if len(log) < 40:
+                log.append([i, st[0], rolls, res, nst[1], nst[2]])
+            tot['downs'] += 1 if res == 'down' else 0
+            st = nst
+            if res == 'break':
+                broke = True
+                break
+        pet = [st[1], st[2]]
+        tot['tries'] += n
+        tot['reached'] += 1 if st[0] >= b else 0
+        tot['broke'] += 1 if broke else 0
+        items.append([n, st[0] >= b, broke, st[0]])
+    return {'totals': tot, 'log': log, 'items': items, 'pet': pet}
+
+
+def bar_edit(t, op):
+    M = bar_model(t)
+    k, lv, pct = op
+    want = max(0, min(10000, round(pct / 100 * 10000)))
+    if k == 'bchance':                  # fail if r > p: want passes = p + 1
+        x = M['L']['tables']['tBarunaUpgrade'][lv]
+        return up_splice(t, x[1], x[2], want - 1)
+    x = M['L']['tables']['tBarunaDowngrade'][lv]      # bdrop: drops when r >= d: want drops = 10000 - d
+    return up_splice(t, x[1], x[2], 10000 - want)
+
+
+BAR_SHORT = ('tBarunaUpgrade = { 10000, 5000, 2500.7 }\r\ntBarunaDowngrade = { 0, 9000 }\r\n'
+             'tBarunaPetMultiplicator = { 0, 33, 150 }\r\ntBarunaNeedFailForPetUp = { 1, 2, 3 }\r\n')
+BAR_NOPET = ('tBarunaUpgrade = { 9000, 9000, 9000, 9000, 9000, 9000, 9000, 9000, 9000, 9000, 9000, 9000 }\n'
+             '-- no downgrade or pet tables: every Blessing fail above +0 drops a level\n')
+BAR_BROKEN = 'tBarunaUpgrade = { 10000, 5000\r\ntBarunaDowngrade = { 0 }\r\n'
+
+
+def bar_run_all(root):
+    real = open(os.path.join(root, 'Baruna.lua'), 'rb').read().decode('latin-1')
+    sets = {'real': real, 'short': BAR_SHORT, 'nopet': BAR_NOPET, 'broken': BAR_BROKEN}
+    out = {'files': sets, 'facts': [], 'edits': []}
+    for name, t in sets.items():
+        M = bar_model(t)
+        top = bar_top(M)
+        f = {'name': name, 'ok': M['ok'], 'top': top, 'petMax': len(M['fail']),
+             'rows': [[L, M['up'][L], bar_count(M, L, 0), bar_drop(M, L), [bar_count(M, L, p) for p in range(7)]] for L in range(top)],
+             'cases': []}
+        if top > 0:
+            for protect in (0, 1, 2):
+                for (a, b) in sorted({(0, top), (0, min(top, 3)), (max(0, top - 2), top)}):
+                    for seed in (1, 77):
+                        for pet0 in ((0, 0), (3, 0)):
+                            f['cases'].append({'p': protect, 'a': a, 'b': b, 'seed': seed, 'pet0': list(pet0),
+                                               'run': bar_run(M, a, b, protect, seed, 25, pet0)})
+        out['facts'].append(f)
+    scripts = [
+        ('real', [['bchance', 0, 50], ['bchance', 9, 0.5], ['bdrop', 5, 25]]),
+        ('real', [['bchance', 4, 100], ['bdrop', 1, 0], ['bdrop', 9, 100]]),
+        ('short', [['bchance', 2, 12.34], ['bdrop', 1, 60]]),
+    ]
+    for base, ops in scripts:
+        t = sets[base]
+        for op in ops:
+            t = bar_edit(t, op)
+        out['edits'].append({'base': base, 'ops': ops, 'text': t})
+    return out
+
 # ---------------------------------------------------------------- sets: set effects (task G part 1)
 # Written from the C++: CProject::LoadPiercingAvail (_Common/Project.cpp:4542-4611), AddSetItemElem (:4697, MAX_SETITEM_ELEM 8),
 # AddItemAvail (:4719, MAX_ITEMAVAIL 32), SortItemAvail (:4736), GetItemAvail (:4760), CSetItemFinder::AddSetItem (:4806);
@@ -11635,6 +11785,8 @@ if __name__ == '__main__':
         print(json.dumps(cp_run_all(root)))
     elif what == 'upgrade':
         print(json.dumps(up_run_all(root)))
+    elif what == 'baruna':                      # the Baruna upgrade (Baruna.lua, EnchantBaruna): chances, drops, Udi, runs, edits
+        print(json.dumps(bar_run_all(root)))
     elif what == 'fees':                        # the upgrade fees (upgrade-fees.diff): reads, charges, the game, edits
         print(json.dumps(fees_run()))
     elif what == 'sets':                        # set effects: propItemEtc.inc SetItem, the +N table, wearing, tooltip, edits

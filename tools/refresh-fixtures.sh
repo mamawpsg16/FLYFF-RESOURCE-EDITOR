@@ -30,7 +30,7 @@ cp -p $SRC/Server/Resource/1Rebirth.inc $SRC/Server/Resource/couple.inc $SRC/Ser
 cp -p $SRC/Server/Resource/ServerBuff.txt $SRC/Server/Resource/GuildBuff.txt "$DST/Resource/"
 cp -p $SRC/Client/GuildBuff.txt $SRC/Client/1Rebirth.inc "$DST/Client/"
 # Upgrade Rates: the chance tables (+ the game's copies of s.txt and WeaponRarity.inc)
-cp -p $SRC/Server/Resource/ItemUpgrade.lua $SRC/Server/Resource/s.txt $SRC/Server/Resource/Ultimate_UltimateWeapon.txt \
+cp -p $SRC/Server/Resource/ItemUpgrade.lua $SRC/Server/Resource/Baruna.lua $SRC/Server/Resource/s.txt $SRC/Server/Resource/Ultimate_UltimateWeapon.txt \
   $SRC/Server/Resource/WeaponRarity.inc "$DST/Resource/"
 cp -p $SRC/Client/s.txt $SRC/Client/WeaponRarity.inc "$DST/Client/"
 # PvP Events: the FFA / TDM settings, the siege prizes (GuildCombat.txt above) and the rules boards players read (client-only)

@@ -19,7 +19,13 @@
 //                     Add_Weapon_Rarity { nRarityLevel = n; szName = "…"; dwColor = 0x…; nStatsPctBonus = n; nStatsFlatBonus = n; }
 //                     (one struct reused: a field a block leaves out keeps the block above's value), then Drop { level luck … } with
 //                     exactly as many pairs as blocks before it; the lucks must add up to 100 (else Error, :576). 3168003d.
-// Not modelled: Baruna.lua (the user left Baruna out, 2026-10-09); PiercingSize.txt (nothing loads it).
+//   Baruna.lua        CItemUpgrade::LoadScriptBaruna (WORLDSERVER/ItemUpgrade.cpp:125, WorldServer only; V19 ad93a9af): tBarunaUpgrade,
+//                     tBarunaDowngrade, tBarunaPetMultiplicator, tBarunaNeedFailForPetUp into maps by Lua key. EnchantBaruna (:1315):
+//                     refused at level >= min( tBarunaUpgrade's size, 10 ); success if xRandom( 10000 ) <= (int)( (float)p × Udi )
+//                     (GetBarunaEnchantProp :1462 key level + 1; GetBarunaPetMultiplicator :1478 key petLevel = 1 + v / 100 in float);
+//                     tBarunaDowngrade is the chance to KEEP the level with a Blessing: it drops when level > 0 && xRandom( 10000 ) >= d.
+//                     A run failure: ASSERT, the maps stay empty and every Baruna upgrade is refused.
+// Not modelled: PiercingSize.txt (nothing loads it); Baruna's tBarunaChaosGem / tBarunaPiercing (crafting, not upgrade chances).
 (function (FRE) {
   'use strict';
   const MAX_AAO = 20;                                   // accessory.h:4
@@ -32,23 +38,23 @@
 
   // -> { tables: { name: { open, close, items: [{ value, start, end }] } }, numbers: { name: span }, attr: [{ args, stmt }],
   //      fns: Set, errors: [{ start, end, message }], failed }
-  function loadLua(file) {
-    const res = { file: file ? file.name : 'ItemUpgrade.lua', tables: {}, numbers: {}, attr: [], fns: new Set(), errors: [], failed: false, missing: !file };
+  function loadLua(file, fname = 'ItemUpgrade.lua') {
+    const res = { file: file ? file.name : fname, tables: {}, numbers: {}, attr: [], fns: new Set(), errors: [], failed: false, missing: !file };
     if (!file) return res;
     const text = file.text;
     const bl = FRE.rates.blankLua(text), bt = bl.text;
-    for (const b of bl.bad) res.errors.push({ start: b.start, end: b.end, message: `ItemUpgrade.lua has ${b.what}` });
+    for (const b of bl.bad) res.errors.push({ start: b.start, end: b.end, message: `${fname} has ${b.what}` });
     // brackets
     const stack = [], PAIR = { ')': '(', ']': '[', '}': '{' };
     for (let i = 0; i < bt.length; i++) {
       const c = bt[i];
       if (c === '(' || c === '[' || c === '{') stack.push(i);
       else if (PAIR[c]) {
-        if (!stack.length || bt[stack[stack.length - 1]] !== PAIR[c]) { res.errors.push({ start: i, end: i + 1, message: `ItemUpgrade.lua has a "${c}" with nothing to close` }); break; }
+        if (!stack.length || bt[stack[stack.length - 1]] !== PAIR[c]) { res.errors.push({ start: i, end: i + 1, message: `${fname} has a "${c}" with nothing to close` }); break; }
         stack.pop();
       }
     }
-    if (stack.length) { const i = stack[stack.length - 1]; res.errors.push({ start: i, end: i + 1, message: `ItemUpgrade.lua has a "${bt[i]}" that is never closed` }); }
+    if (stack.length) { const i = stack[stack.length - 1]; res.errors.push({ start: i, end: i + 1, message: `${fname} has a "${bt[i]}" that is never closed` }); }
     // function blocks: function NAME( … ) … end (blocks: function / if / do open, end closes)
     const fnSpans = [];
     const reFn = /\bfunction\s+([A-Za-z_]\w*)\s*\(/g;
@@ -103,7 +109,7 @@
       if (!defined.has(name) && !LUA_KNOWN.has(name)) {
         res.errors.push({ start: m.index, end: m.index + m[0].length, message: fnSpans.some(f => f.name === name)
           ? `${name}() is called before "function ${name}" is defined (Lua: attempt to call a nil value)`
-          : `ItemUpgrade.lua calls ${name}(), which nothing defines (Lua: attempt to call a nil value)` });
+          : `${fname} calls ${name}(), which nothing defines (Lua: attempt to call a nil value)` });
         continue;
       }
       if (name === 'AddAttribute') {
@@ -292,6 +298,7 @@
     acc: { label: 'Accessory upgrade', n: 10000, mode: 'lt', safeMode: 'le' },
     coll: { label: 'Collector upgrade', n: 1000, mode: 'lt' },
     ult: { label: 'Ultimate upgrade', n: 1000000, mode: 'lt', safeMode: 'le' },
+    baruna: { label: 'Baruna upgrade', n: 10000, mode: 'le' },
   };
   // the ladder of one system: [{ level (from), value (file), eff (after the cut), count, chance, safeCount, safeChance, span }]
   function ladder(model, sys) {
@@ -302,6 +309,7 @@
     else if (sys === 'attr') rows = t.attr.map(a => ({ level: a.level - 1, span: a.call.args[1], value: a.call.args[1].value, call: a.call }));
     else if (sys === 'acc') rows = model.s.acc.slice(0, MAX_AAO).map((x, i) => ({ level: i, span: x, value: x.value }));
     else if (sys === 'coll') rows = model.s.coll.map((x, i) => ({ level: i, span: x, value: x.value }));
+    else if (sys === 'baruna') rows = model.baruna.up.slice(0, BARUNA_MAX).map((x, i) => ({ level: i, span: x, value: x.value, down: model.baruna.down[i] || null }));
     else if (sys === 'ult') { const m = firstByLevel(model.ult.enchant); rows = [...m.keys()].sort((a, b) => a - b).map(k => ({ level: k - 1, span: m.get(k).prob, value: m.get(k).prob.value, row: m.get(k) })); }
     return rows.map(r => {
       const eff = S.cut ? cut90(r.value, r.level) : r.value;
@@ -321,12 +329,48 @@
   // a single-roll chance (Ultimate file): r < p out of 1,000,000
   const singleChance = p => countOf('lt', p, 1000000) / 1000000;
 
+  // ---------------------------------------------------------------- Baruna.lua (ItemUpgrade.cpp:125 LoadScriptBaruna)
+  const BARUNA_MAX = 10;                                // EnchantBaruna nBarunaMaxLevel (V19 ad93a9af)
+  function loadBaruna(file) {
+    const lua = loadLua(file, 'Baruna.lua');
+    const t = n => (!lua.failed && lua.tables[n] ? lua.tables[n].items : []);
+    return { lua, missing: !file, up: t('tBarunaUpgrade'), down: t('tBarunaDowngrade'), pet: t('tBarunaPetMultiplicator'), petFail: t('tBarunaNeedFailForPetUp'),
+      ult: t('tBarunaUltimate'), hasUlt: !lua.failed && !!lua.tables.tBarunaUltimate };
+  }
+  // Make Ultimate Baruna (ItemUpgrade.cpp LoadScriptBaruna + MakeUltimateBaruna): tBarunaUltimate = { chance, crystals, stones };
+  // a missing table / value keeps the C++ default (3000, 10, 10); crystals and stones are at least 1;
+  // the try works when xRandom( 10000 ) < chance -> count = chance clamped to 0..10000
+  const BARUNA_ULT_DEFAULT = [3000, 10, 10];
+  function barunaUltimate(B) {
+    const v = i => (B.ult[i] ? B.ult[i].value : BARUNA_ULT_DEFAULT[i]);
+    const chance = v(0);
+    return { chance, count: Math.max(0, Math.min(chance, 10000)), crystal: Math.max(1, v(1)), stone: Math.max(1, v(2)), spans: [B.ult[0] || null, B.ult[1] || null, B.ult[2] || null] };
+  }
+  // the number compared with xRandom( 10000 ) at `level` with Udi at `petLevel` (0 = no bonus; key petLevel, 1-based)
+  function barunaP(B, level, petLevel = 0) {
+    const p = B.up[level] ? B.up[level].value : 0;
+    const v = petLevel >= 1 && B.pet[petLevel - 1] ? B.pet[petLevel - 1].value : null;
+    const mult = v === null ? 1 : f32(f32(f32(v) / f32(100)) + f32(1));
+    return Math.trunc(f32(f32(p) * mult));
+  }
+  // how many of the 10,000 rolls pass (fail if r > p)
+  const barunaCount = (B, level, petLevel = 0) => countOf('le', barunaP(B, level, petLevel), 10000);
+  // how many of the 10,000 rolls drop a level after a Blessing fail (level > 0 and r >= d; no table row = d 0 = always)
+  function barunaDrop(B, level) {
+    if (level <= 0) return 0;
+    const d = B.down[level] ? B.down[level].value : 0;
+    return 10000 - Math.max(0, Math.min(d, 10000));
+  }
+  const barunaTop = B => Math.min(B.up.length, BARUNA_MAX);
+  // Udi: fails needed to reach the next level (key petLevel + 1), its highest level (the table size)
+  const barunaFailsFor = (B, petLevel) => (B.petFail[petLevel] ? B.petFail[petLevel].value : 0);
+
   // ---------------------------------------------------------------- the workspace model
   function fromWorkspace(ws) {
     const D = ws.defines.defines;
     const lua = loadLua(ws.files.get('itemupgrade.lua'));
     const m = { lua, t: luaTables(lua), s: loadS(ws.files.get('s.txt'), D), ult: loadUltimate(ws.files.get('ultimate_ultimateweapon.txt')),
-      rarity: loadRarity(ws.files.get('weaponrarity.inc'), D) };
+      rarity: loadRarity(ws.files.get('weaponrarity.inc'), D), baruna: loadBaruna(ws.files.get('baruna.lua')) };
     m.scrolls = rateScrolls(ws);
     // part 2: the fees (UpgradeFees.lua, upgrade-fees.diff) + the remove-element text that names its fee (textClient.txt.txt)
     m.fees = FRE.upgradeFees.load(ws.files.get('upgradefees.lua'));
@@ -349,5 +393,5 @@
   }
 
   FRE.upgrade = { MAX_AAO, SYSTEMS, loadLua, luaTables, loadS, loadUltimate, firstByLevel, loadRarity, rarityChances, ladder, valueForPercent,
-    countOf, cut90, uncut90, singleChance, fromWorkspace, rateScrolls };
+    countOf, cut90, uncut90, singleChance, fromWorkspace, rateScrolls, BARUNA_MAX, loadBaruna, barunaP, barunaCount, barunaDrop, barunaTop, barunaFailsFor, BARUNA_ULT_DEFAULT, barunaUltimate };
 })(globalThis.FRE = globalThis.FRE || {});

@@ -67,6 +67,7 @@
     // Ultimate_UltimateWeapon.txt (Project.cpp:967 LoadUltimateWeapon -> UltimateWeapon.cpp:116, #ifdef __WORLDSERVER),
     // WeaponRarity.inc (Project.cpp:971 LoadWeaponRarity, both)
     'itemupgrade.lua': { server: STARTUP, client: null, cite: 'ItemUpgrade.cpp:31 CItemUpgrade() -> LoadScript :59 (WorldServer only)' },
+    'baruna.lua': { server: STARTUP, client: null, cite: 'ItemUpgrade.cpp:125 LoadScriptBaruna (WorldServer only, V19 ad93a9af)' },
     's.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:994 LoadServerScript (+ the game: :937 LoadCollectingInfo)' },
     'ultimate_ultimateweapon.txt': { server: STARTUP, client: null, cite: 'Project.cpp:967 LoadUltimateWeapon -> UltimateWeapon.cpp:116 (#ifdef __WORLDSERVER)' },
     'weaponrarity.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:971 LoadWeaponRarity' },

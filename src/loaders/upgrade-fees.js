@@ -44,8 +44,19 @@
     F('nSwapVisPenya', 'pets', 'Swap two vis', 'each swap', 0, 'ItemUpgrade.cpp SwapVis'),
     F('nRemoveAuraPenya', 'pets', 'Remove the aura', 'the aura / glow change on armor', 0, 'DPSrvr.cpp OnRemoveAura'),
     F('nLookChangePenya', 'pets', 'Change an item\'s look', 'transmute or revert', 0, 'DPSrvr.cpp OnLookChange'),
+    // Baruna (V19 ad93a9af, UpgradeFees.h nEnchantBaruna / nEnchantBarunaAttribute): every try of Udi's auto-repeat windows;
+    // too little Penya refuses the try and stops the repeat. Jewels on Baruna (+6..+10) pay the Ultimate gem rows above.
+    F('nEnchantBarunaPenya', 'baruna', 'Baruna upgrade', 'every try, Udi window (+1 → +10)', 0, 'ItemUpgrade.cpp EnchantBaruna'),
+    F('nEnchantBarunaAttributePenya', 'baruna', 'Baruna element', 'every try, Udi element window (+1 → +20)', 0, 'ItemUpgrade.cpp EnchantBarunaAttribute'),
+    F('nMakeUltimateBarunaPenya', 'baruna', 'Make Ultimate Baruna', 'every try, Udi window (+10 Baruna → Ultimate +0)', 0, 'ItemUpgrade.cpp MakeUltimateBaruna'),
+    F('nBarunaExtractChaosPenya', 'baruna', 'Extract Chaos Stones', 'each item broken down, Udi menu', 0, 'ItemUpgrade.cpp BarunaChaosGemExtract'),
+    F('nBarunaCreateChaosGemPenya', 'baruna', 'Create Chaos Gems', 'each gem made, Udi menu (a short purse makes fewer)', 0, 'ItemUpgrade.cpp CreateBarunaChaosGem'),
+    F('nBarunaCreateCrystalPenya', 'baruna', 'Upgrade Order Stones', 'each Crystal of Order made, Udi menu (a short purse makes fewer)', 0, 'ItemUpgrade.cpp CreateBarunaCrystal'),
+    F('nBarunaCreateStonePenya', 'baruna', 'Create Stone of Balance', 'each Stone of Balance made, Udi menu (a short purse makes fewer)', 0, 'ItemUpgrade.cpp CreateStone'),
+    F('nBarunaSocketRunePenya', 'baruna', 'Socket Ancient Rune', 'each rune put into an Ultimate Baruna, Udi menu', 0, 'ItemUpgrade.cpp CreateBarunaPiercing'),
+    F('nBarunaRemoveRunePenya', 'baruna', 'Remove Ancient Rune', 'each rune taken out (the rune is destroyed), Udi menu', 0, 'ItemUpgrade.cpp RemoveBarunaRune'),
   ];
-  const GROUPS = [['gear', 'Gear upgrades'], ['ultimate', 'Ultimate weapons'], ['remove', 'Removes and cancels'], ['pets', 'Pets, vis, aura and looks']];
+  const GROUPS = [['gear', 'Gear upgrades'], ['ultimate', 'Ultimate weapons'], ['baruna', 'Baruna weapons'], ['remove', 'Removes and cancels'], ['pets', 'Pets, vis, aura and looks']];
   const BY_KEY = new Map(FEES.map(f => [f.key, f]));
 
   // lua_isnumber + lua_tonumber of a literal: decimal / hex numbers, or a string holding one (Lua 5.3 string coercion)

@@ -3409,6 +3409,61 @@ section('upgrade rates (K): ItemUpgrade.lua, s.txt, Ultimate, WeaponRarity; trie
     'UP_ULT_MISSING', 'UP_ULT_DUP', 'UP_TRANS_OWN', 'UP_RARITY_DUP', 'UP_RARITY_INHERIT', 'UP_RARITY_DROP', 'UP_RARITY_SUM', 'UP_STALE_COMMENT']) ok(FRE.diagHelp[k], `help text for ${k}`);
 }
 
+section('Baruna upgrade (Upgrade Rates): Baruna.lua read like LoadScriptBaruna, chances with Udi, drops, runs, edits (JS and Python copies agree)');
+{
+  const J = JSON.stringify;
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} baruna ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py baruna) gave no readable result', e.message); }
+  const U = FRE.upgrade, S = FRE.upgradeSim, O = FRE.upgradeOps;
+  const bin = t => B.binaryStringToBytes(t);
+  const modelOf = t => ({ baruna: U.loadBaruna(new FRE.SourceFile('Baruna.lua', bin(t))) });
+  if (py) {
+    for (const f of py.facts) {
+      const m = modelOf(py.files[f.name]), Bm = m.baruna;
+      eq(!Bm.lua.failed, f.ok, `${f.name}: Baruna.lua ${f.ok ? 'runs' : 'fails to run'}`);
+      eq(J([U.barunaTop(Bm), Bm.petFail.length]), J([f.top, f.petMax]), `${f.name}: highest level (min( table, 10 )) and Udi's highest level`);
+      const rows = U.ladder(m, 'baruna').map(r => [r.level, r.value, r.count, U.barunaDrop(Bm, r.level), Array.from({ length: 7 }, (_, p) => U.barunaCount(Bm, r.level, p))]);
+      eq(J(rows), J(f.rows), `${f.name}: every step's value, real chance, drop chance and chance with Udi Lv 0-6`);
+      let same = 0, n = 0;
+      for (const c of f.cases) {
+        const r = S.barunaRun(m, c.a, c.b, c.p, c.seed, 25, c.pet0);
+        n++;
+        if (J(r) === J(c.run)) same++;
+        else if (n - same <= 3) eq(J(r).slice(0, 600), J(c.run).slice(0, 600), `${f.name}: protect ${c.p} +${c.a} → +${c.b} seed ${c.seed} Udi ${c.pet0}`);
+      }
+      eq(same, n, `${f.name}: ${n} Baruna runs (every roll, drop, break and Udi level)`);
+    }
+    for (const e of py.edits) {
+      const F = new FRE.SourceFile('Baruna.lua', bin(py.files[e.base]));
+      for (const op of e.ops) {
+        const m = { baruna: U.loadBaruna(F) };
+        F.applySplices((op[0] === 'bchance' ? O.setBarunaChance(m, op[1], op[2]) : O.setBarunaDrop(m, op[1], op[2])).splices, 'x');
+      }
+      eq(F.text, e.text, `edit script on ${e.base}: ${J(e.ops)}: the same file`);
+    }
+  }
+  const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e));
+  const W = new FRE.Workspace(fs, { only: 'upgrade' }).load(), Bm = W.models.upgrade.baruna;
+  eq(J(U.ladder(W.models.upgrade, 'baruna').map(r => r.count)), J([10000, 8001, 6301, 4501, 3301, 2601, 2101, 1701, 1401, 1101]), 'the real Baruna.lua: +0 → +10 chances (r <= p: +1), only the first 10 values');
+  eq(U.barunaDrop(Bm, 1), 6000, 'tBarunaDowngrade is the KEEP chance: +1 with a Blessing drops 60% of fails (4000 keep)');
+  eq(U.barunaDrop(Bm, 0), 0, '+0 never drops');
+  W.apply('baruna.lua', O.setBarunaChance(W.models.upgrade, 5, 30).splices, 'x');
+  eq(U.ladder(W.models.upgrade, 'baruna')[5].count, 3000, '+5 → +6 typed as 30%: players get exactly 30%');
+  throws(() => O.setBarunaDrop(W.models.upgrade, 0, 10), '+0 has no drop chance to set');
+  // Make Ultimate Baruna: tBarunaUltimate = { chance of 10000 (r < chance), Crystals of Order, Stones of Balance }
+  const ub = U.barunaUltimate(W.models.upgrade.baruna);
+  eq(J([ub.chance, ub.count, ub.crystal, ub.stone]), J([3000, 3000, 10, 10]), 'the real Baruna.lua: Make Ultimate Baruna 30% with 10 Crystals + 10 Stones');
+  const ubOf = t => U.barunaUltimate(U.loadBaruna(new FRE.SourceFile('Baruna.lua', bin(t))));
+  eq(J([ubOf('tBarunaUpgrade = { 1 };\r\n').count, ubOf('tBarunaUpgrade = { 1 };\r\n').crystal]), J([3000, 10]), 'no tBarunaUltimate: the C++ defaults (30%, 10 + 10)');
+  const ubOdd = ubOf('tBarunaUltimate = { 20000, 0 };\r\n');
+  eq(J([ubOdd.count, ubOdd.crystal, ubOdd.stone]), J([10000, 1, 10]), 'chance above 10,000 always works; amount 0 -> 1; a missing value keeps its default');
+  W.apply('baruna.lua', O.setNumber(ub.spans[0], 2500, -2147483648, 2147483647, 'The chance'), 'x');
+  eq(U.barunaUltimate(W.models.upgrade.baruna).count, 2500, 'Make Ultimate Baruna typed as 25%: 2500 of 10,000');
+  throws(() => O.setNumber(U.barunaUltimate(W.models.upgrade.baruna).spans[1], 0, 1, 32767, 'The amount'), 'Crystals per try: at least 1');
+  eq(FRE.afterSave.readerOf('baruna.lua').cite.includes('LoadScriptBaruna'), true, 'After saving knows Baruna.lua (WorldServer only)');
+}
+
 section('upgrade fees (K part 2): UpgradeFees.lua read like CUpgradeFees, charges, the game, edits (JS and Python copies agree)');
 {
   const J = JSON.stringify;
