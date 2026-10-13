@@ -62,7 +62,7 @@
         h('td', sp ? diagTags(FRE.ui.diagsInSpan(ctx.ws, 'EqualizedPvP.inc', sp.start, sp.end)) : null)));
     });
     el.appendChild(tb);
-    if (ev !== 'FFA') el.appendChild(h('p.muted.small', `Note: the server reads this switch for ${lbl}, but the ${lbl} side is not wired yet (only FFA uses it so far).`));
+    if (ev === 'GS') el.appendChild(h('p.muted.small', `Note: the server reads this switch for ${lbl}, but the ${lbl} side is not wired yet (FFA and TDM use it so far).`));
   }
 
   // ---------------------------------------------------------------- the presets page
