@@ -70,6 +70,10 @@ loaders/weapons.js
 loaders/weapons-sim.js
 edit/weapons-ops.js
 validate/weapons.js
+loaders/consumables.js
+loaders/consumables-sim.js
+edit/consumables-ops.js
+validate/consumables.js
 loaders/pvp.js
 loaders/pvp-sim.js
 loaders/pvp-rules.js
@@ -114,6 +118,7 @@ ui/rates.js
 ui/upgrade.js
 ui/sets.js
 ui/weapons.js
+ui/consumables.js
 ui/pvp-equalized.js
 ui/pvp.js
 ui/dungeon.js

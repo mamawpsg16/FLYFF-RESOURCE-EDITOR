@@ -3722,6 +3722,58 @@ section('weapon effects (G part 2): each weapon\'s own stats, rarity, hands, too
   for (const k of ['WE_DST_ZERO', 'WE_SLOT_DUP', 'WE_ASPD_SMALL', 'WE_RARITY_ASPD', 'WE_TIER_ASPD']) ok(FRE.diagHelp[k], `help text for ${k}`);
 }
 
+section('consumable stats (L): use, use again, same-kind blocks, the timer, edits (JS and Python copies agree)');
+{
+  const J = JSON.stringify;
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} consumables ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py consumables) gave no readable result', e.message); }
+  const fresh = () => { const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e)); return new FRE.Workspace(fs, { only: 'consumables' }).load(); };
+  const ws = fresh(), D = ws.defines.defines, M = ws.models.consumables, Sim = FRE.consumablesSim, env = Sim.envFor(ws);
+  ok(M.byDefine.get('II_CHR_FOO_COO_BULLHAMS') && M.byDefine.get('II_CHR_FOO_COO_BULLHAMS').path === 'keep', 'Bull Hams is a timed (IK2_KEEP) item');
+  ok(M.byDefine.get('II_CHR_SYS_SCR_ACTIVITION') && M.byDefine.get('II_CHR_SYS_SCR_ACTIVITION').hard, 'the Activation scroll is listed as hard-coded');
+  if (py) {
+    eq(M.items.length, py.count, `${py.count} consumables in both copies`);
+    eq(M.items.filter(c => c.slots.some(s => s.on)).length, py.with_stats, `… ${py.with_stats} with stats`);
+    let agree = 0; const bad = [];
+    for (const c of py.cases) {
+      const r = Sim.run(env, c.steps, c.level);
+      const j = J({ res: r.results.map(x => [x.ok, x.why || null, !!x.fresh]), st: Sim.statList(r.p), ins: r.p.instant.map(i => [i.dst, i.adj]), gold: r.p.gold, buffs: Sim.buffList(r.p) });
+      const p = J({ res: c.results, st: c.stats, ins: c.instant, gold: c.gold, buffs: c.buffs });
+      if (j === p) agree++; else if (bad.length < 3) bad.push(`${J(c.steps)} lv ${c.level}: js ${j.slice(0, 220)} py ${p.slice(0, 220)}`);
+    }
+    eq(agree, py.cases.length, `using consumables: every case agrees (${py.cases.length}: every item × use / again half-way / after its time / a same-kind item / outside the level range, 400 random mixes)`);
+    bad.forEach(x => print('   ' + x));
+    let same = 0;
+    for (const sc of py.edits) {
+      const W = fresh(), f = W.files.get('spec_item.txt');
+      for (const op of sc.ops) {
+        const c = W.models.consumables.byDefine.get(op[1]);
+        W.apply('spec_item.txt', op[0] === 'slot' ? FRE.consumablesOps.setSlot(f.text, c, op[2], op[3] ? { dstName: op[3], adj: op[4] } : null, W.defines.defines)
+          : FRE.consumablesOps.setTime(f.text, c, op[2], W.defines.defines), 'x');
+      }
+      const b = f.serialize(), sha = GLib.compute_checksum_for_bytes(GLib.ChecksumType.SHA256, new GLib.Bytes(b));
+      if (sha === sc.sha && b.length === sc.size) same++; else print(`   edit ${J(sc.ops)}: js ${b.length} bytes, py ${sc.size}`);
+    }
+    eq(same, py.edits.length, `edit scripts: byte-identical Spec_Item.txt (${py.edits.length}: a stat set / emptied, a time, permanent, a negative amount)`);
+  }
+  {
+    const b = M.byDefine.get('II_CHR_FOO_COO_BULLHAMS'), hp = D.get('DST_HP_MAX');
+    const r = Sim.run(env, [['use', b.id], ['tick', 1800000], ['use', b.id]], 1);
+    eq(J([r.results[1].ok, r.results[1].why]), J([false, 'active']), 'Bull Hams twice: the second is refused while the first is on (DoUseItemKeep)');
+    eq(r.p.stats.get(hp), 1200, '… and its Max HP is not added twice');
+    const s = M.byDefine.get('II_SYS_SYS_SCR_STR'), st2 = Sim.run(env, [['use', s.id], ['tick', 600000], ['use', s.id]], 1);
+    eq(st2.results[1].ok, false, 'a STR elixir twice: refused (IsDoUseBuff: same IK3_POTION_BUFF_STR)');
+    const W = fresh(), f = W.files.get('spec_item.txt'), x = W.models.consumables.byDefine.get('II_SYS_SYS_SCR_STR');
+    W.apply('spec_item.txt', FRE.consumablesOps.setSlot(f.text, x, 2, { dstName: 'DST_MP', adj: 100 }, D), 'x');
+    ok(W.diags.some(d => d.code === 'CS_INSTANT_LEFTOVER'), 'an MP slot on a timed buff is flagged (taken off the stat table when it ends)');
+    throws(() => FRE.consumablesOps.setSlot(f.text, x, 7, null, D), 'there is no slot 7');
+    throws(() => FRE.consumablesOps.setTime(f.text, x, -5, D), 'a negative time is refused');
+    throws(() => FRE.consumablesOps.setSlot(f.text, W.models.consumables.byDefine.get('II_CHR_SYS_SCR_ACTIVITION'), 1, null, D), 'the hard-coded Activation scroll is not editable');
+  }
+  for (const k of ['CS_NO_TIME', 'CS_KEEP_REFUSED', 'CS_ZERO_TIME', 'CS_DST_ZERO', 'CS_HP_NOTHING', 'CS_INSTANT_LEFTOVER', 'CS_DST_DROPPED', 'CS_SLOT_DUP']) ok(FRE.diagHelp[k], `help text for ${k}`);
+}
+
 // ---------------------------------------------------------------- PvP Events (FFA, TDM, Guild Siege)
 section('PvP Events: FFA / TDM / Guild Siege settings, schedules, money, battles, edits, rules boards (JS and Python copies agree)');
 {

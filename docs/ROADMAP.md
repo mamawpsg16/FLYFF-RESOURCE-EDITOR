@@ -2,6 +2,9 @@
 
 _Last updated 2026-10-12 (PvP Events built, waiting for the test. Before: G part 1 pushed `372cbfb`; G part 2, Weapon Effects, built, waiting for the user's Brave test. C, L and M dropped (the user, 2026-10-10). Next after G: the "Next, after the resource editor" features in FLYFF TODOS.md, planned one at a time)._
 
+> **Handoff (2026-10-15) — task L, Consumable Stats: built, user-tested (Bull Hams edited to STA +20 in game), committed + pushed. Plan: `docs/plans/L-consumables.md`. The page also edits names / descriptions and lists the charged-item modes (only their time). Found + fixed in V19 on the way: IK2_KEEP stats only applied after a relog (a2b5cb01). Next: Oroth Lair research (FLYFF TODOS).**
+
+
 
 
 > **Handoff (2026-10-12) — PvP Events (TODOS Next item 2, plan `C:/Users/Mensah/.claude/plans/partitioned-tumbling-wilkes.md` part C): built, NOT committed (the user tests first). Part B (Guild Siege prizes into `GuildSiegePrize.lua`) is V19 `6de6da39`, verified in game, not pushed; `docs/patches/gs-prizes.diff` is its copy.**

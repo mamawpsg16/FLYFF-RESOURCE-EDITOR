@@ -487,7 +487,7 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "78+", "when": "Tue 13 Oct 2026, 21:39", "rev": "b4e9b34", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "79+", "when": "Thu 15 Oct 2026, 08:58", "rev": "92bc993", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -6316,6 +6316,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "78+", "when
     WE_ASPD_SMALL: ['DST_ATTACKSPEED is counted in 1/20 % (the speed factor gets amount / 1000; the tooltip shows amount / 20), so a small number is almost nothing.', 'Use DST_ATTACKSPEED_RATE for a whole percent, or multiply the number by 20.'],
     WE_RARITY_ASPD: ['A Weapon Rarity tier adds its % bonus to every rate stat, Attack Speed included, but Attack Speed is counted in 1/20 %: the bonus is tiny there, while the tooltip shows it as a whole %.', 'Nothing to fix in the file; it is how WeaponRarity_ScaleParam works.'],
     WE_TIER_ASPD: ['A tier 2 (Legendary Golden) weapon has less raw Attack Speed than the tier 1 (Lusaka) weapon of the same type: players lose speed when they upgrade.', 'Raise tier 2, or lower tier 1.'],
+    CS_NO_TIME: ['A buff item with no buff time ("=" or a negative number): ApplySkill makes no buff, yet still applies the stats, so nothing takes them off until the player logs out.', 'Give it a time (ms), or Permanent (999999999).'],
+    CS_KEEP_REFUSED: ['An IK2_KEEP item whose time is negative as a number: AddBuff refuses it and the item does nothing.', 'Give it a time between 0 and 2147483647 ms.'],
+    CS_ZERO_TIME: ['Buff time 0: the buff ends on the next tick, so the stats flash on and off.', 'Give it a real time.'],
+    CS_DST_ZERO: ['A stat slot holds stat 0 (an unknown DST_ name becomes 0): it does nothing.', 'Pick a stat, or empty the slot.'],
+    CS_HP_NOTHING: ["An item's HP slot does nothing when used: ApplyParam's DST_HP branch only works for skills.", 'Use DST_HP_MAX (or a food item for an instant heal).'],
+    CS_INSTANT_LEFTOVER: ['MP / FP (and HP) are instant changes when used, but when the buff ends the game takes the amount off the stat table anyway (Release subtracts all 6 slots), leaving a negative leftover.', 'Use DST_MP_MAX / DST_FP_MAX, or put the instant part on a food item.'],
+    CS_DST_DROPPED: ['Stats numbered 118 (MAX_ADJPARAMARY) and up are dropped by SetDestParam unless they have their own code: the slot does nothing.', 'Pick another stat.'],
+    CS_SLOT_DUP: ['The same stat is in two slots: both are added.', 'Merge them into one slot.'],
     UP_STALE_COMMENT: ['The line\'s number changed, but its comment (after -- or //) may still describe the old number.', 'Update or remove the comment by hand if you want the file to stay clear.'],
     // PvP Events (FFAManager.inc, TDMManager.inc, GuildCombat.txt, GuildSiegePrize.lua, the rules boards)
     PVP_OFF: ['The WorldServer reads FFAManager.inc / TDMManager.inc at startup and on /ffareload or /tdmreload. Any mistake (an unknown word, a value out of range, a bad start time) switches that event off until the file is fixed: no runs, the NPC says it is not available.', 'Fix the value shown, then type /ffareload or /tdmreload in game (or restart the servers).'],
@@ -13468,6 +13476,382 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "78+", "when
   FRE.weaponChecks = weaponChecks;
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/consumables.js ----
+// Consumable Stats (task L): what each used item gives, the 6 slots dwDestParam1-6 / nAdjParamVal1-6 of its Spec_Item.txt row
+// (cols 54-65, CProject::LoadPropItem _Common/ProjectCmn.cpp:665-683) and its buff time dwSkillTime (col 99, ms, :724).
+// Read from the Spec model the workspace already loaded (loaders/specitem.js), like loaders/weapons.js.
+//   Which items: the ones CMover::DoUseItem (_Common/MoverSkill.cpp:1455) sends down a path that applies the slots:
+//     IK2_BUFF / IK2_BUFF_TOGIFT (:1615, IsDoUseBuff then DoApplySkill), IK2_SYSTEM + IK3_BALLOON (DoUseItemSystem :3235),
+//     IK2_ONCE (DoUseItemOnce :3254), IK2_KEEP (DoUseItemKeep :3266, __NEW_STACKABLE_AMPS), and the instant ones
+//     IK2_FOOD / IK2_POTION / IK2_REFRESHER (DoUseItemFood, listed; the simulator does not model them).
+//   The Activation scrolls (II_CHR_SYS_SCR_ACTIVITION / NEWACTIVITION) have no slots: SetSMMode( SM_ACTPOINT ) is hard-coded
+//     (MoverSkill.cpp:2515), so they are listed read-only.
+(function (FRE) {
+  'use strict';
+  const SLOTS = 6;
+  const NONE = 0xFFFFFFFF;
+  // charged-item modes (SetSMMode in DoUseItemSystem; the item table is ADDSMMODE, _Network/CmnHdr.h:520): what they do is
+  // written in the code, only their time is data (dwCircleTime, in seconds). Items with their own use path stay there.
+  const HARD = {
+    II_CHR_SYS_SCR_ACTIVITION: 'Action points (SM_ACTPOINT, MoverSkill.cpp:2515)', II_CHR_SYS_SCR_NEWACTIVITION: 'Action points (SM_ACTPOINT)',
+    II_CHR_SYS_SCR_UPCUTSTONE: 'Damage x1.2 (SM_ATTACK_UP, MoverAttack.cpp:1234)', II_CHR_SYS_SCR_UPCUTSTONE01: 'Damage x1.2 (SM_ATTACK_UP1)',
+    II_SYS_SYS_SCR_VIP_07: 'VIP perks (SM_VIP_7)', II_SYS_SYS_SCR_VIP_15: 'VIP perks (SM_VIP_15)', II_SYS_SYS_SCR_VIP_30: 'VIP perks (SM_VIP_30)',
+    II_CHR_SYS_SCR_SHOUTFULL15: 'Free shouts (SM_SHOUT15)', II_CHR_SYS_SCR_SHOUTFULL30: 'Free shouts (SM_SHOUT30)',
+    II_CHR_SYS_SCR_SHOUTFULL001: 'Free shouts (SM_SHOUT001)', II_CHR_SYS_SCR_SHOUTFULL03: 'Free shouts (SM_SHOUT03)',
+    II_CHR_SYS_SCR_PSKILLFULL1: 'Party skills reach members at any distance (SM_PARTYSKILL1)', II_CHR_SYS_SCR_PSKILLFULL15: 'Party skills reach members at any distance (SM_PARTYSKILL15)',
+    II_CHR_SYS_SCR_PSKILLFULL30: 'Party skills reach members at any distance (SM_PARTYSKILL30)',
+    II_CHR_SYS_SCR_COMMBANK15: 'Common bank (SM_BANK15)', II_CHR_SYS_SCR_COMMBANK30: 'Common bank (SM_BANK30)', II_CHR_SYS_SCR_COMMBANK001: 'Common bank (SM_BANK001)',
+    II_SYS_SYS_SCR_BLESSING: 'Revival protection (SM_REVIVAL)', II_SYS_SYS_SCR_VELOCIJUMP: 'Speed and jump (SM_VELOCIJUMP)',
+    II_CHR_SYS_SCR_ESCAPEBLINKWING: 'Escape cool-down (SM_ESCAPE)',
+    II_CHR_SYS_SCR_FIREASTONE: 'Fire attack (SM_RESIST_ATTACK)', II_CHR_SYS_SCR_WATEILSTONE: 'Water attack (SM_RESIST_ATTACK)',
+    II_CHR_SYS_SCR_WINDYOSTONE: 'Wind attack (SM_RESIST_ATTACK)', II_CHR_SYS_SCR_LIGHTINESTONE: 'Electric attack (SM_RESIST_ATTACK)',
+    II_CHR_SYS_SCR_EARTHYSTONE: 'Earth attack (SM_RESIST_ATTACK)', II_CHR_SYS_SCR_DEFIREASTONE: 'Fire defense (SM_RESIST_DEFENSE)',
+    II_CHR_SYS_SCR_DEWATEILSTONE: 'Water defense (SM_RESIST_DEFENSE)', II_CHR_SYS_SCR_DEWINDYOSTONE: 'Wind defense (SM_RESIST_DEFENSE)',
+    II_CHR_SYS_SCR_DELIGHTINESTONE: 'Electric defense (SM_RESIST_DEFENSE)', II_CHR_SYS_SCR_DEEARTHYSTONE: 'Earth defense (SM_RESIST_DEFENSE)',
+  };
+  // display groups, first match wins
+  const GROUPS = [
+    { key: 'balloon', label: 'Balloons' },
+    { key: 'couple', label: 'Couple buffs' },
+    { key: 'stat', label: 'Stat potions (STR / DEX / INT / STA / DEF)' },
+    { key: 'premium', label: 'Premium buffs (cash items)' },
+    { key: 'buff', label: 'Buff scrolls and potions' },
+    { key: 'keep', label: 'Timed items (IK2_KEEP / ONCE)' },
+    { key: 'food', label: 'Food and drink (instant)' },
+    { key: 'hard', label: 'Hard-coded (no stats in the file)' },
+  ];
+
+  function slotsOf(it) {
+    const g = f => FRE.specItem.get(it, f), out = [];
+    for (let i = 1; i <= SLOTS; i++) {
+      const dst = g('dwDestParam' + i) >>> 0;
+      out.push({ i, dst, on: dst !== NONE, adj: g('nAdjParamVal' + i) | 0 });
+    }
+    return out;
+  }
+
+  // the DoUseItem path an item takes: 'buff' | 'balloon' | 'once' | 'keep' | 'food' | null (not a consumable here)
+  function pathOf(k, K) {
+    if (k.k2 === K.IK2_BUFF || k.k2 === K.IK2_BUFF_TOGIFT) return 'buff';
+    if (k.k2 === K.IK2_SYSTEM && k.k3 === K.IK3_BALLOON) return 'balloon';
+    if (k.k2 === K.IK2_ONCE) return 'once';
+    if (k.k2 === K.IK2_KEEP) return 'keep';
+    if (k.k2 === K.IK2_FOOD || k.k2 === K.IK2_POTION || k.k2 === K.IK2_REFRESHER) return 'food';
+    return null;
+  }
+
+  function groupOf(c, K) {
+    if (c.hard) return 'hard';
+    if (c.k3 === K.IK3_BALLOON) return 'balloon';
+    if (c.k3 === K.IK3_COUPLE_BUFF) return 'couple';
+    if ([K.IK3_POTION_BUFF_STR, K.IK3_POTION_BUFF_DEX, K.IK3_POTION_BUFF_INT, K.IK3_POTION_BUFF_STA, K.IK3_POTION_BUFF_DEFENSE].includes(c.k3)) return 'stat';
+    if (c.path === 'food') return 'food';
+    if (c.charged && (c.path === 'buff' || c.path === 'keep' || c.path === 'once')) return 'premium';
+    if (c.path === 'buff') return 'buff';
+    return 'keep';
+  }
+
+  const KIND_NAMES = ['IK1_CHARGED', 'IK2_BUFF', 'IK2_BUFF_TOGIFT', 'IK2_SYSTEM', 'IK2_ONCE', 'IK2_KEEP', 'IK2_FOOD', 'IK2_POTION', 'IK2_REFRESHER',
+    'IK3_BALLOON', 'IK3_COUPLE_BUFF', 'IK3_POTION_BUFF_STR', 'IK3_POTION_BUFF_DEX', 'IK3_POTION_BUFF_INT', 'IK3_POTION_BUFF_STA',
+    'IK3_POTION_BUFF_DEFENSE', 'IK3_ANGEL_BUFF', 'IK3_ARMOREFFECTCHANGE', 'IK3_EXP_RATE'];
+
+  // ws: a Workspace (items, defines) -> { items, byId, byDefine, K }
+  function fromWorkspace(ws) {
+    const D = ws.defines.defines, K = {};
+    for (const n of KIND_NAMES) K[n] = D.has(n) ? D.get(n) : -1;
+    const items = [], byId = new Map(), byDefine = new Map();
+    for (const it of ws.items.items.values()) {
+      const g = f => FRE.specItem.get(it, f);
+      const k = { k1: g('dwItemKind1'), k2: g('dwItemKind2'), k3: g('dwItemKind3') };
+      const hard = HARD[it.define] || null;
+      const path = hard ? null : pathOf(k, K);
+      if (!path && !hard) continue;
+      const info = ws.itemInfo(it);
+      const c = { id: it.id, define: it.define, name: info.name || it.define, item: it, info, k1: k.k1, k2: k.k2, k3: k.k3, path, hard,
+        charged: k.k1 === K.IK1_CHARGED, time: g('dwSkillTime') >>> 0, circle: g('dwCircleTime') >>> 0, minLv: g('nMinLimitLevel') | 0, maxLv: g('nMaxLimitLevel') | 0,
+        slots: slotsOf(it) };
+      c.group = groupOf(c, K);
+      items.push(c); byId.set(c.id, c); byDefine.set(c.define, c);
+    }
+    items.sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);
+    return { items, byId, byDefine, K };
+  }
+
+  // a duration in ms as players read it ("1 h", "5 min", "3 d", "permanent", "none")
+  function timeText(ms) {
+    ms = ms >>> 0;
+    if (ms === NONE) return 'none (=)';
+    if (ms === 999999999) return 'permanent (999999999)';
+    if (ms > 0x7FFFFFFF) return `${ms} ms (too big: refused)`;
+    const s = ms / 1000;
+    if (s >= 86400 && s % 3600 === 0) return `${+(s / 86400).toFixed(2)} d`;
+    if (s >= 3600) return `${+(s / 3600).toFixed(2)} h`;
+    if (s >= 60) return `${+(s / 60).toFixed(2)} min`;
+    return `${+s.toFixed(2)} s`;
+  }
+
+  FRE.consumables = { fromWorkspace, slotsOf, pathOf, timeText, GROUPS, HARD, SLOTS, NONE };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/consumables-sim.js ----
+// What using a consumable does in game (task L): a port of the server code that USES the slots and dwSkillTime.
+//   CMover::DoUseItem (_Common/MoverSkill.cpp:1455), by dwItemKind2:
+//     IK2_BUFF / IK2_BUFF_TOGIFT (:1615): IsDoUseBuff (:3371) refuses when the item's IK3 is POTION_BUFF_STR/DEX/INT/STA/DEFENSE,
+//       ANGEL_BUFF or ARMOREFFECTCHANGE, or its IK2 is BUFF_TOGIFT, and a buff of the same IK3 is on (HasBuffByIk3); then
+//       DoApplySkill -> CCtrl::ApplySkill (Ctrl.cpp:1102).
+//     IK2_SYSTEM + IK3_BALLOON (DoUseItemSystem :3235): refused while any balloon buff is on, else DoApplySkill.
+//     IK2_ONCE (DoUseItemOnce :3254): refused while a buff of the same IK3 is on, else DoApplySkill.
+//     IK2_KEEP (DoUseItemKeep :3266, __NEW_STACKABLE_AMPS): level outside nMin/MaxLimitLevel -> refused (1); not IK3_EXP_RATE:
+//       HasBuff( BUFF_ITEM, id ) -> refused (5), else AddBuff( BUFF_ITEM, id, 0, dwSkillTime ) and, when it is new, ApplyParam
+//       (the V19 fix of 2026-10-15: before it the stats never went on, since IBuff::Process only applies a buff with inst 0,
+//       i.e. one loaded at login; Bull Hams showed "STA+20" and gave nothing until a relog).
+//   ApplySkill (Ctrl.cpp:1236-1309): nSkillTime = (int)dwSkillTime; nSkillTime >= 0 -> bNew = AddBuff( BUFF_ITEM, id, 0, time );
+//     a negative time (an "=" = -1 or > 2^31) adds no buff and bNew stays TRUE: the stats go on with nothing to take them off.
+//     bNew -> ApplyParam.
+//   CBuffMgr::AddBuff (Buff.cpp:742 / :756): IsAddable refuses (int)total < 0; Overwrite (:695): the same id at the same level
+//     (items are level 0) -> AddTotal: SetTotal( max( new, remaining ) ) and the clock restarts (:56, :40) -> not new, stats
+//     not applied again. CBuffItem::AddTotal (:366) adds the remaining time for PET_FEED_POCKET02 / PET_TONIC_A / _B only.
+//   CMover::ApplyParam (MoverActEvent.cpp:211, 6 slots with __FIX_STAT_BUFF): NULL_ID skipped; DST_HP does nothing for an
+//     item (its branch needs pAddSkillProp); everything else here -> SetDestParam.
+//   CMover::SetDestParam (MoverParam.cpp:2525): a negative dst (but ADJDEF / ADJDEF_RATE) ignored; DST_MP / DST_FP are an
+//     instant change (-1 = refill to max); DST_GOLD adds gold; RESIST_ALL, STAT_ALLUP, HPDMG_UP, DEFHITRATE_DOWN, LOCOMOTION
+//     (jump x3) fan out; dst >= MAX_ADJPARAMARY (118) dropped; else m_adjParamAry[dst] += adj (an amount 0 adds nothing).
+//   Expiry: IBuffItemBase::Release (Buff.cpp:226) -> ResetDestParam( dst, adj ) for all 6 slots (MoverParam.cpp:2802): the same
+//     fan-outs, then m_adjParamAry[dst] -= adj for 0 <= dst < 118. MP / FP (and HP, never added) are subtracted too: a leftover.
+// Not modelled: DoUseItemFood (food / potions / refreshers), IK3_EXP_RATE amp stacking, IK3_LINK, the cooldown groups, the
+//   world / state refusals before the switch, DST_CHRSTATE / CHANCE* / CURECHR / CLEARBUFF / HEAL_* / SPEED rank checks, the
+//   special recovery / kill-rate cases of SetDestParam (:2616-2717; treated as a plain add), dwChgParamVal, HP / MP / FP caps.
+(function (FRE) {
+  'use strict';
+  const NONE = 0xFFFFFFFF, MAX_ADJ = 118;
+  const s32 = v => v | 0;
+
+  function envFor(ws, model) {
+    const D = ws.defines.defines, m = model || ws.models.consumables, d = n => (D.has(n) ? D.get(n) : -999);
+    return { D, m, K: m.K,
+      HP: d('DST_HP'), MP: d('DST_MP'), FP: d('DST_FP'), GOLD: d('DST_GOLD'), ADJDEF: d('DST_ADJDEF'), ADJDEF_RATE: d('DST_ADJDEF_RATE'),
+      FAN: new Map([
+        [d('DST_RESIST_ALL'), ['DST_RESIST_ELECTRICITY', 'DST_RESIST_FIRE', 'DST_RESIST_WIND', 'DST_RESIST_WATER', 'DST_RESIST_EARTH'].map(n => [d(n), 1])],
+        [d('DST_STAT_ALLUP'), ['DST_STR', 'DST_DEX', 'DST_INT', 'DST_STA'].map(n => [d(n), 1])],
+        [d('DST_HPDMG_UP'), [[d('DST_HP_MAX'), 1], [d('DST_CHR_DMG'), 1]]],
+        [d('DST_DEFHITRATE_DOWN'), [[d('DST_ADJDEF'), 1], [d('DST_ADJ_HITRATE'), 1]]],
+        [d('DST_LOCOMOTION'), [[d('DST_SPEED'), 1], [d('DST_JUMPING'), 3]]],
+      ]),
+      ADDS_REMAIN: new Set(['II_SYS_SYS_SCR_PET_FEED_POCKET02', 'II_SYS_SYS_SCR_PET_TONIC_A', 'II_SYS_SYS_SCR_PET_TONIC_B'].map(n => D.get(n)).filter(v => v !== undefined)) };
+  }
+
+  // a player: buffs Map id -> { id, k3, total, start }, stats Map dst -> amount, instant [{dst, adj}], gold, now (ms), level
+  function blank(level) { return { buffs: new Map(), stats: new Map(), instant: [], gold: 0, now: 0, level: level || 1, log: [] }; }
+  const add = (p, d, a) => { const v = s32((p.stats.get(d) || 0) + a); if (v) p.stats.set(d, v); else p.stats.delete(d); };
+
+  function setDest(env, p, dst, adj) {
+    const sd = s32(dst);
+    if (sd < 0 && sd !== env.ADJDEF_RATE && sd !== env.ADJDEF) return;
+    if (dst === env.HP || dst === env.MP || dst === env.FP) { p.instant.push({ dst, adj }); return; }
+    if (dst === env.GOLD) { p.gold = s32(p.gold + adj); return; }
+    const fan = env.FAN.get(dst);
+    if (fan) { for (const [d, m] of fan) setDest(env, p, d, s32(adj * m)); return; }
+    if (dst >= MAX_ADJ) return;
+    if (adj !== 0) add(p, dst, adj);
+  }
+  function resetDest(env, p, dst, adj) {
+    const fan = env.FAN.get(dst);
+    if (fan) { for (const [d, m] of fan) resetDest(env, p, d, s32(adj * m)); return; }
+    const sd = s32(dst);
+    if (sd >= MAX_ADJ || sd < 0) return;
+    if (adj !== 0) add(p, dst, -adj);
+  }
+  function applyParam(env, p, c) {
+    for (const s of c.slots) {
+      if (!s.on || s.dst === env.HP) continue;
+      setDest(env, p, s.dst, s.adj);
+    }
+  }
+  const remaining = (p, b) => Math.max(0, b.total - (p.now - b.start));
+
+  // AddBuff( BUFF_ITEM, id, 0, total ): true when a new buff was added
+  function addBuff(env, p, c, total) {
+    if (s32(total) < 0) return false;                          // IsAddable
+    const old = p.buffs.get(c.id);
+    if (old) {                                                 // Overwrite: same level -> AddTotal
+      let t = total >>> 0;
+      if (env.ADDS_REMAIN.has(c.id)) t = (t + remaining(p, old)) >>> 0;
+      old.total = Math.max(t, remaining(p, old)); old.start = p.now;
+      return false;
+    }
+    p.buffs.set(c.id, { id: c.id, k3: c.k3, total: total >>> 0, start: p.now });
+    return true;
+  }
+  function applySkill(env, p, c) {
+    const t = s32(c.time);
+    let bNew = true;
+    if (t >= 0) bNew = addBuff(env, p, c, t);
+    else p.log.push('no buff (time < 0): the stats stay on');
+    if (bNew) applyParam(env, p, c);
+    return bNew;
+  }
+  const hasIk3 = (env, p, k3) => [...p.buffs.values()].some(b => b.k3 === k3);
+
+  // use one item: { ok, why?, fresh? } ; why = 'same-kind' | 'balloon' | 'level' | 'active' | 'not-modelled'
+  function use(env, p, c) {
+    const K = env.K;
+    if (c.path === 'buff') {
+      const gated = [K.IK3_POTION_BUFF_STR, K.IK3_POTION_BUFF_DEX, K.IK3_POTION_BUFF_INT, K.IK3_POTION_BUFF_STA, K.IK3_POTION_BUFF_DEFENSE,
+        K.IK3_ANGEL_BUFF, K.IK3_ARMOREFFECTCHANGE].includes(c.k3) || c.k2 === K.IK2_BUFF_TOGIFT;
+      if (gated && hasIk3(env, p, c.k3)) return { ok: false, why: 'same-kind' };
+      return { ok: true, fresh: applySkill(env, p, c) };
+    }
+    if (c.path === 'balloon') {
+      if (hasIk3(env, p, K.IK3_BALLOON)) return { ok: false, why: 'balloon' };
+      return { ok: true, fresh: applySkill(env, p, c) };
+    }
+    if (c.path === 'once') {
+      if (hasIk3(env, p, c.k3)) return { ok: false, why: 'same-kind' };
+      return { ok: true, fresh: applySkill(env, p, c) };
+    }
+    if (c.path === 'keep') {
+      if (p.level < c.minLv || p.level > c.maxLv) return { ok: false, why: 'level' };
+      if (c.k3 === K.IK3_EXP_RATE) return { ok: false, why: 'not-modelled' };
+      if (p.buffs.has(c.id)) return { ok: false, why: 'active' };
+      const fresh = addBuff(env, p, c, c.time);
+      if (fresh) applyParam(env, p, c);
+      return { ok: true, fresh };
+    }
+    return { ok: false, why: 'not-modelled' };
+  }
+
+  // time passes: buffs whose time is up are released (ResetDestParam for all 6 slots)
+  function tick(env, p, ms) {
+    p.now += ms;
+    for (const b of [...p.buffs.values()].sort((x, y) => x.id - y.id)) {
+      if (p.now - b.start < b.total) continue;
+      p.buffs.delete(b.id);
+      const c = env.m.byId.get(b.id);
+      if (c) for (const s of c.slots) if (s.on) resetDest(env, p, s.dst, s.adj);
+    }
+  }
+
+  // steps: ['use', id] | ['tick', ms]; returns the player and each use's result
+  function run(env, steps, level) {
+    const p = blank(level), results = [];
+    for (const s of steps) {
+      if (s[0] === 'use') { const c = env.m.byId.get(s[1]); results.push(c ? use(env, p, c) : { ok: false, why: 'unknown' }); }
+      else if (s[0] === 'tick') tick(env, p, s[1]);
+    }
+    return { p, results };
+  }
+  const statList = p => [...p.stats].sort((a, b) => a[0] - b[0]);
+  const buffList = p => [...p.buffs.values()].sort((a, b) => a.id - b.id).map(b => [b.id, b.total, remaining(p, b)]);
+
+  FRE.consumablesSim = { envFor, blank, use, tick, run, statList, buffList, setDest, resetDest, MAX_ADJ };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- edit/consumables-ops.js ----
+// Consumable Stats edits (task L): one stat slot of an item's Spec_Item.txt row = two tokens, dwDestParamN (written as its
+// DST_ name, the 62fb3b3e style) and nAdjParamValN ("=" in both for an empty slot), and the buff time dwSkillTime (ms, one
+// token). Same splice way as edit/weapons-ops.js; Spec_Item.txt is CRLF on the server and LF in Client/ (the core client sync
+// writes the same change there). Nothing else in the row moves.
+(function (FRE) {
+  'use strict';
+  const T = FRE.textOps;
+
+  // v: { dstName, adj } or null (empty the slot)
+  function setSlot(text, c, i, v, defines) {
+    T.checkAmount(i, 1, FRE.consumables.SLOTS, 'The slot');
+    if (c.hard) throw new Error(`${c.name} is hard-coded: it has no stats in the file`);
+    const empty = !v;
+    if (!empty) {
+      if (!/^DST_[A-Z0-9_]+$/.test(v.dstName || '')) throw new Error('Pick a stat');
+      if (!Number.isInteger(v.adj) || v.adj < -2147483647 || v.adj > 2147483647) throw new Error('The amount must be a whole number');
+    }
+    const d = FRE.itemOps.fieldSpan(text, c.item, 'dwDestParam' + i, defines), a = FRE.itemOps.fieldSpan(text, c.item, 'nAdjParamVal' + i, defines);
+    const di = empty ? '=' : v.dstName, ai = empty ? '=' : String(v.adj);
+    const out = [];
+    if (text.slice(d.start, d.end) !== di) out.push({ start: d.start, end: d.end, insert: di });
+    if (text.slice(a.start, a.end) !== ai) out.push({ start: a.start, end: a.end, insert: ai });
+    return out;
+  }
+
+  // ms: whole milliseconds 0 .. 2147483647, or 999999999 (permanent: CBuffItem::IsRemovable, Buff.cpp:358)
+  function setTime(text, c, ms, defines) {
+    if (c.hard) throw new Error(`${c.name} is hard-coded: its time is not in this field`);
+    T.checkAmount(ms, 0, 2147483647, 'The time (ms)');
+    const f = FRE.itemOps.fieldSpan(text, c.item, 'dwSkillTime', defines), ins = String(ms);
+    return text.slice(f.start, f.end) === ins ? [] : [{ start: f.start, end: f.end, insert: ins }];
+  }
+
+  // a charged-item mode's time: dwCircleTime in SECONDS (SetSMMode( mode, dwCircleTime ), MoverSkill.cpp:2377-2610)
+  function setCircle(text, c, sec, defines) {
+    if (!c.hard) throw new Error(`${c.name} has no charged-item time`);
+    T.checkAmount(sec, 1, 2147483647, 'The time (s)');
+    const f = FRE.itemOps.fieldSpan(text, c.item, 'dwCircleTime', defines), ins = String(sec);
+    return text.slice(f.start, f.end) === ins ? [] : [{ start: f.start, end: f.end, insert: ins }];
+  }
+
+  // "Provides STA +20 for 1 hour." from the slots and the time (the house style of coupleOps.describe)
+  const WORD = { DST_ATKPOWER_RATE: 'Attack', DST_ATKPOWER: 'Attack', DST_HP_MAX_RATE: 'Max HP', DST_HP_MAX: 'Max HP', DST_MP_MAX: 'Max MP',
+    DST_MP_MAX_RATE: 'Max MP', DST_FP_MAX: 'Max FP', DST_FP_MAX_RATE: 'Max FP', DST_STAT_ALLUP: 'All Stats', DST_ADJDEF: 'Defense', DST_SPEED: 'Speed',
+    DST_MONSTER_DMG: 'PvE Damage', DST_EXPERIENCE: 'EXP', DST_STR: 'STR', DST_STA: 'STA', DST_DEX: 'DEX', DST_INT: 'INT' };
+  function timeWords(ms) {
+    ms = ms >>> 0;
+    if (ms === 999999999) return ' permanently';
+    if ((ms | 0) <= 0) return '';
+    const s = ms / 1000, one = (n, w) => `${+n.toFixed(2)} ${w}${n === 1 ? '' : 's'}`;
+    if (s >= 86400 && s % 86400 === 0) return ` for ${one(s / 86400, 'day')}`;
+    if (s >= 3600 && s % 3600 === 0) return ` for ${one(s / 3600, 'hour')}`;
+    if (s >= 60) return ` for ${one(s / 60, 'minute')}`;
+    return ` for ${one(s, 'second')}`;
+  }
+  function describe(c, words) {
+    const list = c.slots.filter(s => s.on && s.dst).map(s => {
+      const w = words.get(s.dst) || { word: '', define: '' };
+      const name = WORD[w.define] || (w.word || '').replace(/[:\s]+$/, '').replace(/^Increased\s+/i, '') || w.define || `stat ${s.dst}`;
+      return `${name} ${s.adj >= 0 ? '+' : ''}${s.adj}${w.rate ? '%' : ''}`;
+    });
+    return list.length ? `Provides ${list.join(', ')}${c.path === 'food' ? '' : timeWords(c.time)}.` : '';
+  }
+
+  FRE.consumablesOps = { setSlot, setTime, setCircle, describe };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- validate/consumables.js ----
+// Consumable Stats checks (task L). loaders/consumables.js reads the slots, loaders/consumables-sim.js what the server does.
+(function (FRE) {
+  'use strict';
+  // SetDestParam's own cases (MoverParam.cpp:2525-2717): these work although some are >= MAX_ADJPARAMARY
+  const SPECIAL = ['DST_RESIST_ALL', 'DST_STAT_ALLUP', 'DST_HPDMG_UP', 'DST_DEFHITRATE_DOWN', 'DST_LOCOMOTION', 'DST_MASTRY_ALL', 'DST_GOLD',
+    'DST_HP_RECOVERY_RATE', 'DST_MP_RECOVERY_RATE', 'DST_FP_RECOVERY_RATE', 'DST_ALL_RECOVERY', 'DST_ALL_RECOVERY_RATE', 'DST_KILL_ALL',
+    'DST_KILL_HP_RATE', 'DST_KILL_MP_RATE', 'DST_KILL_FP_RATE', 'DST_KILL_ALL_RATE', 'DST_ALL_DEC_RATE'];
+
+  function consumableChecks(model, opts) {
+    const ws = opts.ws, out = [], D = ws.defines.defines, F = 'Spec_Item.txt', MAX = FRE.consumablesSim.MAX_ADJ;
+    const words = FRE.itemTooltip.dstWords(ws), special = new Set(SPECIAL.map(n => D.get(n)).filter(v => v !== undefined));
+    const HP = D.get('DST_HP'), MP = D.get('DST_MP'), FP = D.get('DST_FP');
+    const label = d => { const x = words.get(d); return x ? (x.word || x.define).replace(/[:\s]+$/, '') : (ws.defines.byValue('DST_', d) || `stat ${d}`); };
+    const push = (c, code, severity, message, k) => out.push({ module: 'consumables', file: F, code, severity, start: c.item.start, end: c.item.end,
+      key: `${code}|${c.define}|${k || ''}`, message });
+    for (const c of model.items) {
+      if (c.hard || c.path === 'food') continue;
+      const on = c.slots.filter(s => s.on), t = c.time | 0, seen = new Map();
+      if (!on.length) continue;
+      if (t < 0 && c.path !== 'keep') push(c, 'CS_NO_TIME', 'WARN', `${c.name}: no buff time (${c.time === 0xFFFFFFFF ? '=' : c.time}): no buff is made, so its stats stay on until the player logs out.`);
+      if (t < 0 && c.path === 'keep') push(c, 'CS_KEEP_REFUSED', 'WARN', `${c.name}: buff time ${c.time} is negative as a number: the buff is refused and the item does nothing.`);
+      if (t === 0) push(c, 'CS_ZERO_TIME', 'WARN', `${c.name}: buff time 0: the buff ends at once (the stats flash on and off).`);
+      for (const s of on) {
+        if (s.dst === 0) push(c, 'CS_DST_ZERO', 'WARN', `${c.name}: slot ${s.i} is stat 0 (an unknown name becomes 0): it does nothing.`, s.i);
+        else if (s.dst === HP && c.path !== 'keep') push(c, 'CS_HP_NOTHING', 'WARN', `${c.name}: slot ${s.i} is HP: an item's HP slot does nothing when used (ApplyParam's HP branch is for skills).`, s.i);
+        else if ((s.dst === MP || s.dst === FP || s.dst === HP) && t >= 0) push(c, 'CS_INSTANT_LEFTOVER', 'WARN', `${c.name}: slot ${s.i} is ${label(s.dst)}: it is an instant change, yet when the buff ends ${s.adj} is taken off the stat table, leaving a leftover.`, s.i);
+        else if ((s.dst >>> 0) >= MAX && !special.has(s.dst)) push(c, 'CS_DST_DROPPED', 'WARN', `${c.name}: slot ${s.i} is ${label(s.dst)} (${s.dst}): stats from ${MAX} up are dropped unless they have their own code.`, s.i);
+        if (seen.has(s.dst)) push(c, 'CS_SLOT_DUP', 'INFO', `${c.name}: ${label(s.dst)} is in slot ${seen.get(s.dst)} and slot ${s.i}: both are added.`, s.dst);
+        else seen.set(s.dst, s.i);
+      }
+    }
+    return out;
+  }
+
+  FRE.consumableChecks = consumableChecks;
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- loaders/pvp.js ----
 // PvP Events (task "PvP Events"): the FFA, TDM and Guild Siege settings, read the way the servers read them, with the offsets
 // the edits need. No DOM. Each reader cites the C++ (FLYFF-V19-SOURCE/Source/Source/_Common).
@@ -15539,6 +15923,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "78+", "when
       required: [], optional: ['WeaponRarity.inc'], editable: [], client: [], deps: ['WeaponRarity.inc'],
       parse(ws) { return FRE.weapons.fromWorkspace(ws); },
       validate(ws, model) { return FRE.weaponChecks(model, { ws }); },
+    },
+    {
+      // Consumable Stats (task L, loaders/consumables.js): each used item's 6 stat slots and buff time dwSkillTime in Spec_Item.txt
+      // (editsSpec: the server copy and its LF Client copy; applied by CMover::DoUseItem MoverSkill.cpp:1455 -> ApplySkill Ctrl.cpp:1102).
+      id: 'consumables', label: 'Consumable Stats', editsSpec: true,
+      required: [], optional: ['propItem.txt.txt'], editable: ['propItem.txt.txt'], client: ['propItem.txt.txt'], deps: [],
+      parse(ws) { return FRE.consumables.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.consumableChecks(model, { ws }); },
     },
     {
       // PvP Events (loaders/pvp.js): FFAManager.inc / TDMManager.inc (ReadConfig: WorldServer start + /ffareload, /tdmreload),
@@ -23838,6 +24230,232 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "78+", "when
 
   FRE.ui.modules.push(mod);
   FRE.ui.weapons = { weaponView, familyView };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- ui/consumables.js ----
+// Consumable Stats (task L): every used item that gives stats (premium buffs, macarons, STR/DEX/INT/STA/DEF potions,
+// balloons, timed foods, couple buffs): its 6 stat slots and buff time (Spec_Item.txt), what players see (the game tooltip:
+// loaders/item-tooltip.js), and 🧪 Use it (loaders/consumables-sim.js: use, use again, a blocking item, the timer running out).
+// Edits: edit/consumables-ops.js. The user, 2026-10-15: "an editor for stats for all consumables like prems like activation
+// etc macaron what stats it gives".
+(function (FRE) {
+  'use strict';
+  const { h, numInput, keepFocus } = FRE.dom;
+  const { diagRow } = FRE.ui;
+  const SPEC = 'spec_item.txt';
+  const st = { sel: null, show: 'stats', group: '', unit: 'min', other: null };
+  const Sim = () => FRE.consumablesSim, O = () => FRE.consumablesOps, C = () => FRE.consumables;
+  const model = ctx => ctx.ws.models.consumables;
+  const can = ctx => ctx.ws.isEditable(SPEC);
+  const cDiags = (ctx, c) => ctx.ws.diags.filter(d => d.module === 'consumables' && d.start === c.item.start);
+  const keyOf = id => `consumables|${id}`;
+  const iconOf = it => (it ? String(FRE.specItem.get(it, 'szIcon') || '').replace(/"/g, '').trim() : '');
+  const UNITS = { s: 1000, min: 60000, h: 3600000, d: 86400000 };
+  const PATH = { buff: 'used like a buff scroll (IK2_BUFF)', balloon: 'a balloon (one at a time)', once: 'IK2_ONCE (one of its kind at a time)',
+    keep: 'IK2_KEEP (one at a time, level range)', food: 'food / potion (instant)' };
+  const WHY = { 'same-kind': 'refused: a buff of the same kind is on', balloon: 'refused: a balloon is already on', level: 'refused: outside its level range',
+    active: 'refused: already active', 'not-modelled': 'not modelled here', unknown: 'unknown item' };
+
+  // a text box that commits on pause / Enter / leaving it (the same as ui/rates.js textInput)
+  function textInput({ value, key, disabled, max, width, onCommit }) {
+    const el = h('input', { type: 'text', value: value || '', disabled, maxLength: max || 255, style: `width:${width || '14em'}` });
+    if (key) el.dataset.key = key;
+    el.dataset.value = el.value;
+    const commit = () => { if (!el.isConnected || el.value === el.dataset.value) return; el.dataset.value = el.value; onCommit(el.value); };
+    FRE.dom.liveCommit(el, commit);
+    el.addEventListener('change', commit);
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') el.blur(); });
+    return el;
+  }
+
+  function dstOptions(ctx) {
+    const words = FRE.itemTooltip.dstWords(ctx.ws), opts = [{ v: 0, label: '(empty slot)', find: 'empty none' }];
+    for (const [v, w] of [...words].sort((a, b) => (a[1].word || a[1].define).localeCompare(b[1].word || b[1].define)))
+      opts.push({ v, label: `${(w.word || '').replace(/[:\s]+$/, '') || w.define}${w.rate ? ' (%)' : ''} — ${w.define}`, find: `${w.word} ${w.define}` });
+    return { opts, words };
+  }
+  const dstLabel = (ctx, words, v) => { const w = words.get(v); return w ? (w.word || w.define).replace(/[:\s]+$/, '') : (ctx.ws.defines.byValue('DST_', v) || `stat ${v}`); };
+  const valText = (ctx, words, d, a) => {
+    const w = words.get(d), aspd = d === ctx.ws.defines.defines.get('DST_ATTACKSPEED');
+    return aspd ? `${a >= 0 ? '+' : ''}${a / 20}% (raw ${a})` : `${a >= 0 ? '+' : ''}${a}${w && w.rate ? '%' : ''}`;
+  };
+
+  const SHOW = [
+    { v: 'stats', label: 'With stats', test: c => c.slots.some(s => s.on) || !!c.hard },
+    { v: 'all', label: 'All consumables', test: () => true },
+    { v: 'problems', label: 'With problems', test: (c, ctx) => cDiags(ctx, c).some(d => d.severity !== 'INFO') },
+    { v: 'edited', label: 'Edited', test: (c, ctx) => ctx.edited.has(keyOf(c.id)) },
+  ];
+
+  const mod = {
+    id: 'consumables', label: 'Consumable Stats', searchPlaceholder: 'Search consumables', noItems: true,
+    help: 'Consumable Stats: what premium buffs, macarons, potions, balloons and foods give, and for how long (Spec_Item.txt)',
+    st,
+    onLoad() { st.sel = null; st.show = 'stats'; st.group = ''; st.other = null; },
+
+    listExtra(ctx) {
+      const m = model(ctx);
+      return h('div.bx-filters',
+        h('select.npc-filter', { title: 'Which items', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
+          SHOW.map(o => h('option', { value: o.v, selected: o.v === st.show }, `${o.label} (${m.items.filter(c => o.test(c, ctx)).length})`))),
+        h('select.npc-filter', { title: 'Group', on: { change: e => { st.group = e.target.value; ctx.renderList(); } } },
+          [h('option', { value: '' }, 'Every group'), ...C().GROUPS.map(g => h('option', { value: g.key, selected: g.key === st.group }, `${g.label} (${m.items.filter(c => c.group === g.key).length})`))]));
+    },
+
+    renderList(el, ctx) {
+      const m = model(ctx), q = ctx.query.toLowerCase(), test = SHOW.find(o => o.v === st.show).test;
+      let shown = 0;
+      for (const g of C().GROUPS) {
+        if (st.group && g.key !== st.group) continue;
+        const list = m.items.filter(c => c.group === g.key && test(c, ctx) && (!q || c.name.toLowerCase().includes(q) || c.define.toLowerCase().includes(q)));
+        if (!list.length) continue;
+        el.appendChild(h('div.pad.muted.small', h('b', g.label), ` · ${list.length}`));
+        for (const c of list) {
+          if (++shown > 600) continue;
+          const ds = cDiags(ctx, c), nw = ds.filter(d => d.severity === 'WARN').length;
+          el.appendChild(h('div.npc.bx-row' + (st.sel === c.id ? '.sel' : ''), { on: { click: () => { st.sel = c.id; st.other = null; ctx.renderAll(false); } } },
+            FRE.dds.picture(ctx, iconOf(c.item), { cls: '.bx-icon' }),
+            h('div.bx-text', h('div.n', h('span', c.name), h('span', ctx.edited.has(keyOf(c.id)) ? h('span.tag.edit', 'edited') : null, nw ? h('span.tag.warn', '⚠' + nw) : null)),
+              h('div.k', c.hard ? 'hard-coded' : `${c.slots.filter(s => s.on).length} stats · ${C().timeText(c.time)}${c.charged ? ' · cash' : ''}`))));
+        }
+      }
+      if (shown > 600) el.appendChild(h('div.pad.muted', `${shown - 600} more: search to narrow the list.`));
+      if (!shown) el.appendChild(h('div.pad.muted', 'No consumables match.'));
+    },
+
+    renderEditor(el, ctx) {
+      keepFocus(el, () => {
+        const c = st.sel === null ? null : model(ctx).byId.get(st.sel);
+        if (!c) { el.appendChild(h('p.empty-state', 'Select a consumable on the left.')); return; }
+        itemView(el, ctx, c);
+      });
+    },
+
+    addTarget() { return { ok: false, title: 'Items are not added in this task' }; },
+    locate(d, ctx) {
+      if (d.module !== 'consumables') return false;
+      const c = model(ctx).items.find(x => x.item.start === d.start);
+      if (c) st.sel = c.id;
+      return true;
+    },
+  };
+
+  const edit = (ctx, c, splicesOf, label, mergeKey) =>
+    ctx.editGroup(() => [{ file: SPEC, splices: splicesOf(ctx.ws.files.get(SPEC).text) }], label, [keyOf(c.id)], mergeKey);
+
+  function itemView(el, ctx, c) {
+    const m = model(ctx), edit_ = can(ctx) && !c.hard, { opts, words } = dstOptions(ctx), D = ctx.ws.defines.defines;
+    const f = ctx.ws.files.get(SPEC);
+    el.appendChild(h('div.npc-title', FRE.dds.picture(ctx, iconOf(c.item), { cls: '.bx-icon' }), h('h2', c.name), h('span.def', `${c.define} · ${c.id}`),
+      can(ctx) ? null : h('span.tag.bad', 'read-only'), h('span.line', `Spec_Item.txt L${f.lineOf(c.item.start) + 1}`)));
+    if (c.hard) {
+      el.appendChild(h('p', `${c.name} has no stat slots: what it does is written in the game code: ${c.hard}. Only its time is data (dwCircleTime, seconds).`));
+      const sec = c.circle;
+      el.appendChild(h('div.dr-line', h('span', `Time now: ${(sec | 0) > 0 ? C().timeText(sec * 1000) : 'none'}.`),
+        can(ctx) ? numInput({ value: (sec | 0) > 0 ? +(sec / (UNITS[st.unit] / 1000)).toFixed(3) : 0, min: 0, step: 'any', key: `csc|${c.id}|${st.unit}`,
+          onCommit: v => { if (v === null) return; const n = Math.round(v * UNITS[st.unit] / 1000); if (n === sec || n < 1) return;
+            edit(ctx, c, t => O().setCircle(t, c, n, ctx.ws.defines.defines), `${c.name}: time ${C().timeText(n * 1000)} (was ${C().timeText(sec * 1000)})`, `csc|${c.id}`); } }) : null,
+        can(ctx) ? h('select', { on: { change: e => { st.unit = e.target.value; ctx.renderAll(false); } } },
+          Object.keys(UNITS).map(u => h('option', { value: u, selected: u === st.unit }, { s: 'seconds', min: 'minutes', h: 'hours', d: 'days' }[u]))) : null));
+      el.appendChild(h('p.muted.small', "Players see what it gives when they hover its buff icon (V19 fix 2026-10-15). The description below is what the inventory tooltip shows."));
+    }
+    if (!c.hard) el.appendChild(h('p.muted.small', `${PATH[c.path] || c.path}${c.charged ? ' · cash item' : ''}. `,
+      c.path === 'food' ? 'Food and potions heal at once; the 🧪 panel does not model them. ' : '',
+      'Buff items show only their name and description in game: players do not see these numbers in the tooltip. After saving: Stop / Start Server.bat.'));
+
+    // stats (not for a hard-coded item: it has none)
+    if (!c.hard) {
+    el.appendChild(h('h3', 'Stats (6 slots)'));
+    const tb = h('table.items.rt', h('tr', h('th', 'Slot'), h('th', 'Stat'), h('th', 'Amount'), h('th', 'Players get'), h('th', '')));
+    for (const s of c.slots) {
+      const label = `${c.name}: slot ${s.i}`;
+      tb.appendChild(h('tr', h('td', h('b', String(s.i))),
+        h('td', edit_ ? FRE.ui.combo({ options: opts, value: s.on ? s.dst : 0, placeholder: 'Pick a stat', wordStart: true,
+          onPick: v => { if (v === (s.on ? s.dst : 0)) return;
+            edit(ctx, c, t => O().setSlot(t, c, s.i, v ? { dstName: ctx.ws.defines.byValue('DST_', v), adj: s.on ? s.adj : 1 } : null, D),
+              v ? `${label} ${dstLabel(ctx, words, v)}${s.on ? ` (was ${dstLabel(ctx, words, s.dst)})` : ''}` : `${label} emptied (was ${dstLabel(ctx, words, s.dst)})`); } })
+          : (s.on ? dstLabel(ctx, words, s.dst) : '—')),
+        h('td', s.on ? numInput({ value: s.adj, min: -2147483647, max: 2147483647, disabled: !edit_, key: `cs|${c.id}|${s.i}`,
+          onCommit: v => { if (v === null || v === s.adj) return;
+            edit(ctx, c, t => O().setSlot(t, c, s.i, { dstName: ctx.ws.defines.byValue('DST_', s.dst), adj: v }, D), `${label} ${dstLabel(ctx, words, s.dst)} ${v} (was ${s.adj})`, `cs|${c.id}|${s.i}`); } }) : ''),
+        h('td', s.on ? valText(ctx, words, s.dst, s.adj) : h('span.muted', 'empty')),
+        h('td', edit_ && s.on ? h('button.icon.danger', { title: 'Empty this slot', on: { click: () => edit(ctx, c, t => O().setSlot(t, c, s.i, null, D), `${label} emptied (was ${dstLabel(ctx, words, s.dst)})`) } }, '✕') : null)));
+    }
+    el.appendChild(tb);
+
+    // buff time
+    if (c.path !== 'food' && !c.hard) {
+      const ms = c.time >>> 0, unit = UNITS[st.unit], shown = (ms | 0) >= 0 && ms !== 999999999 ? +(ms / unit).toFixed(3) : null;
+      el.appendChild(h('h3', 'Buff time'));
+      el.appendChild(h('div.dr-line', h('span', `Now: ${C().timeText(ms)}.`),
+        edit_ ? numInput({ value: shown === null ? 0 : shown, min: 0, max: Math.floor(2147483647 / unit), step: 'any', key: `cst|${c.id}|${st.unit}`,
+          onCommit: v => { if (v === null) return; const n = Math.round(v * unit); if (n === ms) return;
+            edit(ctx, c, t => O().setTime(t, c, n, D), `${c.name}: time ${C().timeText(n)} (was ${C().timeText(ms)})`, `cst|${c.id}`); } }) : null,
+        edit_ ? h('select', { on: { change: e => { st.unit = e.target.value; ctx.renderAll(false); } } },
+          Object.keys(UNITS).map(u => h('option', { value: u, selected: u === st.unit }, { s: 'seconds', min: 'minutes', h: 'hours', d: 'days' }[u]))) : null,
+        edit_ ? h('button', { title: 'Never runs out (999999999: the buff cannot be removed)', on: { click: () => edit(ctx, c, t => O().setTime(t, c, 999999999, D), `${c.name}: permanent (was ${C().timeText(ms)})`) } }, 'Permanent') : null));
+      el.appendChild(h('p.muted.small', 'Using the same item again restarts its timer at the full time (it does not add up), and its stats are not added twice.'));
+    }
+
+    }
+
+    // name + description (propItem.txt.txt, + its Client copy): the description is the only place players read what it gives
+    {
+      const ws = ctx.ws, PT = 'propitem.txt.txt', CK = FRE.coupleChecks, CO = FRE.coupleOps;
+      const editText = ctx.ws.isEditable(PT) && ws.files.has(PT);
+      const nameKey = CK.keyOf(ws, c.item, 'szName'), descKey = CK.keyOf(ws, c.item, 'szCommand');
+      const nameMeta = CK.textLine(ws, nameKey), descMeta = CK.textLine(ws, descKey);
+      const desc = CK.descOf(ws, c.item) || '', auto = O().describe(c, words);
+      const putText = (key, v, max, label, mk) => ctx.editGroup(() => [{ file: PT, splices: CO.setText(CK.textLine(ws, key), v, max) }], label, [keyOf(c.id)], mk);
+      el.appendChild(h('h3', 'Name and description'));
+      el.appendChild(h('div.dr-line', h('span', 'Name'), textInput({ value: c.name, key: `csn|${c.id}`, disabled: !editText || !nameMeta, max: 63,
+        onCommit: v => putText(nameKey, v, 63, `${c.name}: name "${v}"`, `csn|${c.id}`) })));
+      el.appendChild(h('div.dr-line', h('span', 'Description'), textInput({ value: desc, key: `csd|${c.id}`, disabled: !editText || !descMeta, max: 255, width: '28em',
+        onCommit: v => putText(descKey, v, 255, `${c.name}: description`, `csd|${c.id}`) }),
+        h('button', { disabled: !editText || !descMeta || !auto || auto === desc, title: auto === desc ? 'The description already says this' : `Write: ${auto}`,
+          on: { click: () => putText(descKey, auto, 255, `${c.name}: description written from the stats`) } }, FRE.ui.pencil(), ' Write description from stats')));
+      if (descKey && /^IDS_/.test(descKey) && !descMeta) el.appendChild(h('p.small.muted', `The description key ${descKey} is not in propItem.txt.txt.`));
+      if (auto && desc && auto !== desc) el.appendChild(h('p.small.warn-text', `⚠ Check the description: the stats give "${auto}"`));
+    }
+
+    // what players see
+    el.appendChild(h('h3', 'What players see (the item tooltip)'));
+    const tt = FRE.itemTooltip.build(ctx.ws, c.item), box = h('div.bx-tt.se-tt');
+    for (const line of tt.game) box.appendChild(h('div', line.map(p => h('span', { style: `color:${p.color}${p.bold ? ';font-weight:bold' : ''}` }, p.text))));
+    if (tt.editor.length) { box.appendChild(h('hr')); for (const line of tt.editor) box.appendChild(h('div', line.map(p => h('span', { style: `color:${p.color}` }, p.text)))); }
+    el.appendChild(box);
+
+    // 🧪 use it
+    if (c.path !== 'food' && !c.hard) {
+      const env = Sim().envFor(ctx.ws), others = m.items.filter(x => x.id !== c.id && x.path && x.path !== 'food' && (x.k3 === c.k3 || (c.path === 'balloon' && x.path === 'balloon')));
+      el.appendChild(h('h3', '🧪 Use it'));
+      const steps = [['use', c.id]], tm = (c.time | 0) > 0 && c.time !== 999999999 ? c.time : 0;
+      const once = Sim().run(env, steps, Math.max(1, c.minLv | 0));
+      const rows = h('table.items.rt', h('tr', h('th', 'What happens'), h('th', 'Result')));
+      const sl = p => Sim().statList(p).map(([d, a]) => `${dstLabel(ctx, words, d)} ${valText(ctx, words, d, a)}`).join(', ') || 'no stats';
+      rows.appendChild(h('tr', h('td', 'Use it'), h('td', once.results[0].ok ? `${sl(once.p)}${once.p.instant.length ? `; at once: ${once.p.instant.map(i => `${dstLabel(ctx, words, i.dst)} ${i.adj === -1 ? 'refilled' : valText(ctx, words, i.dst, i.adj)}`).join(', ')}` : ''}${once.p.log.length ? ` (${once.p.log.join('; ')})` : ''}` : WHY[once.results[0].why])));
+      const twice = Sim().run(env, [['use', c.id], ['tick', Math.floor(tm / 2)], ['use', c.id]], Math.max(1, c.minLv | 0));
+      const r2 = twice.results[1], b2 = Sim().buffList(twice.p).find(b => b[0] === c.id);
+      rows.appendChild(h('tr', h('td', 'Use it again half-way'), h('td', r2.ok ? `${sl(twice.p)}; time left ${b2 ? C().timeText(b2[2]) : '—'}` : WHY[r2.why])));
+      if (tm) {
+        const end = Sim().run(env, [['use', c.id], ['tick', tm]], Math.max(1, c.minLv | 0));
+        rows.appendChild(h('tr', h('td', `After ${C().timeText(tm)}`), h('td', Sim().statList(end.p).length ? `leftover: ${sl(end.p)}` : 'the stats are gone')));
+      }
+      if (others.length) {
+        const pick = others.find(x => x.id === st.other) || others[0];
+        const both = Sim().run(env, [['use', pick.id], ['use', c.id]], Math.max(1, c.minLv | 0));
+        rows.appendChild(h('tr', h('td', h('span', 'With ', h('select', { on: { change: e => { st.other = Number(e.target.value); ctx.renderAll(false); } } },
+          others.slice(0, 200).map(x => h('option', { value: x.id, selected: x.id === pick.id }, x.name))), ' on first')),
+          h('td', both.results[1].ok ? `works: ${sl(both.p)}` : WHY[both.results[1].why])));
+      }
+      el.appendChild(rows);
+    }
+    const ds = cDiags(ctx, c);
+    if (ds.length) { el.appendChild(h('h3', 'Problems')); for (const d of ds) el.appendChild(diagRow(d)); }
+  }
+
+  FRE.ui.modules.push(mod);
+  FRE.ui.consumables = { itemView };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/pvp-equalized.js ----

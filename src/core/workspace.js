@@ -193,6 +193,14 @@
       validate(ws, model) { return FRE.weaponChecks(model, { ws }); },
     },
     {
+      // Consumable Stats (task L, loaders/consumables.js): each used item's 6 stat slots and buff time dwSkillTime in Spec_Item.txt
+      // (editsSpec: the server copy and its LF Client copy; applied by CMover::DoUseItem MoverSkill.cpp:1455 -> ApplySkill Ctrl.cpp:1102).
+      id: 'consumables', label: 'Consumable Stats', editsSpec: true,
+      required: [], optional: ['propItem.txt.txt'], editable: ['propItem.txt.txt'], client: ['propItem.txt.txt'], deps: [],
+      parse(ws) { return FRE.consumables.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.consumableChecks(model, { ws }); },
+    },
+    {
       // PvP Events (loaders/pvp.js): FFAManager.inc / TDMManager.inc (ReadConfig: WorldServer start + /ffareload, /tdmreload),
       // GuildCombat.txt (the siege day / time AUTO_OPEN_IDC and the minimum bid JOINPENYA, CGuildCombat::LoadScript),
       // GuildSiegePrize.lua (the siege prizes, PvP events part B 6de6da39). Server files only; the rules boards players read are

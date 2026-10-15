@@ -10447,6 +10447,268 @@ def we_run_all(root):
         out['edits'].append({'ops': sc, 'sha': hashlib.sha256(b).hexdigest(), 'size': len(b)})
     return out
 
+
+# ---------------------------------------------------------------- consumables: Consumable Stats (task L)
+# Written from the C++: CMover::DoUseItem (_Common/MoverSkill.cpp:1455: IK2_BUFF / IK2_BUFF_TOGIFT :1615 with IsDoUseBuff :3371;
+# IK2_SYSTEM -> DoUseItemSystem's IK3_BALLOON block :3235; IK2_ONCE DoUseItemOnce :3254; IK2_KEEP DoUseItemKeep :3266 with
+# __NEW_STACKABLE_AMPS), CCtrl::ApplySkill (Ctrl.cpp:1236-1309: (int)dwSkillTime >= 0 -> AddBuff, bNew -> ApplyParam),
+# CBuffMgr::AddBuff / Overwrite / IBuff::AddTotal / SetTotal (Buff.cpp:742, :756, :695, :56, :40; IsAddable :47; CBuffItem::AddTotal
+# :366), CMover::ApplyParam (MoverActEvent.cpp:211: 6 slots, DST_HP does nothing without pAddSkillProp), CMover::SetDestParam
+# (MoverParam.cpp:2525: negative dst, HP / MP / FP / GOLD, the fan-outs, MAX_ADJPARAMARY 118), IBuffItemBase::Release (Buff.cpp:226)
+# -> ResetDestParam (MoverParam.cpp:2802). Not modelled: the same list as loaders/consumables-sim.js says.
+
+CS_PATH_K2 = {'IK2_BUFF': 'buff', 'IK2_BUFF_TOGIFT': 'buff', 'IK2_ONCE': 'once', 'IK2_KEEP': 'keep',
+              'IK2_FOOD': 'food', 'IK2_POTION': 'food', 'IK2_REFRESHER': 'food'}
+CS_HARD = ('II_CHR_SYS_SCR_ACTIVITION', 'II_CHR_SYS_SCR_NEWACTIVITION')
+CS_GATED = ('IK3_POTION_BUFF_STR', 'IK3_POTION_BUFF_DEX', 'IK3_POTION_BUFF_INT', 'IK3_POTION_BUFF_STA', 'IK3_POTION_BUFF_DEFENSE',
+            'IK3_ANGEL_BUFF', 'IK3_ARMOREFFECTCHANGE')
+CS_REMAIN = ('II_SYS_SYS_SCR_PET_FEED_POCKET02', 'II_SYS_SYS_SCR_PET_TONIC_A', 'II_SYS_SYS_SCR_PET_TONIC_B')
+
+
+def cs_spec(root, D):
+    """Spec_Item.txt consumables by the header columns: id -> {define, k2, k3, path, time, minlv, maxlv, slots}"""
+    lines = open(os.path.join(root, 'Spec_Item.txt'), 'rb').read().decode('latin-1').split('\r\n')
+    col = {h.lstrip('/'): i for i, h in enumerate(lines[1].split('\t'))}
+    def v(x):
+        x = x.strip().strip('"')
+        if x == '=': return -1
+        if x in D: return D[x]
+        if x[:1] == '-': return -atoi(x[1:])
+        return atoi(x)
+    k2path = {D[k]: p for k, p in CS_PATH_K2.items() if k in D}
+    out = {}
+    for n, l in enumerate(lines):
+        if not l.strip() or l.lstrip().startswith('//'):
+            continue
+        c = l.split('\t')
+        if len(c) <= col['dwSkillTime'] or v(c[0]) > 19:
+            continue
+        define = c[col['dwID']].strip()
+        k2, k3 = v(c[col['dwItemKind2']]), v(c[col['dwItemKind3']])
+        if define in CS_HARD:
+            path = 'hard'
+        elif k2 in k2path:
+            path = k2path[k2]
+        elif k2 == D.get('IK2_SYSTEM') and k3 == D.get('IK3_BALLOON'):
+            path = 'balloon'
+        else:
+            continue
+        iid = v(c[col['dwID']]) & 0xFFFFFFFF
+        out[iid] = {'define': define, 'line': n, 'k2': k2, 'k3': k3, 'path': path,
+                    'time': v(c[col['dwSkillTime']]) & 0xFFFFFFFF, 'minlv': s32(v(c[col['nMinLimitLevel']])), 'maxlv': s32(v(c[col['nMaxLimitLevel']])),
+                    'slots': [(v(c[col['dwDestParam%d' % i]]) & 0xFFFFFFFF, s32(v(c[col['nAdjParamVal%d' % i]]))) for i in range(1, 7)]}
+    return out, col, lines
+
+
+class CsPlayer:
+    def __init__(self, level):
+        self.buffs, self.stats, self.instant, self.gold, self.now, self.level = {}, {}, [], 0, 0, level
+
+
+def cs_world(D):
+    g = lambda n: D.get(n, -999)
+    fan = {g('DST_RESIST_ALL'): [(g(n), 1) for n in ('DST_RESIST_ELECTRICITY', 'DST_RESIST_FIRE', 'DST_RESIST_WIND', 'DST_RESIST_WATER', 'DST_RESIST_EARTH')],
+           g('DST_STAT_ALLUP'): [(g(n), 1) for n in ('DST_STR', 'DST_DEX', 'DST_INT', 'DST_STA')],
+           g('DST_HPDMG_UP'): [(g('DST_HP_MAX'), 1), (g('DST_CHR_DMG'), 1)],
+           g('DST_DEFHITRATE_DOWN'): [(g('DST_ADJDEF'), 1), (g('DST_ADJ_HITRATE'), 1)],
+           g('DST_LOCOMOTION'): [(g('DST_SPEED'), 1), (g('DST_JUMPING'), 3)]}
+    return {'fan': fan, 'HP': g('DST_HP'), 'MP': g('DST_MP'), 'FP': g('DST_FP'), 'GOLD': g('DST_GOLD'),
+            'ADJDEF': g('DST_ADJDEF'), 'ADJDEF_RATE': g('DST_ADJDEF_RATE'), 'gated': {D[n] for n in CS_GATED if n in D},
+            'TOGIFT': g('IK2_BUFF_TOGIFT'), 'BALLOON': g('IK3_BALLOON'), 'EXP': g('IK3_EXP_RATE'),
+            'remain': {D[n] for n in CS_REMAIN if n in D}}
+
+
+def cs_stat(p, d, a):
+    v = s32(p.stats.get(d, 0) + a)
+    if v: p.stats[d] = v
+    else: p.stats.pop(d, None)
+
+
+def cs_set_dest(W, p, dst, adj):
+    sd = s32(dst)
+    if sd < 0 and sd not in (W['ADJDEF_RATE'], W['ADJDEF']):
+        return
+    if dst in (W['HP'], W['MP'], W['FP']):
+        p.instant.append([dst, adj]); return
+    if dst == W['GOLD']:
+        p.gold = s32(p.gold + adj); return
+    if dst in W['fan']:
+        for d, m in W['fan'][dst]:
+            cs_set_dest(W, p, d, s32(adj * m))
+        return
+    if dst >= 118:
+        return
+    if adj != 0:
+        cs_stat(p, dst, adj)
+
+
+def cs_reset_dest(W, p, dst, adj):
+    if dst in W['fan']:
+        for d, m in W['fan'][dst]:
+            cs_reset_dest(W, p, d, s32(adj * m))
+        return
+    sd = s32(dst)
+    if sd >= 118 or sd < 0:
+        return
+    if adj != 0:
+        cs_stat(p, dst, -adj)
+
+
+def cs_remaining(p, b):
+    return max(0, b['total'] - (p.now - b['start']))
+
+
+def cs_add_buff(W, p, iid, it, total):
+    if s32(total) < 0:
+        return False
+    if iid in p.buffs:
+        old = p.buffs[iid]
+        t = total & 0xFFFFFFFF
+        if iid in W['remain']:
+            t = (t + cs_remaining(p, old)) & 0xFFFFFFFF
+        old['total'] = max(t, cs_remaining(p, old)); old['start'] = p.now
+        return False
+    p.buffs[iid] = {'k3': it['k3'], 'total': total & 0xFFFFFFFF, 'start': p.now}
+    return True
+
+
+def cs_apply_param(W, p, it):
+    for dst, adj in it['slots']:
+        if dst == 0xFFFFFFFF or dst == W['HP']:
+            continue
+        cs_set_dest(W, p, dst, adj)
+
+
+def cs_apply_skill(W, p, iid, it):
+    t, new = s32(it['time']), True
+    if t >= 0:
+        new = cs_add_buff(W, p, iid, it, t)
+    if new:
+        cs_apply_param(W, p, it)
+    return new
+
+
+def cs_has_ik3(p, k3):
+    return any(b['k3'] == k3 for b in p.buffs.values())
+
+
+def cs_use(W, I, p, iid):
+    it = I.get(iid)
+    if it is None:
+        return [False, 'unknown', False]
+    path = it['path']
+    if path == 'buff':
+        if (it['k3'] in W['gated'] or it['k2'] == W['TOGIFT']) and cs_has_ik3(p, it['k3']):
+            return [False, 'same-kind', False]
+        return [True, None, cs_apply_skill(W, p, iid, it)]
+    if path == 'balloon':
+        if cs_has_ik3(p, W['BALLOON']):
+            return [False, 'balloon', False]
+        return [True, None, cs_apply_skill(W, p, iid, it)]
+    if path == 'once':
+        if cs_has_ik3(p, it['k3']):
+            return [False, 'same-kind', False]
+        return [True, None, cs_apply_skill(W, p, iid, it)]
+    if path == 'keep':
+        if p.level < it['minlv'] or p.level > it['maxlv']:
+            return [False, 'level', False]
+        if it['k3'] == W['EXP']:
+            return [False, 'not-modelled', False]
+        if iid in p.buffs:
+            return [False, 'active', False]
+        new = cs_add_buff(W, p, iid, it, it['time'])
+        if new:
+            cs_apply_param(W, p, it)
+        return [True, None, new]
+    return [False, 'not-modelled', False]
+
+
+def cs_tick(W, I, p, ms):
+    p.now += ms
+    for iid in sorted(p.buffs):
+        b = p.buffs[iid]
+        if p.now - b['start'] < b['total']:
+            continue
+        del p.buffs[iid]
+        for dst, adj in I[iid]['slots']:
+            if dst != 0xFFFFFFFF:
+                cs_reset_dest(W, p, dst, adj)
+
+
+def cs_run(W, I, steps, level):
+    p, res = CsPlayer(level), []
+    for s in steps:
+        if s[0] == 'use':
+            res.append(cs_use(W, I, p, s[1]))
+        else:
+            cs_tick(W, I, p, s[1])
+    return {'results': res, 'stats': sorted([d, a] for d, a in p.stats.items()), 'instant': p.instant, 'gold': p.gold,
+            'buffs': [[i, p.buffs[i]['total'], cs_remaining(p, p.buffs[i])] for i in sorted(p.buffs)]}
+
+
+def cs_set_field(lines, col, row, name, val):
+    c = lines[row].split('\t')
+    c[col[name]] = val
+    lines[row] = '\t'.join(c)
+
+
+def cs_run_all(root):
+    D = defines(root)
+    I, col, lines = cs_spec(root, D)
+    W = cs_world(D)
+    rnd = random.Random(1015)
+    usable = sorted(i for i, it in I.items() if it['path'] not in ('food', 'hard'))
+    out = {'count': len(I), 'with_stats': sum(1 for it in I.values() if any(d != 0xFFFFFFFF for d, _ in it['slots'])), 'cases': [], 'edits': []}
+    for iid in usable:
+        it = I[iid]
+        t = s32(it['time'])
+        tm = t if 0 < t < 999999999 else 3600000
+        lv = max(1, it['minlv'])
+        same = [j for j in usable if j != iid and I[j]['k3'] == it['k3']]
+        scripts = [[['use', iid]],
+                   [['use', iid], ['tick', tm // 2], ['use', iid]],
+                   [['use', iid], ['tick', tm]],
+                   [['use', iid], ['tick', tm], ['use', iid], ['tick', tm // 3]]]
+        if same:
+            scripts.append([['use', rnd.choice(same)], ['use', iid]])
+        if it['path'] == 'keep':
+            scripts.append([['use', iid]])          # at a level outside the range (below)
+        for k, st in enumerate(scripts):
+            level = (it['minlv'] - 1 if it['minlv'] > 1 else it['maxlv'] + 1) if (it['path'] == 'keep' and k == len(scripts) - 1) else lv
+            r = cs_run(W, I, st, level)
+            out['cases'].append(dict(r, steps=st, level=level))
+    # random mixes of 2-5 uses and ticks
+    for _ in range(400):
+        st = []
+        for _ in range(rnd.randint(2, 5)):
+            st.append(['use', rnd.choice(usable)])
+            if rnd.random() < 0.5:
+                st.append(['tick', rnd.choice([1000, 300000, 1800000, 3600000, 86400000])])
+        level = rnd.choice([1, 15, 60, 120, 150])
+        out['cases'].append(dict(cs_run(W, I, st, level), steps=st, level=level))
+    # edit scripts on the real Spec_Item.txt: a slot set / emptied, a time, several rows
+    defs = {it['define']: it for it in I.values()}
+    scripts = [
+        [['slot', 'II_CHR_FOO_COO_BULLHAMS', 1, 'DST_STR', 25]],
+        [['slot', 'II_CHR_FOO_COO_BULLHAMS', 2, 'DST_ATKPOWER_RATE', 5], ['time', 'II_CHR_FOO_COO_BULLHAMS', 7200000]],
+        [['slot', 'II_SYS_SYS_SCR_STR', 1, None, 0]],
+        [['time', 'II_SYS_SYS_EVE_BALLOON', 999999999], ['slot', 'II_SYS_SYS_EVE_BALLOON', 6, 'DST_HP_MAX_RATE', 10]],
+        [['slot', 'II_SYS_SYS_SCR_STR', 1, 'DST_STR', -3], ['time', 'II_SYS_SYS_SCR_STR', 0]],
+    ]
+    for sc in scripts:
+        L = list(lines)
+        for op in sc:
+            it = defs[op[1]]
+            if op[0] == 'slot':
+                cs_set_field(L, col, it['line'], 'dwDestParam%d' % op[2], op[3] if op[3] else '=')
+                cs_set_field(L, col, it['line'], 'nAdjParamVal%d' % op[2], str(op[4]) if op[3] else '=')
+            else:
+                cs_set_field(L, col, it['line'], 'dwSkillTime', str(op[2]))
+        b = '\r\n'.join(L).encode('latin-1')
+        out['edits'].append({'ops': sc, 'sha': hashlib.sha256(b).hexdigest(), 'size': len(b)})
+    return out
+
+
 # ===================================================================================================
 # pvp: PvP Events (FFA, TDM, Guild Siege), straight from the C++ (FLYFF-V19-SOURCE/Source/Source/_Common), not from the JS copy:
 #   FFAManager.cpp:91 / TDMManager.cpp:99 ReadConfig: a CScript; keys compared as written; GetNumber resolves #defines; the loop
@@ -11793,6 +12055,8 @@ if __name__ == '__main__':
         print(json.dumps(se_run(root)))
     elif what == 'weapons':                     # weapon effects: each weapon's own stats, rarity, hands, tooltip, edits
         print(json.dumps(we_run_all(root)))
+    elif what == 'consumables':                 # consumable stats: use, use again, same-kind blocks, expiry, edits
+        print(json.dumps(cs_run_all(root)))
     elif what == 'dungeon':                     # Dungeons: PartyDungeon.lua (LoadScript), entering, the clock, the map monsters, edits
         print(json.dumps(dg_run(root)))
     elif what == 'equalized':                   # Equalized PvP: EqualizedPvP.inc, EqualizedPresets.inc, what a player gets on entry
