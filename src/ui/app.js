@@ -204,6 +204,15 @@
       S.client = null;
       if (L.client) { await phase('Reading the game client\'s copies (Client/)'); await loadClient(L.client, P, phase); }
       if (S.ws.needsMaps()) { await phase('Reading the maps (World/)'); await loadMaps(L.res, P); }
+      // Mini Events: when each question was last asked (the WorldServer writes ..\MiniEventAsked.txt, MiniEventMng.cpp:33); read-only
+      if (id === 'minievent' && L.server) {
+        await phase('Reading the question history (MiniEventAsked.txt)');
+        try {
+          const found = await FRE.fsa.findFiles(L.server, ['MiniEventAsked.txt']);
+          const hnd = found.get('minieventasked.txt');
+          S.ws.miniEventAsked = hnd ? FRE.miniEventSim.parseAsked(new TextDecoder('latin1').decode((await FRE.fsa.readHandle(hnd)).bytes)) : null;
+        } catch (e) { S.ws.miniEventAsked = null; }
+      }
       await phase('Building the lists');
       S.mode = id; S.task = id;
       S.queries[id] = ''; $('list-search').value = '';      // a task opens with an empty search, like its filters (the user, 2026-10-09)

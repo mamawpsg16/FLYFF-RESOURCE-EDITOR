@@ -238,6 +238,7 @@ td.nowrap { white-space: nowrap; }
 .ex-tools { justify-content: flex-start; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
 .ex-tools > * { flex: 0 0 auto; }
 .warn-text { color: var(--warn); }
+.ok-text { color: var(--ok); }
 .ex-game { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--line); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 12px; }
 .ex-slot { padding: 1px 7px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
 .ex-slot.over { border-color: var(--bad); color: var(--bad); }
@@ -496,7 +497,7 @@ details.mt-more > summary { cursor: pointer; color: var(--muted); padding: 6px 0
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "60+", "when": "Sun 18 Oct 2026, 04:28", "rev": "a60e52c", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "61+", "when": "Sun 18 Oct 2026, 05:06", "rev": "1e7f907", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -6340,6 +6341,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "60+", "when
     // Mini Events (MiniEvent.inc, CMiniEventMng::ReadConfig)
     ME_CONFIG: ['MiniEvent.inc has a mistake the WorldServer refuses. ONE mistake switches EVERY Mini Event off (error_*.txt says "Mini Events switched off") until the file is fixed and /eventreload is typed.', 'Fix the value shown; the message is the server\'s own.'],
     ME_DUP_PRIZE: ['The same place (or the "everyone else" prize) has two lines. The server reads both and keeps the last one.', 'Delete the earlier line by hand so the file says one thing.'],
+    ME_ASK_DUP: ['The same question is in the list twice. Both copies share one "last asked" entry, so both can come up in the same event.', 'Delete one of them.'],
     ME_NO_RANDOM: ['Every event is set to stay out of RANDOM start times, so a "BEGIN RANDOM" time starts nothing and nothing is logged.', 'Turn on "Picked by a RANDOM start time" for at least one event, or give that start time a fixed event.'],
     // Mounts (Mount.inc, LoadMountAnimationList Project.cpp:618)
     MT_UNCLOSED: ['An Add_Mount block has no closing "}". The loader keeps reading for it past the end of the file and never stops, so the WorldServer and the game hang at startup.', 'Add the missing } at the end of the block.'],
@@ -14823,7 +14825,65 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "60+", "when
     return { type, e, players, rounds, seed };
   }
 
-  FRE.miniEventSim = { endRound, ranking, finish, stacks, run, sample, newPlayers, DIE_POINTS, FIRST_BONUS, COLORS };
+  // ---- the question order (step 2): Quick Hands / O/X Quiz ASK lines (also RECIPE / SPOT for Turn-in / Hide and Seek)
+  // AskKey (:507): "<EVENT>|<text>"; GetAskText (:525): the question / the recipe title + its item ids / the spot "%.0f %.0f"
+  function askText(e, type, i) {
+    if (type === 5) { const r = e.recipes[i]; return r.title.text + r.items.map(x => ' ' + (x.item.value | 0)).join(''); }
+    if (type === 6) { const sp = e.spots[i]; return `${cRound(sp.x.value)} ${cRound(sp.z.value)}`; }
+    return e.asks[i].question.text;
+  }
+  const cRound = v => (v < 0 ? -Math.round(-v) : Math.round(v));      // printf %.0f (round half away from zero)
+  const askKey = (type, text) => `${FRE.miniEvent.TYPES[type].key}|${text}`;
+  const askCount = (e, type) => (type === 5 ? e.recipes.length : type === 6 ? e.spots.length : e.asks.length);
+
+  // LoadAsked (:549): one line per question, "<time>\t<EVENT>|<text>"; time = _atoi64 of the part before the tab.
+  // fgets( szLine, 512 ) reads up to 511 chars at a time: the rest of a longer line comes back as a line of its own.
+  function parseAsked(text) {
+    const m = new Map(), s = String(text || '');
+    for (let pos = 0; pos < s.length;) {
+      const nl = s.indexOf('\n', pos), end = Math.min(nl < 0 ? s.length : nl + 1, pos + 511);
+      const line = s.slice(pos, end);
+      pos = end;
+      const tab = line.indexOf('\t');
+      if (tab < 0) continue;
+      const key = line.slice(tab + 1).replace(/[\r\n]+$/, '');
+      const t = parseInt((/^\s*[-+]?\d+/.exec(line.slice(0, tab)) || ['0'])[0], 10);
+      if (t > 0 && key) m.set(key, t);
+    }
+    return m;
+  }
+
+  // StartEvent's order (:771-797): every question with its last-asked time (0 = never), shuffled from the end with
+  // xRandom( i + 1 ), then stable-sorted by that time; the first ROUNDS are this run's. recent = how many of them were asked
+  // within ASK_DAYS (the server only logs a warning).
+  function askOrder(e, type, asked, now, rng) {
+    const v = [];
+    for (let i = 0; i < askCount(e, type); i++) v.push([asked.get(askKey(type, askText(e, type, i))) || 0, i]);
+    for (let i = v.length - 1; i > 0; i--) { const j = rng.random(i + 1); const t = v[i]; v[i] = v[j]; v[j] = t; }
+    const sorted = v.map((x, k) => [x, k]).sort((a, b) => a[0][0] - b[0][0] || a[1] - b[1]).map(x => x[0]);
+    const limit = now - e.values.ASK_DAYS * 86400;
+    const order = [], picked = sorted.slice(0, e.values.ROUNDS);
+    let recent = 0;
+    for (const x of picked) { order.push(x[1]); if (x[0] > limit) recent++; }
+    return { order, recent };
+  }
+
+  // several runs in a row: each run starts at start + k * every (seconds); round r is asked at the run start + r x (round + score
+  // time) (StartRound :807 writes "now" for its question). asked: Map (changed). -> [{ order, recent }]
+  function askRuns(e, type, asked, start, every, n, seed) {
+    const rng = FRE.xRandom.rng(seed), out = [];
+    for (let k = 0; k < n; k++) {
+      const t0 = start + k * every, r = askOrder(e, type, asked, t0, rng);
+      r.order.forEach((i, round) => asked.set(askKey(type, askText(e, type, i)), t0 + round * (e.values.ROUND_TIME + e.values.SCORE_TIME)));
+      out.push(r);
+    }
+    return out;
+  }
+
+  // Answer (:1385): exact (strcmp): case, letters and spaces
+  const typerCorrect = (ask, typed) => !!typed && typed === ask.question.text;
+
+  FRE.miniEventSim = { askText, askKey, askCount, parseAsked, askOrder, askRuns, typerCorrect, endRound, ranking, finish, stacks, run, sample, newPlayers, DIE_POINTS, FIRST_BONUS, COLORS };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- edit/minievent-ops.js ----
@@ -14890,7 +14950,47 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "60+", "when
     return T.insertRowAfter(text, e.lines[0], `POINTS\t${e.key}\t${values.slice(0, 10).join(' ')}\t${values[10]}`);
   }
 
-  FRE.miniEventOps = { setKey, setPrize, setPoints, checkKey, prizeRow };
+  // ---- questions (step 2). A text goes between quotes on one line: no ", no line break, printable ASCII (the file is ASCII)
+  function checkText(v, what, min, max) {
+    if (typeof v !== 'string') throw new Error(`${what}: text`);
+    if (v.length < min || v.length > max) throw new Error(`${what}: ${min ? `${min} to ` : 'up to '}${max} letters (now ${v.length})`);
+    if (/"/.test(v)) throw new Error(`${what}: no " inside (it would end the text early)`);
+    if (/[^\x20-\x7e]/.test(v)) throw new Error(`${what}: plain letters only (no line breaks or special characters)`);
+  }
+  // q: Quick Hands { question, info } / O/X { truth: true (O) | false (X), question }
+  function askLine(type, q) {
+    if (type === 2) {
+      checkText(q.question, 'The text to type', 1, FRE.miniEvent.ANSWER_LEN);
+      checkText(q.info || '', 'The small line', 0, 120);
+      return `ASK\tTYPER\t"${q.question}"\t"${q.info || ''}"`;
+    }
+    if (type === 3) {
+      checkText(q.question, 'The statement', 1, 200);
+      return `ASK\tOXQUIZ\t${q.truth ? 'O' : 'X'}\t"${q.question}"`;
+    }
+    throw new Error('Only Quick Hands and O/X Quiz have questions');
+  }
+  // a new question after the last one of that event (else after its last prize / POINTS / EVENT line)
+  function addAsk(text, model, type, q) {
+    const row = askLine(type, q), e = model.events[type];
+    const anchor = e.asks.length ? e.asks[e.asks.length - 1]
+      : [...e.lines, ...e.rankLines, ...e.restLines, ...(e.points ? [e.points] : [])].sort((a, b) => b.start - a.start)[0];
+    if (!anchor) throw new Error(`${e.name} has no EVENT line`);
+    return T.insertRowAfter(text, anchor, row);
+  }
+  // change a question in place: only the parts that differ (the quotes stay)
+  function editAsk(text, ask, type, q) {
+    askLine(type, q);
+    const out = [];
+    const put = (tok, v, quote) => { if (tok && tok.text !== v) out.push({ start: tok.start, end: tok.end, insert: quote ? `"${v}"` : v }); };
+    if (type === 3) put(ask.truth, q.truth ? 'O' : 'X', false);
+    put(ask.question, q.question, true);                    // a new text is always written in quotes (spaces)
+    if (type === 2) put(ask.info, q.info || '', true);
+    return out;
+  }
+  const removeAsk = (text, ask) => T.removeRow(text, ask);
+
+  FRE.miniEventOps = { askLine, addAsk, editAsk, removeAsk, checkText, setKey, setPrize, setPoints, checkKey, prizeRow };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- validate/minievent.js ----
@@ -14911,6 +15011,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "60+", "when
         seen.set(k, r);
       }
       if (e.restLines.length > 1) push(e.restLines[0], 'ME_DUP_PRIZE', 'WARN', `${e.name}: two REST lines; the last one is used.`, `${e.key}|rest`);
+    }
+    // two questions with the same text share one "asked" entry and can both come up in one run
+    for (const t of [2, 3]) {
+      const e = model.events[t], seen = new Map();
+      for (const a of e.asks) {
+        const k = a.question.text;
+        if (seen.has(k)) push(a, 'ME_ASK_DUP', 'WARN', `${e.name}: "${k.length > 60 ? k.slice(0, 57) + '...' : k}" is in the list twice.`, `${e.key}|${k}`);
+        else seen.set(k, a);
+      }
     }
     const randomBegins = model.begins.filter(b => b.type === 0);
     const inRandom = model.events.filter(e => e && e.loaded && e.values.IN_RANDOM);
@@ -17912,15 +18021,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "60+", "when
     return false;
   }
 
-  // -> { kind: 'real' | 'test' | 'plain', root, res, client, backups } ; throws when nothing fits
+  // -> { kind: 'real' | 'test' | 'plain', root, server (the folder above Resource: MiniEventAsked.txt), res, client, backups } ; throws when nothing fits
   async function detectLayout(dir) {
     const server = await child(dir, 'Server');
     const sres = server && await child(server, 'Resource');
-    if (sres) return { kind: 'real', root: dir, res: sres, client: await child(dir, 'Client'), backups: null };
+    if (sres) return { kind: 'real', root: dir, server, res: sres, client: await child(dir, 'Client'), backups: null };
     const res = await child(dir, 'Resource');
     if (res) {
       const backups = (await child(dir, 'backups')) || await dir.getDirectoryHandle('backups', { create: true });
-      return { kind: 'test', root: dir, res, client: await child(dir, 'Client'), backups };
+      return { kind: 'test', root: dir, server: dir, res, client: await child(dir, 'Client'), backups };
     }
     if (await hasFile(dir, 'Masquerade.prj')) return { kind: 'plain', root: dir, res: dir, client: null, backups: null };
     throw new Error(`"${dir.name}" is not the source folder: there is no Server/Resource inside it. Pick FLYFF-V19-SOURCE (or FLYFF-RESOURCE-EDITOR/test-data to test).`);
@@ -25900,7 +26009,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "60+", "when
   const { h, toast, keepFocus, numInput } = FRE.dom;
   const { diagRow } = FRE.ui;
   const FILE = 'minievent.inc';
-  const st = { sel: 1, players: 12, seed: 1 };
+  const st = { sel: 1, players: 12, seed: 1, q: '', page: 0, tryAsk: 0, typed: '', newQ: { 2: { question: '', info: '' }, 3: { question: '', truth: true } } };
   const M = () => FRE.miniEvent, O = () => FRE.miniEventOps, Sim = () => FRE.miniEventSim;
   const model = ctx => ctx.ws.models.minievent;
   const can = ctx => ctx.ws.isEditable(FILE);
@@ -25928,7 +26037,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "60+", "when
     id: 'minievent', label: 'Mini Events', searchPlaceholder: 'Search', noItems: true,
     help: 'Mini Events: each event\'s settings, prizes and round points, and when they start (MiniEvent.inc)',
     st,
-    onLoad() { st.sel = 1; st.players = 12; st.seed = 1; },
+    onLoad() { st.sel = 1; st.players = 12; st.seed = 1; st.q = ''; st.page = 0; st.typed = ''; },
     renderList(el, ctx) {
       const m = model(ctx), q = ctx.query.toLowerCase();
       for (const p of PAGES()) {
@@ -25936,7 +26045,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "60+", "when
         const e = typeof p.id === 'number' ? m.events[p.id] : null;
         const nw = e ? eDiags(ctx, e).filter(d => d.severity !== 'INFO').length : 0;
         const sub = e ? (e.loaded ? `${e.values.ROUNDS} rounds · ${e.values.ROUND_TIME} s${e.values.IN_RANDOM ? '' : ' · not random'}` : 'no EVENT line: off') : `${m.begins.length} start times`;
-        el.appendChild(h('div.npc' + (st.sel === p.id ? '.sel' : ''), { 'data-page': p.id, on: { click: () => { st.sel = p.id; ctx.renderAll(false); } } },
+        el.appendChild(h('div.npc' + (st.sel === p.id ? '.sel' : ''), { 'data-page': p.id, on: { click: () => { st.sel = p.id; st.q = ''; st.page = 0; ctx.renderAll(false); } } },
           h('div.n', h('span', p.label), h('span', e && ctx.edited.has(keyOf(p.id)) ? h('span.tag.edit', 'edited') : null, nw ? h('span.tag.warn', '⚠' + nw) : null)),
           h('div.k', sub)));
       }
@@ -26021,12 +26130,117 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "60+", "when
 
     // what this event's list holds (edited in the next steps)
     const list = e.type === 2 || e.type === 3 ? `${e.asks.length} question${e.asks.length === 1 ? '' : 's'}` : e.type === 5 ? `${e.recipes.length} recipes` : e.type === 6 ? `${e.spots.length} hiding spots` : null;
-    if (list) el.appendChild(h('p.muted.small', `This event has ${list} (at least one per round is needed: ${e.values.ROUNDS}). Editing the list comes in the next step.`));
+    if (e.type === 2 || e.type === 3) questionsView(el, ctx, e);
+    else if (list) el.appendChild(h('p.muted.small', `This event has ${list} (at least one per round is needed: ${e.values.ROUNDS}). Editing the list comes in a later step.`));
 
     tryView(el, ctx, e);
     const ds = eDiags(ctx, e);
     if (ds.length) { el.appendChild(h('h3', 'Problems')); for (const d of ds) el.appendChild(diagRow(d)); }
     el.appendChild(h('p.muted.small', 'After saving: type /eventreload in game as GM while no Mini Event runs (or restart the servers).'));
+  }
+
+  // a text box that commits on Enter / leaving it (and after a pause while typing)
+  function textBox({ value, key, disabled, max, width, placeholder, onCommit, onInput }) {
+    const el = h('input', { type: 'text', value: value || '', disabled, maxLength: max || 255, placeholder: placeholder || '', style: `width:${width || '100%'}` });
+    if (key) el.dataset.key = key;
+    el.dataset.value = el.value;
+    const commit = () => { if (!el.isConnected || el.value === el.dataset.value) return; el.dataset.value = el.value; onCommit(el.value); };
+    if (onCommit) { el.addEventListener('change', commit); el.addEventListener('keydown', ev => { if (ev.key === 'Enter') el.blur(); }); }
+    if (onInput) el.addEventListener('input', () => onInput(el.value));
+    return el;
+  }
+  const PAGE = 50;
+  const dateText = t => { const d = new Date(t * 1000); return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`; };
+
+  // Quick Hands / O/X Quiz: the ASK lines of this event - add, edit, remove, search; the order the next runs ask them
+  function questionsView(el, ctx, e) {
+    const ed = can(ctx), ox = e.type === 3, ws = ctx.ws, asked = ws.miniEventAsked || null;
+    const S2 = Sim(), noun = ox ? 'statement' : 'text';
+    el.appendChild(h('h3', `Questions (${e.asks.length})`));
+    el.appendChild(h('p.muted.small', `${e.values.ROUNDS} are asked per event, one per round, never one twice in an event. Never-asked questions come first, then the ones asked longest ago (random among equals).`
+      + (ox ? ' O = true, X = false.' : ' Players must type the text exactly: upper / lower case, letters and spaces.')
+      + (asked ? ' "Asked last" comes from the server\'s MiniEventAsked.txt.' : ' (No MiniEventAsked.txt found next to Resource: "asked last" is not shown.)')));
+
+    // + add
+    const nq = st.newQ[e.type], msg = h('div.small');
+    const check = () => {
+      msg.textContent = '';
+      try {
+        O().askLine(e.type, nq);
+        if (e.asks.some(a => a.question.text === nq.question)) { msg.className = 'small warn-text'; msg.textContent = '⚠ Already in the list.'; }
+        add.disabled = false;
+      } catch (er) { add.disabled = true; if (nq.question) { msg.className = 'small warn-text'; msg.textContent = '⛔ ' + er.message; } }
+    };
+    const add = h('button.primary', { disabled: true, on: { click: () => {
+      const q = Object.assign({}, nq);
+      edit(ctx, e.type, (t, mm) => O().addAsk(t, mm, e.type, q), `${e.name}: new question "${q.question}"`);
+      st.newQ[e.type] = ox ? { question: '', truth: true } : { question: '', info: '' };
+      ctx.renderAll(false);
+    } } }, '+ Add question');
+    if (ed) {
+      const parts = [];
+      if (ox) parts.push(h('select', { on: { change: ev => { nq.truth = ev.target.value === 'O'; check(); } } }, h('option', { value: 'O', selected: nq.truth }, 'O (true)'), h('option', { value: 'X', selected: !nq.truth }, 'X (false)')));
+      parts.push(textBox({ value: nq.question, max: ox ? 200 : M().ANSWER_LEN, placeholder: ox ? 'The statement (true or false)' : 'The text players type', width: ox ? '34em' : '18em', onInput: v => { nq.question = v; check(); } }));
+      if (!ox) parts.push(textBox({ value: nq.info, max: 120, placeholder: 'Small line under it: what it is (optional)', width: '26em', onInput: v => { nq.info = v; check(); } }));
+      el.appendChild(h('div.dr-line', ...parts, add));
+      el.appendChild(msg);
+      check();
+    }
+
+    // search + table, 50 a page
+    const q = st.q.toLowerCase();
+    const list = e.asks.map((a, i) => [a, i]).filter(([a]) => !q || a.question.text.toLowerCase().includes(q) || (a.info && a.info.text.toLowerCase().includes(q)));
+    const pages = Math.max(1, Math.ceil(list.length / PAGE));
+    if (st.page >= pages) st.page = pages - 1;
+    el.appendChild(h('div.dr-line', textBox({ value: st.q, placeholder: `Search the ${e.asks.length} questions`, width: '20em', key: `meq|${e.type}`, onInput: v => { st.q = v; st.page = 0; ctx.renderAll(false); } }),
+      h('span.muted.small', `${list.length} shown`), pages > 1 ? h('span', h('button.small', { disabled: st.page === 0, on: { click: () => { st.page--; ctx.renderAll(false); } } }, '‹'),
+        h('span.muted.small', ` page ${st.page + 1} / ${pages} `), h('button.small', { disabled: st.page >= pages - 1, on: { click: () => { st.page++; ctx.renderAll(false); } } }, '›')) : null));
+    const head = [h('th', '#'), ox ? h('th', 'Answer') : null, h('th', ox ? 'Statement' : 'Text to type'), ox ? null : h('th', 'Small line'), h('th', 'Asked last'), h('th', '')].filter(Boolean);
+    const rows = [h('tr', head)];
+    for (const [a, i] of list.slice(st.page * PAGE, st.page * PAGE + PAGE)) {
+      const label = `${e.name} question ${i + 1}`;
+      const cur = () => model(ctx).events[e.type].asks[i];
+      const change = (patch, what) => {
+        const now = cur(), qv = ox ? { truth: now.truth.text === 'O', question: now.question.text } : { question: now.question.text, info: now.info.text };
+        Object.assign(qv, patch);
+        try { O().askLine(e.type, qv); } catch (er) { toast(er.message, 'bad'); ctx.renderAll(false); return; }
+        edit(ctx, e.type, t => O().editAsk(t, cur(), e.type, qv), `${label}: ${what}`);
+      };
+      const when = asked ? asked.get(S2.askKey(e.type, a.question.text)) : null;
+      rows.push(h('tr', [h('td.muted', String(i + 1)),
+        ox ? h('td', h('select', { disabled: !ed, on: { change: ev => change({ truth: ev.target.value === 'O' }, `answer ${ev.target.value}`) } },
+          h('option', { value: 'O', selected: a.truth.text === 'O' }, 'O'), h('option', { value: 'X', selected: a.truth.text === 'X' }, 'X'))) : null,
+        h('td', textBox({ value: a.question.text, disabled: !ed, max: ox ? 200 : M().ANSWER_LEN, key: `meqt|${e.type}|${i}`, onCommit: v => change({ question: v }, `${noun} "${v}"`) })),
+        ox ? null : h('td', textBox({ value: a.info.text, disabled: !ed, max: 120, key: `meqi|${e.type}|${i}`, onCommit: v => change({ info: v }, `small line "${v}"`) })),
+        h('td.muted.small', asked ? (when ? dateText(when) : 'never') : '—'),
+        h('td', ed ? h('button.icon.danger', { title: 'Remove this question', on: { click: () => edit(ctx, e.type, t => O().removeAsk(t, cur()), `${e.name}: removed question "${a.question.text}"`) } }, '✕') : null)].filter(Boolean)));
+    }
+    el.appendChild(h('table.items.rt', { style: 'table-layout:fixed;width:100%' },
+      h('colgroup', (ox ? ['5%', '9%', '72%', '10%', '4%'] : ['5%', '24%', '57%', '10%', '4%']).map(w => h('col', { style: `width:${w}` }))), rows));
+    if (e.asks.length < e.values.ROUNDS) el.appendChild(h('p.warn-text', `⛔ Only ${e.asks.length} questions for ${e.values.ROUNDS} rounds: the server switches Mini Events off.`));
+
+    // the next runs, from now (the history is copied, nothing is written)
+    const hist = new Map(asked || []), now = Math.floor(Date.now() / 1000);
+    const runs = S2.askRuns(e, e.type, hist, now, 86400, 3, st.seed);
+    el.appendChild(h('h3', 'The next 3 events (one a day)'));
+    const ul = h('ol.small');
+    runs.forEach((r, k) => ul.appendChild(h('li', `${r.order.map(i => `"${e.asks[i].question.text.length > 40 ? e.asks[i].question.text.slice(0, 37) + '…' : e.asks[i].question.text}"`).join(', ')}${r.recent ? ` (${r.recent} asked in the last ${e.values.ASK_DAYS} days: the server logs a warning)` : ''}`)));
+    el.appendChild(ul);
+    el.appendChild(h('p.muted.small', `With ${e.asks.length} questions and ${e.values.ROUNDS} a run, a question comes back after about ${Math.max(1, Math.floor(e.asks.length / Math.max(1, e.values.ROUNDS)))} events.`));
+
+    // Quick Hands: try typing
+    if (!ox && e.asks.length) {
+      if (st.tryAsk >= e.asks.length) st.tryAsk = 0;
+      const a = e.asks[st.tryAsk], res = h('span');
+      const show = v => { res.textContent = !v ? '' : S2.typerCorrect(a, v) ? '✓ Correct!' : '✗ Wrong answer, try again.'; res.className = S2.typerCorrect(a, v) ? 'ok-text' : 'warn-text'; };
+      el.appendChild(h('h3', '⌨ Try typing'));
+      el.appendChild(h('div.dr-line', h('select', { style: 'max-width:22em', on: { change: ev => { st.tryAsk = Number(ev.target.value); st.typed = ''; ctx.renderAll(false); } } },
+        e.asks.slice(0, 600).map((x, i) => h('option', { value: i, selected: i === st.tryAsk }, x.question.text))),
+        h('span.muted.small', a.info.text)));
+      const inp = textBox({ value: st.typed, placeholder: 'Type it here exactly', width: '24em', key: 'metype', onInput: v => { st.typed = v; show(v); } });
+      el.appendChild(h('div.dr-line', inp, res));
+      show(st.typed);
+    }
   }
 
   // a made-up event: N players, random picks (repeatable), the server's scoring and prizes
@@ -27469,6 +27683,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "60+", "when
       S.client = null;
       if (L.client) { await phase('Reading the game client\'s copies (Client/)'); await loadClient(L.client, P, phase); }
       if (S.ws.needsMaps()) { await phase('Reading the maps (World/)'); await loadMaps(L.res, P); }
+      // Mini Events: when each question was last asked (the WorldServer writes ..\MiniEventAsked.txt, MiniEventMng.cpp:33); read-only
+      if (id === 'minievent' && L.server) {
+        await phase('Reading the question history (MiniEventAsked.txt)');
+        try {
+          const found = await FRE.fsa.findFiles(L.server, ['MiniEventAsked.txt']);
+          const hnd = found.get('minieventasked.txt');
+          S.ws.miniEventAsked = hnd ? FRE.miniEventSim.parseAsked(new TextDecoder('latin1').decode((await FRE.fsa.readHandle(hnd)).bytes)) : null;
+        } catch (e) { S.ws.miniEventAsked = null; }
+      }
       await phase('Building the lists');
       S.mode = id; S.task = id;
       S.queries[id] = ''; $('list-search').value = '';      // a task opens with an empty search, like its filters (the user, 2026-10-09)

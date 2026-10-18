@@ -16,15 +16,15 @@
     return false;
   }
 
-  // -> { kind: 'real' | 'test' | 'plain', root, res, client, backups } ; throws when nothing fits
+  // -> { kind: 'real' | 'test' | 'plain', root, server (the folder above Resource: MiniEventAsked.txt), res, client, backups } ; throws when nothing fits
   async function detectLayout(dir) {
     const server = await child(dir, 'Server');
     const sres = server && await child(server, 'Resource');
-    if (sres) return { kind: 'real', root: dir, res: sres, client: await child(dir, 'Client'), backups: null };
+    if (sres) return { kind: 'real', root: dir, server, res: sres, client: await child(dir, 'Client'), backups: null };
     const res = await child(dir, 'Resource');
     if (res) {
       const backups = (await child(dir, 'backups')) || await dir.getDirectoryHandle('backups', { create: true });
-      return { kind: 'test', root: dir, res, client: await child(dir, 'Client'), backups };
+      return { kind: 'test', root: dir, server: dir, res, client: await child(dir, 'Client'), backups };
     }
     if (await hasFile(dir, 'Masquerade.prj')) return { kind: 'plain', root: dir, res: dir, client: null, backups: null };
     throw new Error(`"${dir.name}" is not the source folder: there is no Server/Resource inside it. Pick FLYFF-V19-SOURCE (or FLYFF-RESOURCE-EDITOR/test-data to test).`);

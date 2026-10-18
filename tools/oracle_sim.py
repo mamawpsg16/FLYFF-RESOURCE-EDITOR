@@ -12512,7 +12512,7 @@ def me_type(w):
 def me_load(text, D, items, movers, chars):
     s = MtScan(text, D)
     ev = {i: {'loaded': False, 'v': dict(ME_DEF), 'ranks': [None] * 10, 'rest': None, 'pts': [15, 12, 10, 8, 7, 6, 5, 4, 3, 2], 'restp': 1,
-              'asks': 0, 'recipes': 0, 'spots': 0} for i in range(1, 7)}
+              'asks': 0, 'recipes': 0, 'spots': 0, 'al': []} for i in range(1, 7)}
     begins, hints, errors, hide = [], 0, [], None
     ok_item = lambda v: (v & 0xFFFFFFFF) in items
     s.get()
@@ -12592,6 +12592,7 @@ def me_load(text, D, items, movers, chars):
                 bad = True
             if not bad:
                 ev[t]['asks'] += 1
+                ev[t]['al'].append([a if t == 3 else None, q, info if t == 2 else None])
         elif kw == 'RECIPE':
             title = s.word()
             n = s.number()
@@ -12684,6 +12685,154 @@ def me_load(text, D, items, movers, chars):
         if b[0] and not ev[b[0]]['loaded']:
             errors.append('BEGIN %s: that event has no EVENT line' % ME_KEYS[b[0] - 1])
     return {'events': ev, 'begins': begins, 'hints': hints, 'hide': hide, 'errors': errors}
+
+
+# ---- the question order (StartEvent :771-797, StartRound :819-823, LoadAsked :549, AskKey :507)
+def me_parse_asked(text):
+    """LoadAsked: each fgets( szLine, 512 ) gives up to 511 chars, or fewer through a '\n' (a longer line comes back in pieces);
+    cut at the first tab, the key trimmed of CR / LF at the end, the time = _atoi64 of the front; kept when time > 0 and a key."""
+    out = {}
+    pos = 0
+    while pos < len(text):
+        nl = text.find('\n', pos)
+        end = len(text) if nl < 0 else nl + 1
+        end = min(end, pos + 511)
+        piece = text[pos:end]
+        pos = end
+        k = piece.find('\t')
+        if k < 0:
+            continue
+        key = piece[k + 1:].rstrip('\r\n')
+        m = re.match(r'[ \t\n\r\f\v]*([-+]?\d+)', piece[:k])
+        t = int(m.group(1)) if m else 0
+        if t > 0 and key:
+            out[key] = t
+    return out
+
+
+def me_ask_texts(t, ev):
+    return [a[1] for a in ev[t]['al']]
+
+
+def me_start(texts, key, asked, now, rounds, days, rng):
+    """vecSort (time or 0, i); swap i with xRandom(i + 1) from the end; stable sort by time; the first `rounds`."""
+    v = [(asked.get(key + '|' + q, 0), i) for i, q in enumerate(texts)]
+    for i in range(len(v) - 1, 0, -1):
+        j = rng(i + 1)
+        v[i], v[j] = v[j], v[i]
+    v = sorted(v, key=lambda x: x[0])                # Python's sort is stable
+    lim = now - days * 86400
+    pick = v[:rounds]
+    return [i for _, i in pick], sum(1 for tm, _ in pick if tm > lim)
+
+
+def me_order_cases(real, D, items, movers, chars):
+    ev = me_load(real, D, items, movers, chars)['events']
+    rnd = random.Random(2618)
+    asked_texts = [
+        '',
+        '1700000000\tTYPER|Slash\n1700000100\tOXQUIZ|Magicians fight with a bow.\n',
+        'junk line\n0\tTYPER|Keenwheel\n-5\tTYPER|Slash\n  1700000200\tTYPER|Keenwheel\r\n1700000300\t\n12abc\tTYPER|Slash\nnot a number\tTYPER|x\n',
+        '1700000000\tTYPER|' + 'z' * 600 + '\n1700000001\tTYPER|Slash',   # a line longer than fgets reads, no final newline
+        '1700000000\t' + 'k' * 500 + '123\tTYPER|Slash\n1700000400\tOXQUIZ|Knight is a second job of the Mercenary.\n',   # the rest of a long line read as a line
+    ]
+    parsed = []
+    for a in asked_texts:
+        parsed.append([a, sorted(me_parse_asked(a).items())])
+    cases = []
+    sets = {'2': me_ask_texts(2, ev), '3': me_ask_texts(3, ev), 'small': ['A', 'B', 'C', 'D'], 'one': ['Only']}
+    for name, texts in sets.items():
+        key = 'TYPER' if name != '3' else 'OXQUIZ'
+        for rounds in (1, 2, 10, 30):
+            for days in (0, 1, 30):
+                for every in (30, 60, 86400):
+                    seed = rnd.randint(1, 2 ** 31)
+                    start = 1700000000 + rnd.randint(0, 10 ** 6)
+                    base = rnd.choice(asked_texts)
+                    asked = me_parse_asked(base)
+                    if name in ('small', 'one') and rnd.random() < 0.5:
+                        asked = {key + '|' + texts[0]: start - 3600, key + '|' + texts[-1]: start - 40 * 86400}
+                    init = sorted(asked.items())
+                    rng = Rand(seed)
+                    runs = []
+                    rt, sc = rnd.choice([(15, 5), (5, 2), (120, 60)])
+                    for k in range(4):
+                        t0 = start + k * every
+                        order, recent = me_start(texts, key, asked, t0, rounds, days, rng)
+                        for r, i in enumerate(order):
+                            asked[key + '|' + texts[i]] = t0 + r * (rt + sc)
+                        runs.append([order, recent])
+                    cases.append({'set': name, 'key': key, 'texts': texts if name in ('small', 'one') else None, 'rounds': rounds, 'days': days, 'every': every,
+                                  'rt': rt, 'sc': sc, 'seed': seed, 'start': start, 'asked': init, 'runs': runs})
+    return {'parsed': parsed, 'cases': cases}
+
+
+# ---- question edits: a line-based copy (not token splices): add after the event's last ASK line (else its last EVENT / POINTS /
+# RANK / REST line), change = the quoted parts / the O-X word of that line, remove = the whole line
+def me_ask_line(t, q):
+    if t == 3:
+        return 'ASK\tOXQUIZ\t%s\t"%s"' % ('O' if q['truth'] else 'X', q['question'])
+    return 'ASK\tTYPER\t"%s"\t"%s"' % (q['question'], q.get('info', ''))
+
+
+def me_edit_text(text, t, op):
+    lines = text.split('\n')
+    key = 'TYPER' if t == 2 else 'OXQUIZ'
+    asks = [i for i, ln in enumerate(lines) if ln.split('\t')[:2] == ['ASK', key]]
+    if op['op'] == 'add':
+        if asks:
+            at = asks[-1]
+        else:
+            at = max(i for i, ln in enumerate(lines) if len(ln.split('\t')) > 1 and ln.split('\t')[0] in ('EVENT', 'POINTS', 'RANK', 'REST') and ln.split('\t')[1] == key)
+        lines.insert(at + 1, me_ask_line(t, op['q']))
+        return '\n'.join(lines)
+    i = asks[op['n']]
+    if op['op'] == 'remove':
+        del lines[i]
+        return '\n'.join(lines)
+    parts = re.findall(r'"[^"]*"', lines[i])
+    ln = lines[i]
+    if t == 3:
+        f = ln.split('\t')
+        f[2] = 'O' if op['q']['truth'] else 'X'
+        ln = '\t'.join(f)
+        ln = ln.replace(parts[0], '"%s"' % op['q']['question'], 1)
+    else:
+        a = ln.index(parts[0])
+        b = ln.index(parts[1], a + len(parts[0]))
+        ln = ln[:a] + '"%s"' % op['q']['question'] + ln[a + len(parts[0]):b] + '"%s"' % op['q'].get('info', '') + ln[b + len(parts[1]):]
+    lines[i] = ln
+    return '\n'.join(lines)
+
+
+ME_EDITS = [
+    [[2, {'op': 'add', 'q': {'question': 'Giant Wings', 'info': 'Item: wings'}}]],
+    [[3, {'op': 'add', 'q': {'truth': False, 'question': 'Clockworks is a fish.'}}]],
+    [[2, {'op': 'edit', 'n': 0, 'q': {'question': 'Double Slash', 'info': 'Mercenary skill'}}]],
+    [[2, {'op': 'edit', 'n': 3, 'q': {'question': 'Keep', 'info': ''}}]],
+    [[3, {'op': 'edit', 'n': 1, 'q': {'truth': True, 'question': 'Magicians fight with a wand.'}}]],
+    [[3, {'op': 'edit', 'n': 0, 'q': {'truth': False, 'question': 'Every new character starts as a Vagrant.'}}]],   # only the answer
+    [[2, {'op': 'remove', 'n': 0}]],
+    [[3, {'op': 'remove', 'n': -1}]],
+    [[2, {'op': 'add', 'q': {'question': 'A', 'info': ''}}], [2, {'op': 'add', 'q': {'question': 'B b', 'info': 'x'}}], [2, {'op': 'remove', 'n': 1}],
+     [3, {'op': 'edit', 'n': 5, 'q': {'truth': True, 'question': 'It is.'}}]],
+]
+
+
+def me_edit_cases(real):
+    out = []
+    small = 'EVENT\tTYPER\tROUNDS 1\nPOINTS\tTYPER\t5 4 3 2 1 1 1 1 1 1\t0\n// end\n'
+    for k, script in enumerate(ME_EDITS):
+        base = real
+        text = base
+        for t, op in script:
+            text = me_edit_text(text, t, op)
+        out.append({'base': None, 'script': script, 'text': text})
+    text = small
+    for t, op in [[2, {'op': 'add', 'q': {'question': 'First', 'info': 'one'}}], [2, {'op': 'add', 'q': {'question': 'Second', 'info': ''}}]]:
+        text = me_edit_text(text, t, op)
+    out.append({'base': small, 'script': [[2, {'op': 'add', 'q': {'question': 'First', 'info': 'one'}}], [2, {'op': 'add', 'q': {'question': 'Second', 'info': ''}}]], 'text': text})
+    return out
 
 
 def me_round(x):
@@ -12810,7 +12959,8 @@ def me_run(root):
         r = me_load(t, D, items, movers, chars)
         evs = {str(i): {'loaded': e['loaded'], 'v': e['v'], 'ranks': e['ranks'], 'rest': e['rest'], 'pts': e['pts'] + [e['restp']],
                          'asks': e['asks'], 'recipes': e['recipes'], 'spots': e['spots']} for i, e in r['events'].items()}
-        files.append({'text': None if t is real else t, 'events': evs, 'begins': r['begins'], 'hints': r['hints'], 'hide': r['hide'], 'errors': r['errors']})
+        files.append({'text': None if t is real else t, 'events': evs, 'begins': r['begins'], 'hints': r['hints'], 'hide': r['hide'], 'errors': r['errors'],
+                      'qs': {'2': r['events'][2]['al'], '3': r['events'][3]['al']}})
     # whole events: every type x player counts x seeds, picks made here
     runs = []
     rnd = random.Random(1812)
@@ -12858,7 +13008,7 @@ def me_run(root):
                 st.append(min(k, size))
                 k -= min(k, size)
             stacks.append([pm, n, st])
-    return {'files': files, 'runs': runs, 'stacks': stacks}
+    return {'files': files, 'runs': runs, 'stacks': stacks, 'order': me_order_cases(real, D, items, movers, chars), 'edits': me_edit_cases(real)}
 
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'

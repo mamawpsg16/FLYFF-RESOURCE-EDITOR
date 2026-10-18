@@ -318,6 +318,7 @@
     // Mini Events (MiniEvent.inc, CMiniEventMng::ReadConfig)
     ME_CONFIG: ['MiniEvent.inc has a mistake the WorldServer refuses. ONE mistake switches EVERY Mini Event off (error_*.txt says "Mini Events switched off") until the file is fixed and /eventreload is typed.', 'Fix the value shown; the message is the server\'s own.'],
     ME_DUP_PRIZE: ['The same place (or the "everyone else" prize) has two lines. The server reads both and keeps the last one.', 'Delete the earlier line by hand so the file says one thing.'],
+    ME_ASK_DUP: ['The same question is in the list twice. Both copies share one "last asked" entry, so both can come up in the same event.', 'Delete one of them.'],
     ME_NO_RANDOM: ['Every event is set to stay out of RANDOM start times, so a "BEGIN RANDOM" time starts nothing and nothing is logged.', 'Turn on "Picked by a RANDOM start time" for at least one event, or give that start time a fixed event.'],
     // Mounts (Mount.inc, LoadMountAnimationList Project.cpp:618)
     MT_UNCLOSED: ['An Add_Mount block has no closing "}". The loader keeps reading for it past the end of the file and never stops, so the WorldServer and the game hang at startup.', 'Add the missing } at the end of the block.'],

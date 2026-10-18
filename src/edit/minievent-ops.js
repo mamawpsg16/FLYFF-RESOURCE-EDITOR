@@ -61,5 +61,45 @@
     return T.insertRowAfter(text, e.lines[0], `POINTS\t${e.key}\t${values.slice(0, 10).join(' ')}\t${values[10]}`);
   }
 
-  FRE.miniEventOps = { setKey, setPrize, setPoints, checkKey, prizeRow };
+  // ---- questions (step 2). A text goes between quotes on one line: no ", no line break, printable ASCII (the file is ASCII)
+  function checkText(v, what, min, max) {
+    if (typeof v !== 'string') throw new Error(`${what}: text`);
+    if (v.length < min || v.length > max) throw new Error(`${what}: ${min ? `${min} to ` : 'up to '}${max} letters (now ${v.length})`);
+    if (/"/.test(v)) throw new Error(`${what}: no " inside (it would end the text early)`);
+    if (/[^\x20-\x7e]/.test(v)) throw new Error(`${what}: plain letters only (no line breaks or special characters)`);
+  }
+  // q: Quick Hands { question, info } / O/X { truth: true (O) | false (X), question }
+  function askLine(type, q) {
+    if (type === 2) {
+      checkText(q.question, 'The text to type', 1, FRE.miniEvent.ANSWER_LEN);
+      checkText(q.info || '', 'The small line', 0, 120);
+      return `ASK\tTYPER\t"${q.question}"\t"${q.info || ''}"`;
+    }
+    if (type === 3) {
+      checkText(q.question, 'The statement', 1, 200);
+      return `ASK\tOXQUIZ\t${q.truth ? 'O' : 'X'}\t"${q.question}"`;
+    }
+    throw new Error('Only Quick Hands and O/X Quiz have questions');
+  }
+  // a new question after the last one of that event (else after its last prize / POINTS / EVENT line)
+  function addAsk(text, model, type, q) {
+    const row = askLine(type, q), e = model.events[type];
+    const anchor = e.asks.length ? e.asks[e.asks.length - 1]
+      : [...e.lines, ...e.rankLines, ...e.restLines, ...(e.points ? [e.points] : [])].sort((a, b) => b.start - a.start)[0];
+    if (!anchor) throw new Error(`${e.name} has no EVENT line`);
+    return T.insertRowAfter(text, anchor, row);
+  }
+  // change a question in place: only the parts that differ (the quotes stay)
+  function editAsk(text, ask, type, q) {
+    askLine(type, q);
+    const out = [];
+    const put = (tok, v, quote) => { if (tok && tok.text !== v) out.push({ start: tok.start, end: tok.end, insert: quote ? `"${v}"` : v }); };
+    if (type === 3) put(ask.truth, q.truth ? 'O' : 'X', false);
+    put(ask.question, q.question, true);                    // a new text is always written in quotes (spaces)
+    if (type === 2) put(ask.info, q.info || '', true);
+    return out;
+  }
+  const removeAsk = (text, ask) => T.removeRow(text, ask);
+
+  FRE.miniEventOps = { askLine, addAsk, editAsk, removeAsk, checkText, setKey, setPrize, setPoints, checkKey, prizeRow };
 })(globalThis.FRE = globalThis.FRE || {});

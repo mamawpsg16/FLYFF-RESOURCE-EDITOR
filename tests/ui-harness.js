@@ -190,8 +190,49 @@
     ok(!S.ws.diags.some(d => d.module === 'minievent'), 'the real MiniEvent.inc has no problem');
     click(items().find(x => x.dataset.page === '3'));
     ok(/O\/X Quiz/.test(ed().querySelector('h2').textContent) && /Prizes/.test(ed().textContent) && /Round points/.test(ed().textContent) && ed().querySelector('input[data-key="me|3|ROUNDS"]').value === '10'
-      && /364 questions/.test(ed().textContent) && /Try it/.test(ed().textContent), 'O/X Quiz page: its settings, its prizes, its points, 364 questions, Try it');
+      && /Questions \(364\)/.test(ed().textContent) && /Try it/.test(ed().textContent), 'O/X Quiz page: its settings, its prizes, its points, 364 questions, Try it');
     if (STOP === 'minievent') { $('toasts').textContent = ''; return; }
+    // the question lists (?stop=mineventqs): Quick Hands add / change / remove / search, O/X answer, Try typing
+    {
+      const qrows = () => [...ed().querySelectorAll('table.items tr')].filter(r => r.querySelector('input[data-key^="meqt|"]'));
+      const set = (el, v, ev) => { el.value = v; el.dispatchEvent(new Event(ev)); };
+      click(items().find(x => x.dataset.page === '2'));
+      ok(/Questions \(547\)/.test(ed().textContent) && qrows().length === 50 && /page 1 \/ 11/.test(ed().textContent) && /The next 3 events/.test(ed().textContent), 'Quick Hands: 547 questions, 50 a page (11 pages), the next 3 events');
+      set(ed().querySelector('input[data-key="meq|2"]'), 'keenwheel', 'input');
+      ok(qrows().length === 1 && qrows()[0].querySelector('input').value === 'Keenwheel', 'search "keenwheel": one row');
+      set(ed().querySelector('input[data-key="meq|2"]'), '', 'input');
+      const n0 = txt().length, addBox = ed().querySelector('input[placeholder="The text players type"]');
+      set(addBox, 'Bad "quote"', 'input');
+      const addBtn = () => btnByText(ed(), '+ Add question');
+      ok(addBtn().disabled && /⛔/.test(ed().textContent), 'a " in the text: ⛔, Add greyed out');
+      set(addBox, 'Giant Wings', 'input');
+      set(ed().querySelector('input[placeholder^="Small line"]'), 'Item: big wings', 'input');
+      click(addBtn());
+      ok(/ASK\tTYPER\t"Weapon Rarity Scroll"\t"[^"]*"\nASK\tTYPER\t"Giant Wings"\t"Item: big wings"\n/.test(txt()) && /Questions \(548\)/.test(ed().textContent), 'add: a new ASK line after the last Quick Hands question');
+      set(qrows()[0].querySelector('input[data-key="meqt|2|0"]'), 'Double Slash', 'change');
+      ok(/ASK\tTYPER\t"Double Slash"\t"Mercenary skill: Strikes/.test(txt()) && /question 1: text "Double Slash"/.test(lastToast()), 'change question 1 text: only the quoted text changes');
+      click(qrows()[1].querySelector('button.danger'));
+      ok(!/"Keenwheel"/.test(txt()) && /removed question "Keenwheel"/.test(lastToast()), 'remove question 2');
+      click($('btn-undo')); click($('btn-undo')); click($('btn-undo'));
+      ok(txt().length === n0 && /"Slash"/.test(txt()) && /"Keenwheel"/.test(txt()) && !/Giant Wings/.test(txt()), 'undo x3: the file is back');
+      const tryBox = ed().querySelector('input[data-key="metype"]');
+      set(tryBox, 'slash', 'input');
+      const wrong = /Wrong answer/.test(ed().textContent);
+      set(tryBox, 'Slash', 'input');
+      ok(wrong && /✓ Correct!/.test(ed().textContent), 'Try typing: "slash" is wrong, "Slash" is right (exact)');
+      click(items().find(x => x.dataset.page === '3'));
+      const sel = qrows()[1].querySelector('select');
+      set(sel, 'O', 'change');
+      ok(/ASK\tOXQUIZ\tO\t"Magicians fight with a bow\."/.test(txt()), 'O/X question 2: answer X -> O, nothing else changes');
+      click($('btn-undo'));
+      ok(/ASK\tOXQUIZ\tX\t"Magicians fight with a bow\."/.test(txt()), 'undo: X again');
+    }
+    if (STOP === 'mineventqs') {
+      click(items().find(x => x.dataset.page === '2'));
+      const hq = [...ed().querySelectorAll('h3')].find(x => /^Questions/.test(x.textContent));
+      if (hq) hq.scrollIntoView();
+      $('toasts').textContent = ''; return;
+    }
     const rounds = ed().querySelector('input[data-key="me|3|ROUNDS"]');
     rounds.value = '12'; rounds.dispatchEvent(new Event('change'));
     ok(/EVENT\tOXQUIZ\t[^\n]*ROUNDS 12\t/.test(txt()) && /rounds 12 \(was 10\)/.test(lastToast()), 'O/X rounds 10 -> 12: one value on the EVENT line');
@@ -305,7 +346,7 @@
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     if (STOP === 'dungeon') { await dungeonStage(); return; }
-    if (STOP === 'minievent' || STOP === 'mineventedit' || STOP === 'mineventsave') { await miniEventStage(); return; }
+    if (STOP === 'minievent' || STOP === 'mineventqs' || STOP === 'mineventedit' || STOP === 'mineventsave') { await miniEventStage(); return; }
     if (STOP === 'mounts' || STOP === 'mountsmore' || STOP === 'mountsimple' || STOP === 'mountsgame' || STOP === 'mountsedit' || STOP === 'mountsave') { await mountsStage(); return; }
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
     click(document.querySelector('.task-card[data-task="npc"]'));

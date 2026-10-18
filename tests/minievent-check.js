@@ -17,7 +17,8 @@ export function checkMiniEvent({ FRE, py, ws, ok }) {
     }
     const js = { events: evs, begins: m.begins.map(b => [b.type, b.day.value, b.hour.value, b.minute.value]), hints: m.hints.length,
       hide: m.hideNpc ? [m.hideNpc.mover.value, m.hideNpc.key.text] : null, errors: m.errors.map(e => e.message) };
-    const p = { events: f.events, begins: f.begins, hints: f.hints, hide: f.hide, errors: f.errors };
+    js.qs = { 2: m.events[2].asks.map(a => [null, a.question.text, a.info.text]), 3: m.events[3].asks.map(a => [a.truth.text, a.question.text, null]) };
+    const p = { events: f.events, begins: f.begins, hints: f.hints, hide: f.hide, errors: f.errors, qs: f.qs };
     if (J(js) !== J(p)) { bad++; if (!first) { let k = 0; const a = J(js), b = J(p); while (a[k] === b[k]) k++; first = `file ${i} at ${k}: …${a.slice(k - 80, k + 120)}  vs  …${b.slice(k - 80, k + 120)}`; } }
   });
   ok(!bad, `MiniEvent.inc read the same way: the real file + ${py.files.length - 1} made-up files (settings, prizes, points, lists, start times, every error)`, first);
@@ -33,4 +34,35 @@ export function checkMiniEvent({ FRE, py, ws, ok }) {
   const sb = (py.stacks || []).filter(([pm, n, st]) => J(Sim.stacks({ packMax: pm }, n)) !== J(st));
   ok(py.stacks && !sb.length, `prize stacks: ${(py.stacks || []).length} stack sizes x amounts split the same way`, J(sb.slice(0, 2)));
   ok(!bad, `whole events: ${py.runs.length} runs (every event type, 0-25 players, ties, no picks, other points / prizes) give the same round points, places and prizes`, first);
+
+  // the question order: MiniEventAsked.txt read, then several events in a row
+  if (!py.order) { ok(false, 'the Python copy gave no question-order cases'); return; }
+  const pb = py.order.parsed.filter(([t, want]) => J([...Sim.parseAsked(t)].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))) !== J(want));
+  ok(!pb.length, `MiniEventAsked.txt: ${py.order.parsed.length} files (junk lines, times 0 / negative, CR, lines longer than 511) read the same way`, J(pb.slice(0, 1)).slice(0, 400));
+  const realQs = py.files[0].qs;
+  bad = 0; first = '';
+  for (const c of py.order.cases) {
+    const type = c.key === 'OXQUIZ' ? 3 : 2;
+    const texts = c.texts || realQs[c.set].map(q => q[1]);
+    const e = { asks: texts.map(q => ({ question: { text: q } })), values: { ROUNDS: c.rounds, ASK_DAYS: c.days, ROUND_TIME: c.rt, SCORE_TIME: c.sc } };
+    const runs = Sim.askRuns(e, type, new Map(c.asked), c.start, c.every, 4, c.seed).map(r => [r.order, r.recent]);
+    if (J(runs) !== J(c.runs)) { bad++; if (!first) first = `${c.set} rounds ${c.rounds} days ${c.days}: ${J(runs).slice(0, 200)} vs ${J(c.runs).slice(0, 200)}`; }
+  }
+  ok(!bad, `question order: ${py.order.cases.length} cases x 4 events in a row (Quick Hands 547 / O/X 364 / 4 / 1 questions, 1-30 rounds, 0-30 days) pick the same questions`, first);
+  // question edits: the editor's splices = the Python copy's line edits
+  const O = FRE.miniEventOps;
+  bad = 0; first = '';
+  py.edits.forEach((c, k) => {
+    let text = c.base === null ? real.text : c.base;
+    try {
+      for (const [type, op] of c.script) {
+        const m = ME.loadMiniEvent({ name: 'MiniEvent.inc', text }, ctx), asks = m.events[type].asks;
+        const ask = op.n === undefined ? null : asks[op.n < 0 ? asks.length + op.n : op.n];
+        const sp = op.op === 'add' ? O.addAsk(text, m, type, op.q) : op.op === 'edit' ? O.editAsk(text, ask, type, op.q) : O.removeAsk(text, ask);
+        for (const x of [...sp].sort((a, b) => b.start - a.start)) text = text.slice(0, x.start) + x.insert + text.slice(x.end);
+      }
+    } catch (er) { text = 'ERROR ' + er.message; }
+    if (text !== c.text) { bad++; if (!first) { let i = 0; while (text[i] === c.text[i]) i++; first = `script ${k} at ${i}: ${J(text.slice(i - 40, i + 60))} vs ${J(c.text.slice(i - 40, i + 60))}`; } }
+  });
+  ok(!bad, `question edits: ${py.edits.length} add / change / remove scripts give the same file, byte for byte`, first);
 }

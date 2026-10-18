@@ -125,5 +125,63 @@
     return { type, e, players, rounds, seed };
   }
 
-  FRE.miniEventSim = { endRound, ranking, finish, stacks, run, sample, newPlayers, DIE_POINTS, FIRST_BONUS, COLORS };
+  // ---- the question order (step 2): Quick Hands / O/X Quiz ASK lines (also RECIPE / SPOT for Turn-in / Hide and Seek)
+  // AskKey (:507): "<EVENT>|<text>"; GetAskText (:525): the question / the recipe title + its item ids / the spot "%.0f %.0f"
+  function askText(e, type, i) {
+    if (type === 5) { const r = e.recipes[i]; return r.title.text + r.items.map(x => ' ' + (x.item.value | 0)).join(''); }
+    if (type === 6) { const sp = e.spots[i]; return `${cRound(sp.x.value)} ${cRound(sp.z.value)}`; }
+    return e.asks[i].question.text;
+  }
+  const cRound = v => (v < 0 ? -Math.round(-v) : Math.round(v));      // printf %.0f (round half away from zero)
+  const askKey = (type, text) => `${FRE.miniEvent.TYPES[type].key}|${text}`;
+  const askCount = (e, type) => (type === 5 ? e.recipes.length : type === 6 ? e.spots.length : e.asks.length);
+
+  // LoadAsked (:549): one line per question, "<time>\t<EVENT>|<text>"; time = _atoi64 of the part before the tab.
+  // fgets( szLine, 512 ) reads up to 511 chars at a time: the rest of a longer line comes back as a line of its own.
+  function parseAsked(text) {
+    const m = new Map(), s = String(text || '');
+    for (let pos = 0; pos < s.length;) {
+      const nl = s.indexOf('\n', pos), end = Math.min(nl < 0 ? s.length : nl + 1, pos + 511);
+      const line = s.slice(pos, end);
+      pos = end;
+      const tab = line.indexOf('\t');
+      if (tab < 0) continue;
+      const key = line.slice(tab + 1).replace(/[\r\n]+$/, '');
+      const t = parseInt((/^\s*[-+]?\d+/.exec(line.slice(0, tab)) || ['0'])[0], 10);
+      if (t > 0 && key) m.set(key, t);
+    }
+    return m;
+  }
+
+  // StartEvent's order (:771-797): every question with its last-asked time (0 = never), shuffled from the end with
+  // xRandom( i + 1 ), then stable-sorted by that time; the first ROUNDS are this run's. recent = how many of them were asked
+  // within ASK_DAYS (the server only logs a warning).
+  function askOrder(e, type, asked, now, rng) {
+    const v = [];
+    for (let i = 0; i < askCount(e, type); i++) v.push([asked.get(askKey(type, askText(e, type, i))) || 0, i]);
+    for (let i = v.length - 1; i > 0; i--) { const j = rng.random(i + 1); const t = v[i]; v[i] = v[j]; v[j] = t; }
+    const sorted = v.map((x, k) => [x, k]).sort((a, b) => a[0][0] - b[0][0] || a[1] - b[1]).map(x => x[0]);
+    const limit = now - e.values.ASK_DAYS * 86400;
+    const order = [], picked = sorted.slice(0, e.values.ROUNDS);
+    let recent = 0;
+    for (const x of picked) { order.push(x[1]); if (x[0] > limit) recent++; }
+    return { order, recent };
+  }
+
+  // several runs in a row: each run starts at start + k * every (seconds); round r is asked at the run start + r x (round + score
+  // time) (StartRound :807 writes "now" for its question). asked: Map (changed). -> [{ order, recent }]
+  function askRuns(e, type, asked, start, every, n, seed) {
+    const rng = FRE.xRandom.rng(seed), out = [];
+    for (let k = 0; k < n; k++) {
+      const t0 = start + k * every, r = askOrder(e, type, asked, t0, rng);
+      r.order.forEach((i, round) => asked.set(askKey(type, askText(e, type, i)), t0 + round * (e.values.ROUND_TIME + e.values.SCORE_TIME)));
+      out.push(r);
+    }
+    return out;
+  }
+
+  // Answer (:1385): exact (strcmp): case, letters and spaces
+  const typerCorrect = (ask, typed) => !!typed && typed === ask.question.text;
+
+  FRE.miniEventSim = { askText, askKey, askCount, parseAsked, askOrder, askRuns, typerCorrect, endRound, ranking, finish, stacks, run, sample, newPlayers, DIE_POINTS, FIRST_BONUS, COLORS };
 })(globalThis.FRE = globalThis.FRE || {});
