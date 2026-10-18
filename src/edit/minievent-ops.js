@@ -101,5 +101,82 @@
   }
   const removeAsk = (text, ask) => T.removeRow(text, ask);
 
-  FRE.miniEventOps = { askLine, addAsk, editAsk, removeAsk, checkText, setKey, setPrize, setPoints, checkKey, prizeRow };
+  // ---- Turn-in Race (step 3): RECIPE "<title>" <n> <item> <amount> ... and ITEM_HINT <item> "<text>"
+  // r = { title, items: [[id, amount], ...] }; keyOf(id) -> the item's define, nameOf(id) -> its name (for the // comment)
+  function checkRecipe(r, itemOk) {
+    checkText(r.title, 'The title', 1, 60);
+    if (!r.items.length || r.items.length > M().RECIPE_ITEMS) throw new Error(`A recipe has 1 - ${M().RECIPE_ITEMS} items`);
+    const seen = new Set();
+    for (const [id, n] of r.items) {
+      if (!itemOk(id)) throw new Error(`Item ${id} does not exist`);
+      if (!Number.isInteger(n) || n < 1 || n > 9999) throw new Error('Each amount is a whole number from 1 to 9,999');
+      if (seen.has(id >>> 0)) throw new Error('The same item twice: change its amount instead');
+      seen.add(id >>> 0);
+    }
+  }
+  const recipeRow = (r, keyOf, nameOf) => `RECIPE\t"${r.title}"\t${r.items.length}\t${r.items.map(([id, n]) => `${keyOf(id)} ${n}`).join(' ')}\t// ${r.items.map(([id, n]) => `${n} ${nameOf(id)}`).join(', ').replace(/[^\x20-\x7e]/g, '?')}`;
+  const hintRow = (id, t, keyOf) => `ITEM_HINT\t${keyOf(id)}\t"${t}"`;
+  const contentEnd = (text, i) => { let k = text.indexOf('\n', i); if (k < 0) k = text.length; if (k > 0 && text[k - 1] === '\r') k--; return k; };
+  const lineStartOf = (text, i) => text.lastIndexOf('\n', i - 1) + 1;
+  // where new RECIPE lines go: after the last one, else after the Turn-in Race's last EVENT / POINTS / RANK / REST line
+  function recipeAnchor(model) {
+    const e = model.events[5];
+    const all = [...e.recipes, ...e.lines, ...e.rankLines, ...e.restLines, ...(e.points ? [e.points] : [])];
+    const anchor = e.recipes.length ? e.recipes[e.recipes.length - 1] : all.sort((a, b) => b.start - a.start)[0];
+    if (!anchor) throw new Error('Turn-in Race has no EVENT line');
+    return anchor;
+  }
+  function insertRows(text, model, anchor, rows) {
+    if (!rows.length) return [];
+    return T.insertRowAfter(text, anchor, rows.join(model.eol));
+  }
+  function addRecipe(text, model, r, ctx) {
+    checkRecipe(r, ctx.itemOk);
+    return insertRows(text, model, recipeAnchor(model), [recipeRow(r, ctx.keyOf, ctx.nameOf)]);
+  }
+  // the whole line is written again (its // comment too: it names the items)
+  function editRecipe(text, recipe, r, ctx) {
+    checkRecipe(r, ctx.itemOk);
+    return [{ start: recipe.start, end: contentEnd(text, recipe.end), insert: recipeRow(r, ctx.keyOf, ctx.nameOf) }];
+  }
+  const removeRecipe = (text, recipe) => T.removeRow(text, recipe);
+  // many recipes at once: mode 'add' = after the last one; 'replace' = instead of every RECIPE line (one undo step)
+  function putRecipes(text, model, list, ctx, mode) {
+    list.forEach(r => checkRecipe(r, ctx.itemOk));
+    const rows = list.map(r => recipeRow(r, ctx.keyOf, ctx.nameOf));
+    const old = model.events[5].recipes;
+    if (mode !== 'replace' || !old.length) return insertRows(text, model, recipeAnchor(model), rows);
+    const first = old[0], out = [{ start: lineStartOf(text, first.start), end: contentEnd(text, first.end), insert: rows.join(model.eol) }];
+    for (const r of old.slice(1)) out.push(...T.removeRow(text, r));
+    return out;
+  }
+
+  function checkHint(t) { checkText(t, 'The hint', 0, 100); }
+  function hintAnchor(model) {
+    if (model.hints.length) return model.hints.reduce((a, b) => (b.start > a.start ? b : a));
+    return recipeAnchor(model);
+  }
+  // the hint of an item: the last ITEM_HINT line of it is the one the server keeps (mapItemHint[dwItem] = ..., :337)
+  const hintOf = (model, id) => { let h = null; for (const x of model.hints) if (x.id === (id >>> 0)) h = x; return h; };
+  function setHint(text, model, id, t, keyOf) {
+    checkHint(t);
+    const h = hintOf(model, id);
+    if (h) return h.text.text === t ? [] : [{ start: h.text.start, end: h.text.end, insert: `"${t}"` }];
+    return insertRows(text, model, hintAnchor(model), [hintRow(id, t, keyOf)]);
+  }
+  // every ITEM_HINT line of the item goes
+  function removeHint(text, model, id) {
+    const out = [];
+    for (const x of model.hints) if (x.id === (id >>> 0)) out.push(...T.removeRow(text, x));
+    return out;
+  }
+  // many hints at once: only items without one (a hint already in the file is never changed); map id -> text
+  function addHints(text, model, map, keyOf) {
+    const rows = [];
+    for (const [id, t] of map) { if (hintOf(model, id)) continue; checkHint(t); rows.push(hintRow(id, t, keyOf)); }
+    return insertRows(text, model, hintAnchor(model), rows);
+  }
+
+  FRE.miniEventOps = { askLine, addAsk, editAsk, removeAsk, checkText, setKey, setPrize, setPoints, checkKey, prizeRow,
+    checkRecipe, recipeRow, hintRow, addRecipe, editRecipe, removeRecipe, putRecipes, checkHint, hintOf, setHint, removeHint, addHints };
 })(globalThis.FRE = globalThis.FRE || {});

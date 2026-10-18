@@ -25,6 +25,25 @@
         else seen.set(k, a);
       }
     }
+    // Turn-in Race: the same recipe twice (title + items = one "asked" entry); a recipe item with no "where to get it" line;
+    // an item with two ITEM_HINT lines (the server keeps the last one, ReadConfig :337)
+    {
+      const e = model.events[5], seen = new Map(), hinted = new Map();
+      for (const r of e.recipes) {
+        const k = `${r.title.text}|${r.items.map(x => x.id).join(' ')}`;
+        if (seen.has(k)) push(r, 'ME_RECIPE_DUP', 'WARN', `Turn-in Race: the recipe "${r.title.text}" is in the list twice.`, k);
+        else seen.set(k, r);
+      }
+      for (const h of model.hints) {
+        if (hinted.has(h.id)) push(hinted.get(h.id), 'ME_HINT_DUP', 'WARN', `Item ${h.item.define || h.id} has two ITEM_HINT lines: the server shows the last one ("${h.text.text}").`, `${h.id}`);
+        hinted.set(h.id, h);
+      }
+      const told = new Set();
+      for (const r of e.recipes) for (const x of r.items) if (!hinted.has(x.id) && !told.has(x.id)) {
+        told.add(x.id);
+        push(x.item, 'ME_HINT_MISSING', 'INFO', `Turn-in Race: ${x.item.define || x.id} has no "where to get it" line (ITEM_HINT): players see no hint under it.`, `${x.id}`);
+      }
+    }
     const randomBegins = model.begins.filter(b => b.type === 0);
     const inRandom = model.events.filter(e => e && e.loaded && e.values.IN_RANDOM);
     if (randomBegins.length && !inRandom.length) push(randomBegins[0], 'ME_NO_RANDOM', 'WARN', 'Every event is off for RANDOM start times (IN_RANDOM 0): those start times start nothing, and nothing is logged.', 'random');

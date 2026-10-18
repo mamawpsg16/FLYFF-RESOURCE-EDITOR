@@ -208,6 +208,10 @@
       required: ['MiniEvent.inc'], optional: ['propMover.txt', 'propMover.txt.txt', 'character.inc', 'character-etc.inc', 'character-school.inc',
         'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt', 'FFAManager.inc', 'TDMManager.inc'],
       editable: ['MiniEvent.inc'], client: [], deps: [],
+      // Turn-in Race (loaders/minievent-turnin.js): the "where to get it" hints and the random recipes read the NPC shops,
+      // monster drops, the Donation Shop, exchanges and boxes (read-only), and WdMadrigal.rgn (monster spots, area names)
+      uses: ['npc', 'drops', 'donation', 'exchange', 'boxes'],
+      maps: true,
       parse(ws) { return FRE.miniEvent.fromWorkspace(ws); },
       validate(ws, model) { return FRE.miniEventChecks(model); },
     },

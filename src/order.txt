@@ -80,6 +80,7 @@ edit/mounts-ops.js
 validate/mounts.js
 loaders/minievent.js
 loaders/minievent-sim.js
+loaders/minievent-turnin.js
 edit/minievent-ops.js
 validate/minievent.js
 loaders/pvp.js
