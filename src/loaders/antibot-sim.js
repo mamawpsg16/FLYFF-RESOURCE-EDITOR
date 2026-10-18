@@ -11,7 +11,8 @@
 //             0 while frozen = SendToTown (score 0, the next counted kill asks again).
 //   zone      IsCountedZone (:76): GM accounts (SKIP_GM), safe regions, NO_CHECK_WORLD maps, the event / PvP / guild maps, secret
 //             rooms, guild houses, party dungeons never count (the caller says which of those the player is in).
-// Not modelled: offline players (their timers wait), the 10 s resend, the logs, the town position.
+// Not modelled: offline players (their timers wait), the 10 s resend, the logs, the town position. In `session` the made-up player
+// keeps killing right after being sent to town (a real one stands in town first, where kills do not count).
 (function (FRE) {
   'use strict';
   const A = () => FRE.antiBot;
