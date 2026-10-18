@@ -423,3 +423,12 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 .wh-sec h3 { margin: 0 0 4px; }
 .wh-table td { vertical-align: top; }
 .wh-table tr.muted td { opacity: .65; }
+
+/* Mounts: the simple page (leg speeds, flying speed) and the folded "More settings" */
+.mt-simple { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 16px 10px; margin: 10px 0; max-width: 760px; }
+.mt-simple-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; border-top: 1px solid var(--line); }
+.mt-simple h3 + .mt-simple-row { border-top: 0; }
+.mt-simple-row label { flex: 1; }
+.mt-simple-row input.num-input { width: 90px; font-size: 16px; }
+details.mt-more { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 8px; }
+details.mt-more > summary { cursor: pointer; color: var(--muted); padding: 6px 0; }

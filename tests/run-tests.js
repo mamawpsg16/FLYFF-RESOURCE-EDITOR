@@ -4217,6 +4217,10 @@ section('Mounts: Mount.inc, leg loops, ground, flying, take-off, edits (JS and P
     'MT_DUP_ID,MT_FLY_NO_LOOPS,MT_NOT_ITEM,MT_RANGE,MT_SPEED_ZERO', 'a duplicate, no speed, can fly without loops, a leg speed of 20');
   for (const k of ['MT_UNCLOSED', 'MT_DUP_ID', 'MT_NO_ID', 'MT_NOT_ITEM', 'MT_NOT_MOUNT', 'MT_NO_BLOCK', 'MT_SPEED_ZERO', 'MT_TYPE', 'MT_FLY_NO_LOOPS', 'MT_FLY_UNUSED', 'MT_RANGE', 'MT_ANI_MISSING']) ok(FRE.diagHelp[k], `help text for ${k}`);
   eq(FRE.afterSave.compute({ changes: [{ label: 'x', files: ['mount.inc'] }] }).steps.map(s => s.id).join(), 'servers', 'Mount.inc: Stop / Start Server.bat (the WorldServer and the game read it once at start)');
+  // the simple page's "Flying speed" box (the speed-meter number) -> Mount.inc values
+  eq(J(Sim.pushForMeter(nd.anim, 582)), J({ push: 0.008, max: Math.fround(0.9), shown: 582, turbo: 699 }), 'flying speed 582 = today\'s push 0.008, top speed kept');
+  eq(J(Sim.pushForMeter(nd.anim, 1000)), J({ push: 0.01373, max: 2, shown: 999, turbo: 1199 }), 'flying speed 1000: push 0.01373 and the top speed raised to 2 (0.9 would cut it at ~950)');
+  eq(Sim.pushForMeter(nd.anim, 1500), null, 'flying speed 1500: out of reach (push 0.02 is /mountset fly\'s limit)');
   // a pasted /mountset reply
   const p = FRE.mounts.parsePaste('Mount 225049: fGroundSpeed=0.40; fAnimSpeed=1.65; fWalkAnimSpeed=1.25; fNameOffset=0.00;\nszRun="item_Mount058_run.ani"; szWalk="item_Mount058_walk.ani"; szWalkBack="item_Mount058_walkback.ani";');
   eq(J([p.id, Object.keys(p.values).length, p.values.fAnimSpeed, p.values.szWalkBack]), J([225049, 7, 1.65, 'item_Mount058_walkback.ani']), 'a /mountset reply: the mount id and its 7 values');

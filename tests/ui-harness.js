@@ -191,10 +191,25 @@
     click(items().find(x => x.dataset.mount === '225049'));
     ok(/Nightmare Dragon/.test(ed().textContent) && /can take off/.test(ed().textContent) && /settles at 582/.test(ed().textContent) && /never reached/.test(ed().textContent) && /Moves 24 units a second/.test(ed().textContent),
       'Nightmare Dragon: flying settings, 24 units / s, the flying meter settles at 582 (its top speed 0.9 is never reached)');
+    // the simple page: the two leg speeds and the flying speed in plain words, the rest folded away
+    const simple = ed().querySelector('.mt-simple');
+    ok(simple && /Legs when running/.test(ed().textContent) && /Legs when walking/.test(ed().textContent) && ed().querySelector('input[data-key="mts|225049|fly"]').value === '582'
+      && !ed().querySelector('details.mt-more').open && !/fAnimSpeed|fFlightSpeed/.test(simple.textContent), 'simple page: legs when running / walking, flying speed 582; no file names; More settings closed');
     const runSel = ed().querySelector('select[data-key="mt|225049|szRun"]');
     ok(runSel && [...runSel.options].some(o => o.value === 'item_Mount058_fly_walk.ani') && runSel.value === 'item_Mount058_run.ani', "loops are picked from the model's own .ani files (Client/Model.list)");
     if (STOP === 'mounts') { $('toasts').textContent = ''; return; }
-    if (STOP === 'mountsgame') { $('toasts').textContent = ''; ed().querySelector('.mt-game').scrollIntoView(); return; }
+    {
+      const leg = ed().querySelector('input[data-key="mts|225049|fAnimSpeed"]');
+      leg.value = '1.5'; leg.dispatchEvent(new Event('change'));
+      ok(/dwID=225049;[\s\S]*?fAnimSpeed=1\.5;/.test(txt()) && /legs when running ×1\.5 \(was ×1\.1\)/.test(lastToast()), 'Legs when running 1.1 -> 1.5: one value, a plain toast');
+      const fl = ed().querySelector('input[data-key="mts|225049|fly"]');
+      fl.value = '1000'; fl.dispatchEvent(new Event('change'));
+      const blk = txt().slice(txt().indexOf('dwID=225049'));
+      ok(/fFlightSpeed=0\.01373;/.test(blk) && /fFlyMaxSpeed=2;/.test(blk) && /flying speed 999 \(was 582\)/.test(lastToast()), 'Flying speed 582 -> 1000: the push and (needed here) the top speed, toast in meter numbers');
+      if (STOP === 'mountsimple') { $('toasts').textContent = ''; return; }
+      while (S.ws.history.length) click($('btn-undo'));
+    }
+    if (STOP === 'mountsgame') { $('toasts').textContent = ''; ed().querySelector('details.mt-more').open = true; ed().querySelector('.mt-game').scrollIntoView(); return; }
     const sp = ed().querySelector('input[data-key="mt|225049|fGroundSpeed"]');
     sp.value = '0.5'; sp.dispatchEvent(new Event('change'));
     ok(/dwID=225049;[\s\S]*?fGroundSpeed=0\.5;/.test(txt()) && /Speed 0\.5 \(was 0\.4\)/.test(lastToast()), 'speed 0.4 -> 0.5: only the value changes; the toast says (was 0.4)');
@@ -254,7 +269,7 @@
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     if (STOP === 'dungeon') { await dungeonStage(); return; }
-    if (STOP === 'mounts' || STOP === 'mountsgame' || STOP === 'mountsedit' || STOP === 'mountsave') { await mountsStage(); return; }
+    if (STOP === 'mounts' || STOP === 'mountsimple' || STOP === 'mountsgame' || STOP === 'mountsedit' || STOP === 'mountsave') { await mountsStage(); return; }
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
     click(document.querySelector('.task-card[data-task="npc"]'));
     const card = document.querySelector('.task-card[data-task="npc"]'), lw = document.querySelector('.loading-back');

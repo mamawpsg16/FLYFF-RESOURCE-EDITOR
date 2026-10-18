@@ -173,5 +173,31 @@
     return out;
   }
 
-  FRE.mountSim = { frame, loops, mountOn, ground, fly, takeOff, nameLift, describe, NAMES, TICKS, FRIC_AIR, BROOM_MAX };
+  // the editor's "Flying speed" box: the number players see on the speed meter while flying (held key, no turbo) -> the
+  // Mount.inc values that give it. The push alone decides (it settles against air friction); the top speed is raised only
+  // when it would cut the flight short (to 2, the most /mountset flymax takes). -> { push, max, shown, turbo } or null
+  // when the meter cannot reach it (push 0.02 = /mountset fly's limit).
+  function pushForMeter(anim, target) {
+    const cur = anim.fFlyMaxSpeed > 0 ? anim.fFlyMaxSpeed : 0;
+    const tryMax = max => {
+      const a = Object.assign({}, anim, { fFlyMaxSpeed: max });
+      const at = p => fly(Object.assign({}, a, { fFlightSpeed: p }), { fFlightSpeed: 0 }, { ticks: 0 }).steadyShown;
+      let lo = 0.00001, hi = 0.02;
+      if (at(hi) < target - 1) return null;
+      for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (at(mid) < target) lo = mid; else hi = mid; }
+      // the shortest number that still lands on (or next to) the target
+      for (let d = 2; d <= 8; d++) {
+        const p = Number(hi.toPrecision(d));
+        if (p > 0 && p <= 0.02 && Math.abs(at(p) - target) <= 1) return { push: p, max };
+      }
+      return { push: Number(hi.toPrecision(6)), max };
+    };
+    let r = tryMax(cur);
+    if (!r || (cur && fly(Object.assign({}, anim, { fFlyMaxSpeed: cur, fFlightSpeed: r.push }), { fFlightSpeed: 0 }, { ticks: 0 }).steady >= f32(cur * f32(1 - FRIC_AIR)) - 1e-6)) r = tryMax(2);
+    if (!r) return null;
+    const a = Object.assign({}, anim, { fFlyMaxSpeed: r.max, fFlightSpeed: r.push });
+    return Object.assign(r, { shown: fly(a, { fFlightSpeed: 0 }, { ticks: 0 }).steadyShown, turbo: fly(a, { fFlightSpeed: 0 }, { ticks: 0, turbo: true }).steadyShown });
+  }
+
+  FRE.mountSim = { pushForMeter, frame, loops, mountOn, ground, fly, takeOff, nameLift, describe, NAMES, TICKS, FRIC_AIR, BROOM_MAX };
 })(globalThis.FRE = globalThis.FRE || {});

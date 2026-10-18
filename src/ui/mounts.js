@@ -7,7 +7,7 @@
   const { h, toast, keepFocus, modal } = FRE.dom;
   const { diagRow } = FRE.ui;
   const FILE = 'mount.inc';
-  const st = { sel: null, show: 'all', other: null };
+  const st = { sel: null, show: 'all', other: null, more: false };
   const M = () => FRE.mounts, O = () => FRE.mountsOps, Sim = () => FRE.mountSim;
   const model = ctx => ctx.ws.models.mounts;
   const can = ctx => ctx.ws.isEditable(FILE);
@@ -39,18 +39,18 @@
 
   const SHOW = [
     { v: 'all', label: 'All mounts', test: () => true },
-    { v: 'fly', label: 'Can fly', test: x => flies(x) },
-    { v: 'ground', label: 'Ground only', test: x => !!x.anim && !flies(x) },
-    { v: 'noblock', label: 'No Mount.inc block', test: x => x.isMount && !x.block },
+    { v: 'fly', label: 'Flying mounts', test: x => flies(x) },
+    { v: 'ground', label: 'Ground mounts', test: x => !!x.anim && !flies(x) },
+    { v: 'noblock', label: 'Not set up yet', test: x => x.isMount && !x.block },
     { v: 'problems', label: 'With problems', test: (x, ctx) => xDiags(ctx, x).some(d => d.severity !== 'INFO') },
     { v: 'edited', label: 'Edited', test: (x, ctx) => ctx.edited.has(keyOf(x.id)) },
   ];
 
   const mod = {
-    id: 'mounts', label: 'Mounts', searchPlaceholder: 'Search mounts (name, id, model)', noItems: true,
-    help: 'Mounts: how each mount sits, how fast it moves, its leg loops, flying and name height (Mount.inc, what /mountset tunes in game)',
+    id: 'mounts', label: 'Mounts', searchPlaceholder: 'Search mounts', noItems: true,
+    help: 'Mounts: how fast each mount\'s legs move and how fast it flies',
     st,
-    onLoad() { st.sel = null; st.show = 'all'; st.other = null; },
+    onLoad() { st.sel = null; st.show = 'all'; st.other = null; st.more = false; },
 
     listExtra(ctx) {
       const m = model(ctx);
@@ -68,7 +68,7 @@
         el.appendChild(h('div.npc.bx-row' + (st.sel === x.id ? '.sel' : ''), { 'data-mount': x.id, on: { click: () => { st.sel = x.id; ctx.renderAll(false); } } },
           FRE.dds.picture(ctx, iconOf(x.item), { cls: '.bx-icon' }),
           h('div.bx-text', h('div.n', h('span', x.name), h('span', ctx.edited.has(keyOf(x.id)) ? h('span.tag.edit', 'edited') : null, nw ? h('span.tag.warn', '⚠' + nw) : null)),
-            h('div.k', `${x.id}${x.model ? ' · ' + x.model : ''} · ${!x.anim ? 'no block' : flies(x) ? 'can fly' : 'ground'}`))));
+            h('div.k', `${!x.anim ? 'not set up' : flies(x) ? 'flying mount' : 'ground mount'} · ${x.id}`))));
       }
       if (!list.length) el.appendChild(h('div.pad.muted', 'No mounts match.'));
     },
@@ -76,11 +76,7 @@
     renderEditor(el, ctx) {
       keepFocus(el, () => {
         const x = st.sel === null ? null : model(ctx).byId.get(st.sel);
-        if (!x) {
-          el.appendChild(h('p.empty-state', 'Select a mount on the left.'));
-          el.appendChild(h('p.muted.small', 'Every value here is what the GM command /mountset changes in game until a restart. Tune a mount in game, type /mountset to print its lines, then paste them here with "Paste from /mountset".'));
-          return;
-        }
+        if (!x) { el.appendChild(h('p.empty-state', 'Pick a mount on the left to change its leg speed or flying speed.')); return; }
         mountView(el, ctx, x);
       });
     },
@@ -135,11 +131,51 @@
   const table = rows => h('table.items.rt.mt-table', { style: 'table-layout:fixed;width:100%' },
     h('colgroup', ['22%', '28%', '13%', '4%', '33%'].map(w => h('col', { style: `width:${w}` }))), rows);
 
+  // the page the user asked for (2026-10-18: "only change the animation walk/run speed and the fly speed ... layman terms"):
+  // three plain boxes; everything else is under "More settings", closed
+  function simpleView(el, ctx, x) {
+    const a = x.anim, ed = can(ctx);
+    const legBox = (key, label, hint) => h('div.mt-simple-row',
+      h('label', h('b', label), h('div.muted.small', hint)),
+      h('div', decInput({ value: a[key], key: `mts|${x.id}|${key}`, disabled: !ed, title: 'above 0, at most 10',
+        onCommit: v => {
+          if (!(v > 0 && v <= 10)) { toast('Type a number above 0 and at most 10 (1 = normal, 2 = twice as fast)', 'bad'); return; }
+          edit(ctx, x.id, { [key]: v }, `${x.name}: ${label.toLowerCase()} ×${num(v)} (was ×${num(a[key])})`, `mts|${x.id}|${key}`);
+        } }), h('span.muted', ` × normal`)));
+    el.appendChild(h('div.mt-simple',
+      h('h3', 'Leg animation speed'),
+      legBox('fAnimSpeed', 'Legs when running', 'How fast the legs move while riding normally. 1 = as the model was made, 2 = twice as fast, 0.5 = half.'),
+      legBox('fWalkAnimSpeed', 'Legs when walking', 'Walk mode and backing up.'),
+      h('p.muted.small', 'This only changes how fast the legs move, not how fast the mount travels.')));
+    if (flies(x)) {
+      const now = Sim().fly(a, { fFlightSpeed: x.itemFlight }, { ticks: 0 });
+      const box = decInput({ value: now.steadyShown, key: `mts|${x.id}|fly`, disabled: !ed, title: 'the number on the speed meter while flying',
+        onCommit: v => {
+          const r = Sim().pushForMeter(a, Math.round(v));
+          if (!r || v < 20) { toast('Pick a flying speed between 20 and 1,400 (the fastest a mount can fly)', 'bad'); return; }
+          const ch = { fFlightSpeed: r.push };
+          if (Math.fround(r.max) !== Math.fround(a.fFlyMaxSpeed)) ch.fFlyMaxSpeed = r.max;
+          edit(ctx, x.id, ch, `${x.name}: flying speed ${r.shown} (was ${now.steadyShown})`, `mts|${x.id}|fly`);
+        } });
+      el.appendChild(h('div.mt-simple',
+        h('h3', 'Flying speed'),
+        h('div.mt-simple-row', h('label', h('b', 'Flying speed'), h('div.muted.small', 'The number on the speed meter while flying straight. With turbo it goes about 20% higher.')),
+          h('div', box, h('span.muted', ` now ${now.steadyShown} (turbo ${Sim().fly(a, { fFlightSpeed: x.itemFlight }, { ticks: 0, turbo: true }).steadyShown})`)))));
+    }
+    el.appendChild(h('p.muted.small', 'After saving: run Stop Server.bat, then Start Server.bat.'));
+  }
+
   function mountView(el, ctx, x) {
     const f = ctx.ws.files.get(FILE);
-    el.appendChild(h('div.npc-title', FRE.dds.picture(ctx, iconOf(x.item), { cls: '.bx-icon' }), h('h2', x.name), h('span.def', `${x.define || '?'} · ${x.id}${x.model ? ' · model ' + x.model : ''}`),
-      can(ctx) ? null : h('span.tag.bad', 'read-only'), x.block ? h('span.line', `Mount.inc L${f.lineOf(x.block.start) + 1}`) : null));
+    el.appendChild(h('div.npc-title', FRE.dds.picture(ctx, iconOf(x.item), { cls: '.bx-icon' }), h('h2', x.name), h('span.def', `${flies(x) ? 'Flying mount' : 'Ground mount'} · ${x.id}`),
+      can(ctx) ? null : h('span.tag.bad', 'read-only')));
     if (!x.block) { addBlockView(el, ctx, x); return; }
+    simpleView(el, ctx, x);
+    const more = h('details.mt-more', { open: !!st.more, on: { toggle: e => { st.more = e.target.open; } } },
+      h('summary', 'More settings (movement speed, animation files, seat, name height, paste / copy) — you usually don\'t need these'));
+    el.appendChild(more);
+    el = more;
+    el.appendChild(h('p.small.muted', `${x.define || '?'}${x.model ? ' · model ' + x.model : ''} · Mount.inc line ${f.lineOf(x.block.start) + 1}`));
     if (x.blocks.length > 1) el.appendChild(h('p.small.warn-text', `⚠ ${x.blocks.length} Add_Mount blocks have this dwID: the last one (line ${f.lineOf(x.block.start) + 1}) is used and shown here.`));
     if (!ctx.ws.clientModels) el.appendChild(h('p.small.muted', 'Pick a folder with Client/Model (or test-data with Client/Model.list) to choose loops from the model\'s own .ani files.'));
     const ed = can(ctx);
@@ -175,7 +211,6 @@
     compareView(el, ctx, x);
     const ds = xDiags(ctx, x);
     if (ds.length) { el.appendChild(h('h3', 'Problems')); for (const d of ds) el.appendChild(diagRow(d)); }
-    el.appendChild(h('p.muted.small', 'After saving: run Stop Server.bat, then Start Server.bat (the WorldServer reads the speed and "can fly"; the game reads the seat, loops and name height).'));
   }
 
   const ms = v => `${num(Math.round(v * 100) / 100)}`;
