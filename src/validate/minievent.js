@@ -44,6 +44,15 @@
         push(x.item, 'ME_HINT_MISSING', 'INFO', `Turn-in Race: ${x.item.define || x.id} has no "where to get it" line (ITEM_HINT): players see no hint under it.`, `${x.id}`);
       }
     }
+    // Hide and Seek: two spots at the same whole-number x / z share one "asked" entry (AskKey "HIDESEEK|x z", GetAskText %.0f)
+    {
+      const seen = new Map(), r0 = v => (v < 0 ? -Math.round(-v) : Math.round(v));
+      for (const sp of model.events[6].spots) {
+        const k = `${r0(sp.x.value)} ${r0(sp.z.value)}`;
+        if (seen.has(k)) push(sp, 'ME_SPOT_DUP', 'WARN', `Hide and Seek: two spots at ${k}: they share one "last used" entry, so both can come up in one event.`, k);
+        else seen.set(k, sp);
+      }
+    }
     const randomBegins = model.begins.filter(b => b.type === 0);
     const inRandom = model.events.filter(e => e && e.loaded && e.values.IN_RANDOM);
     if (randomBegins.length && !inRandom.length) push(randomBegins[0], 'ME_NO_RANDOM', 'WARN', 'Every event is off for RANDOM start times (IN_RANDOM 0): those start times start nothing, and nothing is logged.', 'random');

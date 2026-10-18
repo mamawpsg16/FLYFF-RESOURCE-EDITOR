@@ -81,6 +81,8 @@ validate/mounts.js
 loaders/minievent.js
 loaders/minievent-sim.js
 loaders/minievent-turnin.js
+loaders/minievent-hide.js
+loaders/minievent-week.js
 edit/minievent-ops.js
 validate/minievent.js
 loaders/pvp.js

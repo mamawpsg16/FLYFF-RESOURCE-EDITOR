@@ -42,6 +42,7 @@ cp -p $SRC/Client/Client/NpcBoard_289.inc $SRC/Client/Client/NpcBoard_290.inc $S
 cp -p $SRC/Server/Resource/PartyDungeon.lua "$DST/Resource/"
 # Mini Events: the six events' settings, prizes, questions, recipes, spots, start times (server only)
 cp -p $SRC/Server/Resource/MiniEvent.inc "$DST/Resource/"
+cp -p $SRC/Server/Resource/FreePKTime.txt "$DST/Resource/"
 # Mounts: the seat / speed / loops / flying of every mount (+ the game's identical copy)
 cp -p $SRC/Server/Resource/Mount.inc "$DST/Resource/"
 cp -p $SRC/Client/Mount.inc "$DST/Client/"

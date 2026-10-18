@@ -177,6 +177,45 @@
     return insertRows(text, model, hintAnchor(model), rows);
   }
 
-  FRE.miniEventOps = { askLine, addAsk, editAsk, removeAsk, checkText, setKey, setPrize, setPoints, checkKey, prizeRow,
+  // ---- Hide and Seek (step 4): SPOT <x> <z> "<region>" "<hint>" "<landmark>" (x / z written as whole numbers, above 0)
+  function checkSpot(sp) {
+    for (const k of ['x', 'z']) if (!Number.isInteger(sp[k]) || sp[k] <= 0 || sp[k] > 99999) throw new Error(`${k} must be a whole number above 0`);
+    checkText(sp.region, 'The region', 1, 60);
+    checkText(sp.hint || '', 'The hint', 0, 120);
+    checkText(sp.landmark || '', 'The landmark', 0, 60);
+  }
+  const spotRow = sp => `SPOT\t${sp.x}\t${sp.z}\t"${sp.region}"\t"${sp.hint || ''}"\t"${sp.landmark || ''}"`;
+  function spotAnchor(model) {
+    const e = model.events[6];
+    if (e.spots.length) return e.spots.reduce((a, b) => (b.start > a.start ? b : a));
+    const all = [...e.lines, ...e.rankLines, ...e.restLines, ...(e.points ? [e.points] : []), ...(model.hideNpc ? [model.hideNpc] : [])];
+    const a = all.sort((x, y) => y.start - x.start)[0];
+    if (!a) throw new Error('Hide and Seek has no EVENT line');
+    return a;
+  }
+  function addSpot(text, model, sp) { checkSpot(sp); return insertRows(text, model, spotAnchor(model), [spotRow(sp)]); }
+  // the record from SPOT to its landmark is written again; a comment after it (// /hidespot by ...) stays
+  function editSpot(text, spot, sp) { checkSpot(sp); return [{ start: spot.start, end: spot.end, insert: spotRow(sp) }]; }
+  const removeSpot = (text, spot) => T.removeRow(text, spot);
+
+  // ---- the week (step 5): BEGIN <EVENT | RANDOM> <day 0-7> <hour 0-23> <minute 0-59> (the file writes minutes as 2 digits)
+  // b = { type: 0 (RANDOM) | 1-6, day, hour, minute }
+  function checkBegin(model, b) {
+    if (!Number.isInteger(b.day) || b.day < 0 || b.day > 7) throw new Error('Day: every day, or Sunday - Saturday');
+    if (!Number.isInteger(b.hour) || b.hour < 0 || b.hour > 23) throw new Error('Hour: 0 - 23');
+    if (!Number.isInteger(b.minute) || b.minute < 0 || b.minute > 59) throw new Error('Minute: 0 - 59');
+    if (b.type && !(model.events[b.type] && model.events[b.type].loaded)) throw new Error('That event has no EVENT line: the server would switch Mini Events off');
+  }
+  const beginRow = b => `BEGIN\t${b.type ? M().TYPES[b.type].key : 'RANDOM'}\t${b.day}\t${b.hour}\t${String(b.minute).padStart(2, '0')}`;
+  function addBegin(text, model, b) {
+    checkBegin(model, b);
+    if (model.begins.length) return insertRows(text, model, model.begins.reduce((a, x) => (x.start > a.start ? x : a)), [beginRow(b)]);
+    const eol = model.eol, end = text.length, nl = end && !text.endsWith('\n') ? eol : '';
+    return [{ start: end, end, insert: `${nl}${beginRow(b)}${eol}` }];
+  }
+  function editBegin(text, model, begin, b) { checkBegin(model, b); return [{ start: begin.start, end: begin.end, insert: beginRow(b) }]; }
+  const removeBegin = (text, begin) => T.removeRow(text, begin);
+
+  FRE.miniEventOps = { checkBegin, beginRow, addBegin, editBegin, removeBegin, checkSpot, spotRow, addSpot, editSpot, removeSpot, askLine, addAsk, editAsk, removeAsk, checkText, setKey, setPrize, setPoints, checkKey, prizeRow,
     checkRecipe, recipeRow, hintRow, addRecipe, editRecipe, removeRecipe, putRecipes, checkHint, hintOf, setHint, removeHint, addHints };
 })(globalThis.FRE = globalThis.FRE || {});

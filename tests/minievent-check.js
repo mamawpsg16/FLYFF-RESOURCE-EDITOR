@@ -115,4 +115,58 @@ export function checkTurnIn({ FRE, py, ws, ok }) {
     if (text !== cs.text) { eb++; if (!first) { let i = 0; while (text[i] === cs.text[i]) i++; first = `script ${k} at ${i}: ${J(text.slice(i - 60, i + 80))} vs ${J(cs.text.slice(i - 60, i + 80))}`; } }
   });
   ok(!eb, `recipe / hint edits: ${py.edits.length} scripts (add, change, remove, 4 items, a ' in a title, hints set / kept / removed, a whole new list) give the same file, byte for byte`, first);
+
+  // Hide and Seek (step 4): spot suggestions, hint times, Found's distance, SPOT edits
+  const HS = FRE.miniEventHide, hp = py.hide;
+  if (!hp) { ok(false, 'the Python copy gave no Hide and Seek cases'); return; }
+  const mobs = HS.mobs(ws, c.mad);
+  const sb = hp.sugg.filter(([x, z, r, h, l]) => { const s2 = HS.suggest(c.mad, mobs, x, z); return s2.region !== r || s2.hint !== h || s2.landmark !== l; });
+  ok(mobs.length === hp.mobs && !sb.length, `Hide and Seek: ${hp.sugg.length} spots get the same region / hint / landmark (${mobs.length} monster spots for hints)`,
+    `${mobs.length} vs ${hp.mobs}; ${J(sb.slice(0, 2).map(([x, z, r, h, l]) => [x, z, [r, h, l], HS.suggest(c.mad, mobs, x, z)]))}`);
+  const tb2 = hp.times.filter(([rt, a, b]) => { const t = HS.hintTimes(rt); return t.hint !== a || t.landmark !== b; });
+  ok(!tb2.length, `Hide and Seek: hint / landmark times for every round time 5-600 s`, J(tb2.slice(0, 3)));
+  const fb = hp.found.filter(([sx, sz, px, pz, f]) => HS.found({ x: Math.fround(sx), z: Math.fround(sz) }, Math.fround(px), Math.fround(pz)) !== f);
+  ok(!fb.length, `Hide and Seek: "Found it!" within 6 m: ${hp.found.length} cases at the edge`, J(fb.slice(0, 2)));
+  let hb = 0, hf = '';
+  hp.edits.forEach((cs, k) => {
+    let text = real;
+    try {
+      for (const op of cs.script) {
+        const mm = load(text), sps = mm.events[6].spots, at = op.n < 0 ? sps.length + op.n : (op.n || 0);
+        const sp = op.op === 'add' ? O.addSpot(text, mm, op.s) : op.op === 'remove' ? O.removeSpot(text, sps[at]) : O.editSpot(text, sps[at], op.s);
+        for (const x of [...sp].sort((a, b) => b.start - a.start)) text = text.slice(0, x.start) + x.insert + text.slice(x.end);
+      }
+    } catch (er) { text = 'ERROR ' + er.message; }
+    if (text !== cs.text) { hb++; if (!hf) { let i = 0; while (text[i] === cs.text[i]) i++; hf = `script ${k} at ${i}: ${J(text.slice(i - 60, i + 80))} vs ${J(cs.text.slice(i - 60, i + 80))}`; } }
+  });
+  ok(!hb, `Hide and Seek: ${hp.edits.length} SPOT edit scripts (add, the longest texts, change with a ' inside, the /hidespot line keeps its comment, remove) give the same file`, hf);
+}
+
+// the week (step 5): the JS copy (loaders/minievent-week.js) against tools/oracle_sim.py week.
+// ws: a Workspace({ only: 'minievent' }) (FFAManager.inc / TDMManager.inc / GuildCombat.txt / FreePKTime.txt read)
+export function checkWeek({ FRE, py, ws, ok }) {
+  const J = JSON.stringify, WK = FRE.miniEventWeek, m0 = ws.models.minievent;
+  const pvp = FRE.pvp.fromWorkspace(ws);
+  const fps = py.fp_texts.map(t => WK.readFreePk(t === null ? null : { name: 'FreePKTime.txt', text: t }));
+  const fpJ = fps.map(f => (f.ok ? { dur: f.dur, slots: f.slots.map(x => [x.day, x.hour, x.minute]) } : null));
+  ok(J(fpJ) === J(py.freepk), `FreePKTime.txt: ${py.fp_texts.length} files (the real one, missing, a whole day, bad rows, DURATION 0, an unknown word) read the same way`, `${J(fpJ).slice(0, 300)} vs ${J(py.freepk).slice(0, 300)}`);
+  const load = text => FRE.miniEvent.loadMiniEvent({ name: 'MiniEvent.inc', text }, { defines: ws.defines.defines, items: ws.items.items, movers: ws.movers ? ws.movers.movers : null, charKeys: m0.charKeys });
+  const models = py.texts.map(load);
+  let bad = 0, first = '', n = 0;
+  for (const c of py.cases) {
+    const from = py.week0, until = from + 21 * 86400;
+    const res = WK.week(models[c.text], pvp, fps[c.fp], from, until, { seed: c.seed });
+    const busy = res.busy.map(w => [w.ev, w.from, w.to]).sort((a, b) => a[1] - b[1] || a[2] - b[2] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    const runs = res.runs.map(r => [r.start, r.line, r.type, r.picked, r.announce, r.end, r.busy, r.why]);
+    n += runs.length;
+    if (J(busy) !== J(c.busy) || J(runs) !== J(c.runs)) {
+      bad++;
+      if (!first) {
+        const i = runs.findIndex((r, k) => J(r) !== J(c.runs[k]));
+        first = J(busy) !== J(c.busy) ? `case text ${c.text} fp ${c.fp}: busy ${busy.length} vs ${c.busy.length}: ${J(busy.find((b, k) => J(b) !== J(c.busy[k])))} vs ${J(c.busy.find((b, k) => J(b) !== J(busy[k])))}`
+          : `case text ${c.text} fp ${c.fp} seed ${c.seed} at ${i}: ${J(runs[i])} vs ${J(c.runs[i])}`;
+      }
+    }
+  }
+  ok(!bad, `the week: ${py.cases.length} cases (7 start-time sets x 6 Free PK files x 2 seeds, 3 weeks, ${n} starts: runs, skips for FFA / TDM / Guild Siege / Free PK Time, lost inside a run, random picks) agree`, first);
 }

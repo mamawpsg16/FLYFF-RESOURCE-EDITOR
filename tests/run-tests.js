@@ -10,7 +10,7 @@ import { FRE, ROOT, readBytes, listDir, loadFolder, openSource, exists, loadWorl
 const ORACLE_SIM = GLib.getenv('ORACLE_SIM') || ROOT + '/tools/oracle_sim.py';
 import { bpServer } from './bp-server.js';
 import { checkMounts } from './mount-check.js';
-import { checkMiniEvent, checkTurnIn } from './minievent-check.js';
+import { checkMiniEvent, checkTurnIn, checkWeek } from './minievent-check.js';
 
 const FIXTURES = ROOT + '/test-data/fixtures/Resource';
 const REAL = ROOT + '/../FLYFF-V19-SOURCE/Server/Resource';
@@ -4191,6 +4191,10 @@ section('Mini Events: MiniEvent.inc, round points, places, prizes, edits (JS and
     let p2 = null;
     try { p2 = JSON.parse(new TextDecoder().decode(o2)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py turnin) gave no readable result', e.message); }
     if (p2) checkTurnIn({ FRE, py: p2, ws: tw, ok });
+    const [, o3] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} week ${FIXTURES}`);
+    let p3 = null;
+    try { p3 = JSON.parse(new TextDecoder().decode(o3)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py week) gave no readable result', e.message); }
+    if (p3) checkWeek({ FRE, py: p3, ws: tw, ok });
   }
   // edits: one value / a prize of one event only / a new POINTS line; undo = the same bytes
   const f = W.files.get('minievent.inc'), before = f.serialize();

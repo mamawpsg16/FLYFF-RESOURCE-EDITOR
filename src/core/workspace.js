@@ -206,7 +206,7 @@
       // HIDE_NPC mover and character key; FFAManager.inc / TDMManager.inc: the schedule's clashes (CheckClashes :464).
       id: 'minievent', label: 'Mini Events',
       required: ['MiniEvent.inc'], optional: ['propMover.txt', 'propMover.txt.txt', 'character.inc', 'character-etc.inc', 'character-school.inc',
-        'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt', 'FFAManager.inc', 'TDMManager.inc'],
+        'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt', 'FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt', 'FreePKTime.txt'],
       editable: ['MiniEvent.inc'], client: [], deps: [],
       // Turn-in Race (loaders/minievent-turnin.js): the "where to get it" hints and the random recipes read the NPC shops,
       // monster drops, the Donation Shop, exchanges and boxes (read-only), and WdMadrigal.rgn (monster spots, area names)

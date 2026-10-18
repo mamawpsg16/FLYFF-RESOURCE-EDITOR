@@ -234,6 +234,59 @@
       click($('btn-undo'));
       ok(/ASK\tOXQUIZ\tX\t"Magicians fight with a bow\."/.test(txt()), 'undo: X again');
     }
+    // the week (?stop=mineventweek): BEGIN lines edited, the 7-day grid, the 2-week list
+    if (STOP === 'mineventweek') {
+      const set = (el, v, ev) => { el.value = v; el.dispatchEvent(new Event(ev)); };
+      const begins = () => (txt().match(/^BEGIN\t/gm) || []).length;
+      click(items().find(x => x.dataset.page === 'week'));
+      const b0 = begins();
+      ok(b0 === 6 && ed().querySelectorAll('input[data-key^="mewk-h|"]').length === 6 && ed().querySelector('svg') && /The next 2 weeks/.test(ed().textContent) && /Free PK Time/.test(ed().textContent),
+        'week page: 6 start times, the 7-day grid with Free PK Time, the 2-week list');
+      set(ed().querySelector('input[data-key="mewk-h|0"]'), '14', 'change');
+      ok(/^BEGIN\tRANDOM\t2\t14\t15\r?$/m.test(txt()) && /Start time 1: hour 14/.test(lastToast()), 'start time 1: hour 13 -> 14, one line');
+      click($('btn-undo'));
+      const sel = ed().querySelectorAll('select')[0];
+      set(sel, '1', 'change');
+      ok(/^BEGIN\tCOLORGAME\t2\t13\t15\r?$/m.test(txt()), 'start time 1: Random -> Color Game');
+      click($('btn-undo'));
+      click(btnByText(ed(), '+ Add start time'));
+      ok(begins() === b0 + 1 && /^BEGIN\tRANDOM\t0\t19\t00\r?$/m.test(txt()), 'a new start time after the last one (every day 19:00)');
+      ok(/skipped|never starts|runs/.test(ed().textContent), 'each start time says what happens');
+      click($('btn-undo'));
+      click([...ed().querySelectorAll('table.items tr')].find(r => r.querySelector('input[data-key="mewk-h|5"]')).querySelector('button.danger'));
+      ok(begins() === b0 - 1 && /Removed start time 6/.test(lastToast()), 'remove start time 6');
+      click($('btn-undo'));
+      ok(begins() === b0, 'undo: 6 again');
+      $('toasts').textContent = ''; return;
+    }
+    // Hide and Seek (?stop=mineventhide): the map, paste /position + ✨, add / change / remove, one round
+    if (STOP === 'mineventhide') {
+      const set = (el, v, ev) => { el.value = v; el.dispatchEvent(new Event(ev)); };
+      const spots = () => (txt().match(/^SPOT\t/gm) || []).length;
+      click(items().find(x => x.dataset.page === '6'));
+      const s0 = spots();
+      ok(/Hiding spots \(38\)/.test(ed().textContent) && ed().querySelectorAll('svg circle').length > 900 && /One round/.test(ed().textContent), 'Hide and Seek page: 38 spots, the map (monster spots + hiding spots), one round');
+      set(ed().querySelector('input[data-key="mehs-paste"]'), 'Position : x = 6698.40, y = 120.00, z = 3394.20', 'input');
+      ok(ed().querySelector('input[data-key="mehs-r"]').value.length > 0 && /\/te 1 6698 3394/.test(ed().textContent), `paste /position: x 6698, z 3394, region "${ed().querySelector('input[data-key="mehs-r"]').value}", hint "${ed().querySelector('input[data-key="mehs-h"]').value}", landmark "${ed().querySelector('input[data-key="mehs-l"]').value}"`);
+      click(btnByText(ed(), '+ Add spot'));
+      ok(spots() === s0 + 1 && /^SPOT\t6698\t3394\t"[^"]+"\t"[^"]*"\t"[^"]*"\r?$/m.test(txt()) && /new spot 6698, 3394/.test(lastToast()), 'a new SPOT line after the last one');
+      click($('btn-undo'));
+      set(ed().querySelector('input[data-key="mehs-r|0"]'), 'Leren Peaks', 'change');
+      ok(/^SPOT\t6698\t3394\t"Leren Peaks"\t"close to where Aibatt spawn"\t"the Flaris Observatory"$/m.test(txt()), 'spot 1 region changed: the rest of the line stays');
+      click($('btn-undo'));
+      const last = e => [...ed().querySelectorAll('table.items tr')].find(r => r.querySelector('input[data-key="mehs-r|' + e + '"]'));
+      const n0 = txt().length;
+      click(last(37).querySelector('button.danger'));
+      ok(spots() === s0 - 1 && !/hidespot by Diablo/.test(txt()) && /removed spot 38/.test(lastToast()), 'remove spot 38 (the /hidespot line, with its comment)');
+      click($('btn-undo'));
+      ok(txt().length === n0, 'undo: back');
+      ok(/0:00 \[Event\] Lost Fwanki is hiding somewhere in/.test(ed().textContent) && !/\[Event\] Hint/.test(ed().textContent) && /1:40 \[Event\] Player 1 found/.test(ed().textContent), 'one round: region at 0:00, found at 1:40: the 2:00 hint never shows');
+      set(ed().querySelector('input[data-key="mehs-found"]'), '', 'change');
+      ok(/2:00 \[Event\] Hint: Lost Fwanki is close to where Aibatt spawn/.test(ed().textContent) && /4:00 \[Event\] Lost Fwanki is within about 100 m of the Flaris Observatory/.test(ed().textContent) && /5:00 \[Event\] Lost Fwanki got away/.test(ed().textContent), 'nobody finds it: hint 2:00, landmark 4:00, got away 5:00');
+      const hm = [...ed().querySelectorAll('h3')].find(x => /^Hiding spots/.test(x.textContent));
+      if (hm) hm.scrollIntoView();
+      $('toasts').textContent = ''; return;
+    }
     // Turn-in Race (?stop=mineventturnin): recipes, 🎲 random recipes + hints, edit / remove, hints, Try turning in
     if (STOP === 'mineventturnin') {
       const set = (el, v, ev) => { el.value = v; el.dispatchEvent(new Event(ev)); };
@@ -390,7 +443,7 @@
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     if (STOP === 'dungeon') { await dungeonStage(); return; }
-    if (STOP === 'minievent' || STOP === 'mineventprizes' || STOP === 'mineventqs' || STOP === 'mineventturnin' || STOP === 'mineventedit' || STOP === 'mineventsave') { await miniEventStage(); return; }
+    if (STOP === 'minievent' || STOP === 'mineventprizes' || STOP === 'mineventhide' || STOP === 'mineventweek' || STOP === 'mineventqs' || STOP === 'mineventturnin' || STOP === 'mineventedit' || STOP === 'mineventsave') { await miniEventStage(); return; }
     if (STOP === 'mounts' || STOP === 'mountsmore' || STOP === 'mountsimple' || STOP === 'mountsgame' || STOP === 'mountsedit' || STOP === 'mountsave') { await mountsStage(); return; }
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
     click(document.querySelector('.task-card[data-task="npc"]'));

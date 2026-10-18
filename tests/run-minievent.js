@@ -3,7 +3,7 @@
 import GLib from 'gi://GLib';
 import System from 'system';
 import { FRE, ROOT, loadFolder, openSource, loadWorldFiles } from './gjs-env.js';
-import { checkMiniEvent, checkTurnIn } from './minievent-check.js';
+import { checkMiniEvent, checkTurnIn, checkWeek } from './minievent-check.js';
 const ORACLE_SIM = GLib.getenv('ORACLE_SIM') || ROOT + '/tools/oracle_sim.py';
 const FIXTURES = ROOT + '/test-data/fixtures/Resource';
 let pass = 0, fail = 0;
@@ -22,6 +22,10 @@ if (py) checkMiniEvent({ FRE, py, ws, ok });
   let p2 = null;
   try { p2 = JSON.parse(new TextDecoder().decode(o2)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py turnin) gave no readable result', e.message); }
   if (p2) checkTurnIn({ FRE, py: p2, ws: tw, ok });
+  const [, o3] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} week ${FIXTURES}`);
+  let p3 = null;
+  try { p3 = JSON.parse(new TextDecoder().decode(o3)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py week) gave no readable result', e.message); }
+  if (p3) checkWeek({ FRE, py: p3, ws: tw, ok });
 }
 print(`\n${pass} passed, ${fail} failed`);
 if (fail) System.exit(1);

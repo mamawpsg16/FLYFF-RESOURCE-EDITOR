@@ -321,6 +321,7 @@
     ME_RECIPE_DUP: ['The same Turn-in recipe (title and items) is in the list twice. Both share one "last used" entry, so both can come up in the same event.', 'Remove one, or change its items.'],
     ME_HINT_DUP: ['An item has two ITEM_HINT lines. The server keeps only the last one, so the first one never shows.', 'Remove the extra line (✕ on the hint), or edit the one that shows.'],
     ME_HINT_MISSING: ['A Turn-in recipe item has no ITEM_HINT line, so the window shows nothing under it about where to get it.', 'Use "Write missing hints" on the Turn-in Race page, or type one in the Hints table.'],
+    ME_SPOT_DUP: ['Two Hide and Seek spots round to the same x / z. They share one "last used" entry, so the same place can come up twice in one event.', 'Remove one, or move it a few metres.'],
     ME_ASK_DUP: ['The same question is in the list twice. Both copies share one "last asked" entry, so both can come up in the same event.', 'Delete one of them.'],
     ME_NO_RANDOM: ['Every event is set to stay out of RANDOM start times, so a "BEGIN RANDOM" time starts nothing and nothing is logged.', 'Turn on "Picked by a RANDOM start time" for at least one event, or give that start time a fixed event.'],
     // Mounts (Mount.inc, LoadMountAnimationList Project.cpp:618)

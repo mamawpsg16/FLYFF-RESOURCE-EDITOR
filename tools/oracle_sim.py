@@ -13167,7 +13167,7 @@ def ti_run(root):
         pts.append((r[0], r[1]))
     areas = [[x, z, T.area(x, z), T.town_of(x, z)] for x, z in pts]
     tiers = [[rk, pb, ti_tier(rk, pb)] for rk in range(0, 10) for pb in (1, 29999999, 30000000, 30000001, 2147483647)]
-    return {'areas': areas, 'tiers': tiers, 'hints': hints, 'pools': [[b[0] for b in parts], [b[0] for b in food], [g[0] for g in gear]], 'gens': gens, 'turns': turns,
+    return {'hide': hs_run(root, T), 'areas': areas, 'tiers': tiers, 'hints': hints, 'pools': [[b[0] for b in parts], [b[0] for b in food], [g[0] for g in gear]], 'gens': gens, 'turns': turns,
             'edits': ti_edit_cases(real, T)}
 
 
@@ -13239,6 +13239,263 @@ def ti_edit_cases(real, T):
             text = ti_edit(T, text, op)
         out.append({'script': sc, 'text': text})
     return out
+
+
+# ---- Hide and Seek (step 4): spot suggestions (V19 Tools/minievent/build_spots.py rules for any point), the round's
+# hint times (Process :710-733, MINIEVENT_HINT1_PCT 40 / HINT2_PCT 80), Found's distance (:1518, 6 m on x / z), SPOT edits
+HS_SKIP = ('Collecting Area', 'Guild Combat', 'Gravity Disorder', 'Kion Soldiers', 'residence')
+
+
+def hs_suggest(T, mobs, x, z):
+    ar = lambda r: (r[2] - r[0]) * (r[3] - r[1])
+    sk = lambda r: any(w in ' '.join(r[4]) for w in HS_SKIP)
+    big = [r for r in T.regions if ar(r) >= 5000 and not sk(r)]
+    small = [r for r in T.regions if ar(r) < 5000 and not sk(r)]
+    inside = [r for r in big if r[0] <= x <= r[2] and r[1] <= z <= r[3]]
+    if inside:
+        reg = min(inside, key=ar)
+    elif big:
+        reg = min(big, key=lambda r: (x - (r[0] + r[2]) / 2) ** 2 + (z - (r[1] + r[3]) / 2) ** 2)
+    else:
+        reg = None
+    region = reg[4][0] if reg else T.town_of(x, z)
+    if not any(w in region.lower() for w in ('darkon', 'saint', 'eillun', 'shaduwar', 'flaris', 'flarine')):
+        region = '%s (%s)' % (region, T.town_of(x, z))
+    hint = ''
+    if mobs:
+        name, mx, mz = min(mobs, key=lambda m: (m[1] - x) ** 2 + (m[2] - z) ** 2)
+        if (mx - x) ** 2 + (mz - z) ** 2 < 250 ** 2:
+            hint = 'close to where %s spawn' % name
+    landmark = ''
+    if small:
+        r = min(small, key=lambda r: (x - (r[0] + r[2]) / 2) ** 2 + (z - (r[1] + r[3]) / 2) ** 2)
+        if (x - (r[0] + r[2]) / 2) ** 2 + (z - (r[1] + r[3]) / 2) ** 2 < 120 ** 2:
+            n = r[4][-1]
+            landmark = n if n.lower().startswith('the ') else 'the ' + n
+    return [ti_clean(region, 60), ti_clean(hint, 120), ti_clean(landmark, 60)]
+
+
+def hs_times(rt):
+    """the first whole second t of the round with t * 100 >= ROUND_TIME * pct"""
+    return [-(-rt * 40 // 100), -(-rt * 80 // 100)]
+
+
+def hs_found(sx, sz, px, pz):
+    f = lambda v: struct.unpack('f', struct.pack('f', v))[0]
+    dx, dz = f(f(sx) - f(px)), f(f(sz) - f(pz))
+    return f(f(dx * dx) + f(dz * dz)) <= 36.0
+
+
+def hs_run(root, T=None):
+    T = T or TiWorld(root)
+    bossy = ('Captain', 'Giant', 'Boss', 'Lord', 'General')
+    mobs = [(T.mnames[m], x, z) for m, x, z in T.respawns if m in T.mnames and T.W.mv.get(m, {}).get('rank') in (1, 2)
+            and not T.mnames[m].startswith(bossy)]
+    rnd = random.Random(1563)
+    pts = [(int(x), int(z)) for _, x, z in T.respawns[::5]]
+    pts += [(rnd.randint(1, 10000), rnd.randint(1, 10000)) for _ in range(400)]
+    for r in T.regions:
+        pts.append(((r[0] + r[2]) // 2, (r[1] + r[3]) // 2))
+    sugg = [[x, z] + hs_suggest(T, mobs, x, z) for x, z in pts]
+    times = [[rt] + hs_times(rt) for rt in range(5, 601)]
+    found = []
+    for _ in range(400):
+        sx, sz = rnd.uniform(1, 9000), rnd.uniform(1, 9000)
+        a, d = rnd.uniform(0, 6.283), rnd.choice([0, 1, 5.99, 6, 6.0001, 6.01, 7, rnd.uniform(0, 12)])
+        px, pz = sx + math.cos(a) * d, sz + math.sin(a) * d
+        found.append([sx, sz, px, pz, hs_found(sx, sz, px, pz)])
+    real = ti_read(os.path.join(root, 'MiniEvent.inc'))
+    return {'mobs': len(mobs), 'sugg': sugg, 'times': times, 'found': found, 'edits': hs_edit_cases(real)}
+
+
+def hs_line(sp):
+    return 'SPOT\t%d\t%d\t"%s"\t"%s"\t"%s"' % (sp['x'], sp['z'], sp['region'], sp['hint'], sp['landmark'])
+
+
+def hs_edit_cases(real):
+    def spots(lines):
+        return [i for i, l in enumerate(lines) if l.startswith('SPOT\t')]
+    def apply(text, op):
+        lines = text.split('\n')
+        sp = spots(lines)
+        n = op.get('n', 0)
+        if n < 0:
+            n += len(sp)
+        if op['op'] == 'add':
+            lines.insert(sp[-1] + 1, hs_line(op['s']))
+        elif op['op'] == 'remove':
+            del lines[sp[n]]
+        else:                                    # the record is rewritten; a // comment after it stays
+            l = lines[sp[n]]
+            m = re.match(r'SPOT\t[^\t]*\t[^\t]*\t"[^"]*"\t"[^"]*"\t"[^"]*"', l)
+            lines[sp[n]] = hs_line(op['s']) + l[m.end():]
+        return '\n'.join(lines)
+    S = lambda x, z, r, h='', l='': {'x': x, 'z': z, 'region': r, 'hint': h, 'landmark': l}
+    scripts = [
+        [{'op': 'add', 's': S(6698, 3394, 'Flaris', 'near the lake', 'the Observatory')}],
+        [{'op': 'add', 's': S(1, 99999, 'x' * 60, 'h' * 120, 'l' * 60)}],
+        [{'op': 'edit', 'n': 0, 's': S(6700, 3390, 'Leren Peaks', "it's high", '')}],
+        [{'op': 'edit', 'n': -1, 's': S(6887, 3233, 'Flaris', 'Near Collecting Area', 'the Flaris gate')}],   # the /hidespot line: its comment stays
+        [{'op': 'remove', 'n': 0}],
+        [{'op': 'remove', 'n': -1}],
+        [{'op': 'add', 's': S(5000, 5000, 'A')}, {'op': 'add', 's': S(5001, 5001, 'B', 'b')}, {'op': 'remove', 'n': 3}, {'op': 'edit', 'n': -2, 's': S(42, 43, 'C', '', 'c')}],
+    ]
+    out = []
+    for sc in scripts:
+        text = real
+        for op in sc:
+            text = apply(text, op)
+        out.append({'script': sc, 'text': text})
+    return out
+
+
+# ---- the week (step 5): Process (:642-695) while CLOSED + GetNextScheduledStart (:585) + PickRandomType (:613); FFA / TDM / Guild
+# Siege windows from pv_runs / pv_sieges; Free PK Time from FreePKTime.txt (_Common/FreePKTime.cpp LoadFile / FindScheduled)
+def wk_freepk(text):
+    if text is None:
+        return None
+    t = [x.decode('latin-1') for x in tokens(text.encode('latin-1'))]
+    dur, slots, i = 60, [], 0
+    while i < len(t):
+        w = t[i]
+        if w == 'DURATION':
+            dur = atoi(t[i + 1]); i += 2
+        elif w in ('EXPRATE', 'WARNING'):
+            i += 2
+        elif w == 'SCHEDULE':
+            i += 2                                   # SCHEDULE {
+            while i < len(t) and not t[i].startswith('}'):
+                d, hh, mm = (atoi(t[i]), atoi(t[i + 1]) if i + 1 < len(t) else 0, atoi(t[i + 2]) if i + 2 < len(t) else 0)
+                if 0 <= d <= 7 and 0 <= hh < 24 and 0 <= mm < 60:
+                    slots.append((d, hh, mm))
+                i += 3
+            i += 1
+        else:
+            break
+    return {'dur': min(1440, max(1, dur)), 'slots': slots}
+
+
+def wk_next(begins, now):
+    best = None
+    day0 = now - now % PV_DAY
+    for off in range(8):
+        d = day0 + off * PV_DAY
+        wd = pv_wday(d + 43200)
+        for line, (typ, dd, hh, mm) in enumerate(begins):
+            if dd != 0 and dd != wd:
+                continue
+            t = d + hh * 3600 + mm * 60
+            if t > now and (best is None or t < best[0]):
+                best = (t, typ, line)
+    return best
+
+
+def wk_busy(ffa, tdm, gc, tl, fp, frm, until):
+    out = []
+    for name, cfg in (('FFA', ffa), ('TDM', tdm)):
+        if cfg:
+            for r in pv_runs(cfg, frm - 2 * PV_DAY, until):
+                out.append((name, r[0], r[4]))
+    if gc and gc.get('ok'):
+        for sg in pv_sieges(gc, tl, frm - 2 * PV_DAY, until, gc['min']):
+            out.append(('Guild Siege', sg[0], sg[6]))
+    if fp:
+        d = (frm - 2 * PV_DAY) - (frm - 2 * PV_DAY) % PV_DAY - PV_DAY
+        while d <= until:
+            wd = pv_wday(d + 43200)
+            for dd, hh, mm in fp['slots']:
+                if dd != 0 and dd != wd:
+                    continue
+                a = d + hh * 3600 + mm * 60
+                b = a + fp['dur'] * 60
+                if b > frm - 2 * PV_DAY and a <= until:
+                    out.append(('Free PK Time', a, b))
+            d += PV_DAY
+    return [w for w in out if w[2] > frm - PV_DAY]
+
+
+def wk_week(ev, begins, busy, frm, until, seed):
+    rng = Rand(seed)
+    pool = [t for t in range(1, 7) if ev[t]['loaded'] and ev[t]['v']['IN_RANDOM']]
+    def busy_at(t):
+        for name in ('FFA', 'TDM', 'Guild Siege', 'Free PK Time'):
+            if any(w[0] == name and w[1] <= t < w[2] for w in busy):
+                return name
+        return None
+    out, now = [], frm
+    while True:
+        nx = wk_next(begins, now)
+        if nx is None or nx[0] > until:
+            break
+        t0, typ, line = nx
+        pick = typ if typ else (pool[rng(len(pool))] if pool else 0)
+        if not pick:
+            out.append([t0, line, typ, pick, None, None, None, 'none'])
+            now = t0
+            continue
+        v = ev[pick]['v']
+        ann = max(now, t0 - v['REGISTER'] * 60)
+        b = busy_at(ann)
+        if b:
+            out.append([t0, line, typ, pick, ann, None, b, 'busy'])
+            now = t0
+            continue
+        end = t0 + v['ROUNDS'] * (v['ROUND_TIME'] + v['SCORE_TIME'])
+        out.append([t0, line, typ, pick, ann, end, None, None])
+        n2 = wk_next(begins, t0)
+        while n2 is not None and n2[0] <= end and n2[0] <= until:
+            out.append([n2[0], n2[2], n2[1], None, None, None, None, 'lost'])
+            n2 = wk_next(begins, n2[0])
+        now = end
+    return out
+
+
+def wk_run(root):
+    D = defines(root)
+    props = spec_props(root, D)
+    rd = lambda n: open(os.path.join(root, n), 'rb').read().decode('latin-1') if os.path.exists(os.path.join(root, n)) else None
+    cfg = lambda text, kind: (pv_read(text, kind, D, props) if text is not None else (None, 'missing'))
+    ffa, e1 = cfg(rd('FFAManager.inc'), 'ffa')
+    tdm, e2 = cfg(rd('TDMManager.inc'), 'tdm')
+    ffa, tdm = (None if e1 else ffa), (None if e2 else tdm)
+    gc = pv_gc(rd('GuildCombat.txt')) if rd('GuildCombat.txt') is not None else None
+    tl = pv_timeline(gc) if gc else None
+    fp_real = wk_freepk(rd('FreePKTime.txt'))
+    real = rd('MiniEvent.inc')
+    week0 = 1791676800          # Sunday 2026-10-11 00:00 (wall clock)
+    fps = [fp_real, None, {'dur': 1440, 'slots': [(1, 0, 0)]}, wk_freepk('DURATION 30\r\nSCHEDULE\r\n{\r\n0 13 0\r\n2 19 1\r\n9 1 1\r\n0 24 0\r\n}\r\n'),
+           wk_freepk('DURATION 0\r\nSCHEDULE { 0 12 0 }\r\n'), wk_freepk('WARNING 5\r\nFOO\r\nSCHEDULE { 0 13 0 }\r\n')]
+    fp_texts = [rd('FreePKTime.txt'), None, None, 'DURATION 30\r\nSCHEDULE\r\n{\r\n0 13 0\r\n2 19 1\r\n9 1 1\r\n8 1 1\r\n0 24 0\r\n0 16 0\r\n}\r\n',
+                'DURATION 0\r\nSCHEDULE { 0 12 0 }\r\n', 'WARNING 5\r\nFOO\r\nSCHEDULE { 0 13 0 }\r\n']
+    fps[2] = None
+    fp_texts[2] = 'DURATION 1440\r\nSCHEDULE\r\n{\r\n1 0 0\r\n}\r\n'
+    fps = [wk_freepk(t) for t in fp_texts]
+    D, items, movers, chars, props = me_ctx(root)
+    hourly = ''.join('BEGIN\tRANDOM\t0\t%d\t%02d\n' % (h, m) for h in range(24) for m in (0, 55))
+    texts = [real, real.replace('BEGIN\tRANDOM\t2\t13\t15', 'BEGIN\tTYPER\t2\t13\t15\nBEGIN\tRANDOM\t2\t13\t15', 1),
+             real + 'BEGIN\tTURNIN\t1\t12\t0\nBEGIN\tCOLORGAME\t1\t12\t20\nBEGIN\tHIDESEEK\t1\t12\t25\n',
+             'EVENT\tCOLORGAME\tIN_RANDOM 0\nEVENT\tLUCKYDRAW\tIN_RANDOM 0\tREGISTER 60\nBEGIN\tRANDOM\t0\t10\t0\nBEGIN\tLUCKYDRAW\t3\t10\t30\n'
+             'EVENT\tTYPER\tROUNDS 3\tROUND_TIME 15\tSCORE_TIME 5\tREGISTER 5\nBEGIN\tTYPER\t0\t9\t0\nBEGIN\tTYPER\t0\t9\t1\nBEGIN\tTYPER\t0\t13\t5\nBEGIN\tTYPER\t0\t17\t6\n',
+             real.split('BEGIN\tRANDOM')[0] + hourly,
+             real.split('BEGIN\tRANDOM')[0] + 'BEGIN\tRANDOM\t7\t23\t59\nBEGIN\tOXQUIZ\t1\t0\t0\nBEGIN\tTYPER\t0\t0\t1\n']
+    # start times inside the FFA / TDM runs: 1, 10 and 30 minutes after each of their starts (and right at it)
+    near = ''
+    for c in (ffa, tdm):
+        for dd, hh, mm in (c['times'] if c else []):
+            for plus in (0, 1, 10, 30):
+                t = hh * 60 + mm + plus
+                near += 'BEGIN\tRANDOM\t%d\t%d\t%02d\n' % (dd, (t // 60) % 24, t % 60)
+    texts.append(real.split('BEGIN\tRANDOM')[0] + near)
+    cases = []
+    for k, text in enumerate(texts):
+        r = me_load(text, D, items, movers, chars)
+        begins = [tuple(b) for b in r['begins']]
+        for fi, fp in enumerate(fps):
+            busy = wk_busy(ffa, tdm, gc, tl, fp, week0, week0 + 21 * PV_DAY)
+            for seed in (1, 77):
+                cases.append({'text': k, 'fp': fi, 'seed': seed, 'busy': sorted([list(w) for w in busy], key=lambda w: (w[1], w[2], w[0])),
+                              'runs': wk_week(r['events'], begins, busy, week0, week0 + 21 * PV_DAY, seed)})
+    return {'week0': week0, 'texts': texts, 'fp_texts': fp_texts, 'freepk': fps, 'cases': cases}
 
 
 def me_round(x):
@@ -13332,10 +13589,16 @@ ME_SMALL = [
 
 
 def me_run(root):
+    D, items, movers, chars, props = me_ctx(root)
+    packmax = {k: v[0] for k, v in props.items()}
+    real = open(os.path.join(root, 'MiniEvent.inc'), 'rb').read().decode('latin-1')
+    return me_run_rest(root, D, items, movers, chars, props, packmax, real)
+
+
+def me_ctx(root):
     D = defines(root)
     props = spec_props(root, D)
     items = set(props)
-    packmax = {k: v[0] for k, v in props.items()}
     movers = set()
     for l in open(os.path.join(root, 'propMover.txt'), 'rb').read().decode('latin-1').splitlines():
         c = l.strip().split('\t')[0].strip() if l.strip() and not l.lstrip().startswith('//') else ''
@@ -13359,7 +13622,10 @@ def me_run(root):
             while i < len(tk) and depth > 0:
                 depth += 1 if tk[i] == '{' else -1 if tk[i] == '}' else 0
                 i += 1
-    real = open(os.path.join(root, 'MiniEvent.inc'), 'rb').read().decode('latin-1')
+    return D, items, movers, chars, props
+
+
+def me_run_rest(root, D, items, movers, chars, props, packmax, real):
     files = []
     for t in [real] + ME_SMALL:
         r = me_load(t, D, items, movers, chars)
@@ -13469,6 +13735,8 @@ if __name__ == '__main__':
         print(json.dumps(we_run_all(root)))
     elif what == 'consumables':                 # consumable stats: use, use again, same-kind blocks, expiry, edits
         print(json.dumps(cs_run_all(root)))
+    elif what == 'week':                        # Mini Events, the week: BEGIN starts, skips (FFA / TDM / Guild Siege / Free PK Time)
+        print(json.dumps(wk_run(root)))
     elif what == 'turnin':                      # Mini Events, Turn-in Race: hints, random recipes, turn-ins, recipe / hint edits
         print(json.dumps(ti_run(root)))
     elif what == 'minievent':                   # Mini Events: MiniEvent.inc (ReadConfig), round points, ranking, prizes

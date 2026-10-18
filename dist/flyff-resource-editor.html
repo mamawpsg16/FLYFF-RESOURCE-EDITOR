@@ -241,6 +241,8 @@ td.nowrap { white-space: nowrap; }
 .ok-text { color: var(--ok); }
 .me-pts td input.num-input { width: 100%; min-width: 0; box-sizing: border-box; }
 .tag input.num-input { width: 64px; }
+.me-spots td input.num-input { width: 100%; min-width: 0; box-sizing: border-box; margin-bottom: 2px; }
+tr.sel td { background: rgba(255, 207, 74, 0.10); }
 .note { border-left: 3px solid var(--ok); padding: 6px 10px; margin: 8px 0; }
 .ex-game { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--line); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 12px; }
 .ex-slot { padding: 1px 7px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
@@ -500,7 +502,7 @@ details.mt-more > summary { cursor: pointer; color: var(--muted); padding: 6px 0
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when": "Sun 18 Oct 2026, 06:07", "rev": "8d81c78", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when": "Sun 18 Oct 2026, 06:27", "rev": "89ddb37", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -6347,6 +6349,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     ME_RECIPE_DUP: ['The same Turn-in recipe (title and items) is in the list twice. Both share one "last used" entry, so both can come up in the same event.', 'Remove one, or change its items.'],
     ME_HINT_DUP: ['An item has two ITEM_HINT lines. The server keeps only the last one, so the first one never shows.', 'Remove the extra line (✕ on the hint), or edit the one that shows.'],
     ME_HINT_MISSING: ['A Turn-in recipe item has no ITEM_HINT line, so the window shows nothing under it about where to get it.', 'Use "Write missing hints" on the Turn-in Race page, or type one in the Hints table.'],
+    ME_SPOT_DUP: ['Two Hide and Seek spots round to the same x / z. They share one "last used" entry, so the same place can come up twice in one event.', 'Remove one, or move it a few metres.'],
     ME_ASK_DUP: ['The same question is in the list twice. Both copies share one "last asked" entry, so both can come up in the same event.', 'Delete one of them.'],
     ME_NO_RANDOM: ['Every event is set to stay out of RANDOM start times, so a "BEGIN RANDOM" time starts nothing and nothing is logged.', 'Turn on "Picked by a RANDOM start time" for at least one event, or give that start time a fixed event.'],
     // Mounts (Mount.inc, LoadMountAnimationList Project.cpp:618)
@@ -15201,6 +15204,221 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     nameOf, keyOf, TOWNS, HINT_LEN, TITLE_LEN };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/minievent-hide.js ----
+// Mini Events, Hide and Seek (step 4): where Lost Fwanki hides (SPOT lines) and what one round does.
+//   suggest   region / hint / landmark for a spot, the way V19 Tools/minievent/build_spots.py wrote the first 37 (3b12a4bb):
+//             region = the smallest titled WdMadrigal.rgn box of 5,000+ around it (else the nearest), its FIRST title line
+//             + the Teleport-list town (medata.py with_town); hint = "close to where <monster> spawn" for the nearest normal
+//             monster spot (RANK_LOW / RANK_NORMAL, not Captain / Giant / Boss / Lord / General) within 250; landmark =
+//             "the <name>" of the nearest small titled box (under 5,000) whose centre is within 120 (the script put each spot
+//             40-80 from one; 120 is this editor's choice for a spot typed anywhere).
+//   round     CMiniEventMng::Process (MiniEventMng.cpp:710-733): the hint at 40 % of ROUND_TIME, the landmark at 80 %
+//             (MINIEVENT_HINT1_PCT / HINT2_PCT, :36): the first whole second t with t x 100 >= ROUND_TIME x pct; an empty
+//             text is skipped (no message). SpawnHideNpc (:1563): at the spot, on the ground (GetLandHeight), the region
+//             shouted at the start. Found (:1518): within MINIEVENT_FOUND_DIST 6 m on x / z (y ignored) = 1st place, the
+//             round ends; nobody = "it got away".
+// Not modelled: the ground height (the .lnd files), walls / water at the spot, packets.
+(function (FRE) {
+  'use strict';
+  const SKIP = ['Collecting Area', 'Guild Combat', 'Gravity Disorder', 'Kion Soldiers', 'residence'];
+  const SMALL = 5000, HINT_NEAR = 250, LANDMARK_NEAR = 120;
+  const HINT1_PCT = 40, HINT2_PCT = 80, FOUND_DIST = 6;
+  const BOSSY = ['Captain', 'Giant', 'Boss', 'Lord', 'General'];
+  const area = r => (r.rect[2] - r.rect[0]) * (r.rect[3] - r.rect[1]);
+  const clean = (s, n) => s.split('"').join("'").replace(/[^\x20-\x7e]/g, '?').slice(0, n);
+  const skipped = r => SKIP.some(w => r.titles.join(' ').includes(w));
+
+  // the monsters a hint may name: normal Madrigal spots, in file order
+  function mobs(ws, mad) {
+    const mv = ws.movers ? ws.movers.movers : new Map(), out = [];
+    for (const r of mad.respawns) {
+      const m = mv.get(r.mover);
+      if (!m || (m.rankId !== 1 && m.rankId !== 2) || BOSSY.some(b => m.name.startsWith(b))) continue;
+      out.push({ name: m.name, x: r.x, z: r.z });
+    }
+    return out;
+  }
+
+  function suggest(mad, mobList, x, z) {
+    const big = mad.regions.filter(r => area(r) >= SMALL && !skipped(r));
+    const small = mad.regions.filter(r => area(r) < SMALL && !skipped(r));
+    let reg = null, bv = Infinity;
+    for (const r of big) if (r.rect[0] <= x && x <= r.rect[2] && r.rect[1] <= z && z <= r.rect[3] && area(r) < bv) { bv = area(r); reg = r; }
+    if (!reg) for (const r of big) { const d = (x - (r.rect[0] + r.rect[2]) / 2) ** 2 + (z - (r.rect[1] + r.rect[3]) / 2) ** 2; if (d < bv) { bv = d; reg = r; } }
+    let region = reg ? reg.titles[0] : FRE.miniEventTurnIn.townOf(mad, x, z);
+    region = ['darkon', 'saint', 'eillun', 'shaduwar', 'flaris', 'flarine'].some(w => region.toLowerCase().includes(w)) ? region : `${region} (${FRE.miniEventTurnIn.townOf(mad, x, z)})`;
+    let hint = '', hb = Infinity, hm = null;
+    for (const m of mobList) { const d = (m.x - x) ** 2 + (m.z - z) ** 2; if (d < hb) { hb = d; hm = m; } }
+    if (hm && hb < HINT_NEAR ** 2) hint = `close to where ${hm.name} spawn`;
+    let landmark = '', lb = Infinity, lm = null;
+    for (const r of small) { const d = (x - (r.rect[0] + r.rect[2]) / 2) ** 2 + (z - (r.rect[1] + r.rect[3]) / 2) ** 2; if (d < lb) { lb = d; lm = r; } }
+    if (lm && lb < LANDMARK_NEAR ** 2) { const n = lm.titles[lm.titles.length - 1]; landmark = n.toLowerCase().startsWith('the ') ? n : `the ${n}`; }
+    return { region: clean(region, 60), hint: clean(hint, 120), landmark: clean(landmark, 60) };
+  }
+
+  // the seconds into a round at which the hint / landmark show (null = that text is empty: nothing shown)
+  function hintTimes(roundTime, spot) {
+    const at = pct => { let t = 0; while (t * 100 < roundTime * pct) t++; return t; };
+    return { hint: spot && !spot.hint ? null : at(HINT1_PCT), landmark: spot && !spot.landmark ? null : at(HINT2_PCT) };
+  }
+  // what one round shows: [{ t, text }] (the shouts / player notices of SpawnHideNpc and Process), then the end
+  function roundLog(roundTime, spot, foundAt, finder) {
+    const out = [{ t: 0, text: `[Event] Lost Fwanki is hiding somewhere in ${spot.region}!` }];
+    const ht = hintTimes(roundTime, spot);
+    const end = foundAt !== null && foundAt !== undefined && foundAt < roundTime ? foundAt : null;
+    if (ht.hint !== null && (end === null || ht.hint < end)) out.push({ t: ht.hint, text: `[Event] Hint: Lost Fwanki is ${spot.hint}.` });
+    if (ht.landmark !== null && (end === null || ht.landmark < end)) out.push({ t: ht.landmark, text: `[Event] Lost Fwanki is within about 100 m of ${spot.landmark}!` });
+    out.push(end !== null ? { t: end, text: `[Event] ${finder || 'A player'} found Lost Fwanki!` } : { t: roundTime, text: '[Event] Lost Fwanki got away!' });
+    return out;
+  }
+  // Found: close enough on x / z (the height does not count)
+  const found = (spot, px, pz) => { const dx = Math.fround(spot.x - px), dz = Math.fround(spot.z - pz); return Math.fround(dx * dx + dz * dz) <= FOUND_DIST * FOUND_DIST; };
+
+  FRE.miniEventHide = { mobs, suggest, hintTimes, roundLog, found, SMALL, HINT_NEAR, LANDMARK_NEAR, FOUND_DIST, HINT1_PCT, HINT2_PCT };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/minievent-week.js ----
+// Mini Events, the week (step 5): when each BEGIN line really starts an event, and which ones the server skips.
+//   schedule  CMiniEventMng::Process (MiniEventMng.cpp:642-695), one tick a second while CLOSED: the next start
+//             (GetNextScheduledStart :585: day 0 = every day, 1 = Sunday ... 7 = Saturday; the smallest start after now over
+//             today + 7 days, the first BEGIN line wins a tie); RANDOM = PickRandomType (:613, xRandom over the loaded events with
+//             IN_RANDOM 1, picked once per start); when the start is REGISTER minutes away (of the picked event) it is
+//             announced - unless FFA, TDM or the Guild Siege is not CLOSED or Free PK Time is open at that moment: then that
+//             start is skipped (error_*.txt "skipped: <event> is running"). A start is never announced twice (m_tLastStart).
+//             The run: registration until the start, then ROUNDS x (ROUND_TIME + SCORE_TIME), then closed (Turn-in / Hide and
+//             Seek rounds can end sooner); starts that fall in a run are lost (the next start is looked up when CLOSED).
+//   clashes   CheckClashes (:465): ReadConfig's log warning for a BEGIN within an hour of an FFA / TDM start (any day pairs
+//             with day 0); shown as a note, the skip above is what matters.
+//   free pk   FreePKTime::LoadFile / FindScheduled (_Common/FreePKTime.cpp): FreePKTime.txt DURATION (1-1440 minutes, default 60),
+//             SCHEDULE { day hour minute ... }; open from each start for DURATION minutes.
+// FFA / TDM / Guild Siege windows come from loaders/pvp-sim.js (runs: announce -> closed, sieges: start -> closed).
+// Not modelled: GM /eventstart, a cancelled run (too few players: it closes at the start), a server restart, /freepkstop.
+(function (FRE) {
+  'use strict';
+  const DAY = 86400;
+  const P = () => FRE.pvpSim;
+
+  // FreePKTime.txt (a bare CScanner): DURATION n, EXPRATE f, WARNING n, SCHEDULE { day hour minute ... }; any other word stops it
+  function readFreePk(file) {
+    const out = { ok: !!file, dur: 60, slots: [] };
+    if (!file) return out;
+    const s = new FRE.lexer.Script(file.text, { file: file.name, defines: new Map(), diags: [] });
+    for (let t = s.getToken(); t.type !== 'eof'; t = s.getToken()) {
+      if (t.text === 'DURATION') out.dur = s.getNumber().value;
+      else if (t.text === 'EXPRATE') s.getFloat();
+      else if (t.text === 'WARNING') s.getNumber();
+      else if (t.text === 'SCHEDULE') {
+        s.getToken();                                         // {
+        // GetNumber() then `while( *s.token != '}' )`: read as tokens (the times are plain numbers)
+        for (let d = s.getToken(); d.type !== 'eof' && !d.text.startsWith('}'); d = s.getToken()) {
+          const day = parseInt(d.text, 10) || 0, hour = parseInt(s.getToken().text, 10) || 0, minute = parseInt(s.getToken().text, 10) || 0;
+          if (day >= 0 && day <= 7 && hour >= 0 && hour < 24 && minute >= 0 && minute < 60) out.slots.push({ day, hour, minute });
+        }
+      } else break;
+    }
+    out.dur = Math.min(1440, Math.max(1, out.dur));
+    return out;
+  }
+  // the open windows [{ from, to }] that touch from..until
+  function freePkWindows(fp, from, until) {
+    const out = [];
+    if (!fp || !fp.ok) return out;
+    for (let d = P().midnight(from) - DAY; d <= until; d += DAY) {
+      const w = P().dow(d + 12 * 3600);
+      for (const sl of fp.slots) {
+        if (sl.day !== 0 && sl.day !== w) continue;
+        const a = d + sl.hour * 3600 + sl.minute * 60, b = a + fp.dur * 60;
+        if (b > from && a <= until) out.push({ from: a, to: b });
+      }
+    }
+    return out.sort((x, y) => x.from - y.from);
+  }
+
+  // GetNextScheduledStart with the BEGIN line's event: { t, type, line } | null
+  function nextStart(times, tNow) {
+    let best = null;
+    const today = P().midnight(tNow);
+    for (let off = 0; off <= 7; off++) {
+      const d = today + off * DAY, w = P().dow(d + 12 * 3600);
+      times.forEach((x, line) => {
+        if (x.day !== 0 && x.day !== w) return;
+        const t = d + x.hour * 3600 + x.minute * 60;
+        if (t > tNow && (best === null || t < best.t)) best = { t, type: x.type, line };
+      });
+    }
+    return best;
+  }
+
+  // the busy windows of the other events: [{ ev: 'FFA' | 'TDM' | 'Guild Siege' | 'Free PK Time', from, to }]
+  function busyWindows(pvpModel, fp, from, until) {
+    const out = [];
+    if (pvpModel) {
+      for (const [k, name] of [['ffa', 'FFA'], ['tdm', 'TDM']]) {
+        const cfg = pvpModel[k] && pvpModel[k].cfg;
+        if (cfg) for (const r of P().runs(cfg, from - 2 * DAY, until)) out.push({ ev: name, from: r.announce, to: r.closed });
+      }
+      if (pvpModel.gs && pvpModel.gs.ok) for (const sg of P().sieges(pvpModel.gs, pvpModel.timeline, from - 2 * DAY, until)) out.push({ ev: 'Guild Siege', from: sg.start, to: sg.closed });
+    }
+    for (const w of freePkWindows(fp, from - 2 * DAY, until)) out.push({ ev: 'Free PK Time', from: w.from, to: w.to });
+    return out.filter(w => w.to > from - DAY).sort((a, b) => a.from - b.from || a.to - b.to);
+  }
+  // FFA / TDM / GS: not CLOSED from announce (incl.) to closed (excl.); Free PK Time: start <= now < start + DURATION.
+  // The server asks FFA, then TDM, then the Guild Siege, then Free PK Time.
+  const ORDER = ['FFA', 'TDM', 'Guild Siege', 'Free PK Time'];
+  function busyAt(busy, t) {
+    for (const ev of ORDER) if (busy.some(w => w.ev === ev && w.from <= t && t < w.to)) return ev;
+    return null;
+  }
+
+  // model: loaders/minievent.js; -> [{ start, line, type (0 = RANDOM), picked, announce, end, busy, why }] for starts from..until
+  // why: null = runs; 'busy' (another event: busy names it); 'none' (RANDOM with no IN_RANDOM event); 'lost' (inside a run)
+  function week(model, pvpModel, fp, from, until, o = {}) {
+    const times = model.begins.map(b => ({ type: b.type, day: b.day.value, hour: b.hour.value, minute: b.minute.value }));
+    const busy = busyWindows(pvpModel, fp, from, until);
+    const rng = FRE.xRandom.rng(o.seed || 1);
+    const pool = model.events.filter(e => e && e.loaded && e.values.IN_RANDOM).map(e => e.type);
+    const out = [];
+    let now = from;
+    for (let guard = 0; guard < 5000; guard++) {
+      const nx = nextStart(times, now);
+      if (!nx || nx.t > until) break;
+      const type = nx.type || (pool.length ? pool[rng.random(pool.length)] : 0);
+      const row = { start: nx.t, line: nx.line, type: nx.type, picked: type, announce: null, end: null, busy: null, why: null };
+      out.push(row);
+      if (!type) { row.why = 'none'; now = nx.t; continue; }
+      const e = model.events[type], reg = e.values.REGISTER * 60;
+      row.announce = Math.max(now, nx.t - reg);
+      const b = busyAt(busy, row.announce);
+      if (b) { row.why = 'busy'; row.busy = b; now = nx.t; continue; }
+      row.end = nx.t + e.values.ROUNDS * (e.values.ROUND_TIME + e.values.SCORE_TIME);
+      // starts inside this run are never announced (the next start is looked up only when CLOSED again)
+      for (let t2 = nextStart(times, nx.t); t2 && t2.t <= row.end && t2.t <= until; t2 = nextStart(times, t2.t))
+        out.push({ start: t2.t, line: t2.line, type: t2.type, picked: null, announce: null, end: null, busy: null, why: 'lost' });
+      now = row.end;
+    }
+    return { runs: out, busy };
+  }
+
+  // CheckClashes: BEGIN lines within an hour of an FFA / TDM start line (the server's log warning)
+  function clashes(model, pvpModel) {
+    const out = [];
+    if (!pvpModel) return out;
+    for (const [k, name] of [['ffa', 'FFA'], ['tdm', 'TDM']]) {
+      const cfg = pvpModel[k] && pvpModel[k].cfg;
+      if (!cfg) continue;
+      for (const x of cfg.times) model.begins.forEach((b, i) => {
+        if (b.day.value !== 0 && x.day !== 0 && b.day.value !== x.day) return;
+        let d = Math.abs((b.hour.value * 60 + b.minute.value) - (x.hour * 60 + x.minute));
+        if (d > 12 * 60) d = 24 * 60 - d;
+        if (d < 60) out.push({ line: i, ev: name, day: x.day, hour: x.hour, minute: x.minute });
+      });
+    }
+    return out;
+  }
+
+  FRE.miniEventWeek = { readFreePk, freePkWindows, nextStart, busyWindows, busyAt, week, clashes };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- edit/minievent-ops.js ----
 // Mini Events edits (MiniEvent.inc; LF in git, CRLF on the Windows PC: new lines copy their neighbour's EOL and tabs).
 // The file's own style (V19 25e4f227): "EVENT<TAB>COLORGAME<TAB>MIN_LEVEL 120<TAB>MIN_PLAYERS 5 ...", "RANK<TAB>COLORGAME<TAB>1<TAB>
@@ -15381,7 +15599,46 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     return insertRows(text, model, hintAnchor(model), rows);
   }
 
-  FRE.miniEventOps = { askLine, addAsk, editAsk, removeAsk, checkText, setKey, setPrize, setPoints, checkKey, prizeRow,
+  // ---- Hide and Seek (step 4): SPOT <x> <z> "<region>" "<hint>" "<landmark>" (x / z written as whole numbers, above 0)
+  function checkSpot(sp) {
+    for (const k of ['x', 'z']) if (!Number.isInteger(sp[k]) || sp[k] <= 0 || sp[k] > 99999) throw new Error(`${k} must be a whole number above 0`);
+    checkText(sp.region, 'The region', 1, 60);
+    checkText(sp.hint || '', 'The hint', 0, 120);
+    checkText(sp.landmark || '', 'The landmark', 0, 60);
+  }
+  const spotRow = sp => `SPOT\t${sp.x}\t${sp.z}\t"${sp.region}"\t"${sp.hint || ''}"\t"${sp.landmark || ''}"`;
+  function spotAnchor(model) {
+    const e = model.events[6];
+    if (e.spots.length) return e.spots.reduce((a, b) => (b.start > a.start ? b : a));
+    const all = [...e.lines, ...e.rankLines, ...e.restLines, ...(e.points ? [e.points] : []), ...(model.hideNpc ? [model.hideNpc] : [])];
+    const a = all.sort((x, y) => y.start - x.start)[0];
+    if (!a) throw new Error('Hide and Seek has no EVENT line');
+    return a;
+  }
+  function addSpot(text, model, sp) { checkSpot(sp); return insertRows(text, model, spotAnchor(model), [spotRow(sp)]); }
+  // the record from SPOT to its landmark is written again; a comment after it (// /hidespot by ...) stays
+  function editSpot(text, spot, sp) { checkSpot(sp); return [{ start: spot.start, end: spot.end, insert: spotRow(sp) }]; }
+  const removeSpot = (text, spot) => T.removeRow(text, spot);
+
+  // ---- the week (step 5): BEGIN <EVENT | RANDOM> <day 0-7> <hour 0-23> <minute 0-59> (the file writes minutes as 2 digits)
+  // b = { type: 0 (RANDOM) | 1-6, day, hour, minute }
+  function checkBegin(model, b) {
+    if (!Number.isInteger(b.day) || b.day < 0 || b.day > 7) throw new Error('Day: every day, or Sunday - Saturday');
+    if (!Number.isInteger(b.hour) || b.hour < 0 || b.hour > 23) throw new Error('Hour: 0 - 23');
+    if (!Number.isInteger(b.minute) || b.minute < 0 || b.minute > 59) throw new Error('Minute: 0 - 59');
+    if (b.type && !(model.events[b.type] && model.events[b.type].loaded)) throw new Error('That event has no EVENT line: the server would switch Mini Events off');
+  }
+  const beginRow = b => `BEGIN\t${b.type ? M().TYPES[b.type].key : 'RANDOM'}\t${b.day}\t${b.hour}\t${String(b.minute).padStart(2, '0')}`;
+  function addBegin(text, model, b) {
+    checkBegin(model, b);
+    if (model.begins.length) return insertRows(text, model, model.begins.reduce((a, x) => (x.start > a.start ? x : a)), [beginRow(b)]);
+    const eol = model.eol, end = text.length, nl = end && !text.endsWith('\n') ? eol : '';
+    return [{ start: end, end, insert: `${nl}${beginRow(b)}${eol}` }];
+  }
+  function editBegin(text, model, begin, b) { checkBegin(model, b); return [{ start: begin.start, end: begin.end, insert: beginRow(b) }]; }
+  const removeBegin = (text, begin) => T.removeRow(text, begin);
+
+  FRE.miniEventOps = { checkBegin, beginRow, addBegin, editBegin, removeBegin, checkSpot, spotRow, addSpot, editSpot, removeSpot, askLine, addAsk, editAsk, removeAsk, checkText, setKey, setPrize, setPoints, checkKey, prizeRow,
     checkRecipe, recipeRow, hintRow, addRecipe, editRecipe, removeRecipe, putRecipes, checkHint, hintOf, setHint, removeHint, addHints };
 })(globalThis.FRE = globalThis.FRE || {});
 
@@ -15430,6 +15687,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
       for (const r of e.recipes) for (const x of r.items) if (!hinted.has(x.id) && !told.has(x.id)) {
         told.add(x.id);
         push(x.item, 'ME_HINT_MISSING', 'INFO', `Turn-in Race: ${x.item.define || x.id} has no "where to get it" line (ITEM_HINT): players see no hint under it.`, `${x.id}`);
+      }
+    }
+    // Hide and Seek: two spots at the same whole-number x / z share one "asked" entry (AskKey "HIDESEEK|x z", GetAskText %.0f)
+    {
+      const seen = new Map(), r0 = v => (v < 0 ? -Math.round(-v) : Math.round(v));
+      for (const sp of model.events[6].spots) {
+        const k = `${r0(sp.x.value)} ${r0(sp.z.value)}`;
+        if (seen.has(k)) push(sp, 'ME_SPOT_DUP', 'WARN', `Hide and Seek: two spots at ${k}: they share one "last used" entry, so both can come up in one event.`, k);
+        else seen.set(k, sp);
       }
     }
     const randomBegins = model.begins.filter(b => b.type === 0);
@@ -17526,7 +17792,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
       // HIDE_NPC mover and character key; FFAManager.inc / TDMManager.inc: the schedule's clashes (CheckClashes :464).
       id: 'minievent', label: 'Mini Events',
       required: ['MiniEvent.inc'], optional: ['propMover.txt', 'propMover.txt.txt', 'character.inc', 'character-etc.inc', 'character-school.inc',
-        'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt', 'FFAManager.inc', 'TDMManager.inc'],
+        'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt', 'FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt', 'FreePKTime.txt'],
       editable: ['MiniEvent.inc'], client: [], deps: [],
       // Turn-in Race (loaders/minievent-turnin.js): the "where to get it" hints and the random recipes read the NPC shops,
       // monster drops, the Donation Shop, exchanges and boxes (read-only), and WdMadrigal.rgn (monster spots, area names)
@@ -26424,7 +26690,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
   const { h, toast, keepFocus, numInput } = FRE.dom;
   const { diagRow } = FRE.ui;
   const FILE = 'minievent.inc';
-  const st = { tr: { q: '', page: 0, hq: '', hpage: 0, n: 50, seed: 1 + Math.floor(Math.random() * 99999), mode: 'add', withHints: true, preview: null,
+  const st = { hs: { q: '', page: 0, sel: -1, newS: { x: null, z: null, region: '', hint: '', landmark: '' }, paste: '', foundAt: 100, try: 0 }, tr: { q: '', page: 0, hq: '', hpage: 0, n: 50, seed: 1 + Math.floor(Math.random() * 99999), mode: 'add', withHints: true, preview: null,
     newR: { title: '', items: [[null, 20]] }, tryR: 0, have: {}, newH: { id: null, text: '' } }, sel: 1, players: 12, seed: 1, q: '', page: 0, tryAsk: 0, typed: '', newQ: { 2: { question: '', info: '' }, 3: { question: '', truth: true } } };
   const M = () => FRE.miniEvent, O = () => FRE.miniEventOps, Sim = () => FRE.miniEventSim;
   const model = ctx => ctx.ws.models.minievent;
@@ -26548,6 +26814,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     const list = e.type === 2 || e.type === 3 ? `${e.asks.length} question${e.asks.length === 1 ? '' : 's'}` : e.type === 5 ? `${e.recipes.length} recipes` : e.type === 6 ? `${e.spots.length} hiding spots` : null;
     if (e.type === 2 || e.type === 3) questionsView(el, ctx, e);
     else if (e.type === 5) turninView(el, ctx, e);
+    else if (e.type === 6) hideView(el, ctx, e);
     else if (list) el.appendChild(h('p.muted.small', `This event has ${list} (at least one per round is needed: ${e.values.ROUNDS}). Editing the list comes in a later step.`));
 
     tryView(el, ctx, e);
@@ -26863,6 +27130,140 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     }
   }
 
+  // ---- Hide and Seek (step 4): SPOT lines on a map of Madrigal (loaders/minievent-hide.js)
+  const HS = () => FRE.miniEventHide;
+  const SVG = 'http://www.w3.org/2000/svg';
+  const svg = (tag, attrs, ...kids) => { const n = document.createElementNS(SVG, tag); for (const [k, v] of Object.entries(attrs || {})) n.setAttribute(k, v); kids.forEach(k => k && n.appendChild(k)); return n; };
+  function hctx(ws) {
+    if (!ws._meHide) { const mad = TI().madrigal(ws); ws._meHide = { mad, mobs: mad ? HS().mobs(ws, mad) : [] }; }
+    return ws._meHide;
+  }
+  // the map: titled boxes (grey), monster spots (tiny), hiding spots (numbered); a click puts x / z in the + form
+  function hideMap(ctx, e, H, onPick) {
+    const S = st.hs, pts = [...H.mad.respawns.map(r => [r.x, r.z]), ...e.spots.map(sp => [sp.x.value, sp.z.value])];
+    const xs = pts.map(p => p[0]), zs = pts.map(p => p[1]);
+    const x0 = Math.min(...xs) - 200, x1 = Math.max(...xs) + 200, z0 = Math.min(...zs) - 200, z1 = Math.max(...zs) + 200;
+    const W = 720, Hh = Math.round(W * (z1 - z0) / (x1 - x0));
+    const px = x => ((x - x0) / (x1 - x0)) * W, pz = z => Hh - ((z - z0) / (z1 - z0)) * Hh;      // north (+z) up
+    const root = svg('svg', { viewBox: `0 0 ${W} ${Hh}`, width: '100%', style: `max-width:${W}px;background:var(--panel, #11161d);border:1px solid #333;cursor:crosshair` });
+    for (const r of H.mad.regions) {
+      const big = (r.rect[2] - r.rect[0]) * (r.rect[3] - r.rect[1]) >= HS().SMALL;
+      const rect = svg('rect', { x: px(r.rect[0]), y: pz(r.rect[3]), width: Math.max(1, px(r.rect[2]) - px(r.rect[0])), height: Math.max(1, pz(r.rect[1]) - pz(r.rect[3])),
+        fill: big ? 'rgba(120,140,170,0.07)' : 'rgba(230,190,90,0.35)', stroke: big ? 'rgba(120,140,170,0.35)' : 'rgba(230,190,90,0.8)', 'stroke-width': 0.6 });
+      rect.appendChild(svg('title', {}, document.createTextNode(r.titles.join(' / '))));
+      root.appendChild(rect);
+    }
+    for (const r of H.mad.respawns) root.appendChild(svg('circle', { cx: px(r.x), cy: pz(r.z), r: 0.9, fill: 'rgba(160,160,160,0.45)' }));
+    e.spots.forEach((sp, i) => {
+      const c = svg('circle', { cx: px(sp.x.value), cy: pz(sp.z.value), r: i === S.sel ? 7 : 5, fill: i === S.sel ? '#ffcf4a' : '#3ccf8e', stroke: '#000', 'stroke-width': 1, style: 'cursor:pointer' });
+      c.appendChild(svg('title', {}, document.createTextNode(`${i + 1}: ${sp.region.text} (${Math.round(sp.x.value)}, ${Math.round(sp.z.value)})`)));
+      c.addEventListener('click', ev => { ev.stopPropagation(); S.sel = i; S.page = Math.floor(i / PAGE); ctx.renderAll(false); });
+      root.appendChild(c);
+      root.appendChild(svg('text', { x: px(sp.x.value) + 6, y: pz(sp.z.value) - 6, 'font-size': 10, fill: '#ddd' }, document.createTextNode(String(i + 1))));
+    });
+    const nw = S.newS;
+    if (nw.x && nw.z) root.appendChild(svg('circle', { cx: px(nw.x), cy: pz(nw.z), r: 6, fill: 'none', stroke: '#ff6b6b', 'stroke-width': 2 }));
+    root.addEventListener('click', ev => {
+      const b = root.getBoundingClientRect(), sx = (ev.clientX - b.left) / b.width * W, sy = (ev.clientY - b.top) / b.height * Hh;
+      onPick(Math.round(x0 + sx / W * (x1 - x0)), Math.round(z0 + (Hh - sy) / Hh * (z1 - z0)));
+    });
+    return root;
+  }
+
+  function hideView(el, ctx, e) {
+    const ws = ctx.ws, ed = can(ctx), S = st.hs, H = hctx(ws), m = model(ctx);
+    const spotOf = sp => ({ x: Math.round(sp.x.value), z: Math.round(sp.z.value), region: sp.region.text, hint: sp.hint.text, landmark: sp.landmark.text });
+    el.appendChild(h('h3', `Hiding spots (${e.spots.length})`));
+    el.appendChild(h('p.muted.small', `One spot per round (${e.values.ROUNDS} a run), never one twice in a run; never-used spots first. Lost Fwanki (${m.hideNpc ? m.hideNpc.key.text : 'no HIDE_NPC line!'}) stands there on the ground; the region is shouted at the start, the hint at ${HS().HINT1_PCT} % of the round, "within about 100 m of <landmark>" at ${HS().HINT2_PCT} %. "Found it!" works within ${HS().FOUND_DIST} m. Madrigal only. In game a GM adds the spot they stand on with /hidespot "region" ["hint"] ["landmark"].`));
+    if (!H.mad) { el.appendChild(h('p.warn-text', 'World/WdMadrigal/WdMadrigal.rgn was not read: the map, the area names and the suggestions need it.')); }
+
+    // + add: map click / paste /position / type; ✨ suggestions
+    if (ed) {
+      const nw = S.newS, msg = h('div.small');
+      const fill = () => { if (H.mad && nw.x && nw.z) Object.assign(nw, HS().suggest(H.mad, H.mobs, nw.x, nw.z)); };
+      const valid = () => { try { O().checkSpot(nw); return null; } catch (er) { return er.message; } };
+      const add = h('button.primary', { on: { click: () => {
+        const sp = Object.assign({}, nw);
+        edit(ctx, 6, (t, mm) => O().addSpot(t, mm, sp), `Hide and Seek: new spot ${sp.x}, ${sp.z} (${sp.region})`);
+        S.newS = { x: null, z: null, region: '', hint: '', landmark: '' }; S.paste = '';
+        ctx.renderAll(false);
+      } } }, '+ Add spot');
+      const check = () => { const v = valid(); add.disabled = !!v; msg.className = 'small warn-text'; msg.textContent = v && (nw.x || nw.region) ? '⛔ ' + v : ''; };
+      el.appendChild(h('div.dr-line',
+        textBox({ value: S.paste, placeholder: 'Paste /position: Position : x = 6970.12, y = 100.00, z = 3337.45', width: '30em', key: 'mehs-paste', onInput: v => {
+          S.paste = v; const p = FRE.npcEditOps.parsePosition(v);
+          if (p) { nw.x = Math.round(p.x); nw.z = Math.round(p.z); fill(); ctx.renderAll(false); }
+        } }),
+        h('span.muted.small', 'or click the map')));
+      el.appendChild(h('div.dr-line',
+        h('span', 'x '), numInput({ value: nw.x, min: 1, max: 99999, key: 'mehs-x', onCommit: v => { nw.x = v; ctx.renderAll(false); } }),
+        h('span', ' z '), numInput({ value: nw.z, min: 1, max: 99999, key: 'mehs-z', onCommit: v => { nw.z = v; ctx.renderAll(false); } }),
+        h('button.small', { disabled: !H.mad || !nw.x || !nw.z, title: 'Region, hint and landmark from the map (like build_spots.py)', on: { click: () => { fill(); ctx.renderAll(false); } } }, '✨ Fill from the map'),
+        nw.x && nw.z ? h('code.small', `/te 1 ${nw.x} ${nw.z}`) : null));
+      el.appendChild(h('div.dr-line',
+        textBox({ value: nw.region, max: 60, placeholder: 'Region (shouted at the start, 1-60)', width: '18em', key: 'mehs-r', onInput: v => { nw.region = v; check(); } }),
+        textBox({ value: nw.hint, max: 120, placeholder: 'Hint at 40 % (optional)', width: '20em', key: 'mehs-h', onInput: v => { nw.hint = v; check(); } }),
+        textBox({ value: nw.landmark, max: 60, placeholder: 'Landmark at 80 % (optional)', width: '16em', key: 'mehs-l', onInput: v => { nw.landmark = v; check(); } }), add));
+      el.appendChild(msg);
+      check();
+    }
+    if (H.mad) {
+      el.appendChild(hideMap(ctx, e, H, (x, z) => {
+        if (!ed) return;
+        Object.assign(S.newS, { x, z }); Object.assign(S.newS, HS().suggest(H.mad, H.mobs, x, z));
+        ctx.renderAll(false);
+      }));
+      el.appendChild(h('p.muted.small', 'Green = hiding spots (click one to find it in the table), gold boxes = landmarks, grey boxes = areas, dots = monster spots. Click anywhere to start a new spot there (filled from the map). The map shows no walls, water or height: check a new spot in game with the /te line.'));
+    }
+
+    // table
+    const q = S.q.toLowerCase();
+    const list = e.spots.map((sp, i) => [sp, i]).filter(([sp]) => !q || [sp.region.text, sp.hint.text, sp.landmark.text].some(t => t.toLowerCase().includes(q)));
+    const pages = Math.max(1, Math.ceil(list.length / PAGE));
+    if (S.page >= pages) S.page = pages - 1;
+    el.appendChild(h('div.dr-line', textBox({ value: S.q, placeholder: `Search the ${e.spots.length} spots`, width: '20em', key: 'mehs-q', onInput: v => { S.q = v; S.page = 0; ctx.renderAll(false); } }),
+      h('span.muted.small', `${list.length} shown`), pages > 1 ? h('span', h('button.small', { disabled: S.page === 0, on: { click: () => { S.page--; ctx.renderAll(false); } } }, '‹'),
+        h('span.muted.small', ` page ${S.page + 1} / ${pages} `), h('button.small', { disabled: S.page >= pages - 1, on: { click: () => { S.page++; ctx.renderAll(false); } } }, '›')) : null));
+    const asked = ws.miniEventAsked || null;
+    const rows = [h('tr', h('th', '#'), h('th', 'x / z'), h('th', 'Region'), h('th', 'Hint (40 %)'), h('th', 'Landmark (80 %)'), h('th', 'Used last'), h('th', ''))];
+    for (const [sp, i] of list.slice(S.page * PAGE, S.page * PAGE + PAGE)) {
+      const label = `Hide and Seek spot ${i + 1}`, cur = () => model(ctx).events[6].spots[i];
+      const change = (patch, what) => {
+        const nv = Object.assign(spotOf(cur()), patch);
+        try { O().checkSpot(nv); } catch (er) { toast(er.message, 'bad'); ctx.renderAll(false); return; }
+        edit(ctx, 6, t => O().editSpot(t, cur(), nv), `${label}: ${what}`);
+      };
+      const when = asked ? asked.get(Sim().askKey(6, Sim().askText(e, 6, i))) : null;
+      rows.push(h(i === S.sel ? 'tr.sel' : 'tr', h('td.muted', String(i + 1)),
+        h('td', numInput({ value: Math.round(sp.x.value), min: 1, max: 99999, disabled: !ed, key: `mehs-x|${i}`, onCommit: v => { if (v && v !== Math.round(sp.x.value)) change({ x: v }, `x ${v}`); } }),
+          numInput({ value: Math.round(sp.z.value), min: 1, max: 99999, disabled: !ed, key: `mehs-z|${i}`, onCommit: v => { if (v && v !== Math.round(sp.z.value)) change({ z: v }, `z ${v}`); } }),
+          h('div.muted.small', `/te 1 ${Math.round(sp.x.value)} ${Math.round(sp.z.value)}`)),
+        h('td', textBox({ value: sp.region.text, disabled: !ed, max: 60, key: `mehs-r|${i}`, onCommit: v => change({ region: v }, `region "${v}"`) })),
+        h('td', textBox({ value: sp.hint.text, disabled: !ed, max: 120, key: `mehs-h|${i}`, onCommit: v => change({ hint: v }, `hint "${v}"`) })),
+        h('td', textBox({ value: sp.landmark.text, disabled: !ed, max: 60, key: `mehs-l|${i}`, onCommit: v => change({ landmark: v }, `landmark "${v}"`) })),
+        h('td.muted.small', asked ? (when ? dateText(when) : 'never') : '—'),
+        h('td', ed ? h('button.icon.danger', { title: 'Remove this spot', on: { click: () => { S.sel = -1; edit(ctx, 6, t => O().removeSpot(t, cur()), `Hide and Seek: removed spot ${i + 1} (${sp.region.text})`); } } }, '✕') : null)));
+    }
+    el.appendChild(h('div.me-spots', h('table.items.rt', { style: 'table-layout:fixed;width:100%' }, h('colgroup', ['4%', '12%', '20%', '28%', '20%', '11%', '5%'].map(w => h('col', { style: `width:${w}` }))), rows)));
+    if (e.spots.length < e.values.ROUNDS) el.appendChild(h('p.warn-text', `⛔ Only ${e.spots.length} spots for ${e.values.ROUNDS} rounds: the server switches Mini Events off.`));
+
+    // one round, second by second + the next events
+    if (e.spots.length) {
+      if (S.try >= e.spots.length) S.try = 0;
+      const sp = spotOf(e.spots[S.try]), rt = e.values.ROUND_TIME;
+      el.appendChild(h('h3', '⏱ One round'));
+      el.appendChild(h('div.dr-line', h('select', { style: 'max-width:26em', on: { change: ev => { S.try = Number(ev.target.value); ctx.renderAll(false); } } },
+        e.spots.map((x, i) => h('option', { value: i, selected: i === S.try }, `${i + 1}: ${x.region.text}`))),
+        h('span', ' found after '), numInput({ value: S.foundAt, min: 0, max: 9999, key: 'mehs-found', onCommit: v => { S.foundAt = v; ctx.renderAll(false); } }), h('span.muted.small', ` seconds (empty or over ${rt} = nobody finds it)`)));
+      const log = HS().roundLog(rt, sp, S.foundAt === null ? null : S.foundAt, 'Player 1');
+      el.appendChild(h('ul.small', log.map(x => h('li', h('code', `${Math.floor(x.t / 60)}:${two(x.t % 60)}`), ' ', x.text))));
+      const hist = new Map(asked || []), now = Math.floor(Date.now() / 1000);
+      const runs = Sim().askRuns(e, 6, hist, now, 86400, 3, st.seed);
+      el.appendChild(h('h3', 'The next 3 events (one a day)'));
+      el.appendChild(h('ol.small', runs.map(r => h('li', r.order.map(i => `${i + 1} ${e.spots[i].region.text}`).join(', ')))));
+    }
+  }
+
   // a made-up event: N players, random picks (repeatable), the server's scoring and prizes
   function tryView(el, ctx, e) {
     el.appendChild(h('h3', '🎲 Try it'));
@@ -26879,15 +27280,98 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when
     el.appendChild(box);
   }
 
+  // ---- the week (step 5): BEGIN lines, editable; what really happens (loaders/minievent-week.js)
+  const WK = () => FRE.miniEventWeek;
+  const EV_COLOR = { FFA: '#d9534f', TDM: '#5b8def', 'Guild Siege': '#b06ad8', 'Free PK Time': '#e0a030' };
+  function wctx(ws) {
+    if (!ws._meWeek) ws._meWeek = { pvp: FRE.pvp ? FRE.pvp.fromWorkspace(ws) : null, fp: WK().readFreePk(ws.files.get('freepktime.txt') || null) };
+    return ws._meWeek;
+  }
   function weekView(el, ctx) {
-    const m = model(ctx), T = M().TYPES;
+    const m = model(ctx), T = M().TYPES, ed = can(ctx), ws = ctx.ws, W = wctx(ws), P = FRE.pvpSim;
+    const S = st.wk || (st.wk = { newB: { type: 0, day: 0, hour: 19, minute: 0 } });
+    const pool = m.events.filter(e => e && e.loaded && e.values.IN_RANDOM).map(e => e.name);
     el.appendChild(h('div.npc-title', h('h2', 'Start times (the week)')));
-    el.appendChild(h('p', 'Registration opens before each start time (each event\'s "Registration" minutes). RANDOM picks one of the events that are on for random start times. A start time is skipped while FFA, TDM, Guild Siege or Free PK Time is running.'));
-    const rows = [h('tr', h('th', 'Day'), h('th', 'Time'), h('th', 'Event'))];
-    for (const b of m.begins) rows.push(h('tr', h('td', DAYS[b.day.value] || String(b.day.value)), h('td', `${two(b.hour.value)}:${two(b.minute.value)}`),
-      h('td', b.type ? T[b.type].name : `Random (${m.events.filter(e => e && e.loaded && e.values.IN_RANDOM).map(e => e.name).join(', ') || 'none'})`)));
-    el.appendChild(h('table.items.rt', rows));
-    el.appendChild(h('p.muted.small', 'Editing the start times comes in a later step.'));
+    el.appendChild(h('p', `Registration opens before each start time (each event's "Registration" minutes); the event is announced then. Random picks one of: ${pool.join(', ') || 'none (every event has "Picked by a RANDOM start time" off)'}. If FFA, TDM, the Guild Siege or Free PK Time is on at that moment, that start is skipped. Times are the server PC's clock.`));
+    const evOpts = sel => [h('option', { value: 0, selected: sel === 0 }, 'Random'),
+      ...T.slice(1).map((x, i) => h('option', { value: i + 1, selected: sel === i + 1, disabled: !m.events[i + 1].loaded }, x.name))];
+    const dayOpts = sel => DAYS.map((d, i) => h('option', { value: i, selected: sel === i }, i ? d : 'Every day'));
+    const clash = WK().clashes(m, W.pvp);
+    const now = P.wallOf(new Date()), until = now + 14 * 86400;
+    const res = WK().week(m, W.pvp, W.fp, now, until, { seed: st.seed });
+    // the table
+    const rows = [h('tr', h('th', 'Event'), h('th', 'Day'), h('th', 'Hour'), h('th', 'Minute'), h('th', 'Notes'), h('th', ''))];
+    m.begins.forEach((b, i) => {
+      const cur = () => model(ctx).begins[i], bv = () => ({ type: cur().type, day: cur().day.value, hour: cur().hour.value, minute: cur().minute.value });
+      const change = (patch, what) => {
+        const nb = Object.assign(bv(), patch);
+        try { O().checkBegin(model(ctx), nb); } catch (er) { toast(er.message, 'bad'); ctx.renderAll(false); return; }
+        edit(ctx, 'week', t => O().editBegin(t, model(ctx), cur(), nb), `Start time ${i + 1}: ${what}`);
+      };
+      const notes = [];
+      const mine = res.runs.filter(r => r.line === i);
+      const skipped = mine.filter(r => r.why === 'busy'), lost = mine.filter(r => r.why === 'lost');
+      if (skipped.length) notes.push(h('div.small.warn-text', `⚠ skipped ${skipped.length}× in the next 2 weeks: ${[...new Set(skipped.map(r => r.busy))].join(', ')} is on when it would be announced`));
+      if (lost.length) notes.push(h('div.small.warn-text', `⚠ ${lost.length}× inside another Mini Event: never starts`));
+      if (mine.some(r => r.why === 'none')) notes.push(h('div.small.warn-text', '⚠ no event is on for RANDOM: nothing starts'));
+      for (const c of clash.filter(c => c.line === i)) notes.push(h('div.small.muted', `within an hour of ${c.ev} ${c.day ? DAYS[c.day] + ' ' : ''}${two(c.hour)}:${two(c.minute)} (the server logs a warning)`));
+      if (!notes.length) notes.push(h('div.small.ok-text', '✓ runs'));
+      rows.push(h('tr',
+        h('td', h('select', { disabled: !ed, on: { change: ev => change({ type: Number(ev.target.value) }, `event ${Number(ev.target.value) ? T[Number(ev.target.value)].name : 'Random'}`) } }, evOpts(b.type))),
+        h('td', h('select', { disabled: !ed, on: { change: ev => change({ day: Number(ev.target.value) }, `day ${Number(ev.target.value) ? DAYS[Number(ev.target.value)] : 'every day'}`) } }, dayOpts(b.day.value))),
+        h('td', numInput({ value: b.hour.value, min: 0, max: 23, disabled: !ed, key: `mewk-h|${i}`, onCommit: v => { if (v !== null && v !== b.hour.value) change({ hour: v }, `hour ${v}`); } })),
+        h('td', numInput({ value: b.minute.value, min: 0, max: 59, disabled: !ed, key: `mewk-m|${i}`, onCommit: v => { if (v !== null && v !== b.minute.value) change({ minute: v }, `minute ${v}`); } })),
+        h('td', notes),
+        h('td', ed ? h('button.icon.danger', { title: 'Remove this start time', on: { click: () => edit(ctx, 'week', t => O().removeBegin(t, cur()), `Removed start time ${i + 1} (${DAYS[b.day.value] || 'every day'} ${two(b.hour.value)}:${two(b.minute.value)})`) } }, '✕') : null)));
+    });
+    el.appendChild(h('div.me-pts', table(['26%', '16%', '9%', '9%', '36%', '4%'], rows)));
+    if (ed) {
+      const nb = S.newB;
+      el.appendChild(h('div.dr-line', h('select', { on: { change: ev => { nb.type = Number(ev.target.value); } } }, evOpts(nb.type)),
+        h('select', { on: { change: ev => { nb.day = Number(ev.target.value); } } }, dayOpts(nb.day)),
+        numInput({ value: nb.hour, min: 0, max: 23, key: 'mewk-nh', onCommit: v => { if (v !== null) nb.hour = v; } }), h('span', ':'),
+        numInput({ value: nb.minute, min: 0, max: 59, key: 'mewk-nm', onCommit: v => { if (v !== null) nb.minute = v; } }),
+        h('button.primary', { on: { click: () => {
+          const b = Object.assign({}, nb);
+          try { O().checkBegin(m, b); } catch (er) { toast(er.message, 'bad'); return; }
+          edit(ctx, 'week', (t, mm) => O().addBegin(t, mm, b), `New start time: ${b.type ? T[b.type].name : 'Random'} ${b.day ? DAYS[b.day] : 'every day'} ${two(b.hour)}:${two(b.minute)}`);
+        } } }, '+ Add start time')));
+    }
+    // the next 7 days as a grid: other events (coloured), Mini Event runs (green), skipped starts (red)
+    const d0 = P.midnight(now), HPX = 18, CW = 110, LW = 40;
+    const g = svg('svg', { viewBox: `0 0 ${LW + CW * 7} ${HPX * 24 + 22}`, width: '100%', style: `max-width:${LW + CW * 7}px;background:var(--panel, #11161d);border:1px solid #333` });
+    for (let d = 0; d < 7; d++) g.appendChild(svg('text', { x: LW + d * CW + 4, y: 14, 'font-size': 11, fill: '#ccc' }, document.createTextNode(`${P.dayName(d0 + d * 86400 + 43200).slice(0, 3)} ${new Date((d0 + d * 86400) * 1000).getUTCDate()}`)));
+    for (let hh = 0; hh < 24; hh += 2) g.appendChild(svg('text', { x: 2, y: 22 + hh * HPX + 10, 'font-size': 10, fill: '#888' }, document.createTextNode(`${two(hh)}:00`)));
+    const block = (from, to, color, label, dash) => {
+      for (let d = 0; d < 7; d++) {
+        const a = Math.max(from, d0 + d * 86400), b2 = Math.min(to, d0 + (d + 1) * 86400);
+        if (b2 <= a) continue;
+        const y = 22 + (a - d0 - d * 86400) / 3600 * HPX, hgt = Math.max(2, (b2 - a) / 3600 * HPX);
+        const r = svg('rect', { x: LW + d * CW + 2, y, width: CW - 4, height: hgt, fill: dash ? 'none' : color, 'fill-opacity': 0.55, stroke: color, 'stroke-width': dash ? 2 : 0.5, 'stroke-dasharray': dash ? '4 2' : '' });
+        r.appendChild(svg('title', {}, document.createTextNode(label)));
+        g.appendChild(r);
+        if (hgt >= 12) g.appendChild(svg('text', { x: LW + d * CW + 5, y: y + 11, 'font-size': 9, fill: '#fff' }, document.createTextNode(label.slice(0, 22))));
+      }
+    };
+    for (const w of res.busy) block(w.from, w.to, EV_COLOR[w.ev], `${w.ev} ${P.hhmm(w.from)}-${P.hhmm(w.to)}`);
+    for (const r of res.runs) {
+      if (r.why === null) block(r.announce, r.end, '#3ccf8e', `${T[r.picked].name} ${P.hhmm(r.start)}`);
+      else block(r.start, r.start + 1800, '#ff6b6b', `skipped ${P.hhmm(r.start)}${r.busy ? ' (' + r.busy + ')' : ''}`, true);
+    }
+    el.appendChild(h('h3', 'The next 7 days'));
+    el.appendChild(g);
+    el.appendChild(h('p.muted.small', h('span', { style: 'color:#3ccf8e' }, '■ Mini Event (registration → last round) '), ...Object.entries(EV_COLOR).map(([k, c]) => h('span', { style: `color:${c}` }, `■ ${k} `)), h('span', { style: 'color:#ff6b6b' }, '▢ a start that is skipped')));
+    // the list
+    const li = res.runs.filter(r => r.start <= now + 14 * 86400).slice(0, 40).map(r => h('li',
+      h('code', P.dateText(r.start)), ' ',
+      r.why === null ? `${T[r.picked].name}${r.type ? '' : ' (random pick)'}: announced ${P.hhmm(r.announce)}, ends by ${P.hhmm(r.end)}`
+        : r.why === 'busy' ? h('span.warn-text', `skipped: ${r.busy} is on at ${P.hhmm(r.announce)} (${r.type ? T[r.type].name : 'random'})`)
+          : r.why === 'lost' ? h('span.warn-text', 'never starts: another Mini Event is running') : h('span.warn-text', 'nothing: no event is on for RANDOM')));
+    el.appendChild(h('h3', 'The next 2 weeks'));
+    el.appendChild(h('ul.small', li));
+    if (!W.pvp) el.appendChild(h('p.muted.small', 'FFA / TDM / Guild Siege files were not read: their times are not shown.'));
+    if (!W.fp.ok) el.appendChild(h('p.muted.small', 'FreePKTime.txt was not read: Free PK Time is not shown.'));
+    el.appendChild(h('p.muted.small', 'RANDOM picks shown here use a made-up roll; the server rolls its own when the start comes up.'));
   }
 
   FRE.ui.modules.push(mod);
