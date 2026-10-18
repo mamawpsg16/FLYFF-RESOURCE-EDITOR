@@ -18,7 +18,7 @@
 //   Client/Client/DonationShopTree.inc: each time the Donation Shop window opens (WndDonationShop.cpp:346; 409 with donation-tree.diff).
 //   Client/Client/NpcBoard_<id>.inc: on every click of the menu, once docs/patches/npc-board.diff is built.
 //   Client/Client/GuildCombatTEXT_<n>_ENG / _USA.inc: the Guild Siege boards, read on every click by the game's own code
-//     (WndWorld.cpp:4600 / :4681 GetLangFileName( FILE_GUILDCOMBAT_TEXT_n ), no patch).
+//     (WndWorld.cpp:4653 / :4734 GetLangFileName( FILE_GUILDCOMBAT_TEXT_n ), no patch).
 //   FFAManager.inc / TDMManager.inc: the WorldServer at startup (Project.cpp:920 / :923 ReadConfig) AND the GM commands
 //     /ffareload / /tdmreload (FuncTextCmd.cpp:423 / :517; refused while a run is going), so a save needs one of the two.
 //   GuildCombat.txt: the WorldServer at startup (ThreadMng.cpp:293). GuildSiegePrize.lua: the WorldServer at startup
@@ -105,7 +105,7 @@
   const RGN = { server: STARTUP, client: null, cite: 'WorldFile.cpp:554 ReadRespawn (monsters: #ifdef __WORLDSERVER :601)' };
   const BOARD = { server: null, client: CLICK, cite: 'npc-board.diff: WndWorld.cpp OnCommand default:' };
   // the Guild Siege boards: the game's own code reads them on each click (no patch needed)
-  const GS_BOARD = { server: null, client: CLICK, noPatch: true, cite: 'WndWorld.cpp:4600 / :4681 FILE_GUILDCOMBAT_TEXT_n' };
+  const GS_BOARD = { server: null, client: CLICK, noPatch: true, cite: 'WndWorld.cpp:4653 / :4734 FILE_GUILDCOMBAT_TEXT_n' };
   // a file the table does not know: assume both read it at startup (the safe answer)
   const UNKNOWN = { server: STARTUP, client: STARTUP, cite: '?' };
 

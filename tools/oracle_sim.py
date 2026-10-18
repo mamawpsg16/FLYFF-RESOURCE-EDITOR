@@ -4147,7 +4147,7 @@ def db_run(root):
 #     copies, a loose file before data.res (file.cpp:273 CResFile::Open).
 #   Client/Client/DonationShopTree.inc: CWndDonationShop::OnInitialUpdate (WndDonationShop.cpp:346; 409 with donation-tree.diff), each opening.
 #   Client/Client/NpcBoard_<id>.inc: the npc-board.diff default: branch of CWndWorld::OnCommand, each click.
-#   Client/Client/GuildCombatTEXT_<n>_ENG/_USA.inc: CWndWorld::OnCommand MMI_GUILDCOMBAT_INFO_BOARD<n> (WndWorld.cpp:4600 / :4681),
+#   Client/Client/GuildCombatTEXT_<n>_ENG/_USA.inc: CWndWorld::OnCommand MMI_GUILDCOMBAT_INFO_BOARD<n> (WndWorld.cpp:4653 / :4734),
 #     the game's own code, each click: no patch.
 #   FFAManager.inc / TDMManager.inc: Project.cpp:920 / :923 ReadConfig at WorldServer start, and the GM commands /ffareload /
 #     /tdmreload (FuncTextCmd.cpp:423 / :517): a restart OR the command. GuildCombat.txt: ThreadMng.cpp:293, WorldServer start.
@@ -4215,8 +4215,8 @@ AS_CITES = [
     ('_Common/eveschool.cpp', 3743, 'CGuildSiegePrize::GetInstance()->LoadPrizes()'),
     ('databaseserver/Project.cpp', 216, 'CGuildSiegePrize::GetInstance()->LoadScript()'),
     ('_Common/Project.cpp', 996, 'CInstanceDungeonParty::GetInstance()->LoadScript("PartyDungeon.lua")'),
-    ('_Interface/WndWorld.cpp', 4647, 'FILE_GUILDCOMBAT_TEXT_6'),
-    ('_Interface/WndWorld.cpp', 4728, 'FILE_GUILDCOMBAT_TEXT_1'),
+    ('_Interface/WndWorld.cpp', 4653, 'FILE_GUILDCOMBAT_TEXT_6'),
+    ('_Interface/WndWorld.cpp', 4734, 'FILE_GUILDCOMBAT_TEXT_1'),
     # Mounts (V19 b43949aa / a5325b65): both load it, outside any __WORLDSERVER #ifdef
     ('_Common/Project.cpp', 1102, 'LoadMountAnimationList()'),
 ]
