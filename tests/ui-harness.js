@@ -775,7 +775,7 @@
       await waitFor(() => !document.querySelector('.ip'), 'picker closed');
       ok(/II_SYS_SYS_SCR_BLESSEDNESS/.test(form.querySelector('.nn-items').textContent) && /1 \/ 100/.test(form.textContent), 'the picked item is in the tab table');
       ok(/No problem found/.test(form.querySelector('.nn-problems').textContent), 'new NPC form: no problem for the §5 example');
-      ok(/AddVendorSlot\( 0, IDS_CHARACTER_INC_001189 \)|IDS_CHARACTER_INC_001190/.test(form.querySelector('.nn-preview').textContent) && /200 bytes inserted at offset 73300/.test(form.querySelector('.nn-preview').textContent),
+      ok(/AddVendorSlot\( 0, IDS_CHARACTER_INC_001190 \)|IDS_CHARACTER_INC_001191/.test(form.querySelector('.nn-preview').textContent) && /200 bytes inserted at offset 73300/.test(form.querySelector('.nn-preview').textContent),
         'preview: the exact block, the new text keys and the .dyo insert point');
       type('input[placeholder="MaFl_Lumi"]', 'MaFl_Juria');
       ok(/already exists/.test(form.querySelector('.nn-problems').textContent) && document.getElementById('nn-create').disabled, 'a taken key blocks Create');
