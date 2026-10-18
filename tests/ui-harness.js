@@ -540,6 +540,7 @@
     const f2 = document.querySelector('select.npc-filter');
     f2.value = 'shops'; f2.dispatchEvent(new Event('change'));
     click([...document.querySelectorAll('#list .npc')].find(x => x.textContent.includes('MaFl_Lui')));
+    click(btnByText(document.querySelector('.tabs'), 'Magic Tools'));          // back where the next steps expect: Lui, tab 1
     ok(document.querySelectorAll('#list .npc').length > 50, 'filter back to all shops');
 
     // shop type: Lui Penya -> Red Chip via the dropdown, preview, confirm, one undo
