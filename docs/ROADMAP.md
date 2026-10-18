@@ -2,6 +2,8 @@
 
 _Last updated 2026-10-12 (PvP Events built, waiting for the test. Before: G part 1 pushed `372cbfb`; G part 2, Weapon Effects, built, waiting for the user's Brave test. C, L and M dropped (the user, 2026-10-10). Next after G: the "Next, after the resource editor" features in FLYFF TODOS.md, planned one at a time)._
 
+> **Handoff (2026-10-18, late night) — Bot Check built: the V19 change that reads the tuning from AntiBot.inc (`d816e99f`, session branch, NOT built / tested; Bear's Cave stays checked) and the editor task (settings, maps where kills never count, pictures and words with icons, Try it). The planned list (Mini Events, Mounts, Bot Check) is done; next is the user's in-game testing (guides `RESOURCE-EDITOR-IN-GAME-TEST.md` items 23-28) and whatever they pick next.**
+>
 > **Handoff (2026-10-18, night) — Mini Events finished in the editor: step 4 (Hide and Seek spots on a map, Paste /position, ✨ fill from the map, one round) and step 5 (the week: editable start times, what really happens in the next 2 weeks incl. FFA / TDM / Guild Siege / Free PK Time skips, a 7-day grid). Next: Bot Check (first the V19 change moving ANTIBOT_* into AntiBot.inc; ask about Bear's Cave 230). User's test: guides `RESOURCE-EDITOR-IN-GAME-TEST.md` item 27.**
 >
 > **Handoff (2026-10-18, evening) — Mini Events step 3 built: the Turn-in Race page (recipes, hints, 🎲 random recipes, Try turning in) + the in-game `/eventrecipe` GM command in V19 `4a733f19` (session branch `ccr-0b3bb63d-dj4bft`, not merged, NOT built / tested: WorldServer + Neuz). Next: step 4 Hide and Seek spots (add / change / remove), step 5 the week. User's test: guides `RESOURCE-EDITOR-IN-GAME-TEST.md` item 26.**

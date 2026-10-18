@@ -235,6 +235,8 @@ td.nowrap { white-space: nowrap; }
 .tag input.num-input { width: 64px; }
 .me-spots td input.num-input { width: 100%; min-width: 0; box-sizing: border-box; margin-bottom: 2px; }
 tr.sel td { background: rgba(255, 207, 74, 0.10); }
+.ab-pick { padding: 6px; background: #1b222c; border: 1px solid #39424e; border-radius: 6px; cursor: pointer; }
+.ab-pick:hover { border-color: var(--ok); }
 .note { border-left: 3px solid var(--ok); padding: 6px 10px; margin: 8px 0; }
 .ex-game { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--line); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 12px; }
 .ex-slot { padding: 1px 7px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }

@@ -243,6 +243,8 @@ td.nowrap { white-space: nowrap; }
 .tag input.num-input { width: 64px; }
 .me-spots td input.num-input { width: 100%; min-width: 0; box-sizing: border-box; margin-bottom: 2px; }
 tr.sel td { background: rgba(255, 207, 74, 0.10); }
+.ab-pick { padding: 6px; background: #1b222c; border: 1px solid #39424e; border-radius: 6px; cursor: pointer; }
+.ab-pick:hover { border-color: var(--ok); }
 .note { border-left: 3px solid var(--ok); padding: 6px 10px; margin: 8px 0; }
 .ex-game { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--line); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 12px; }
 .ex-slot { padding: 1px 7px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
@@ -502,7 +504,7 @@ details.mt-more > summary { cursor: pointer; color: var(--muted); padding: 6px 0
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when": "Sun 18 Oct 2026, 06:27", "rev": "89ddb37", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "65+", "when": "Sun 18 Oct 2026, 06:45", "rev": "8fb43f0", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -6350,6 +6352,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when
     ME_HINT_DUP: ['An item has two ITEM_HINT lines. The server keeps only the last one, so the first one never shows.', 'Remove the extra line (✕ on the hint), or edit the one that shows.'],
     ME_HINT_MISSING: ['A Turn-in recipe item has no ITEM_HINT line, so the window shows nothing under it about where to get it.', 'Use "Write missing hints" on the Turn-in Race page, or type one in the Hints table.'],
     ME_SPOT_DUP: ['Two Hide and Seek spots round to the same x / z. They share one "last used" entry, so the same place can come up twice in one event.', 'Remove one, or move it a few metres.'],
+    AB_FEW: ['AntiBot.inc has fewer than 6 good picture lines. The server does not take the list: at start the bot check is OFF; a /antibot reload keeps the old list.', 'Add words until there are at least 6.'],
+    AB_SKIPPED: ['The server skips this picture line (the item does not exist, the word is empty, or the word / item is already in the list) and writes it to error_*.txt.', 'Fix or remove the line.'],
+    AB_RANGE: ['A tuning value is out of its range (or the map is not loaded): the server keeps the default (CAMP_RADIUS: the value before) and writes it to error_*.txt.', 'Type a value inside the range shown.'],
+    AB_SAME_ICON: ['Two words use the same picture file: a player cannot tell which is which.', 'Remove one, or pick an item with a different picture.'],
+    AB_SHORT: ['Fewer than 12 words: a bot can learn every picture quickly.', 'Add more words (any item whose picture clearly shows the word).'],
     ME_ASK_DUP: ['The same question is in the list twice. Both copies share one "last asked" entry, so both can come up in the same event.', 'Delete one of them.'],
     ME_NO_RANDOM: ['Every event is set to stay out of RANDOM start times, so a "BEGIN RANDOM" time starts nothing and nothing is logged.', 'Turn on "Picked by a RANDOM start time" for at least one event, or give that start time a fixed event.'],
     // Mounts (Mount.inc, LoadMountAnimationList Project.cpp:618)
@@ -15419,6 +15426,209 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when
   FRE.miniEventWeek = { readFreePk, freePkWindows, nextStart, busyWindows, busyAt, week, clashes };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/antibot.js ----
+// Bot Check (task "Bot Check"): Server/Resource/AntiBot.inc, read the way CAntiBotMng::LoadScript reads it
+// (WORLDSERVER/AntiBotMng.cpp, V19 78f3239f; the tuning lines V19 d816e99f, NOT YET BUILT OR TESTED: an older WorldServer
+// skips them and uses the compiled CustomCommon.h ANTIBOT_* values).
+//   ANTIBOT_ITEM <item> "<word>"   skipped (error_*.txt) when the item does not exist, the word is empty, or the word (any case) /
+//                                  the item is already in the list; fewer than ANTIBOT_CHOICES (6) good lines = the list is not
+//                                  taken (at start: no puzzles at all; /antibot reload: the old list stays).
+//   SCORE_LIMIT n (1-1000000) RANDOM_CHANCE n (0-1000000) CAMP_RADIUS f (1-1000) CAMP_MINUTES n (1-1440) COOLDOWN_MINUTES n
+//   (0-1440) ANSWER_SECONDS n (10-3600) FROZEN_SECONDS n (10-86400) CLICKS n (1-20) SKIP_GM 0|1   out of range = the default
+//   NO_CHECK_WORLD <world>         a map where kills never count (a world the server does not load is skipped)
+// One CScript token stream: any other word is skipped. The words and the tuning change together.
+// SERVER ONLY: the words are the answer key (never a Client copy).
+(function (FRE) {
+  'use strict';
+  const CHOICES = 6;      // ANTIBOT_CHOICES (CustomCommon.h:243): compiled into the game's window too
+  // key, label, default (CustomCommon.h:235-245), min, max, float?, help
+  const TUNING = [
+    { key: 'SCORE_LIMIT', label: 'Score that opens the puzzle', def: 1200, min: 1, max: 1000000,
+      help: 'Each monster kill adds 1 (2 while camping). At this score the puzzle opens. Kills in towns, events, PvP maps, guild houses and party dungeons never count.' },
+    { key: 'RANDOM_CHANCE', label: 'Random check: 1 in …', def: 2000, min: 0, max: 1000000,
+      help: 'Every counted kill also opens the puzzle with this chance (2000 = 1 in 2,000). 0 = off.' },
+    { key: 'CAMP_RADIUS', label: 'Camping: still within … metres', def: 40, min: 1, max: 1000, float: true,
+      help: 'A player who stays this close to one spot …' },
+    { key: 'CAMP_MINUTES', label: '… for … minutes', def: 20, min: 1, max: 1440,
+      help: '… for this long counts as camping: each kill then adds 2.' },
+    { key: 'COOLDOWN_MINUTES', label: 'Rest after a right answer (minutes)', def: 30, min: 0, max: 1440,
+      help: 'No new puzzle for this long after the right picture was clicked.' },
+    { key: 'ANSWER_SECONDS', label: 'Time to answer (seconds)', def: 120, min: 10, max: 3600,
+      help: 'Then the player is frozen (cannot move, attack, use items or teleport) and gets new pictures.' },
+    { key: 'FROZEN_SECONDS', label: 'Frozen for (seconds)', def: 300, min: 10, max: 86400,
+      help: 'No right answer in this time: sent to town, and the next counted kill asks again.' },
+    { key: 'CLICKS', label: 'Clicks per stage', def: 3, min: 1, max: 20,
+      help: 'Wrong clicks allowed while asking (then frozen) and again while frozen. A wrong click shows new pictures.' },
+    { key: 'SKIP_GM', label: 'GM accounts never get it', def: 1, min: 0, max: 1, bool: true,
+      help: 'On = GMs only get it with /antibot. Turn off to test it on a GM account.' },
+  ];
+  const BY = new Map(TUNING.map(t => [t.key, t]));
+  const { Script } = FRE.lexer;
+
+  // ctx: { defines, items (Map id -> item), worlds (Set of loaded world ids) | null }
+  function loadAntiBot(file, ctx = {}) {
+    const text = file.text, s = new Script(text, { file: file.name, defines: ctx.defines || new Map(), diags: [] });
+    const lines = [], skipped = [], tune = {}, worlds = [], errors = [];
+    for (const t of TUNING) tune[t.key] = { value: t.def, set: null };
+    const itemOk = id => !!(ctx.items && ctx.items.get(id >>> 0));
+    for (let t = s.getToken(); t.type !== 'eof'; t = s.getToken()) {
+      const start = t.start;
+      if (t.text === 'ANTIBOT_ITEM') {
+        const n = s.getNumber(), w = s.getToken();
+        const item = { value: n.value >>> 0, start: n.start, end: n.end, define: n.define || text.slice(n.start, n.end) };
+        const word = { text: w.type === 'eof' ? '' : w.text, start: w.start, end: w.end };
+        const rec = { kw: 'ANTIBOT_ITEM', start, end: w.end, item, word, id: item.value };
+        const dup = lines.some(x => x.word.text.toLowerCase() === word.text.toLowerCase() || x.id === rec.id);
+        if (!itemOk(rec.id)) { rec.why = `item ${rec.id} ("${word.text}") does not exist - skipped`; skipped.push(rec); }
+        else if (!word.text || dup) { rec.why = `item ${rec.id} "${word.text}" - empty or repeated word / item - skipped`; skipped.push(rec); }
+        else lines.push(rec);
+      } else if (BY.has(t.text)) {
+        const k = BY.get(t.text), v = k.float ? s.getFloat() : s.getNumber();
+        const value = k.float ? Math.fround(v.value) : v.value;
+        const rec = { key: k.key, start, end: v.end, valueSpan: { start: v.start, end: v.end }, value };
+        // ABNumber: out of range = the DEFAULT (even after a good line of the same key); CAMP_RADIUS out of range = unchanged
+        if (!(value >= k.min && value <= k.max)) {
+          rec.why = `${k.key} ${value} is not ${k.min} - ${k.max}: ${k.float ? 'the value before' : k.def} kept`; errors.push(rec);
+          if (!k.float) tune[k.key] = { value: k.def, set: null, lines: tune[k.key].lines };
+        } else tune[k.key] = { value, set: rec, lines: tune[k.key].lines };
+        tune[k.key].lines = (tune[k.key].lines || []).concat(rec);
+      } else if (t.text === 'NO_CHECK_WORLD') {
+        const n = s.getNumber();
+        const rec = { start, end: n.end, world: n.value >>> 0, define: n.define || text.slice(n.start, n.end), span: { start: n.start, end: n.end } };
+        if (ctx.worlds && !ctx.worlds.has(rec.world)) { rec.why = `NO_CHECK_WORLD ${rec.world} is not a loaded map - skipped`; errors.push(rec); }
+        else worlds.push(rec);
+      }
+    }
+    const ok = lines.length >= CHOICES;
+    return { file: file.name, lines, skipped, tune, worlds, errors, ok, eol: /\r\n/.test(text) ? '\r\n' : '\n' };
+  }
+
+  function fromWorkspace(ws) {
+    const D = ws.defines.defines;
+    let worlds = null;
+    try { if (ws.files.get('world.inc')) worlds = new Set(ws.worldList().map(w => w.id >>> 0)); } catch (e) { worlds = null; }
+    return loadAntiBot(ws.files.get('antibot.inc'), { defines: D, items: ws.items.items, worlds });
+  }
+  const value = (m, key) => m.tune[key].value;
+
+  FRE.antiBot = { loadAntiBot, fromWorkspace, value, TUNING, BY, CHOICES, FILE: 'AntiBot.inc' };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/antibot-sim.js ----
+// Bot Check simulator: what the AntiBot.inc words and tuning do to a player (WORLDSERVER/AntiBotMng.cpp, V19 78f3239f + d816e99f).
+//   kill      OnKill (:183): nothing while no word list, outside a counted zone, while a puzzle is open; a pending re-check (after
+//             being sent to town) opens it at once; inside the cooldown nothing; camping = the same world and within CAMP_RADIUS
+//             (x, y and z, D3DXVec3LengthSq in float) of the anchor, else the anchor moves here; +2 when the anchor is CAMP_MINUTES
+//             old, else +1; score >= SCORE_LIMIT opens it, else a 1 in RANDOM_CHANCE roll (xRandom) may.
+//   icons     NewIcons (:223): a nonce = xRand() (not 0), 6 different lines by a partial shuffle (i + xRandom( n - i )), the asked
+//             one = xRandom( 6 ).
+//   answer    OnAnswer (:340): a right click: solved, score 0, the cooldown starts; a wrong one: -1 click; no clicks left while
+//             asking = frozen (FROZEN_SECONDS, the clicks again, new icons); else new icons. No clicks left while frozen: wait.
+//   tick      Process (:375) once a second for an online player with a puzzle: the seconds left -1; 0 while asking = frozen,
+//             0 while frozen = SendToTown (score 0, the next counted kill asks again).
+//   zone      IsCountedZone (:76): GM accounts (SKIP_GM), safe regions, NO_CHECK_WORLD maps, the event / PvP / guild maps, secret
+//             rooms, guild houses, party dungeons never count (the caller says which of those the player is in).
+// Not modelled: offline players (their timers wait), the 10 s resend, the logs, the town position.
+(function (FRE) {
+  'use strict';
+  const A = () => FRE.antiBot;
+  const f32 = Math.fround;
+  const NONE = 0, ASKING = 1, FROZEN = 2;
+
+  function newEntry() {
+    return { state: NONE, score: 0, anchor: null, anchorWorld: null, tAnchor: 0, cooldown: 0, recheck: false,
+      secLeft: 0, tries: 0, wrong: 0, nonce: 0, items: [], correct: -1, word: '', puzzles: 0, solved: 0, frozen: 0, town: 0 };
+  }
+  function newIcons(m, e, rng) {
+    do e.nonce = rng.rand(); while (e.nonce === 0);
+    const n = m.lines.length, idx = [...Array(n).keys()];
+    if (n < A().CHOICES) return;
+    for (let i = 0; i < A().CHOICES; i++) { const j = i + rng.random(n - i); const t = idx[i]; idx[i] = idx[j]; idx[j] = t; e.items[i] = m.lines[idx[i]].id; }
+    e.items.length = A().CHOICES;
+    e.correct = rng.random(A().CHOICES);
+    e.word = m.lines[idx[e.correct]].word.text;
+  }
+  function start(m, e, rng, reason, log) {
+    const T = k => A().value(m, k);
+    e.recheck = false; e.state = ASKING; e.secLeft = T('ANSWER_SECONDS'); e.tries = T('CLICKS'); e.wrong = 0; e.puzzles++;
+    newIcons(m, e, rng);
+    log.push({ ev: 'open', reason, word: e.word, items: e.items.slice(), correct: e.correct });
+  }
+  // a counted-zone kill at t (seconds) and pos { world, x, y, z }; zone = IsCountedZone's answer for that spot
+  function kill(m, e, rng, t, pos, zone, log) {
+    if (!m.ok || !zone) return;
+    if (e.state !== NONE) return;
+    if (e.recheck) { start(m, e, rng, 'recheck', log); return; }
+    if (t < e.cooldown) return;
+    const T = k => A().value(m, k);
+    let far = e.anchorWorld !== pos.world;
+    if (!far) {
+      const dx = f32(pos.x - e.anchor.x), dy = f32(pos.y - e.anchor.y), dz = f32(pos.z - e.anchor.z);
+      const r = f32(T('CAMP_RADIUS'));
+      far = f32(f32(f32(dx * dx) + f32(dy * dy)) + f32(dz * dz)) > f32(r * r);
+    }
+    if (far) { e.anchorWorld = pos.world; e.anchor = { x: f32(pos.x), y: f32(pos.y), z: f32(pos.z) }; e.tAnchor = t; }
+    e.score += (t - e.tAnchor >= T('CAMP_MINUTES') * 60) ? 2 : 1;
+    if (e.score >= T('SCORE_LIMIT')) start(m, e, rng, 'score', log);
+    else if (T('RANDOM_CHANCE') > 0 && rng.random(T('RANDOM_CHANCE')) === 0) start(m, e, rng, 'random', log);
+  }
+  function freeze(m, e, rng, log, detail) {
+    const T = k => A().value(m, k);
+    e.state = FROZEN; e.secLeft = T('FROZEN_SECONDS'); e.tries = T('CLICKS'); e.frozen++;
+    newIcons(m, e, rng);
+    log.push({ ev: 'frozen', detail, word: e.word, items: e.items.slice(), correct: e.correct });
+  }
+  function end(e) { e.state = NONE; e.secLeft = 0; e.tries = 0; e.nonce = 0; }
+  // a click on icon `index` (0-5) at t
+  function answer(m, e, rng, t, index, log, nonce = e.nonce) {
+    if (e.state === NONE || nonce !== e.nonce || index < 0 || index >= A().CHOICES) return;
+    if (e.tries <= 0) return;
+    if (index === e.correct) {
+      e.solved++; end(e); e.score = 0; e.cooldown = t + A().value(m, 'COOLDOWN_MINUTES') * 60;
+      log.push({ ev: 'solved' });
+      return;
+    }
+    e.wrong++; e.tries--;
+    log.push({ ev: 'wrong', tries: e.tries });
+    if (e.tries <= 0 && e.state === ASKING) { freeze(m, e, rng, log, 1); return; }
+    if (e.tries > 0) { newIcons(m, e, rng); log.push({ ev: 'icons', word: e.word, items: e.items.slice(), correct: e.correct }); }
+  }
+  // one second of Process for an online player
+  function tick(m, e, rng, log) {
+    if (e.state === NONE) return;
+    if (--e.secLeft <= 0) {
+      if (e.state === ASKING) freeze(m, e, rng, log, 0);
+      else { e.town++; end(e); e.score = 0; e.recheck = true; log.push({ ev: 'town' }); }
+    }
+  }
+
+  // a made-up hour (or more): kills every `every` seconds, standing still (camping) or moving `step` metres (and `climb` up) a kill; the player
+  // answers after `delay` seconds: 'right', 'wrong' (always the next icon), 'none'. -> { log: [{ t, ev, ... }], entry }
+  function session(m, o) {
+    const rng = FRE.xRandom.rng(o.seed || 1), e = newEntry(), log = [];
+    const at = t => x => { x.t = t; return x; };
+    let pending = null;
+    for (let t = 0; t <= o.seconds; t++) {
+      const before = log.length;
+      if (e.state !== NONE && pending !== null && t >= pending) {
+        const idx = o.answer === 'right' ? e.correct : o.answer === 'wrong' ? (e.correct + 1) % A().CHOICES : -1;
+        if (idx >= 0) answer(m, e, rng, t, idx, log);
+        pending = e.state !== NONE ? t + o.delay : null;
+      }
+      if (t > 0) tick(m, e, rng, log);
+      if (t % o.every === 0) {
+        const k = t / o.every;
+        kill(m, e, rng, t, { world: 1, x: 6900 + (o.step || 0) * k, y: 100 + (o.climb || 0) * k, z: 3300 }, o.zone !== false, log);
+      }
+      for (let i = before; i < log.length; i++) at(t)(log[i]);
+      if (e.state !== NONE && pending === null) pending = t + o.delay;
+    }
+    return { log, entry: e };
+  }
+
+  FRE.antiBotSim = { newEntry, newIcons, kill, answer, tick, session, NONE, ASKING, FROZEN };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- edit/minievent-ops.js ----
 // Mini Events edits (MiniEvent.inc; LF in git, CRLF on the Windows PC: new lines copy their neighbour's EOL and tabs).
 // The file's own style (V19 25e4f227): "EVENT<TAB>COLORGAME<TAB>MIN_LEVEL 120<TAB>MIN_PLAYERS 5 ...", "RANK<TAB>COLORGAME<TAB>1<TAB>
@@ -15642,6 +15852,68 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when
     checkRecipe, recipeRow, hintRow, addRecipe, editRecipe, removeRecipe, putRecipes, checkHint, hintOf, setHint, removeHint, addHints };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- edit/antibot-ops.js ----
+// Bot Check edits (AntiBot.inc: CRLF, tabs). A word line: ANTIBOT_ITEM<TAB><item define><TAB>"<word>"; a tuning line: KEY<TAB>value;
+// a map: NO_CHECK_WORLD<TAB><world define>. New lines copy their neighbour's indent and EOL (textOps.insertRowAfter).
+(function (FRE) {
+  'use strict';
+  const T = FRE.textOps, A = () => FRE.antiBot;
+  function checkWord(m, w, exceptId) {
+    if (typeof w !== 'string' || !w.length || w.length > 30) throw new Error('The word: 1 to 30 letters');
+    if (/"/.test(w) || /[^\x20-\x7e]/.test(w)) throw new Error('The word: plain letters only, no "');
+    if (m.lines.some(r => r.id !== exceptId && r.word.text.toLowerCase() === w.toLowerCase())) throw new Error(`"${w}" is already a word (any upper / lower case)`);
+  }
+  const wordRow = (define, w) => `ANTIBOT_ITEM\t${define}\t"${w}"`;
+  const lastOf = list => list.reduce((a, b) => (b.start > a.start ? b : a));
+  function addWord(text, m, id, define, w) {
+    checkWord(m, w, null);
+    if (m.lines.some(r => r.id === id) || m.skipped.some(r => r.id === id)) throw new Error('That item is already in the list');
+    const all = [...m.lines, ...m.skipped];
+    if (all.length) return T.insertRowAfter(text, lastOf(all), wordRow(define, w));
+    return [{ start: text.length, end: text.length, insert: `${text.length && !text.endsWith('\n') ? m.eol : ''}${wordRow(define, w)}${m.eol}` }];
+  }
+  function editWord(text, m, rec, w) { checkWord(m, w, rec.id); return w === rec.word.text ? [] : [{ start: rec.word.start, end: rec.word.end, insert: `"${w}"` }]; }
+  function changeItem(text, m, rec, define, id) {
+    if (m.lines.some(r => r !== rec && r.id === id)) throw new Error('That item is already in the list');
+    return [{ start: rec.item.start, end: rec.item.end, insert: define }];
+  }
+  const removeWord = (text, rec) => T.removeRow(text, rec);
+  // a tuning value: the last line of the key is changed; no line = a new one after the last tuning line (else before the words)
+  function setTune(text, m, key, v) {
+    const k = A().BY.get(key);
+    if (!k) throw new Error(`Unknown setting ${key}`);
+    if (!(typeof v === 'number' && v >= k.min && v <= k.max && (k.float || Number.isInteger(v)))) throw new Error(`${k.label}: ${k.min} - ${k.max}${k.float ? '' : ', a whole number'}`);
+    const out = k.float ? String(Number(Math.fround(v).toPrecision(6))) : String(v);
+    const lines = m.tune[key].lines || [];
+    if (lines.length) { const r = lastOf(lines); return [{ start: r.valueSpan.start, end: r.valueSpan.end, insert: out }]; }
+    const tl = A().TUNING.flatMap(t => m.tune[t.key].lines || []);
+    const row = `${key}\t${out}`;
+    if (tl.length) return T.insertRowAfter(text, lastOf(tl), row);
+    const first = [...m.lines, ...m.skipped].sort((a, b) => a.start - b.start)[0];
+    if (first) { const ls = text.lastIndexOf('\n', first.start - 1) + 1; return [{ start: ls, end: ls, insert: `${row}${m.eol}` }]; }
+    return [{ start: text.length, end: text.length, insert: `${text.length && !text.endsWith('\n') ? m.eol : ''}${row}${m.eol}` }];
+  }
+  function addWorld(text, m, define, id) {
+    if (m.worlds.some(w => w.world === id)) throw new Error('That map is already in the list');
+    const row = `NO_CHECK_WORLD\t${define}`;
+    if (m.worlds.length) return T.insertRowAfter(text, lastOf(m.worlds), row);
+    return setTuneAnchor(text, m, row);
+  }
+  function setTuneAnchor(text, m, row) {
+    const tl = A().TUNING.flatMap(t => m.tune[t.key].lines || []);
+    if (tl.length) return T.insertRowAfter(text, lastOf(tl), row);
+    const first = [...m.lines, ...m.skipped].sort((a, b) => a.start - b.start)[0];
+    if (first) { const ls = text.lastIndexOf('\n', first.start - 1) + 1; return [{ start: ls, end: ls, insert: `${row}${m.eol}` }]; }
+    return [{ start: text.length, end: text.length, insert: `${row}${m.eol}` }];
+  }
+  function removeWorld(text, m, id) {
+    const out = [];
+    for (const w of [...m.worlds, ...m.errors.filter(e => e.world !== undefined)]) if (w.world === id) out.push(...T.removeRow(text, w));
+    return out;
+  }
+  FRE.antiBotOps = { checkWord, wordRow, addWord, editWord, changeItem, removeWord, setTune, addWorld, removeWorld };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- validate/minievent.js ----
 // Mini Events checks. loaders/minievent.js reads MiniEvent.inc the way CMiniEventMng::ReadConfig does: every error it finds
 // switches ALL Mini Events off (BLOCK); the rest are the editor's own warnings.
@@ -15704,6 +15976,31 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when
     return out;
   }
   FRE.miniEventChecks = miniEventChecks;
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- validate/antibot.js ----
+// Bot Check checks (AntiBot.inc). The server's own refusals (CAntiBotMng::LoadScript) first, then the editor's warnings.
+(function (FRE) {
+  'use strict';
+  function antiBotChecks(m, opts = {}) {
+    const out = [], F = FRE.antiBot.FILE;
+    const push = (span, code, severity, message, k) => out.push({ module: 'antibot', file: F, code, severity, start: span.start, end: span.end, key: `${code}|${k}`, message });
+    if (!m.ok) push({ start: 0, end: 0 }, 'AB_FEW', 'BLOCK', `Only ${m.lines.length} good ANTIBOT_ITEM lines, ${FRE.antiBot.CHOICES} needed: at start the bot check is OFF (a /antibot reload keeps the old list).`, 'few');
+    for (const r of m.skipped) push(r, 'AB_SKIPPED', 'WARN', `${r.why} (the server writes it to error_*.txt).`, `${r.id}|${r.word.text}`);
+    for (const r of m.errors) push(r, 'AB_RANGE', 'WARN', `${r.why}.`, r.key || `world|${r.world}`);
+    // two words with the same icon file: a player cannot tell them apart
+    const icon = opts.iconOf || (() => '');
+    const seen = new Map();
+    for (const r of m.lines) {
+      const ic = String(icon(r.id) || '').toLowerCase();
+      if (!ic) continue;
+      if (seen.has(ic)) push(r, 'AB_SAME_ICON', 'WARN', `"${r.word.text}" and "${seen.get(ic).word.text}" use the same picture (${ic}): a player cannot tell them apart.`, ic);
+      else seen.set(ic, r);
+    }
+    if (m.ok && m.lines.length < 12) push({ start: 0, end: 0 }, 'AB_SHORT', 'INFO', `${m.lines.length} words: more words = harder for a bot to learn the pictures.`, 'short');
+    return out;
+  }
+  FRE.antiBotChecks = antiBotChecks;
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- loaders/pvp.js ----
@@ -17802,6 +18099,17 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when
       validate(ws, model) { return FRE.miniEventChecks(model); },
     },
     {
+      // Bot Check (loaders/antibot.js): AntiBot.inc, the puzzle's pictures + words and (V19 d816e99f, not yet built) its tuning.
+      // WorldServer only: never a Client copy (the words are the answer key). World.inc: which maps NO_CHECK_WORLD may name.
+      id: 'antibot', label: 'Bot Check',
+      required: ['AntiBot.inc'], optional: ['World.inc'], editable: ['AntiBot.inc'], client: [], deps: [],
+      parse(ws) { return FRE.antiBot.fromWorkspace(ws); },
+      validate(ws, model) {
+        const iconOf = id => { const it = ws.itemById(id); return it ? String(FRE.specItem.get(it, 'szIcon') || '').replace(/"/g, '').trim() : ''; };
+        return FRE.antiBotChecks(model, { iconOf });
+      },
+    },
+    {
       // Mounts (loaders/mounts.js): Mount.inc, how each mount item sits, moves, plays its leg loops and flies (LoadMountAnimationList
       // Project.cpp:618, called at :1102 by the WorldServer AND the game; V19 b43949aa, a5325b65). UTF-16LE, CRLF; identical Client
       // copy. mdlDyna.inc gives each mount item's model (its .ani files are the loop choices).
@@ -18428,6 +18736,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when
     'guildsiegeprize.lua': { server: STARTUP, client: null, cite: 'eveschool.cpp:3672 LoadPrizes (WorldServer) + databaseserver/Project.cpp:216 LoadScript (DatabaseServer)' },
     // Dungeon task: time limit, cooldown, levels, kill-all (WorldServer only, read once at start; no reload command)
     // Mini Events: read on the WorldServer's first tick and by the GM command /eventreload (refused while an event runs)
+    'antibot.inc': { server: RELOAD, client: null, reload: 'antibot', cite: 'AntiBotMng.cpp:375 Process -> LoadScript :28; /antibot reload' },
     'minievent.inc': { server: RELOAD, client: null, reload: 'event', cite: 'MiniEventMng.cpp:643 Process -> ReadConfig :134; /eventreload FuncTextCmd.cpp:1826' },
     // Mounts: the seat, speed, loops and flying of every mount; both read it once at start (no reload; /mountset changes only the
     // running copy until a restart)
@@ -18529,6 +18838,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when
       const L = k.toUpperCase();
       steps.push({ id: 'reload:' + k, short: `type /${k}reload in game`, text: `In the game, as GM, type /${k}reload while no ${L} runs (it is refused during a run; the chat line says how many start times and the fee it read). Or run Stop Server.bat, then Start Server.bat.` });
     }
+    if (!all.has('servers') && all.has('reload:antibot')) steps.push({ id: 'reload:antibot', short: 'type /antibot reload in game', text: 'In the game, as GM, type /antibot reload (bad lines go to error_*.txt; with fewer than 6 good words the old list stays). The tuning lines need the V19 change d816e99f built into the WorldServer; an older build skips them. Or run Stop Server.bat, then Start Server.bat.' });
     if (!all.has('servers') && all.has('reload:event')) steps.push({ id: 'reload:event', short: 'type /eventreload in game', text: 'In the game, as GM, type /eventreload while no Mini Event runs (it is refused during an event; the chat line says how many start times it read, or the error that switched Mini Events off). Or run Stop Server.bat, then Start Server.bat.' });
     if (!all.has('servers') && all.has('reload:eq')) steps.push({ id: 'reload:eq', short: 'type /eqreload in game', text: 'In the game, as GM, type /eqreload (the chat line says how many presets and problems it read; a battle already running keeps the players it has). Or run Stop Server.bat, then Start Server.bat.' });
     return { steps, changes: outChanges, notes, built: Object.keys(PATCHES).filter(id => built.has(id)) };
@@ -27372,6 +27682,191 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "64+", "when
     if (!W.pvp) el.appendChild(h('p.muted.small', 'FFA / TDM / Guild Siege files were not read: their times are not shown.'));
     if (!W.fp.ok) el.appendChild(h('p.muted.small', 'FreePKTime.txt was not read: Free PK Time is not shown.'));
     el.appendChild(h('p.muted.small', 'RANDOM picks shown here use a made-up roll; the server rolls its own when the start comes up.'));
+  }
+
+  FRE.ui.modules.push(mod);
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- ui/antibot.js ----
+// Bot Check: AntiBot.inc - the puzzle's pictures and words, the tuning (V19 d816e99f, not yet built), the maps where kills never
+// count, and a simulator (loaders/antibot-sim.js): the puzzle as a player sees it, and a made-up hour of play.
+(function (FRE) {
+  'use strict';
+  const { h, toast, keepFocus, numInput } = FRE.dom;
+  const FILE = 'antibot.inc';
+  const st = { sel: 'tune', q: '', newW: { id: null, word: '' }, tryState: null, seed: 1, every: 4, step: 0, answer: 'right', delay: 20, minutes: 60, zone: true };
+  const A = () => FRE.antiBot, O = () => FRE.antiBotOps, Sim = () => FRE.antiBotSim;
+  const model = ctx => ctx.ws.models.antibot;
+  const can = ctx => ctx.ws.isEditable(FILE);
+  const iconOf = it => (it ? String(FRE.specItem.get(it, 'szIcon') || '').replace(/"/g, '').trim() : '');
+  const nameOf = (ws, id) => { const it = ws.itemById(id); return it ? (it.name || it.define) : `#${id}`; };
+  const PAGES = [{ id: 'tune', label: 'Settings' }, { id: 'words', label: 'Pictures and words' }, { id: 'try', label: 'Try it' }];
+  const edit = (ctx, make, label, mergeKey) => ctx.editGroup(() => [{ file: FILE, splices: make(ctx.ws.files.get(FILE).text, model(ctx)) }], label, ['antibot|' + st.sel], mergeKey);
+  function itemOptions(ws) {
+    if (!ws._abItemOpts) ws._abItemOpts = [...ws.items.items.values()].map(it => ws.itemInfo(it)).sort((a, b) => a.name.localeCompare(b.name))
+      .map(i => ({ v: i.define, label: `${i.name} (${i.define})`, find: i.define }));
+    return ws._abItemOpts;
+  }
+  const table = (widths, rows) => h('table.items.rt', { style: 'table-layout:fixed;width:100%;max-width:980px' }, h('colgroup', widths.map(w => h('col', { style: `width:${w}` }))), rows);
+  const two = n => String(n).padStart(2, '0');
+  const mmss = t => `${Math.floor(t / 60)}:${two(t % 60)}`;
+
+  const mod = {
+    id: 'antibot', label: 'Bot Check', searchPlaceholder: 'Search', noItems: true,
+    help: 'Bot Check: the puzzle\'s pictures and words, how often it opens, the timers (AntiBot.inc)',
+    st,
+    onLoad() { st.sel = 'tune'; st.q = ''; st.tryState = null; },
+    renderList(el, ctx) {
+      const m = model(ctx);
+      for (const p of PAGES) {
+        const sub = p.id === 'tune' ? `score ${A().value(m, 'SCORE_LIMIT')} · 1 in ${A().value(m, 'RANDOM_CHANCE') || 'off'}` : p.id === 'words' ? `${m.lines.length} words${m.ok ? '' : ' · OFF: fewer than 6'}` : 'the puzzle, a player\'s hour';
+        el.appendChild(h('div.npc' + (st.sel === p.id ? '.sel' : ''), { 'data-page': p.id, on: { click: () => { st.sel = p.id; ctx.renderAll(false); } } },
+          h('div.n', h('span', p.label)), h('div.k', sub)));
+      }
+    },
+    renderEditor(el, ctx) {
+      keepFocus(el, () => {
+        const m = model(ctx);
+        el.appendChild(h('div.note.small', 'AntiBot.inc is read by the WorldServer only (never copy it to the game: the words are the answer key). After saving: /antibot reload in game. ',
+          h('b', 'Settings and "maps where kills do not count"'), ' need the V19 change d816e99f built into the WorldServer (not yet tested); an older build skips those lines and uses its compiled values.'));
+        if (!m.ok) el.appendChild(h('p.warn-text', `⛔ Only ${m.lines.length} good picture lines, 6 needed: the bot check is OFF at start.`));
+        if (st.sel === 'tune') tuneView(el, ctx);
+        else if (st.sel === 'words') wordsView(el, ctx);
+        else tryView(el, ctx);
+      });
+    },
+    addTarget() { return { ok: false, title: 'Use the pages: Pictures and words has + Add word' }; },
+    locate(d, ctx) {
+      if (d.module !== 'antibot') return false;
+      st.sel = /AB_RANGE/.test(d.code) ? 'tune' : 'words';
+      return true;
+    },
+  };
+
+  function tuneView(el, ctx) {
+    const m = model(ctx), ed = can(ctx);
+    el.appendChild(h('div.npc-title', h('h2', 'Settings')));
+    el.appendChild(h('p', 'Monster kills raise a hidden score; at the limit (or by a random roll) the player gets "Click the <word>" with 6 pictures. No answer in time: frozen; still no answer: sent to town.'));
+    const rows = [];
+    for (const k of A().TUNING) {
+      const t = m.tune[k.key], v = t.value;
+      const set = n => edit(ctx, tx => O().setTune(tx, model(ctx), k.key, n), `Bot Check: ${k.label.toLowerCase()} ${n} (was ${v})`, `ab|${k.key}`);
+      const input = k.bool ? h('label', h('input', { type: 'checkbox', checked: !!v, disabled: !ed, on: { change: ev => set(ev.target.checked ? 1 : 0) } }), ' yes')
+        : numInput({ value: v, min: k.min, max: k.max, disabled: !ed, key: `ab|${k.key}`, onCommit: n => { if (n === null || n === v) return; try { set(n); } catch (er) { toast(er.message, 'bad'); } } });
+      rows.push(h('tr', h('td', h('b', k.label), h('div.muted.small', k.help)), h('td', input),
+        h('td.muted.small', t.set ? `${k.min} - ${k.max}` : `default ${k.def}: not in the file (${k.min} - ${k.max})`)));
+    }
+    el.appendChild(table(['56%', '16%', '28%'], rows));
+    // what the numbers mean in play
+    const lim = A().value(m, 'SCORE_LIMIT'), rnd = A().value(m, 'RANDOM_CHANCE');
+    const kph = 600;
+    el.appendChild(h('p.small', `At about ${kph} kills an hour: the score reaches ${lim} in about ${Math.round(lim / kph * 60)} minutes moving around, ${Math.round(lim / 2 / kph * 60)} minutes camping (after the first ${A().value(m, 'CAMP_MINUTES')} minutes). `
+      + (rnd ? `The random check alone opens it about every ${Math.round(rnd / kph * 60)} minutes on average.` : 'No random check.')));
+    // maps
+    el.appendChild(h('h3', 'Maps where kills never count'));
+    el.appendChild(h('p.muted.small', 'Towns and safe areas, events, PvP / Guild Siege maps, secret rooms, guild houses and party dungeons never count anyway. Add other maps here (e.g. Bear\'s Cave).'));
+    const worlds = ctx.ws.worldList ? ctx.ws.worldList() : [];
+    const wname = id => { const w = worlds.find(x => (x.id >>> 0) === id); return w ? `${w.name} (${w.define})` : `map ${id}`; };
+    const wl = [h('tr', h('th', 'Map'), h('th', ''))];
+    for (const w of m.worlds) wl.push(h('tr', h('td', wname(w.world)), h('td', ed ? h('button.icon.danger', { on: { click: () => edit(ctx, tx => O().removeWorld(tx, model(ctx), w.world), `Bot Check: kills count again on ${wname(w.world)}`) } }, '✕') : null)));
+    if (m.worlds.length) el.appendChild(table(['90%', '10%'], wl));
+    else el.appendChild(h('p.muted.small', 'None.'));
+    if (ed && worlds.length) {
+      const opts = [...new Map(worlds.map(w => [w.id >>> 0, w])).values()].filter(w => !m.worlds.some(x => x.world === (w.id >>> 0)))
+        .map(w => ({ v: w.define, label: `${w.name} (${w.define})`, find: w.define }));
+      el.appendChild(h('div.dr-line', FRE.ui.combo({ options: opts, value: '', placeholder: '+ Add a map where kills never count', onPick: d => {
+        const w = worlds.find(x => x.define === d); if (!w) return;
+        try { edit(ctx, tx => O().addWorld(tx, model(ctx), w.define, w.id >>> 0), `Bot Check: kills never count on ${w.name}`); } catch (er) { toast(er.message, 'bad'); }
+      } })));
+    }
+  }
+
+  function wordsView(el, ctx) {
+    const m = model(ctx), ed = can(ctx), ws = ctx.ws;
+    el.appendChild(h('div.npc-title', h('h2', `Pictures and words (${m.lines.length})`)));
+    el.appendChild(h('p.muted.small', 'Each line is an item whose picture shows the word. Pick pictures a player sees at a glance; every word and every item only once; two pictures that look alike = keep one. 6 are shown at a time, so 6 is the minimum; more = harder for a bot to learn.'));
+    if (ed) {
+      const nw = st.newW, msg = h('div.small');
+      const add = h('button.primary', { on: { click: () => {
+        const it = ws.itemById(nw.id), w = nw.word;
+        try { edit(ctx, tx => O().addWord(tx, model(ctx), nw.id, it.define, w), `Bot Check: new word "${w}" (${nameOf(ws, nw.id)})`); } catch (er) { toast(er.message, 'bad'); return; }
+        st.newW = { id: null, word: '' }; ctx.renderAll(false);
+      } } }, '+ Add word');
+      const check = () => {
+        let v = nw.id === null ? 'Pick an item' : null;
+        if (!v) try { O().checkWord(m, nw.word, null); if (m.lines.some(r => r.id === nw.id)) v = 'That item is already in the list'; } catch (er) { v = er.message; }
+        add.disabled = !!v; msg.className = 'small warn-text'; msg.textContent = v && (nw.id !== null || nw.word) ? '⛔ ' + v : '';
+      };
+      const wordBox = h('input', { type: 'text', value: nw.word, placeholder: 'The word players are asked for', maxLength: 30, style: 'width:16em' });
+      wordBox.dataset.key = 'ab-new-word';
+      wordBox.addEventListener('input', () => { nw.word = wordBox.value; check(); });
+      el.appendChild(h('div.dr-line',
+        nw.id !== null ? FRE.dds.picture(ctx, iconOf(ws.itemById(nw.id)), { scale: 2, cls: '.bx-icon-big' }) : null,
+        FRE.ui.combo({ options: itemOptions(ws), value: nw.id !== null ? ws.itemById(nw.id).define : '', placeholder: 'Pick the item (its picture)', onPick: d => {
+          const v = ws.defines.defines.get(d); if (v === undefined) return; nw.id = v >>> 0;
+          if (!nw.word) nw.word = (ws.itemById(nw.id) || {}).name || '';
+          ctx.renderAll(false);
+        } }), wordBox, add));
+      el.appendChild(msg);
+      check();
+    }
+    const rows = [h('tr', h('th', 'Picture'), h('th', 'Item'), h('th', 'Word'), h('th', ''))];
+    const all = [...m.lines.map(r => [r, null]), ...m.skipped.map(r => [r, r.why])].sort((a, b) => a[0].start - b[0].start);
+    for (const [r, why] of all) {
+      const it = ws.itemById(r.id);
+      const box = h('input', { type: 'text', value: r.word.text, disabled: !ed, maxLength: 30, style: 'width:100%' });
+      box.dataset.key = `ab-word|${r.start}`;
+      box.addEventListener('change', () => {
+        const v = box.value;
+        try { edit(ctx, tx => O().editWord(tx, model(ctx), r, v), `Bot Check: "${r.word.text}" -> "${v}"`); } catch (er) { toast(er.message, 'bad'); ctx.renderAll(false); }
+      });
+      rows.push(h('tr', h('td', FRE.dds.picture(ctx, iconOf(it), { scale: 2, cls: '.bx-icon-big' })),
+        h('td', it ? nameOf(ws, r.id) : `#${r.id}`, h('div.muted.small', r.item.define), why ? h('div.small.warn-text', `⚠ skipped by the server: ${why}`) : null),
+        h('td', box),
+        h('td', ed ? h('button.icon.danger', { title: 'Remove this word', on: { click: () => edit(ctx, tx => O().removeWord(tx, r), `Bot Check: removed "${r.word.text}"`) } }, '✕') : null)));
+    }
+    el.appendChild(table(['12%', '40%', '42%', '6%'], rows));
+  }
+
+  function tryView(el, ctx) {
+    const m = model(ctx), ws = ctx.ws;
+    el.appendChild(h('div.npc-title', h('h2', 'Try it')));
+    if (!m.ok) { el.appendChild(h('p.warn-text', 'Fewer than 6 words: there is no puzzle.')); return; }
+    // the puzzle as the player sees it
+    el.appendChild(h('h3', '🧩 The puzzle'));
+    if (!st.tryState) {
+      const rng = FRE.xRandom.rng(st.seed), e = Sim().newEntry(), log = [];
+      Sim().kill(m, Object.assign(e, { recheck: true }), rng, 0, { world: 1, x: 0, y: 0, z: 0 }, true, log);
+      st.tryState = { rng, e, log: [] };
+    }
+    const S = st.tryState, e = S.e;
+    const click = i => { Sim().answer(m, e, S.rng, 0, i, S.log); ctx.renderAll(false); };
+    if (e.state === Sim().NONE) el.appendChild(h('p.ok-text', `✓ ${S.log.some(x => x.ev === 'solved') ? 'Solved: "Thank you, have fun!"' : 'No puzzle.'}`));
+    else {
+      el.appendChild(h('p', h('b', `Click the ${e.word}`), h('span.muted.small', ` · ${e.state === Sim().FROZEN ? 'FROZEN · ' : ''}${e.tries} click${e.tries === 1 ? '' : 's'} left · ${A().value(m, e.state === Sim().FROZEN ? 'FROZEN_SECONDS' : 'ANSWER_SECONDS')} s`)));
+      el.appendChild(h('div.dr-line', e.items.map((id, i) => h('button.ab-pick', { title: `${nameOf(ws, id)}${i === e.correct ? ' (the answer)' : ''}`, on: { click: () => click(i) } }, FRE.dds.picture(ctx, iconOf(ws.itemById(id)), { scale: 2, cls: '.bx-icon-big' })))));
+    }
+    if (S.log.length) el.appendChild(h('p.small.muted', S.log.map(x => x.ev === 'wrong' ? `wrong (${x.tries} left)` : x.ev === 'frozen' ? 'frozen, new pictures' : x.ev === 'icons' ? 'new pictures' : x.ev).join(' → ')));
+    el.appendChild(h('div.dr-line', h('button', { on: { click: () => { st.seed = 1 + Math.floor(Math.random() * 99999); st.tryState = null; ctx.renderAll(false); } } }, '🎲 Another puzzle')));
+
+    // a made-up hour
+    el.appendChild(h('h3', '⏱ A player\'s hour'));
+    el.appendChild(h('div.dr-line',
+      h('span', 'a kill every '), numInput({ value: st.every, min: 1, max: 600, key: 'ab-every', onCommit: v => { if (v) { st.every = v; ctx.renderAll(false); } } }), h('span', ' s, moving '),
+      numInput({ value: st.step, min: 0, max: 500, key: 'ab-step', onCommit: v => { st.step = v || 0; ctx.renderAll(false); } }), h('span', ' m a kill, for '),
+      numInput({ value: st.minutes, min: 1, max: 1440, key: 'ab-min', onCommit: v => { if (v) { st.minutes = v; ctx.renderAll(false); } } }), h('span', ' minutes; answers ')));
+    el.appendChild(h('div.dr-line', h('select', { on: { change: ev => { st.answer = ev.target.value; ctx.renderAll(false); } } },
+      [['right', 'right'], ['wrong', 'wrong every time'], ['none', 'never (a bot)']].map(([v, l]) => h('option', { value: v, selected: st.answer === v }, l))),
+      h('span', ' after '), numInput({ value: st.delay, min: 0, max: 3600, key: 'ab-delay', onCommit: v => { st.delay = v || 0; ctx.renderAll(false); } }), h('span', ' s'),
+      h('button.small', { on: { click: () => { st.seed = 1 + Math.floor(Math.random() * 99999); ctx.renderAll(false); } } }, '🎲 Again')));
+    const res = Sim().session(m, { seed: st.seed, every: st.every, step: st.step, answer: st.answer, delay: st.delay, seconds: st.minutes * 60 });
+    const said = { open: x => `puzzle opens (${x.reason === 'score' ? 'score limit' : x.reason === 'random' ? 'random check' : 'check again after town'}): "Click the ${x.word}"`,
+      wrong: x => `wrong click (${x.tries} left)`, icons: () => 'new pictures', frozen: x => `FROZEN (${x.detail ? 'no clicks left' : 'time is up'}), new pictures`, solved: () => 'solved: "Thank you, have fun!"', town: () => 'SENT TO TOWN' };
+    const shown = res.log.filter(x => x.ev !== 'icons').slice(0, 60);
+    el.appendChild(h('ul.small', shown.map(x => h('li', h('code', mmss(x.t)), ' ', said[x.ev](x)))));
+    if (!res.log.length) el.appendChild(h('p.muted.small', 'Nothing happens in this time.'));
+    const E = res.entry;
+    el.appendChild(h('p.small', `In ${st.minutes} minutes: ${E.puzzles} puzzle${E.puzzles === 1 ? '' : 's'}, ${E.solved} solved, ${E.frozen} frozen, ${E.town} sent to town; score now ${E.score} / ${A().value(m, 'SCORE_LIMIT')}.`));
   }
 
   FRE.ui.modules.push(mod);

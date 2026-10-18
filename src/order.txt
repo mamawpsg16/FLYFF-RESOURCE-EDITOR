@@ -83,8 +83,12 @@ loaders/minievent-sim.js
 loaders/minievent-turnin.js
 loaders/minievent-hide.js
 loaders/minievent-week.js
+loaders/antibot.js
+loaders/antibot-sim.js
 edit/minievent-ops.js
+edit/antibot-ops.js
 validate/minievent.js
+validate/antibot.js
 loaders/pvp.js
 loaders/pvp-sim.js
 loaders/pvp-rules.js
@@ -132,6 +136,7 @@ ui/weapons.js
 ui/consumables.js
 ui/mounts.js
 ui/minievent.js
+ui/antibot.js
 ui/pvp-equalized.js
 ui/pvp.js
 ui/dungeon.js

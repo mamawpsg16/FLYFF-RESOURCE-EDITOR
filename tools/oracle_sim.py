@@ -4258,6 +4258,8 @@ def as_who(key):
         return True, 'start'
     if key == 'minievent.inc':            # MiniEventMng.cpp:643 first tick + /eventreload (WorldServer only)
         return 'reload:event', None
+    if key == 'antibot.inc':              # AntiBotMng.cpp Process first tick + /antibot reload (WorldServer only)
+        return 'reload:antibot', None
     if key == 'mount.inc':                # Project.cpp:1102 LoadMountAnimationList, #ifdef __MOUNT only: the WorldServer and the game
         return True, 'start'
     if key in ('propitemetc.inc', 'propitemetc.txt.txt', 'exptable.inc'):   # Project.cpp:883 / ProjectCmn.cpp:1262 / Project.cpp:763, no #ifdef
@@ -4307,7 +4309,7 @@ def as_compute(changes, client, patches, codes):
     else:
         steps += [[x, None] for x in ('reopen:donation', 'click:board') if x in every]
     if 'servers' not in every:
-        steps += [[x, None] for x in ('reload:ffa', 'reload:tdm', 'reload:event') if x in every]
+        steps += [[x, None] for x in ('reload:ffa', 'reload:tdm', 'reload:antibot', 'reload:event') if x in every]
     return {'steps': steps, 'changes': per, 'notes': notes, 'built': [p for p in AS_PATCHES if p in ticked]}
 
 
@@ -4318,7 +4320,7 @@ def as_run(root):
                         'world/wdvolcane/wdvolcane.dyo', 'propmoverex.inc', 'propgiftbox.inc', 'propskill.txt',
                         'event.lua', 'serverbuff.txt', 'guildbuff.txt', '1rebirth.inc', 'couple.inc', 'propitemetc.inc', 'propitemetc.txt.txt', 'exptable.inc', AS_FEES,
                         'ffamanager.inc', 'tdmmanager.inc', 'guildcombat.txt', 'guildsiegeprize.lua', 'partydungeon.lua',
-                        'client/guildcombattext_5_eng.inc', 'client/guildcombattext_1_usa.inc', 'mount.inc', 'minievent.inc']
+                        'client/guildcombattext_5_eng.inc', 'client/guildcombattext_1_usa.inc', 'mount.inc', 'minievent.inc', 'antibot.inc']
     states = ['written', 'created', 'datares', 'different', 'none']
     pstates = ['in-source', 'missing', 'unknown', 'built']
     codesets = [[], ['DT_PATCH'], ['DT_ORDER'], ['NN_RULES_PATCH']]
@@ -13498,6 +13500,256 @@ def wk_run(root):
     return {'week0': week0, 'texts': texts, 'fp_texts': fp_texts, 'freepk': fps, 'cases': cases}
 
 
+# ---- Bot Check: AntiBot.inc (CAntiBotMng::LoadScript, AntiBotMng.cpp:28 + V19 d816e99f tuning) and the player's side
+# (OnKill :183, NewIcons :223, OnAnswer :340, Process :375, SendToTown). Written from the C++, not from the JS copy.
+AB_KEYS = [('SCORE_LIMIT', 1200, 1, 1000000, False), ('RANDOM_CHANCE', 2000, 0, 1000000, False), ('CAMP_RADIUS', 40.0, 1.0, 1000.0, True),
+           ('CAMP_MINUTES', 20, 1, 1440, False), ('COOLDOWN_MINUTES', 30, 0, 1440, False), ('ANSWER_SECONDS', 120, 10, 3600, False),
+           ('FROZEN_SECONDS', 300, 10, 86400, False), ('CLICKS', 3, 1, 20, False), ('SKIP_GM', 1, 0, 1, False)]
+
+
+def ab_f32(v):
+    return struct.unpack('f', struct.pack('f', v))[0]
+
+
+def ab_load(text, D, items, worlds):
+    t = [x.decode('latin-1') for x in tokens(text.encode('latin-1', 'replace'))]
+    keys = {k[0]: k for k in AB_KEYS}
+    tune = {k[0]: k[1] for k in AB_KEYS}
+    words, skipped, errors, nocheck = [], [], [], []
+    num = lambda w: (D[w] if w in D else atoi(w)) if w else 0
+    i = 0
+    while i < len(t):
+        w = t[i]
+        if w == 'ANTIBOT_ITEM':
+            iid = num(t[i + 1] if i + 1 < len(t) else '') & 0xFFFFFFFF
+            word = t[i + 2] if i + 2 < len(t) else ''
+            if len(word) >= 2 and word[0] == '"' and word[-1] == '"':
+                word = word[1:-1]
+            dup = any(x[1].lower() == word.lower() or x[0] == iid for x in words)
+            if iid not in items:
+                skipped.append([iid, word, 'item'])
+            elif not word or dup:
+                skipped.append([iid, word, 'dup'])
+            else:
+                words.append([iid, word])
+            i += 3
+            continue
+        if w in keys:
+            k, df, lo, hi, isf = keys[w]
+            raw = t[i + 1] if i + 1 < len(t) else ''
+            if isf:
+                try:
+                    v = ab_f32(float(raw))
+                except ValueError:
+                    v = 0.0
+                if lo <= v <= hi:
+                    tune[k] = v
+                else:
+                    errors.append(k)
+            else:
+                v = num(raw)
+                if v > 2147483647:
+                    v -= 1 << 32
+                if lo <= v <= hi:
+                    tune[k] = v
+                else:
+                    tune[k] = df
+                    errors.append(k)
+            i += 2
+            continue
+        if w == 'NO_CHECK_WORLD':
+            wid = num(t[i + 1] if i + 1 < len(t) else '') & 0xFFFFFFFF
+            if worlds is not None and wid not in worlds:
+                errors.append('world %d' % wid)
+            else:
+                nocheck.append(wid)
+            i += 2
+            continue
+        i += 1
+    return {'ok': len(words) >= 6, 'words': words, 'skipped': skipped, 'tune': tune, 'nocheck': nocheck, 'errors': errors}
+
+
+def ab_session(m, seed, every, step, answer, delay, seconds, zone=True, climb=0):
+    R = Rand(seed)
+    T = m['tune']
+    e = {'state': 0, 'score': 0, 'anchor': None, 'aw': None, 'ta': 0, 'cool': 0, 'recheck': False, 'left': 0, 'tries': 0,
+         'nonce': 0, 'items': [], 'correct': -1, 'word': '', 'n': [0, 0, 0, 0]}          # n: puzzles, solved, frozen, town
+    log = []
+    W = m['words']
+
+    def xrand():
+        R.g = (R.g * 1103515245 + 12345) & 0xFFFFFFFF
+        return R.g
+
+    def icons():
+        while True:
+            e['nonce'] = xrand()
+            if e['nonce']:
+                break
+        idx = list(range(len(W)))
+        for i in range(6):
+            j = i + R(len(W) - i)
+            idx[i], idx[j] = idx[j], idx[i]
+        e['items'] = [W[idx[i]][0] for i in range(6)]
+        e['correct'] = R(6)
+        e['word'] = W[idx[e['correct']]][1]
+
+    def start(t, why):
+        e.update(recheck=False, state=1, left=T['ANSWER_SECONDS'], tries=T['CLICKS'])
+        e['n'][0] += 1
+        icons()
+        log.append([t, 'open', why, e['word'], list(e['items']), e['correct']])
+
+    def frozen(t, d):
+        e.update(state=2, left=T['FROZEN_SECONDS'], tries=T['CLICKS'])
+        e['n'][2] += 1
+        icons()
+        log.append([t, 'frozen', d, e['word'], list(e['items']), e['correct']])
+
+    pending = None
+    for t in range(seconds + 1):
+        if e['state'] and pending is not None and t >= pending:
+            idx = e['correct'] if answer == 'right' else (e['correct'] + 1) % 6 if answer == 'wrong' else -1
+            if idx >= 0 and e['tries'] > 0:
+                if idx == e['correct']:
+                    e['n'][1] += 1
+                    e.update(state=0, left=0, tries=0, nonce=0, score=0, cool=t + T['COOLDOWN_MINUTES'] * 60)
+                    log.append([t, 'solved'])
+                else:
+                    e['tries'] -= 1
+                    log.append([t, 'wrong', e['tries']])
+                    if e['tries'] <= 0 and e['state'] == 1:
+                        frozen(t, 1)
+                    elif e['tries'] > 0:
+                        icons()
+                        log.append([t, 'icons', e['word'], list(e['items']), e['correct']])
+            pending = t + delay if e['state'] else None
+        if t > 0 and e['state']:
+            e['left'] -= 1
+            if e['left'] <= 0:
+                if e['state'] == 1:
+                    frozen(t, 0)
+                else:
+                    e['n'][3] += 1
+                    e.update(state=0, left=0, tries=0, nonce=0, score=0, recheck=True)
+                    log.append([t, 'town'])
+        if t % every == 0 and m['ok'] and zone and e['state'] == 0:
+            k = t // every
+            x, y, z = ab_f32(6900 + step * k), ab_f32(100 + climb * k), ab_f32(3300)
+            if e['recheck']:
+                start(t, 'recheck')
+            elif t >= e['cool']:
+                far = e['aw'] != 1
+                if not far:
+                    ax, ay, az = e['anchor']
+                    dx, dy, dz = ab_f32(x - ax), ab_f32(y - ay), ab_f32(z - az)
+                    r = ab_f32(T['CAMP_RADIUS'])
+                    far = ab_f32(ab_f32(ab_f32(dx * dx) + ab_f32(dy * dy)) + ab_f32(dz * dz)) > ab_f32(r * r)
+                if far:
+                    e['aw'], e['anchor'], e['ta'] = 1, (x, y, z), t
+                e['score'] += 2 if t - e['ta'] >= T['CAMP_MINUTES'] * 60 else 1
+                if e['score'] >= T['SCORE_LIMIT']:
+                    start(t, 'score')
+                elif T['RANDOM_CHANCE'] > 0 and R(T['RANDOM_CHANCE']) == 0:
+                    start(t, 'random')
+        if e['state'] and pending is None:
+            pending = t + delay
+    return {'log': log, 'n': e['n'], 'score': e['score']}
+
+
+def ab_run(root):
+    D = dr_defines(root)
+    props = spec_props(root, D)
+    items = set(props)
+    worlds = set()
+    wi = os.path.join(root, 'World.inc')
+    if os.path.exists(wi):
+        tk = [x.decode('latin-1') for x in tokens(ti_read(wi).encode('latin-1', 'replace'))]      # World.inc is UTF-16
+        for k in range(len(tk) - 1):
+            if tk[k].startswith('WI_') and tk[k] in D and tk[k + 1].startswith('"'):     # WI_x "<map folder>" (CWorldMng::LoadScript)
+                worlds.add(D[tk[k]] & 0xFFFFFFFF)
+    real = ti_read(os.path.join(root, 'AntiBot.inc'))
+    head = real[:real.index('\nANTIBOT_ITEM\t') + 1]          # up to the first word line (the header comment names ANTIBOT_ITEM too)
+    small = [
+        real,
+        'ANTIBOT_ITEM II_WEA_SWO_LONG "Sword"\r\n' * 7,
+        ''.join('ANTIBOT_ITEM\t%s\t"%s"\r\n' % (d, w) for d, w in [('II_WEA_SWO_LONG', 'Sword'), ('II_WEA_AXE_MORROW', 'axe'), ('II_WEA_BOW_WOODNE', 'AXE'),
+            ('II_NOT_AN_ITEM', 'Ghost'), ('II_GEN_FOO_INS_BREAD', ''), ('II_GEN_FOO_INS_LOLLIPOP', 'Lollipop'), ('II_GEN_FOO_INS_CHOCOLATE', 'Choco'),
+            ('II_SYS_SYS_EVE_GOLDENAPPLE', 'Apple'), ('II_GEN_MAT_DIAMOND', 'Diamond')]),
+        head.replace('SCORE_LIMIT\t\t\t1200', 'SCORE_LIMIT\t\t\t0').replace('CLICKS\t\t\t\t3', 'CLICKS\t\t\t\t5\r\nCLICKS 99')
+            + 'SCORE_LIMIT 50\r\nCAMP_RADIUS 0.5\r\nCAMP_RADIUS 12.5\r\nCAMP_RADIUS 2000\r\nRANDOM_CHANCE 0\r\nNO_CHECK_WORLD WI_DUNGEON_BEAR\r\nNO_CHECK_WORLD 999999\r\nSKIP_GM 2\r\n'
+            + real[len(head):],
+        'FOO 1\r\n' + real,
+        ''.join('ANTIBOT_ITEM\t%s\t"%s"\r\n' % (d, w) for d, w in [('II_WEA_SWO_LONG', 'Sword'), ('II_WEA_AXE_MORROW', 'Axe'), ('II_WEA_BOW_WOODNE', 'Bow'),
+            ('II_GEN_FOO_INS_BREAD', 'Bread'), ('II_GEN_FOO_INS_LOLLIPOP', 'Lollipop'), ('II_GEN_FOO_INS_CHOCOLATE', 'lollipop')]),   # 5 good: off
+        head + real[len(head):].replace('"Sword"', '"Sword"\r\nANTIBOT_ITEM II_WEA_SWO_LONG "Sword2"'),
+    ]
+    files = []
+    for k, text in enumerate(small):
+        files.append(dict(ab_load(text, D, items, worlds), text=None if k == 0 else text))
+    m0 = ab_load(real, D, items, worlds)
+    m3 = ab_load(small[3], D, items, worlds)
+    rnd = random.Random(375)
+    sessions = []
+    for mi, m in ((0, m0), (3, m3)):
+        for every in (1, 4, 6, 30):
+            for step, climb in ((0, 0), (5, 0), (60, 0), (0, 13)):
+                for ans in ('right', 'wrong', 'none'):
+                    seed, delay = rnd.randint(1, 2 ** 31), rnd.choice([0, 1, 20, 119, 120, 121, 400])
+                    secs = rnd.choice([3600, 7200])
+                    sessions.append({'m': mi, 'seed': seed, 'every': every, 'step': step, 'climb': climb, 'answer': ans, 'delay': delay, 'seconds': secs,
+                                     'out': ab_session(m, seed, every, step, ans, delay, secs, climb=climb)})
+    return {'files': files, 'sessions': sessions, 'edits': ab_edit_cases(real, D)}
+
+
+def ab_edit_cases(real, D):
+    cr = lambda line: '\r' if line.endswith('\r') else ''       # a new line copies its neighbour's end
+
+    def apply(text, op):
+        L = text.split('\n')
+        words = [i for i, l in enumerate(L) if l.startswith('ANTIBOT_ITEM')]
+        if op['op'] == 'add':
+            L.insert(words[-1] + 1, 'ANTIBOT_ITEM\t%s\t"%s"' % (op['define'], op['word']) + cr(L[words[-1]]))
+        elif op['op'] == 'word':
+            k = words[op['n']]
+            L[k] = re.sub(r'"[^"]*"', '"%s"' % op['word'], L[k], count=1)
+        elif op['op'] == 'remove':
+            del L[words[op['n']]]
+        elif op['op'] == 'tune':
+            ks = [i for i, l in enumerate(L) if l.split('\t')[0].split(' ')[0] == op['key']]
+            if ks:
+                k = ks[-1]
+                L[k] = re.sub(r'^(%s\s+)[^\s/]+' % op['key'], lambda mm: mm.group(1) + op['v'], L[k])
+            else:
+                tl = [i for i, l in enumerate(L) if l.split('\t')[0].split(' ')[0] in [x[0] for x in AB_KEYS]]
+                L.insert(tl[-1] + 1, '%s\t%s' % (op['key'], op['v']) + cr(L[tl[-1]]))
+        elif op['op'] == 'world':
+            ws = [i for i, l in enumerate(L) if l.startswith('NO_CHECK_WORLD')]
+            tl = [i for i, l in enumerate(L) if l.split('\t')[0].split(' ')[0] in [x[0] for x in AB_KEYS]]
+            L.insert((ws or tl)[-1] + 1, 'NO_CHECK_WORLD\t%s' % op['define'] + cr(L[(ws or tl)[-1]]))
+        elif op['op'] == 'unworld':
+            L = [l for l in L if not re.match(r'NO_CHECK_WORLD\s+%s\b' % op['define'], l)]
+        return '\n'.join(L)
+    scripts = [
+        [{'op': 'add', 'define': 'II_GEN_GEM_GEM_DROIL', 'word': 'Oil'}],
+        [{'op': 'word', 'n': 0, 'word': 'Long Sword'}],
+        [{'op': 'remove', 'n': 0}], [{'op': 'remove', 'n': -1}],
+        [{'op': 'tune', 'key': 'SCORE_LIMIT', 'v': '1500'}], [{'op': 'tune', 'key': 'CAMP_RADIUS', 'v': '12.5'}],
+        [{'op': 'tune', 'key': 'SKIP_GM', 'v': '0'}],
+        [{'op': 'world', 'define': 'WI_DUNGEON_BEAR'}, {'op': 'world', 'define': 'WI_WORLD_MADRIGAL'}, {'op': 'unworld', 'define': 'WI_DUNGEON_BEAR'}],
+        [{'op': 'add', 'define': 'II_GEN_GEM_GEM_DROIL', 'word': 'Oil'}, {'op': 'word', 'n': -1, 'word': 'Oil drop'}, {'op': 'remove', 'n': 3}, {'op': 'tune', 'key': 'CLICKS', 'v': '20'}],
+    ]
+    out = []
+    for sc in scripts:
+        text = real
+        for op in sc:
+            if op.get('n', 0) < 0:
+                op = dict(op, n=len([1 for l in text.split('\n') if l.startswith('ANTIBOT_ITEM')]) + op['n'])
+            text = apply(text, op)
+        out.append({'script': sc, 'text': text})
+    return out
+
+
 def me_round(x):
     return int(math.floor(x + 0.5)) if x >= 0 else -int(math.floor(-x + 0.5))
 
@@ -13735,6 +13987,8 @@ if __name__ == '__main__':
         print(json.dumps(we_run_all(root)))
     elif what == 'consumables':                 # consumable stats: use, use again, same-kind blocks, expiry, edits
         print(json.dumps(cs_run_all(root)))
+    elif what == 'antibot':                     # Bot Check: AntiBot.inc (LoadScript), a player's hour, edits
+        print(json.dumps(ab_run(root)))
     elif what == 'week':                        # Mini Events, the week: BEGIN starts, skips (FFA / TDM / Guild Siege / Free PK Time)
         print(json.dumps(wk_run(root)))
     elif what == 'turnin':                      # Mini Events, Turn-in Race: hints, random recipes, turn-ins, recipe / hint edits

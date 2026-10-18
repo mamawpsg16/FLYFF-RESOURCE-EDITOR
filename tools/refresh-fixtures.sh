@@ -43,6 +43,8 @@ cp -p $SRC/Server/Resource/PartyDungeon.lua "$DST/Resource/"
 # Mini Events: the six events' settings, prizes, questions, recipes, spots, start times (server only)
 cp -p $SRC/Server/Resource/MiniEvent.inc "$DST/Resource/"
 cp -p $SRC/Server/Resource/FreePKTime.txt "$DST/Resource/"
+# Bot Check: the puzzle words + tuning (server only: never a Client copy)
+cp -p $SRC/Server/Resource/AntiBot.inc "$DST/Resource/"
 # Mounts: the seat / speed / loops / flying of every mount (+ the game's identical copy)
 cp -p $SRC/Server/Resource/Mount.inc "$DST/Resource/"
 cp -p $SRC/Client/Mount.inc "$DST/Client/"

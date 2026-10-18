@@ -322,6 +322,11 @@
     ME_HINT_DUP: ['An item has two ITEM_HINT lines. The server keeps only the last one, so the first one never shows.', 'Remove the extra line (✕ on the hint), or edit the one that shows.'],
     ME_HINT_MISSING: ['A Turn-in recipe item has no ITEM_HINT line, so the window shows nothing under it about where to get it.', 'Use "Write missing hints" on the Turn-in Race page, or type one in the Hints table.'],
     ME_SPOT_DUP: ['Two Hide and Seek spots round to the same x / z. They share one "last used" entry, so the same place can come up twice in one event.', 'Remove one, or move it a few metres.'],
+    AB_FEW: ['AntiBot.inc has fewer than 6 good picture lines. The server does not take the list: at start the bot check is OFF; a /antibot reload keeps the old list.', 'Add words until there are at least 6.'],
+    AB_SKIPPED: ['The server skips this picture line (the item does not exist, the word is empty, or the word / item is already in the list) and writes it to error_*.txt.', 'Fix or remove the line.'],
+    AB_RANGE: ['A tuning value is out of its range (or the map is not loaded): the server keeps the default (CAMP_RADIUS: the value before) and writes it to error_*.txt.', 'Type a value inside the range shown.'],
+    AB_SAME_ICON: ['Two words use the same picture file: a player cannot tell which is which.', 'Remove one, or pick an item with a different picture.'],
+    AB_SHORT: ['Fewer than 12 words: a bot can learn every picture quickly.', 'Add more words (any item whose picture clearly shows the word).'],
     ME_ASK_DUP: ['The same question is in the list twice. Both copies share one "last asked" entry, so both can come up in the same event.', 'Delete one of them.'],
     ME_NO_RANDOM: ['Every event is set to stay out of RANDOM start times, so a "BEGIN RANDOM" time starts nothing and nothing is logged.', 'Turn on "Picked by a RANDOM start time" for at least one event, or give that start time a fixed event.'],
     // Mounts (Mount.inc, LoadMountAnimationList Project.cpp:618)

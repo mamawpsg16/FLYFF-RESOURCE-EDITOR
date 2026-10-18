@@ -11,6 +11,7 @@ const ORACLE_SIM = GLib.getenv('ORACLE_SIM') || ROOT + '/tools/oracle_sim.py';
 import { bpServer } from './bp-server.js';
 import { checkMounts } from './mount-check.js';
 import { checkMiniEvent, checkTurnIn, checkWeek } from './minievent-check.js';
+import { checkAntiBot } from './antibot-check.js';
 
 const FIXTURES = ROOT + '/test-data/fixtures/Resource';
 const REAL = ROOT + '/../FLYFF-V19-SOURCE/Server/Resource';
@@ -4169,6 +4170,17 @@ section('Dungeons: PartyDungeon.lua, entering, the clock, map monsters, edits (J
   // the made-up file's checks
   const bad = Dg.validateDungeons(Dg.loadDungeons({ text: 'SetLevel( 1, 2 )\nAddDungeon( "WI_NOPE" )\n\tSetLevel( 9, 3 )\n\tSetClass( )\n\tSetMonster( ID_BOSS, "MI_NOPE", true, 1, 2, 3 )\nAddDungeon( "WI_INSTANCE_KALGAS" )\nAddDungeon( "WI_INSTANCE_KALGAS" )\n\tSetDungeonTime( SEC(30) )\n\tSetCoolTime( FOO )\n' }, { defines: Dm }), { defines: Dm, movers: W.movers.movers });
   eq([...new Set(bad.map(d => d.code))].sort().join(), 'DG_CLASS,DG_DUP,DG_LEVEL,DG_MONSTER,DG_NAME,DG_NO_DUNGEON,DG_SHORT,DG_WORLD', 'a broken file: every check fires');
+}
+
+// ---------------------------------------------------------------- Bot Check (AntiBot.inc)
+section('Bot Check: AntiBot.inc, the puzzle, a player\'s hours, edits (JS and Python copies agree)');
+{
+  const W = new FRE.Workspace(fixtureFiles(), { only: 'antibot' }).load();
+  ok(!W.diags.some(d => d.module === 'antibot' && d.severity === 'BLOCK'), 'the real AntiBot.inc: no BLOCK (23 words, the tuning lines)');
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} antibot ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py antibot) gave no readable result', e.message); }
+  if (py) checkAntiBot({ FRE, py, ws: W, ok });
 }
 
 // ---------------------------------------------------------------- Mini Events (MiniEvent.inc)

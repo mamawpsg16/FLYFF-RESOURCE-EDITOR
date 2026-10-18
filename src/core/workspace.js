@@ -216,6 +216,17 @@
       validate(ws, model) { return FRE.miniEventChecks(model); },
     },
     {
+      // Bot Check (loaders/antibot.js): AntiBot.inc, the puzzle's pictures + words and (V19 d816e99f, not yet built) its tuning.
+      // WorldServer only: never a Client copy (the words are the answer key). World.inc: which maps NO_CHECK_WORLD may name.
+      id: 'antibot', label: 'Bot Check',
+      required: ['AntiBot.inc'], optional: ['World.inc'], editable: ['AntiBot.inc'], client: [], deps: [],
+      parse(ws) { return FRE.antiBot.fromWorkspace(ws); },
+      validate(ws, model) {
+        const iconOf = id => { const it = ws.itemById(id); return it ? String(FRE.specItem.get(it, 'szIcon') || '').replace(/"/g, '').trim() : ''; };
+        return FRE.antiBotChecks(model, { iconOf });
+      },
+    },
+    {
       // Mounts (loaders/mounts.js): Mount.inc, how each mount item sits, moves, plays its leg loops and flies (LoadMountAnimationList
       // Project.cpp:618, called at :1102 by the WorldServer AND the game; V19 b43949aa, a5325b65). UTF-16LE, CRLF; identical Client
       // copy. mdlDyna.inc gives each mount item's model (its .ani files are the loop choices).

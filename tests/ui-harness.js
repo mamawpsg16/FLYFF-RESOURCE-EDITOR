@@ -180,6 +180,53 @@
     }
   }
 
+  // the Bot Check task (?stop=antibot: settings, words, try it; ?stop=antibotedit: edits + the Save list)
+  async function antiBotStage() {
+    const S = FRE.app.state;
+    await openTask('antibot');
+    const ed = () => $('editor'), items = () => [...document.querySelectorAll('#list .npc')], txt = () => S.ws.files.get('antibot.inc').text;
+    const lastToast = () => ([...$('toasts').children].pop() || { textContent: '' }).textContent;
+    const set = (el, v, ev) => { el.value = v; el.dispatchEvent(new Event(ev)); };
+    ok(S.mode === 'antibot' && items().length === 3 && !S.ws.diags.some(d => d.module === 'antibot' && d.severity === 'BLOCK'), 'Bot Check: 3 pages (Settings, Pictures and words, Try it), no BLOCK on the real file');
+    ok(ed().querySelector('input[data-key="ab|SCORE_LIMIT"]').value === '1,200' && /minutes camping/.test(ed().textContent) && /Maps where kills never count/.test(ed().textContent), 'Settings: score limit 1,200 (from the file), what it means in play, the maps list');
+    click(items().find(x => x.dataset.page === 'words'));
+    ok(/Pictures and words \(23\)/.test(ed().textContent) && ed().querySelectorAll('input[data-key^="ab-word|"]').length === 23, 'Pictures and words: 23 words, each editable');
+    click(items().find(x => x.dataset.page === 'try'));
+    ok(/Click the /.test(ed().textContent) && ed().querySelectorAll('button.ab-pick').length === 6 && /A player's hour/.test(ed().textContent) && /puzzle opens/.test(ed().textContent), 'Try it: a puzzle with 6 pictures; an hour of play opens it');
+    const right = [...ed().querySelectorAll('button.ab-pick')].find(b => /the answer/.test(b.title));
+    click(right);
+    ok(/Solved/.test(ed().textContent), 'clicking the right picture solves it');
+    if (STOP === 'antibot') { $('toasts').textContent = ''; return; }
+    click(items().find(x => x.dataset.page === 'tune'));
+    set(ed().querySelector('input[data-key="ab|SCORE_LIMIT"]'), '1500', 'change');
+    ok(/^SCORE_LIMIT\t\t\t1500\t/m.test(txt()) && /score that opens the puzzle 1500 \(was 1200\)/.test(lastToast()), 'score limit 1200 -> 1500: only the number changes');
+    click($('btn-undo'));
+    click(items().find(x => x.dataset.page === 'words'));
+    const w0 = ed().querySelector('input[data-key^="ab-word|"]');
+    set(w0, 'Long Sword', 'change');
+    ok(/ANTIBOT_ITEM\tII_WEA_SWO_LONG\t+"Long Sword"/.test(txt()), 'word 1: "Sword" -> "Long Sword"');
+    click($('btn-undo'));
+    set(ed().querySelector('input[data-key^="ab-word|"]'), 'axe', 'change');
+    ok(/already a word/.test(lastToast()) && !/"axe"/.test(txt()), 'a word already in the list (any case) is refused');
+    const n0 = (txt().match(/^ANTIBOT_ITEM/gm) || []).length;
+    click([...ed().querySelectorAll('table.items tr')].find(r => r.querySelector('input[data-key^="ab-word|"]')).querySelector('button.danger'));
+    ok((txt().match(/^ANTIBOT_ITEM/gm) || []).length === n0 - 1 && /removed "Sword"/.test(lastToast()), 'remove "Sword"');
+    click($('btn-undo'));
+    click(items().find(x => x.dataset.page === 'tune'));
+    set(ed().querySelector('input[data-key="ab|SCORE_LIMIT"]'), '1500', 'change');
+    click($('btn-save'));
+    await waitFor(() => btnByText(document, 'Choose folder') || btnByText(document, 'Back up and write'), 'backup prompt or review (antibot)');
+    if (btnByText(document, 'Choose folder')) click(btnByText(document, 'Choose folder'));
+    await waitFor(() => btnByText(document, 'Back up and write'), 'review dialog (antibot)');
+    ok(/AntiBot\.inc/.test(document.querySelector('.modal').textContent) && /antibot reload/.test(document.querySelector('.modal').textContent) && !/Client/.test(document.querySelector('.modal header').textContent), 'review lists AntiBot.inc (no Client copy); After saving: /antibot reload');
+    click(btnByText(document, 'Back up and write'));
+    await waitFor(() => [...document.querySelectorAll('.modal header')].some(x => /^Saved|failed/.test(x.textContent)), 'save finished (antibot)');
+    ok(/SCORE_LIMIT\t\t\t1500/.test(new TextDecoder().decode(res.children.get('AntiBot.inc').bytes)), 'AntiBot.inc saved');
+    document.querySelectorAll('.modal-back').forEach(m => m.remove());
+    res.children.get('AntiBot.inc').bytes = original.get('AntiBot.inc');
+    $('toasts').textContent = '';
+  }
+
   // the Mini Events task (?stop=minievent: the O/X Quiz page; ?stop=mineventedit: settings, a prize, points, Save)
   async function miniEventStage() {
     const S = FRE.app.state;
@@ -439,10 +486,11 @@
     // the cards are drawn after the patch check (io/patch-state.js reads one C++ file per patch)
     await waitFor(() => document.querySelector('.task-card:not(:disabled)'), 'task cards enabled');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
-    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 15 && document.querySelector('.task-card[data-task="minievent"]') && document.querySelector('.task-card[data-task="mounts"]') && document.querySelector('.task-card[data-task="consumables"]') && document.querySelector('.task-card[data-task="dungeon"]') && document.querySelector('.task-card[data-task="pvp"]') && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 15 tasks to pick (Mini Events; Mounts; Consumable Stats; Dungeons; PvP Events; Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 16 && document.querySelector('.task-card[data-task="antibot"]') && document.querySelector('.task-card[data-task="minievent"]') && document.querySelector('.task-card[data-task="mounts"]') && document.querySelector('.task-card[data-task="consumables"]') && document.querySelector('.task-card[data-task="dungeon"]') && document.querySelector('.task-card[data-task="pvp"]') && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 16 tasks to pick (Bot Check; Mini Events; Mounts; Consumable Stats; Dungeons; PvP Events; Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     if (STOP === 'dungeon') { await dungeonStage(); return; }
+    if (STOP === 'antibot' || STOP === 'antibotedit') { await antiBotStage(); return; }
     if (STOP === 'minievent' || STOP === 'mineventprizes' || STOP === 'mineventhide' || STOP === 'mineventweek' || STOP === 'mineventqs' || STOP === 'mineventturnin' || STOP === 'mineventedit' || STOP === 'mineventsave') { await miniEventStage(); return; }
     if (STOP === 'mounts' || STOP === 'mountsmore' || STOP === 'mountsimple' || STOP === 'mountsgame' || STOP === 'mountsedit' || STOP === 'mountsave') { await mountsStage(); return; }
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
