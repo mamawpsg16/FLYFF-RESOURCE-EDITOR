@@ -287,7 +287,7 @@
         // currency (SetVenderType); Donate Chip is left out: Donate Chips are spent in the Donation Shop window (7d7df4f9)
         const cur = form.shopType || 0, chip = FRE.shopOps.isChipType(cur), money = chip ? FRE.shopOps.CHIPS[cur] : 'Penya';
         const sel = h('select.shop-type', { title: 'What players pay with in this shop.' },
-          [[0, 'Penya shop'], [1, 'Red Chip shop'], [3, 'PVP Token shop'], [4, 'Perin shop']].map(([v, l]) => h('option', { value: v, selected: v === cur }, l)));
+          [[0, 'Penya shop'], [1, 'Red Chip shop'], [3, 'PVP Token shop'], [4, 'Perin shop'], [5, 'Event Token shop']].map(([v, l]) => h('option', { value: v, selected: v === cur }, l)));
         sel.addEventListener('change', () => { form.shopType = Number(sel.value); render(); });
         body.appendChild(h('h3', `Shop tabs (${money}) `, sel));
         if (chip) body.appendChild(h('p.muted.small', 'Chip shop: a price here is the item\'s chip price (dwReferValue1 in Spec_Item.txt), the same number in every chip shop and the Donation Shop. Rule rows do not work here.'));

@@ -111,7 +111,7 @@
       add('NN_SHOP_EMPTY', 'BLOCK', 'tabs', 'Trade is ticked but no tab has an item: Trade would open an empty shop.');
     const shopType = form.shopType === undefined ? 0 : form.shopType;
     if (trade && !(shopType === 0 || FRE.shopOps.isChipType(shopType)))
-      add('NN_SHOP_TYPE', 'BLOCK', 'tabs', `Shop currency ${shopType} does not exist: 0 Penya, 1 Red Chip, 2 Donate Chip, 3 PVP Token or 4 Perin.`);
+      add('NN_SHOP_TYPE', 'BLOCK', 'tabs', `Shop currency ${shopType} does not exist: 0 Penya, 1 Red Chip, 2 Donate Chip, 3 PVP Token, 4 Perin or 5 Event Token.`);
     const chip = FRE.shopOps.isChipType(shopType);
     const slots = new Set();
     const index = ws.vendorIndex;

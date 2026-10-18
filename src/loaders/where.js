@@ -21,7 +21,7 @@
   const toInt = v => (Number.isNaN(v) || v >= 2147483648 || v < -2147483648) ? INT_MIN : Math.trunc(v);
   const PROB_TOTAL = 1000000;
   const DROP_ONE = 3000000000;
-  const CURRENCY = ['Penya', 'Red Chips', 'Donate Chips', 'PVP Tokens', 'Perins'];
+  const CURRENCY = ['Penya', 'Red Chips', 'Donate Chips', 'PVP Tokens', 'Perins', 'Event Tokens'];
   const round12 = x => Number(x.toPrecision(12));
 
   // ---------------------------------------------------------------- exact chances

@@ -15,8 +15,8 @@
 // form: { key, name, model: 'MI_X', image: 'IDS_..' | null, structure: 'SRT_X' | null, map, x, y, z, angle,
 //         newTag: 'Dungeon Pieces' | null (a new building tag instead of structure),
 //         menus: ['MMI_X', ...], tabs: [{ slot, title, rules: [{ ik3, job, min, max }], items: [{ define, cost }] }],
-//         shopType: 0 Penya (default) | 1 Red Chip | 2 Donate Chip | 3 PVP Token | 4 Perin }
-// A chip shop (shopType 1-4) gets SetVenderType(n); after the menus and AddVenderItem2 lines, like Donaris /
+//         shopType: 0 Penya (default) | 1 Red Chip | 2 Donate Chip | 3 PVP Token | 4 Perin | 5 Event Token }
+// A chip shop (shopType 1-5) gets SetVenderType(n); after the menus and AddVenderItem2 lines, like Donaris /
 // Amos (5035ab0f); an item's cost there is its chip price (dwReferValue1 in Spec_Item.txt, shared by every chip shop).
 // x / z are what /position prints in game (world units); the file stores them / OLD_MPU (4).
 (function (FRE) {

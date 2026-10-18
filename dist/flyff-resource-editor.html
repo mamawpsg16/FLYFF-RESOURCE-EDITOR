@@ -504,7 +504,7 @@ details.mt-more > summary { cursor: pointer; color: var(--muted); padding: 6px 0
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "66+", "when": "Sun 18 Oct 2026, 06:45", "rev": "b966d42", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when": "Sun 18 Oct 2026, 07:08", "rev": "0f070e0", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -6064,9 +6064,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "66+", "when
       'Narrow the AddVendorItem rules of that tab or move items to another tab.'],
     C_RULE_EMPTY: ['This AddVendorItem rule matches no item: no item of that type has a rarity (dwItemRare) inside the range. The server logs a VENDORITEM error and adds nothing.',
       'Check the item type and the rarity range, or remove the rule.'],
-    C_CHIP_TYPE: ['AddVenderItem2 only works in chip shops (SetVenderType 1 Red Chip, 2 Donate Chip, 3 PVP Token or 4 Perin). In a Penya shop the server ignores it.',
+    C_CHIP_TYPE: ['AddVenderItem2 only works in chip shops (SetVenderType 1 Red Chip, 2 Donate Chip, 3 PVP Token, 4 Perin or 5 Event Token). In a Penya shop the server ignores it.',
       'Use AddShopItem for Penya shops, or make the NPC a chip shop.'],
-    C_RULE_IGNORED: ['Chip shops (SetVenderType 1-4) only sell their AddVenderItem2 items. The server ignores AddVendorItem rules there; they come back if the NPC becomes a Penya shop again.',
+    C_RULE_IGNORED: ['Chip shops (SetVenderType 1-5) only sell their AddVenderItem2 items. The server ignores AddVendorItem rules there; they come back if the NPC becomes a Penya shop again.',
       'Nothing to do. Remove the rule if the NPC stays a chip shop for good.'],
     C_FIXED_IN_CHIP: ['AddShopItem items are added to every kind of shop. In a chip shop they are bought with chips, but without the check AddVenderItem2 gets: an item with chip price 0 is free, and one with no chip price breaks the payment. Its Penya price still changes the item\'s price server-wide.',
       'Use AddVenderItem2 in chip shops (switching the shop type in the dropdown does this).'],
@@ -6209,7 +6209,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "66+", "when
     NN_ITEM: ['The item is not in defineItem.h, or not in Spec_Item.txt. The shop would leave it out.', 'Pick an item from the item list.'],
     NN_ITEM_TWICE: ['The item is in this tab twice (once by a rule, or twice by hand). Players see it twice.', 'Remove one.'],
     NN_PRICE: ['A price must be a whole number from 1 to 2,147,483,647 (the server reads it with atoi into an int).', 'Fix the price, or leave it empty to use the item\'s own price.'],
-    NN_SHOP_TYPE: ['The server knows shop currencies 0 Penya, 1 Red Chip, 2 Donate Chip, 3 PVP Token and 4 Perin (CHARACTER::GetVenderCurrency).', 'Pick one of them.'],
+    NN_SHOP_TYPE: ['The server knows shop currencies 0 Penya, 1 Red Chip, 2 Donate Chip, 3 PVP Token, 4 Perin and 5 Event Token (CHARACTER::GetVenderCurrency).', 'Pick one of them.'],
     NN_CHIP_RULE: ['Chip shops only sell their AddVenderItem2 items; the server ignores AddVendorItem rule rows there (Mover.cpp ProcessRegenItem).', 'Remove the rules, or make it a Penya shop.'],
     NN_CHIP_NO_PRICE: ['A chip shop skips an item whose chip price (dwReferValue1) is empty: players would not see it.', 'Type a price for it.'],
     NN_CHIP_SHARED: ['An item has one chip price (dwReferValue1) for every chip shop and the Donation Shop. A new price here changes it there too.', 'Keep the current price if the other shops should stay the same.'],
@@ -6529,7 +6529,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "66+", "when
           if (e.kind === 'chip' && !chipShop) {
             add(Object.assign({ code: 'C_CHIP_TYPE', severity: 'WARN', start: rec.start, end: rec.end,
               key: `C_CHIP_TYPE|${npc.file}|${npc.key}|${itemName}`,
-              message: `${npc.key}: ${rec.cmd} only works in chip shops (SetVenderType 1-4); the server ignores it here` }, at));
+              message: `${npc.key}: ${rec.cmd} only works in chip shops (SetVenderType 1-5); the server ignores it here` }, at));
           }
           if (e.kind === 'chip' && prop) {
             const chip = FRE.specItem.get(prop, 'dwReferValue1');
@@ -6894,22 +6894,22 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "66+", "when
     return T.replaceSpan(rec.args.slot, slot);
   }
 
-  // Shop currency (SetVenderType: 0 Penya, 1 Red Chip, 2 Donate Chip, 3 PVP Token since 5035ab0f, 4 Perin (V19 Project.cpp case 4);
+  // Shop currency (SetVenderType: 0 Penya, 1 Red Chip, 2 Donate Chip, 3 PVP Token since 5035ab0f, 4 Perin (V19 Project.cpp case 4), 5 Event Token (V19 0e9cd3e1, Event Master);
   // CProject::LoadCharacter, Project.cpp:3518; CHARACTER::GetVenderCurrency / IsChipVender, Project.cpp:191). Chip shops sell AddVenderItem2 entries for chips (Mover.cpp:1651);
   // Penya shops sell AddShopItem entries. Converting renames only the command word and
   // keeps the "( tab, II_X )" text as written, so converting back gives identical bytes.
   // AddShopItem's Penya price cannot exist on AddVenderItem2 and is dropped.
   // Returns every splice at once, so the whole change is one undo step.
-  const shopType = v => (v >= 1 && v <= 4 ? v : 0);
+  const shopType = v => (v >= 1 && v <= 5 ? v : 0);
   const isChipType = v => shopType(v) !== 0;
-  const CHIPS = { 1: 'Red chips', 2: 'Donate chips', 3: 'PVP Tokens', 4: 'Perins' };
-  const SHOP_NAME = { 1: 'Red Chip', 2: 'Donate Chip', 3: 'PVP Token', 4: 'Perin' };
+  const CHIPS = { 1: 'Red chips', 2: 'Donate chips', 3: 'PVP Tokens', 4: 'Perins', 5: 'Event Tokens' };
+  const SHOP_NAME = { 1: 'Red Chip', 2: 'Donate Chip', 3: 'PVP Token', 4: 'Perin', 5: 'Event Token' };
   const isChipItem = r => r.cmd === 'AddVenderItem2' || r.cmd === 'AddVendorItem2';
 
   // penyaPrices (optional, converting to Penya): Map rec.start -> price written as
   // AddShopItem( tab, II_X, price ). Chip prices live in Spec_Item.txt (itemOps.setChipPrice).
   function setShopType(text, npc, type, penyaPrices) {
-    if (!(type === 0 || isChipType(type))) throw new Error('shop type must be 0 (Penya), 1 (Red Chip), 2 (Donate Chip), 3 (PVP Token) or 4 (Perin)');
+    if (!(type === 0 || isChipType(type))) throw new Error('shop type must be 0 (Penya), 1 (Red Chip), 2 (Donate Chip), 3 (PVP Token), 4 (Perin) or 5 (Event Token)');
     const from = shopType(npc.venderType);
     const splices = [];
     const rename = (rec, cmd) => splices.push({ start: rec.start, end: rec.start + rec.cmd.length, insert: cmd });
@@ -8314,8 +8314,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "66+", "when
 // form: { key, name, model: 'MI_X', image: 'IDS_..' | null, structure: 'SRT_X' | null, map, x, y, z, angle,
 //         newTag: 'Dungeon Pieces' | null (a new building tag instead of structure),
 //         menus: ['MMI_X', ...], tabs: [{ slot, title, rules: [{ ik3, job, min, max }], items: [{ define, cost }] }],
-//         shopType: 0 Penya (default) | 1 Red Chip | 2 Donate Chip | 3 PVP Token | 4 Perin }
-// A chip shop (shopType 1-4) gets SetVenderType(n); after the menus and AddVenderItem2 lines, like Donaris /
+//         shopType: 0 Penya (default) | 1 Red Chip | 2 Donate Chip | 3 PVP Token | 4 Perin | 5 Event Token }
+// A chip shop (shopType 1-5) gets SetVenderType(n); after the menus and AddVenderItem2 lines, like Donaris /
 // Amos (5035ab0f); an item's cost there is its chip price (dwReferValue1 in Spec_Item.txt, shared by every chip shop).
 // x / z are what /position prints in game (world units); the file stores them / OLD_MPU (4).
 (function (FRE) {
@@ -9564,7 +9564,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "66+", "when
       add('NN_SHOP_EMPTY', 'BLOCK', 'tabs', 'Trade is ticked but no tab has an item: Trade would open an empty shop.');
     const shopType = form.shopType === undefined ? 0 : form.shopType;
     if (trade && !(shopType === 0 || FRE.shopOps.isChipType(shopType)))
-      add('NN_SHOP_TYPE', 'BLOCK', 'tabs', `Shop currency ${shopType} does not exist: 0 Penya, 1 Red Chip, 2 Donate Chip, 3 PVP Token or 4 Perin.`);
+      add('NN_SHOP_TYPE', 'BLOCK', 'tabs', `Shop currency ${shopType} does not exist: 0 Penya, 1 Red Chip, 2 Donate Chip, 3 PVP Token, 4 Perin or 5 Event Token.`);
     const chip = FRE.shopOps.isChipType(shopType);
     const slots = new Set();
     const index = ws.vendorIndex;
@@ -10680,7 +10680,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "66+", "when
   const toInt = v => (Number.isNaN(v) || v >= 2147483648 || v < -2147483648) ? INT_MIN : Math.trunc(v);
   const PROB_TOTAL = 1000000;
   const DROP_ONE = 3000000000;
-  const CURRENCY = ['Penya', 'Red Chips', 'Donate Chips', 'PVP Tokens', 'Perins'];
+  const CURRENCY = ['Penya', 'Red Chips', 'Donate Chips', 'PVP Tokens', 'Perins', 'Event Tokens'];
   const round12 = x => Number(x.toPrecision(12));
 
   // ---------------------------------------------------------------- exact chances
@@ -14928,7 +14928,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "66+", "when
   const KINDS = ['II_GEN_GEM_', 'II_GEN_FOO_', 'II_GEN_POT_', 'II_SYS_SYS_QUE_'];
   const CONSUMABLE_IK3 = ['IK3_REFRESHER', 'IK3_DRINK', 'IK3_INSTANT', 'IK3_PILL', 'IK3_FOOD'];
   const DROP_BASE = 3000000000, MIN_PROB = DROP_BASE / 100;
-  const CURRENCY = ['Penya', 'Red Chips', 'Donate Chips', 'PVP Tokens', 'Perins'];
+  const CURRENCY = ['Penya', 'Red Chips', 'Donate Chips', 'PVP Tokens', 'Perins', 'Event Tokens'];
   const HINT_LEN = 100, TITLE_LEN = 60;
 
   // Python's str.title(): a letter after a non-letter is upper case, the others lower case
@@ -19863,7 +19863,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "66+", "when
   let listWs = null;
   const hasExchanges = npc => !!listWs && exMenusOf(listWs, npc).length > 0
     && (!listWs.placed || FRE.world.npcStatus(npc, listWs.placed).inGame !== false);
-  const TYPES = [{ v: 0, label: 'Penya shop' }, { v: 1, label: 'Red Chip shop' }, { v: 2, label: 'Donate Chip shop' }, { v: 3, label: 'PVP Token shop' }, { v: 4, label: 'Perin shop' }];
+  const TYPES = [{ v: 0, label: 'Penya shop' }, { v: 1, label: 'Red Chip shop' }, { v: 2, label: 'Donate Chip shop' }, { v: 3, label: 'PVP Token shop' }, { v: 4, label: 'Perin shop' }, { v: 5, label: 'Event Token shop' }];
   // NPC list filter: which NPCs to list
   // editable = has fixed items (AddShopItem / AddVenderItem2). Rule items are editable too (ui/shop-rules.js),
   // but listing every rule shop here would hide the few shops with hand-set prices.
@@ -19876,6 +19876,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "66+", "when
     { v: 'donate', label: 'Donate Chip shops', test: n => FRE.shopOps.shopType(n.venderType) === 2 },
     { v: 'pvp', label: 'PVP Token shops', test: n => FRE.shopOps.shopType(n.venderType) === 3 },
     { v: 'perin', label: 'Perin shops', test: n => FRE.shopOps.shopType(n.venderType) === 4 },
+    { v: 'event', label: 'Event Token shops', test: n => FRE.shopOps.shopType(n.venderType) === 5 },
     { v: 'exchange', label: 'NPCs with exchanges', test: hasExchanges },
     { v: 'all', label: 'All NPCs', test: () => true },
   ];
@@ -20088,7 +20089,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "66+", "when
         shown++;
         el.appendChild(h('div.npc' + (id === st.sel ? '.sel' : ''), { on: { click: () => { st.sel = id; st.tab = firstTab(ctx.ws, npc); if (FRE.ui.exchangeView) FRE.ui.exchangeView.clearPick(); ctx.renderAll(false); } } },
           h('div.n', h('span', label),
-            h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : npc.venderType === 3 ? h('span.tag.chip', 'PVP Token') : npc.venderType === 4 ? h('span.tag.chip', 'Perin') : null,
+            h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : npc.venderType === 3 ? h('span.tag.chip', 'PVP Token') : npc.venderType === 5 ? h('span.tag.chip', 'Event Token') : npc.venderType === 4 ? h('span.tag.chip', 'Perin') : null,
               ctx.edited.has('npc|' + id) || exMenusOf(ctx.ws, npc).some(m => ctx.edited.has('ex|' + m)) ? h('span.tag.edit', 'edited') : null,
               dg && dg.b ? h('span.tag.bad', '⛔' + dg.b) : dg && dg.w ? h('span.tag.warn', '⚠' + dg.w) : null)),
           h('div.k', `${npc.key} · ${npc.file}`),
@@ -20900,7 +20901,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "66+", "when
         // currency (SetVenderType); Donate Chip is left out: Donate Chips are spent in the Donation Shop window (7d7df4f9)
         const cur = form.shopType || 0, chip = FRE.shopOps.isChipType(cur), money = chip ? FRE.shopOps.CHIPS[cur] : 'Penya';
         const sel = h('select.shop-type', { title: 'What players pay with in this shop.' },
-          [[0, 'Penya shop'], [1, 'Red Chip shop'], [3, 'PVP Token shop'], [4, 'Perin shop']].map(([v, l]) => h('option', { value: v, selected: v === cur }, l)));
+          [[0, 'Penya shop'], [1, 'Red Chip shop'], [3, 'PVP Token shop'], [4, 'Perin shop'], [5, 'Event Token shop']].map(([v, l]) => h('option', { value: v, selected: v === cur }, l)));
         sel.addEventListener('change', () => { form.shopType = Number(sel.value); render(); });
         body.appendChild(h('h3', `Shop tabs (${money}) `, sel));
         if (chip) body.appendChild(h('p.muted.small', 'Chip shop: a price here is the item\'s chip price (dwReferValue1 in Spec_Item.txt), the same number in every chip shop and the Donation Shop. Rule rows do not work here.'));
@@ -21684,7 +21685,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "66+", "when
 
   // The three kinds, in the user's words; the same cards in + Menu and in + NPC (ui/new-npc.js)
   const TEXT = {
-    shop: 'Sells items for Penya, Red Chips, PVP Tokens or Perins.',
+    shop: 'Sells items for Penya, Red Chips, PVP Tokens, Perins or Event Tokens.',
     exchange: 'Players give items and get rewards (like Collins).',
     rules: 'A window with your text (like the Guild Siege rules).',
   };

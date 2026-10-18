@@ -74,7 +74,7 @@ The user is a web developer learning C++. When server behaviour matters, explain
   - An undefined name in a number slot becomes 0, logged as "Not Found".
   - `"""x"""` is 3 tokens.
 - **Defines** come from the 21 headers in `CProject::LoadDefines`. Only `#define NAME <dec|hex>` is accepted; negatives and aliases are ignored, and the first definition wins.
-- **NPC shops: one currency per NPC** (`SetVenderType` 0 = Penya, 1 = Red Chip, 2 = Donate Chip). There is no Perin NPC shop.
+- **NPC shops: one currency per NPC** (`SetVenderType` 0 = Penya, 1 = Red Chip, 2 = Donate Chip, 3 = PVP Token (5035ab0f), 4 = Perin, 5 = Event Token (V19 `0e9cd3e1`, Event Master); `CHARACTER::GetVenderCurrency`, Project.cpp:194). Types 1-5 are chip shops (`IsChipVender`): AddVenderItem2 lines, the price is the item's `dwReferValue1`, the SAME number in every chip shop (an item sold for 150 Event Tokens also costs 150 Red Chips / PVP Tokens wherever a chip shop sells it).
 - **`AddShopItem`'s price overwrites the item's price server-wide.**
 - **`AddShopItem` is added in every shop type.** In a chip shop it is charged in chips without the "chip cost < 1" check that `AddVenderItem2` gets (`C_FIXED_IN_CHIP`). Chip shops ignore `AddVendorItem` rules.
 - **Client copies.** The game client reads a loose file in `Client/` if there is one, otherwise an old copy packed in `data.res` (`b7645c52`). `character-etc.inc` and `character-school.inc` have no loose copy. `Client/Spec_Item.txt` is LF while the Server copy is CRLF; the content is the same. Every proven data commit changes both copies ("Client copy synced").

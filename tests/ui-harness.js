@@ -530,8 +530,16 @@
     ok(redList.length === 1 && redList[0].textContent.includes('MaFl_Waforu'), 'filter "Red Chip shops" lists only Waforu');
     ok(/Red Chip shops \(1\)/.test(document.querySelector('select.npc-filter').textContent), 'filter shows counts');
     ok(!/Donate Chip shops/.test(document.querySelector('select.npc-filter').textContent), 'empty filter (Donate Chip shops, 0) is hidden');
+    const fe = document.querySelector('select.npc-filter');
+    fe.value = 'event'; fe.dispatchEvent(new Event('change'));
+    const evList = [...document.querySelectorAll('#list .npc')];
+    ok(evList.length === 1 && evList[0].textContent.includes('MaFl_SANTA2011SECOND') && [...evList[0].querySelectorAll('.tag.chip')].some(t => t.textContent === 'Event Token'),
+      'filter "Event Token shops" lists only Event Master (SetVenderType(5), V19 0e9cd3e1), tagged Event Token');
+    click(evList[0]);
+    ok($('editor').querySelector('select.shop-type').value === '5' && /Price \(Event Tokens\)/.test($('editor').textContent), 'Event Master: the currency box says Event Token shop, prices in Event Tokens');
     const f2 = document.querySelector('select.npc-filter');
     f2.value = 'shops'; f2.dispatchEvent(new Event('change'));
+    click([...document.querySelectorAll('#list .npc')].find(x => x.textContent.includes('MaFl_Lui')));
     ok(document.querySelectorAll('#list .npc').length > 50, 'filter back to all shops');
 
     // shop type: Lui Penya -> Red Chip via the dropdown, preview, confirm, one undo

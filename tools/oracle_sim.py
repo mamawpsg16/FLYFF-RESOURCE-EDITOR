@@ -1598,7 +1598,7 @@ def nn_fill(I, npc):
     tabs = []
     for tab in range(4):
         ent, dropped = [], 0
-        if npc['vtype'] in (1, 2, 3, 4):
+        if npc['vtype'] in (1, 2, 3, 4, 5):
             for s in npc['shop']:
                 if s[0] == 'chip' and s[1] == tab:
                     p = props.get(U32(s[2]))
@@ -1814,7 +1814,7 @@ def nn_check(A, form):
     has = lambda t: bool(t.get('items') or t.get('rules'))
     st = form.get('shopType', 0)
     if trade and st not in (0, 1, 2, 3, 4): add('NN_SHOP_TYPE', 'tabs')
-    chip = st in (1, 2, 3, 4)
+    chip = st in (1, 2, 3, 4, 5)
     if not trade and any(has(t) for t in tabs): add('NN_SHOP_NO_TRADE', 'tabs')
     if trade and not any(has(t) for t in tabs): add('NN_SHOP_EMPTY', 'tabs')
     slots = set()
@@ -1872,8 +1872,8 @@ def nn_check(A, form):
 
 
 def nn_chip(form):
-    """a chip shop: SetVenderType 1-4 (GetVenderCurrency != 0, 5035ab0f added 3 = PVP Token, then 4 = Perin) and a shop to write"""
-    return bool(nn_tabs(form)) and form.get('shopType') in (1, 2, 3, 4)
+    """a chip shop: SetVenderType 1-5 (GetVenderCurrency != 0, 5035ab0f added 3 = PVP Token, then 4 = Perin, 0e9cd3e1 5 = Event Token) and a shop to write"""
+    return bool(nn_tabs(form)) and form.get('shopType') in (1, 2, 3, 4, 5)
 
 
 def nn_chip_prices(A, form):
@@ -2984,7 +2984,7 @@ def sh_run(root):
     npcs = sh_npcs(texts, D, A.S)
     final = sh_costs(npcs, props)
     cost_of = lambda iid: final[iid][0] if iid in final else props[iid]['cost']
-    penya = lambda x: x['vtype'] not in (1, 2, 3, 4)
+    penya = lambda x: x['vtype'] not in (1, 2, 3, 4, 5)
     # 1. every item of every Penya shop: dwCost, pay / get back at each rate, refused
     shops = []
     for f, x in npcs:
@@ -6849,7 +6849,7 @@ def wh_facts(root, rates=None):
     for f, x in npcs:
         if not x['shop']:
             continue
-        chip = x['vtype'] in (1, 2, 3, 4)
+        chip = x['vtype'] in (1, 2, 3, 4, 5)
         for tab in range(4):
             ent = []
             if chip:
@@ -12844,7 +12844,7 @@ def me_edit_cases(real):
 TI_TOWNS = {'MaFl': 'Flaris', 'MaSa': 'Saint Morning', 'MaDa': 'Darkon', 'MaHa': 'Harmonin', 'MaEw': 'Eillun', 'MaRu': 'Ruendera'}
 TI_TOWN_NAMES = {'flaris': 'Flaris', 'saintmorning': 'Saint Morning', 'darkon1': 'Darkon 1', 'harmonin': 'Shaduwar', 'elliun': 'Eillun', 'ruendera': 'Eillun'}
 TI_KINDS = ('II_GEN_GEM_', 'II_GEN_FOO_', 'II_GEN_POT_', 'II_SYS_SYS_QUE_')
-TI_CURRENCY = ['Penya', 'Red Chips', 'Donate Chips', 'PVP Tokens', 'Perins']
+TI_CURRENCY = ['Penya', 'Red Chips', 'Donate Chips', 'PVP Tokens', 'Perins', 'Event Tokens']
 
 
 def ti_tier(rank, prob):
@@ -12898,7 +12898,7 @@ class TiWorld:
             chip = x['vtype'] != 0
             for tab in range(4):
                 ent = []
-                if x['vtype'] in (1, 2, 3, 4):
+                if x['vtype'] in (1, 2, 3, 4, 5):
                     for sx in x['shop']:
                         if sx[0] == 'chip' and sx[1] == tab:
                             pp = props.get(U32(sx[2]))

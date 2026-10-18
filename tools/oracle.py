@@ -152,7 +152,7 @@ def vendor_sim(root):
             tabs = []
             for tab in range(4):
                 ent = []
-                if vtype in (1, 2, 3, 4):  # IsChipVender: GetVenderCurrency != 0 (5035ab0f added 3 = PVP Token, then 4 = Perin)
+                if vtype in (1, 2, 3, 4, 5):  # IsChipVender: GetVenderCurrency != 0 (5035ab0f added 3 = PVP Token, then 4 = Perin, 0e9cd3e1 5 = Event Token)
                     for kind, a in stm:
                         if kind == 'chip' and a[0] == tab:
                             p = props.get(U(a[1]))

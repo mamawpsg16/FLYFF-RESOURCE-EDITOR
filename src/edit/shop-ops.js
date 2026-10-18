@@ -58,22 +58,22 @@
     return T.replaceSpan(rec.args.slot, slot);
   }
 
-  // Shop currency (SetVenderType: 0 Penya, 1 Red Chip, 2 Donate Chip, 3 PVP Token since 5035ab0f, 4 Perin (V19 Project.cpp case 4);
+  // Shop currency (SetVenderType: 0 Penya, 1 Red Chip, 2 Donate Chip, 3 PVP Token since 5035ab0f, 4 Perin (V19 Project.cpp case 4), 5 Event Token (V19 0e9cd3e1, Event Master);
   // CProject::LoadCharacter, Project.cpp:3518; CHARACTER::GetVenderCurrency / IsChipVender, Project.cpp:191). Chip shops sell AddVenderItem2 entries for chips (Mover.cpp:1651);
   // Penya shops sell AddShopItem entries. Converting renames only the command word and
   // keeps the "( tab, II_X )" text as written, so converting back gives identical bytes.
   // AddShopItem's Penya price cannot exist on AddVenderItem2 and is dropped.
   // Returns every splice at once, so the whole change is one undo step.
-  const shopType = v => (v >= 1 && v <= 4 ? v : 0);
+  const shopType = v => (v >= 1 && v <= 5 ? v : 0);
   const isChipType = v => shopType(v) !== 0;
-  const CHIPS = { 1: 'Red chips', 2: 'Donate chips', 3: 'PVP Tokens', 4: 'Perins' };
-  const SHOP_NAME = { 1: 'Red Chip', 2: 'Donate Chip', 3: 'PVP Token', 4: 'Perin' };
+  const CHIPS = { 1: 'Red chips', 2: 'Donate chips', 3: 'PVP Tokens', 4: 'Perins', 5: 'Event Tokens' };
+  const SHOP_NAME = { 1: 'Red Chip', 2: 'Donate Chip', 3: 'PVP Token', 4: 'Perin', 5: 'Event Token' };
   const isChipItem = r => r.cmd === 'AddVenderItem2' || r.cmd === 'AddVendorItem2';
 
   // penyaPrices (optional, converting to Penya): Map rec.start -> price written as
   // AddShopItem( tab, II_X, price ). Chip prices live in Spec_Item.txt (itemOps.setChipPrice).
   function setShopType(text, npc, type, penyaPrices) {
-    if (!(type === 0 || isChipType(type))) throw new Error('shop type must be 0 (Penya), 1 (Red Chip), 2 (Donate Chip), 3 (PVP Token) or 4 (Perin)');
+    if (!(type === 0 || isChipType(type))) throw new Error('shop type must be 0 (Penya), 1 (Red Chip), 2 (Donate Chip), 3 (PVP Token), 4 (Perin) or 5 (Event Token)');
     const from = shopType(npc.venderType);
     const splices = [];
     const rename = (rec, cmd) => splices.push({ start: rec.start, end: rec.start + rec.cmd.length, insert: cmd });

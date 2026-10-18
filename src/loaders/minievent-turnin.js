@@ -23,7 +23,7 @@
   const KINDS = ['II_GEN_GEM_', 'II_GEN_FOO_', 'II_GEN_POT_', 'II_SYS_SYS_QUE_'];
   const CONSUMABLE_IK3 = ['IK3_REFRESHER', 'IK3_DRINK', 'IK3_INSTANT', 'IK3_PILL', 'IK3_FOOD'];
   const DROP_BASE = 3000000000, MIN_PROB = DROP_BASE / 100;
-  const CURRENCY = ['Penya', 'Red Chips', 'Donate Chips', 'PVP Tokens', 'Perins'];
+  const CURRENCY = ['Penya', 'Red Chips', 'Donate Chips', 'PVP Tokens', 'Perins', 'Event Tokens'];
   const HINT_LEN = 100, TITLE_LEN = 60;
 
   // Python's str.title(): a letter after a non-letter is upper case, the others lower case

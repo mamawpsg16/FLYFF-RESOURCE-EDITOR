@@ -18,7 +18,7 @@
   let listWs = null;
   const hasExchanges = npc => !!listWs && exMenusOf(listWs, npc).length > 0
     && (!listWs.placed || FRE.world.npcStatus(npc, listWs.placed).inGame !== false);
-  const TYPES = [{ v: 0, label: 'Penya shop' }, { v: 1, label: 'Red Chip shop' }, { v: 2, label: 'Donate Chip shop' }, { v: 3, label: 'PVP Token shop' }, { v: 4, label: 'Perin shop' }];
+  const TYPES = [{ v: 0, label: 'Penya shop' }, { v: 1, label: 'Red Chip shop' }, { v: 2, label: 'Donate Chip shop' }, { v: 3, label: 'PVP Token shop' }, { v: 4, label: 'Perin shop' }, { v: 5, label: 'Event Token shop' }];
   // NPC list filter: which NPCs to list
   // editable = has fixed items (AddShopItem / AddVenderItem2). Rule items are editable too (ui/shop-rules.js),
   // but listing every rule shop here would hide the few shops with hand-set prices.
@@ -31,6 +31,7 @@
     { v: 'donate', label: 'Donate Chip shops', test: n => FRE.shopOps.shopType(n.venderType) === 2 },
     { v: 'pvp', label: 'PVP Token shops', test: n => FRE.shopOps.shopType(n.venderType) === 3 },
     { v: 'perin', label: 'Perin shops', test: n => FRE.shopOps.shopType(n.venderType) === 4 },
+    { v: 'event', label: 'Event Token shops', test: n => FRE.shopOps.shopType(n.venderType) === 5 },
     { v: 'exchange', label: 'NPCs with exchanges', test: hasExchanges },
     { v: 'all', label: 'All NPCs', test: () => true },
   ];
@@ -243,7 +244,7 @@
         shown++;
         el.appendChild(h('div.npc' + (id === st.sel ? '.sel' : ''), { on: { click: () => { st.sel = id; st.tab = firstTab(ctx.ws, npc); if (FRE.ui.exchangeView) FRE.ui.exchangeView.clearPick(); ctx.renderAll(false); } } },
           h('div.n', h('span', label),
-            h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : npc.venderType === 3 ? h('span.tag.chip', 'PVP Token') : npc.venderType === 4 ? h('span.tag.chip', 'Perin') : null,
+            h('span', npc.venderType === 1 ? h('span.tag.chip', 'Red Chip') : npc.venderType === 2 ? h('span.tag.chip', 'Donate') : npc.venderType === 3 ? h('span.tag.chip', 'PVP Token') : npc.venderType === 5 ? h('span.tag.chip', 'Event Token') : npc.venderType === 4 ? h('span.tag.chip', 'Perin') : null,
               ctx.edited.has('npc|' + id) || exMenusOf(ctx.ws, npc).some(m => ctx.edited.has('ex|' + m)) ? h('span.tag.edit', 'edited') : null,
               dg && dg.b ? h('span.tag.bad', '⛔' + dg.b) : dg && dg.w ? h('span.tag.warn', '⚠' + dg.w) : null)),
           h('div.k', `${npc.key} · ${npc.file}`),

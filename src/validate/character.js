@@ -103,7 +103,7 @@
           if (e.kind === 'chip' && !chipShop) {
             add(Object.assign({ code: 'C_CHIP_TYPE', severity: 'WARN', start: rec.start, end: rec.end,
               key: `C_CHIP_TYPE|${npc.file}|${npc.key}|${itemName}`,
-              message: `${npc.key}: ${rec.cmd} only works in chip shops (SetVenderType 1-4); the server ignores it here` }, at));
+              message: `${npc.key}: ${rec.cmd} only works in chip shops (SetVenderType 1-5); the server ignores it here` }, at));
           }
           if (e.kind === 'chip' && prop) {
             const chip = FRE.specItem.get(prop, 'dwReferValue1');
