@@ -209,6 +209,7 @@
       if (STOP === 'mountsimple') { $('toasts').textContent = ''; return; }
       while (S.ws.history.length) click($('btn-undo'));
     }
+    if (STOP === 'mountsmore') { $('toasts').textContent = ''; const d = ed().querySelector('details.mt-more'); d.open = true; d.scrollIntoView(); return; }
     if (STOP === 'mountsgame') { $('toasts').textContent = ''; ed().querySelector('details.mt-more').open = true; ed().querySelector('.mt-game').scrollIntoView(); return; }
     const sp = ed().querySelector('input[data-key="mt|225049|fGroundSpeed"]');
     sp.value = '0.5'; sp.dispatchEvent(new Event('change'));
@@ -269,7 +270,7 @@
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     if (STOP === 'dungeon') { await dungeonStage(); return; }
-    if (STOP === 'mounts' || STOP === 'mountsimple' || STOP === 'mountsgame' || STOP === 'mountsedit' || STOP === 'mountsave') { await mountsStage(); return; }
+    if (STOP === 'mounts' || STOP === 'mountsmore' || STOP === 'mountsimple' || STOP === 'mountsgame' || STOP === 'mountsedit' || STOP === 'mountsave') { await mountsStage(); return; }
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
     click(document.querySelector('.task-card[data-task="npc"]'));
     const card = document.querySelector('.task-card[data-task="npc"]'), lw = document.querySelector('.loading-back');
