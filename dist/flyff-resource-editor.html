@@ -239,6 +239,9 @@ td.nowrap { white-space: nowrap; }
 .ex-tools > * { flex: 0 0 auto; }
 .warn-text { color: var(--warn); }
 .ok-text { color: var(--ok); }
+.me-pts td input.num-input { width: 100%; min-width: 0; box-sizing: border-box; }
+.tag input.num-input { width: 64px; }
+.note { border-left: 3px solid var(--ok); padding: 6px 10px; margin: 8px 0; }
 .ex-game { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--line); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 12px; }
 .ex-slot { padding: 1px 7px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
 .ex-slot.over { border-color: var(--bad); color: var(--bad); }
@@ -497,7 +500,7 @@ details.mt-more > summary { cursor: pointer; color: var(--muted); padding: 6px 0
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "62+", "when": "Sun 18 Oct 2026, 05:51", "rev": "5fe3e18", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "63+", "when": "Sun 18 Oct 2026, 06:07", "rev": "8d81c78", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -14994,7 +14997,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "62+", "when
   const keyOf = (c, id) => { const it = c.items.get(id >>> 0); return it ? it.define : String(id >>> 0); };
   const townOfNpc = npc => TOWNS[npc.key.slice(0, 4)] || 'Madrigal';
   const npcName = npc => npc.name || npc.key;
-  const normalRank = mon => mon && (mon.rank === 'low' || mon.rank === 'normal');
+  // 0 = a RANK_LOW / RANK_NORMAL monster's line of at least 1 % (build_turnin.py's rule), 1 = any other
+  const tierOf = (rankId, prob) => ((rankId === 1 || rankId === 2) && prob >= MIN_PROB ? 0 : 1);
 
   // Madrigal monster drops: each item -> [{ mid, x, z, prob, tier }] in respawn file order (each monster once).
   // tier 0 = a normal monster's line of at least 1 % (build_turnin.py's rule); tier 1 = any other Madrigal drop line
@@ -15009,7 +15013,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "62+", "when
       for (const e of mon.list) {
         if (e.kind !== 'item' || e.event || !c.items.get(e.itemId) || !(e.probability > 0)) continue;
         const prob = Math.min(e.probability, 2147483647);
-        const tier = normalRank(mv) && prob >= MIN_PROB ? 0 : 1;
+        const tier = tierOf(mv.rankId, prob);
         if (!out.has(e.itemId)) out.set(e.itemId, []);
         out.get(e.itemId).push({ mid: r.mover, x: r.x, z: r.z, prob, tier, define: e.define });
       }
@@ -15193,7 +15197,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "62+", "when
     return s.split('"').join("'").slice(0, 60);
   }
 
-  FRE.miniEventTurnIn = { madrigal, townOf, areaName, context, madrigalDrops, hintFor, allHints, pools, generate, comboKey, turnIn, gmTitle,
+  FRE.miniEventTurnIn = { tierOf, madrigal, townOf, areaName, context, madrigalDrops, hintFor, allHints, pools, generate, comboKey, turnIn, gmTitle,
     nameOf, keyOf, TOWNS, HINT_LEN, TITLE_LEN };
 })(globalThis.FRE = globalThis.FRE || {});
 
@@ -26420,7 +26424,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "62+", "when
   const { h, toast, keepFocus, numInput } = FRE.dom;
   const { diagRow } = FRE.ui;
   const FILE = 'minievent.inc';
-  const st = { sel: 1, players: 12, seed: 1, q: '', page: 0, tryAsk: 0, typed: '', newQ: { 2: { question: '', info: '' }, 3: { question: '', truth: true } } };
+  const st = { tr: { q: '', page: 0, hq: '', hpage: 0, n: 50, seed: 1 + Math.floor(Math.random() * 99999), mode: 'add', withHints: true, preview: null,
+    newR: { title: '', items: [[null, 20]] }, tryR: 0, have: {}, newH: { id: null, text: '' } }, sel: 1, players: 12, seed: 1, q: '', page: 0, tryAsk: 0, typed: '', newQ: { 2: { question: '', info: '' }, 3: { question: '', truth: true } } };
   const M = () => FRE.miniEvent, O = () => FRE.miniEventOps, Sim = () => FRE.miniEventSim;
   const model = ctx => ctx.ws.models.minievent;
   const can = ctx => ctx.ws.isEditable(FILE);
@@ -26535,13 +26540,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "62+", "when
       const cells = vals.map((v, i) => h('td', h('div.muted.small', i < 10 ? ORD(i + 1) : 'the rest'), numInput({ value: v, min: 0, max: 999, disabled: !ed, key: `mept|${e.type}|${i}`,
         onCommit: n => { if (n === null || n === v) return; const nv = vals.slice(); nv[i] = n;
           edit(ctx, e.type, (t, mm) => O().setPoints(t, mm, e.type, nv), `${e.name} points, ${i < 10 ? ORD(i + 1) : 'the rest'}: ${n} (was ${v})`, `mept|${e.type}|${i}`); } })));
-      el.appendChild(table(Array(11).fill('9%'), h('tr', cells)));
+      el.appendChild(h('div.me-pts', table(Array(11).fill('9%'), h('tr', cells))));
       el.appendChild(h('p.muted.small', 'Rules the server checks: 0 - 999, never going up from 1st to 10th, and 10th more than the rest.'));
     }
 
     // what this event's list holds (edited in the next steps)
     const list = e.type === 2 || e.type === 3 ? `${e.asks.length} question${e.asks.length === 1 ? '' : 's'}` : e.type === 5 ? `${e.recipes.length} recipes` : e.type === 6 ? `${e.spots.length} hiding spots` : null;
     if (e.type === 2 || e.type === 3) questionsView(el, ctx, e);
+    else if (e.type === 5) turninView(el, ctx, e);
     else if (list) el.appendChild(h('p.muted.small', `This event has ${list} (at least one per round is needed: ${e.values.ROUNDS}). Editing the list comes in a later step.`));
 
     tryView(el, ctx, e);
@@ -26651,6 +26657,209 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "62+", "when
       const inp = textBox({ value: st.typed, placeholder: 'Type it here exactly', width: '24em', key: 'metype', onInput: v => { st.typed = v; show(v); } });
       el.appendChild(h('div.dr-line', inp, res));
       show(st.typed);
+    }
+  }
+
+  // ---- Turn-in Race (step 3): RECIPE lines, ITEM_HINT lines, 🎲 random recipes, Try turning in (loaders/minievent-turnin.js)
+  const TI = () => FRE.miniEventTurnIn;
+  function tctx(ws) { if (!ws._meTurn) ws._meTurn = TI().context(ws); return ws._meTurn; }
+  const opsCtx = ws => ({ itemOk: id => !!ws.itemById(id), keyOf: id => ws.itemById(id).define, nameOf: id => (ws.itemById(id) || {}).name || String(id) });
+  const iname = (ws, id) => { const it = ws.itemById(id >>> 0); return it ? (it.name || it.define) : `item ${id >>> 0}`; };
+  const idOfDefine = (ws, d) => ws.defines.defines.get(d);
+
+  // one recipe's items as an editable list: [[id, n], ...] -> a row of "name × amount ✕" + "+ item"
+  function itemsEditor(ctx, items, ed, onChange, keyBase) {
+    const box = h('div.dr-line', { style: 'flex-wrap:wrap;gap:6px' });
+    items.forEach(([id, n], k) => {
+      box.appendChild(h('span.tag', { style: 'display:inline-flex;align-items:center;gap:4px' },
+        id === null ? (ed ? FRE.ui.combo({ options: itemOptions(ctx.ws), value: '', placeholder: 'Pick an item', onPick: d => { const v = idOfDefine(ctx.ws, d); if (v === undefined) return; const x = items.map(y => y.slice()); x[k][0] = v >>> 0; onChange(x, `item ${k + 1}: ${iname(ctx.ws, v)}`); } }) : '?')
+          : h('span', iname(ctx.ws, id)),
+        ' ×', numInput({ value: n, min: 1, max: 9999, disabled: !ed, key: `${keyBase}|n${k}`, onCommit: v => { if (v === null || v === n) return; const x = items.map(y => y.slice()); x[k][1] = v; onChange(x, `${id === null ? 'amount' : iname(ctx.ws, id)} × ${v}`); } }),
+        ed && items.length > 1 ? h('button.icon.danger', { title: 'Remove this item', on: { click: () => onChange(items.filter((_, j) => j !== k), `without ${id === null ? 'an empty item' : iname(ctx.ws, id)}`) } }, '✕') : null));
+    });
+    if (ed && items.length < M().RECIPE_ITEMS) box.appendChild(h('button.small', { on: { click: () => onChange([...items, [null, 20]], null) } }, '+ item'));
+    return box;
+  }
+
+  function turninView(el, ctx, e) {
+    const ws = ctx.ws, ed = can(ctx), m = model(ctx), S = st.tr, oc = opsCtx(ws);
+    const hintMap = new Map(); for (const x of m.hints) hintMap.set(x.id, x);     // the last line of an item wins
+    const recipeOf = r => ({ title: r.title.text, items: r.items.map(x => [x.id, x.amount.value]) });
+
+    // the GM command (V19 4a733f19)
+    el.appendChild(h('div.note.small', h('b', 'In game: '), 'a GM can set a round\'s recipe with ', h('code', '/eventrecipe [round] ["title"] <Ctrl+click items> [amount]'),
+      ' (no round = the next one; amount = the linked stack). Rounds without one use this list. Needs the V19 change 4a733f19 built into the WorldServer and Neuz (not yet tested in game).'));
+
+    // ---- recipes
+    el.appendChild(h('h3', `Recipes (${e.recipes.length})`));
+    el.appendChild(h('p.muted.small', `One recipe per round (${e.values.ROUNDS} a run), never one twice in a run; never-used recipes come first, then the ones used longest ago. Players bring the items to Event Master and press TURN IN: equipped or locked items do not count; the first ${e.values.END_AT} to turn in end the round.`));
+    // + add
+    if (ed) {
+      const nr = S.newR, msg = h('div.small');
+      const valid = () => { try { O().checkRecipe({ title: nr.title, items: nr.items }, oc.itemOk); return null; } catch (er) { return er.message; } };
+      const add = h('button.primary', { on: { click: () => {
+        const r = { title: nr.title, items: nr.items.map(x => x.slice()) };
+        edit(ctx, 5, (t, mm) => O().addRecipe(t, mm, r, oc), `Turn-in Race: new recipe "${r.title}"`);
+        S.newR = { title: '', items: [[null, 20]] };
+        ctx.renderAll(false);
+      } } }, '+ Add recipe');
+      const check = () => { const v = valid(); add.disabled = !!v; msg.className = 'small warn-text'; msg.textContent = v && (nr.title || nr.items.some(x => x[0] !== null)) ? '⛔ ' + v : ''; };
+      const auto = h('button.small', { title: 'A title like the list\'s: "<monster> Hunt" ...', on: { click: () => {
+        const c = tctx(ws), ids = nr.items.filter(x => x[0] !== null).map(x => x[0]);
+        nr.title = TI().gmTitle(c, ids, id => (hintMap.get(id) ? hintMap.get(id).text.text : TI().hintFor(c, id)));
+        ctx.renderAll(false);
+      } } }, '✨ Title from items');
+      el.appendChild(h('div.dr-line', textBox({ value: nr.title, max: 60, placeholder: 'Title players see (1-60 letters)', width: '22em', key: 'metr-title', onInput: v => { nr.title = v; check(); } }), auto,
+        itemsEditor(ctx, nr.items, true, (x) => { nr.items = x; ctx.renderAll(false); }, 'metr-new'), add));
+      el.appendChild(msg);
+      check();
+    }
+    // search + table
+    const q = S.q.toLowerCase();
+    const list = e.recipes.map((r, i) => [r, i]).filter(([r]) => !q || r.title.text.toLowerCase().includes(q) || r.items.some(x => iname(ws, x.id).toLowerCase().includes(q)));
+    const pages = Math.max(1, Math.ceil(list.length / PAGE));
+    if (S.page >= pages) S.page = pages - 1;
+    el.appendChild(h('div.dr-line', textBox({ value: S.q, placeholder: `Search the ${e.recipes.length} recipes (title or item)`, width: '20em', key: 'metr-q', onInput: v => { S.q = v; S.page = 0; ctx.renderAll(false); } }),
+      h('span.muted.small', `${list.length} shown`), pages > 1 ? h('span', h('button.small', { disabled: S.page === 0, on: { click: () => { S.page--; ctx.renderAll(false); } } }, '‹'),
+        h('span.muted.small', ` page ${S.page + 1} / ${pages} `), h('button.small', { disabled: S.page >= pages - 1, on: { click: () => { S.page++; ctx.renderAll(false); } } }, '›')) : null));
+    const asked = ws.miniEventAsked || null;
+    const rows = [h('tr', h('th', '#'), h('th', 'Title'), h('th', 'Items'), h('th', 'Used last'), h('th', ''))];
+    for (const [r, i] of list.slice(S.page * PAGE, S.page * PAGE + PAGE)) {
+      const label = `Turn-in recipe ${i + 1}`;
+      const cur = () => model(ctx).events[5].recipes[i];
+      const change = (patch, what) => {
+        const nr = Object.assign(recipeOf(cur()), patch);
+        if (nr.items.some(x => x[0] === null)) { S.pending = { i, items: nr.items }; ctx.renderAll(false); return; }
+        try { O().checkRecipe(nr, oc.itemOk); } catch (er) { toast(er.message, 'bad'); ctx.renderAll(false); return; }
+        S.pending = null;
+        edit(ctx, 5, t => O().editRecipe(t, cur(), nr, oc), `${label}: ${what}`);
+      };
+      const items = S.pending && S.pending.i === i ? S.pending.items : recipeOf(r).items;
+      const when = asked ? asked.get(Sim().askKey(5, Sim().askText(e, 5, i))) : null;
+      const missing = r.items.filter(x => !hintMap.has(x.id)).length;
+      rows.push(h('tr', h('td.muted', String(i + 1)),
+        h('td', textBox({ value: r.title.text, disabled: !ed, max: 60, key: `metr-t|${i}`, onCommit: v => change({ title: v }, `title "${v}"`) }),
+          missing ? h('div.small.warn-text', `${missing} item${missing > 1 ? 's' : ''} without a hint`) : null),
+        h('td', itemsEditor(ctx, items, ed, (x, what) => change({ items: x }, what || 'items'), `metr|${i}`)),
+        h('td.muted.small', asked ? (when ? dateText(when) : 'never') : '—'),
+        h('td', ed ? h('button.icon.danger', { title: 'Remove this recipe', on: { click: () => edit(ctx, 5, t => O().removeRecipe(t, cur()), `Turn-in Race: removed recipe "${r.title.text}"`) } }, '✕') : null)));
+    }
+    el.appendChild(h('table.items.rt', { style: 'table-layout:fixed;width:100%' }, h('colgroup', ['4%', '26%', '56%', '10%', '4%'].map(w => h('col', { style: `width:${w}` }))), rows));
+    if (e.recipes.length < e.values.ROUNDS) el.appendChild(h('p.warn-text', `⛔ Only ${e.recipes.length} recipes for ${e.values.ROUNDS} rounds: the server switches Mini Events off.`));
+
+    // ---- 🎲 random recipes
+    if (ed) {
+      el.appendChild(h('h3', '🎲 Make random recipes'));
+      el.appendChild(h('p.muted.small', 'Parts of normal Madrigal monsters (drop 1 % or more), food / potions they drop or Penya shops sell, and Penya-shop gear, in 4 shapes: "<monster> Hunt" (one part ×30-50), "… and Supplies" (a part + a supply), "… Expedition" (gear ×1 + part ×20 + supply ×20), "<monster> and <monster>" (two parts ×20). No item combination twice. With a big list the server picks never-used ones first, so every event looks new.'));
+      const c0 = () => tctx(ws);
+      const run = () => {
+        try {
+          const c = c0(), skip = new Set(e.recipes.map(r => TI().comboKey(r.items.map(x => x.id))));
+          S.preview = TI().generate(c, S.n, S.seed, S.mode === 'add' ? skip : new Set());
+        } catch (er) { toast(`Could not make recipes: ${er.message}`, 'bad'); S.preview = []; }
+        ctx.renderAll(false);
+      };
+      el.appendChild(h('div.dr-line',
+        h('span', 'How many '), numInput({ value: S.n, min: 1, max: 1000, key: 'metr-gn', onCommit: v => { if (v) { S.n = v; S.preview = null; ctx.renderAll(false); } } }),
+        h('select', { on: { change: ev => { S.mode = ev.target.value; S.preview = null; ctx.renderAll(false); } } },
+          h('option', { value: 'add', selected: S.mode === 'add' }, 'Add to the list'), h('option', { value: 'replace', selected: S.mode === 'replace' }, 'Replace the whole list')),
+        h('label.small', h('input', { type: 'checkbox', checked: S.withHints, on: { change: ev => { S.withHints = ev.target.checked; } } }), ' + hints for their items'),
+        h('span.muted.small', `seed ${S.seed}`),
+        h('button', { on: { click: () => { S.seed = 1 + Math.floor(Math.random() * 99999); run(); } } }, '🎲 Roll'),
+        S.preview ? null : h('button', { on: { click: run } }, 'Preview')));
+      if (S.preview) {
+        const pv = S.preview;
+        el.appendChild(h('ol.small', pv.slice(0, 12).map(r => h('li', h('b', r.title), ': ', r.items.map(([id, n]) => `${n} ${iname(ws, id)}`).join(', ')))));
+        if (pv.length > 12) el.appendChild(h('p.muted.small', `… and ${pv.length - 12} more.`));
+        if (pv.length < S.n) el.appendChild(h('p.warn-text.small', `Only ${pv.length} different recipes could be made from these items (asked for ${S.n}).`));
+        el.appendChild(h('div.dr-line', h('button.primary', { disabled: !pv.length, on: { click: () => {
+          const c = c0(), used = new Set(pv.flatMap(r => r.items.map(x => x[0])));
+          const hm = new Map();
+          if (S.withHints) for (const id of [...used].sort((a, b) => a - b)) { if (hintMap.has(id)) continue; const t = TI().hintFor(c, id); if (t) hm.set(id, t); }
+          ctx.editGroup(() => {
+            const f = ws.files.get(FILE);
+            const sp = O().putRecipes(f.text, model(ctx), pv, oc, S.mode);
+            return [{ file: FILE, splices: sp }];
+          }, `Turn-in Race: ${S.mode === 'replace' ? 'replaced the list with' : 'added'} ${pv.length} random recipes`, [keyOf(5)]);
+          if (hm.size) edit(ctx, 5, (t, mm) => O().addHints(t, mm, hm, oc.keyOf), `Turn-in Race: ${hm.size} hints for the new recipes' items`);
+          S.preview = null;
+          ctx.renderAll(false);
+        } } }, `Write ${pv.length} recipes`), h('button', { on: { click: () => { S.preview = null; ctx.renderAll(false); } } }, 'Cancel')));
+      }
+    }
+
+    // ---- hints
+    el.appendChild(h('h3', `Where to get it (${m.hints.length} hints)`));
+    el.appendChild(h('p.muted.small', 'The grey line under each item in the Turn-in window, by item: the same line shows in a GM\'s /eventrecipe round. Up to 100 letters. A hint already here is never changed by the buttons below.'));
+    if (ed) {
+      const recipeIds = [...new Set(e.recipes.flatMap(r => r.items.map(x => x.id)))].filter(id => !hintMap.has(id)).sort((a, b) => a - b);
+      el.appendChild(h('div.dr-line',
+        h('button', { disabled: !recipeIds.length, on: { click: () => {
+          const c = tctx(ws), hm = new Map();
+          for (const id of recipeIds) { const t = TI().hintFor(c, id); if (t) hm.set(id, t); }
+          if (!hm.size) { toast('No source found for those items.', 'bad'); return; }
+          edit(ctx, 5, (t, mm) => O().addHints(t, mm, hm, oc.keyOf), `Turn-in Race: ${hm.size} missing hints for recipe items`);
+        } } }, `Write missing hints for recipe items (${recipeIds.length})`),
+        h('button', { title: 'Every item that drops, is sold, given by an exchange or found in a box: so a GM\'s /eventrecipe item has a hint too', on: { click: () => {
+          const t0 = Date.now(), c = tctx(ws), all = TI().allHints(c), hm = new Map([...all].filter(([id]) => !hintMap.has(id)));
+          if (!hm.size) { toast('Every item with a source already has a hint.'); return; }
+          edit(ctx, 5, (t, mm) => O().addHints(t, mm, hm, oc.keyOf), `Turn-in Race: hints for ${hm.size} more items (every item with a source)`);
+          console.log(`[minievent] allHints ${Date.now() - t0} ms`);
+        } } }, 'Write hints for every item with a source')));
+      const nh = S.newH, hmsg = h('div.small');
+      const hadd = h('button.primary', { on: { click: () => { const id = nh.id, t = nh.text; edit(ctx, 5, (tx, mm) => O().setHint(tx, mm, id, t, oc.keyOf), `Hint for ${iname(ws, id)}: "${t}"`); S.newH = { id: null, text: '' }; ctx.renderAll(false); } } }, '+ Add / change hint');
+      const hcheck = () => { let v = nh.id === null ? 'Pick an item' : null; if (!v) try { O().checkHint(nh.text); } catch (er) { v = er.message; } hadd.disabled = !!v; hmsg.className = 'small warn-text'; hmsg.textContent = v && nh.id !== null ? '⛔ ' + v : ''; };
+      el.appendChild(h('div.dr-line', FRE.ui.combo({ options: itemOptions(ws), value: nh.id !== null ? ws.itemById(nh.id).define : '', placeholder: 'Item', onPick: d => {
+        const v = idOfDefine(ws, d); if (v === undefined) return; nh.id = v >>> 0;
+        nh.text = hintMap.has(nh.id) ? hintMap.get(nh.id).text.text : (TI().hintFor(tctx(ws), nh.id) || '');
+        ctx.renderAll(false);
+      } }), textBox({ value: nh.text, max: 100, placeholder: 'Where to get it (picked items get a suggestion)', width: '30em', key: 'metr-h', onInput: v => { nh.text = v; hcheck(); } }), hadd));
+      el.appendChild(hmsg);
+      hcheck();
+    }
+    const hq = S.hq.toLowerCase();
+    const hl = m.hints.filter(x => !hq || x.text.text.toLowerCase().includes(hq) || iname(ws, x.id).toLowerCase().includes(hq));
+    const hpages = Math.max(1, Math.ceil(hl.length / PAGE));
+    if (S.hpage >= hpages) S.hpage = hpages - 1;
+    el.appendChild(h('div.dr-line', textBox({ value: S.hq, placeholder: 'Search the hints', width: '20em', key: 'metr-hq', onInput: v => { S.hq = v; S.hpage = 0; ctx.renderAll(false); } }),
+      h('span.muted.small', `${hl.length} shown`), hpages > 1 ? h('span', h('button.small', { disabled: S.hpage === 0, on: { click: () => { S.hpage--; ctx.renderAll(false); } } }, '‹'),
+        h('span.muted.small', ` page ${S.hpage + 1} / ${hpages} `), h('button.small', { disabled: S.hpage >= hpages - 1, on: { click: () => { S.hpage++; ctx.renderAll(false); } } }, '›')) : null));
+    const hrows = [h('tr', h('th', 'Item'), h('th', 'Where to get it'), h('th', ''))];
+    for (const x of hl.slice(S.hpage * PAGE, S.hpage * PAGE + PAGE)) {
+      const shown = hintMap.get(x.id) === x;
+      hrows.push(h('tr', h('td', iname(ws, x.id), shown ? null : h('div.small.warn-text', 'not shown: a later line wins')),
+        h('td', textBox({ value: x.text.text, disabled: !ed, max: 100, key: `metr-ht|${x.start}`, onCommit: v => {
+          try { O().checkHint(v); } catch (er) { toast(er.message, 'bad'); ctx.renderAll(false); return; }
+          edit(ctx, 5, tx => [{ start: x.text.start, end: x.text.end, insert: `"${v}"` }], `Hint for ${iname(ws, x.id)}: "${v}"`);
+        } })),
+        h('td', ed ? h('button.icon.danger', { title: 'Remove this hint', on: { click: () => edit(ctx, 5, tx => FRE.textOps.removeRow(tx, x), `Removed the hint for ${iname(ws, x.id)}`) } }, '✕') : null)));
+    }
+    el.appendChild(h('table.items.rt', { style: 'table-layout:fixed;width:100%' }, h('colgroup', ['32%', '64%', '4%'].map(w => h('col', { style: `width:${w}` }))), hrows));
+
+    // ---- the next runs + try turning in
+    if (e.recipes.length) {
+      const hist = new Map(asked || []), now = Math.floor(Date.now() / 1000);
+      const runs = Sim().askRuns(e, 5, hist, now, 86400, 3, st.seed);
+      el.appendChild(h('h3', 'The next 3 events (one a day)'));
+      el.appendChild(h('ol.small', runs.map(r => h('li', r.order.map(i => e.recipes[i].title.text).join(', ')))));
+      if (S.tryR >= e.recipes.length) S.tryR = 0;
+      const r = e.recipes[S.tryR], rec = recipeOf(r);
+      el.appendChild(h('h3', '🧺 Try turning in'));
+      el.appendChild(h('div.dr-line', h('select', { style: 'max-width:26em', on: { change: ev => { S.tryR = Number(ev.target.value); S.have = {}; ctx.renderAll(false); } } },
+        e.recipes.map((x, i) => h('option', { value: i, selected: i === S.tryR }, x.title.text)))));
+      const bagRows = [h('tr', h('th', 'Item'), h('th', 'Needed'), h('th', 'In your bag'), h('th', 'Equipped / locked'), h('th', 'Under it in the window'))];
+      for (const [id, n] of rec.items) {
+        const hv = S.have[id] || (S.have[id] = { bag: n, locked: 0 });
+        bagRows.push(h('tr', h('td', iname(ws, id)), h('td', String(n)),
+          h('td', numInput({ value: hv.bag, min: 0, max: 99999, key: `metr-bag|${id}`, onCommit: v => { hv.bag = v || 0; ctx.renderAll(false); } })),
+          h('td', numInput({ value: hv.locked, min: 0, max: 99999, key: `metr-lk|${id}`, onCommit: v => { hv.locked = v || 0; ctx.renderAll(false); } })),
+          h('td.muted.small', hintMap.has(id) ? hintMap.get(id).text.text : '(no hint)')));
+      }
+      el.appendChild(table(['30%', '10%', '16%', '16%', '28%'], bagRows));
+      const bag = [];
+      for (const [id] of rec.items) { const hv = S.have[id]; if (hv.locked) bag.push({ id, n: hv.locked, equip: true }); if (hv.bag) bag.push({ id, n: hv.bag }); }
+      const res = TI().turnIn(rec, bag, id => iname(ws, id));
+      el.appendChild(h(res.ok ? 'p.ok-text' : 'p.warn-text', res.ok ? `✓ Turned in! ${rec.items.map(([id, n]) => `${n} ${iname(ws, id)}`).join(', ')} taken; left in the bag: ${rec.items.map(([id]) => `${res.bag.filter(s => s && s.id === id && !s.equip).reduce((t, s) => t + s.n, 0)} ${iname(ws, id)}`).join(', ')}.` : res.msg));
     }
   }
 

@@ -66,3 +66,53 @@ export function checkMiniEvent({ FRE, py, ws, ok }) {
   });
   ok(!bad, `question edits: ${py.edits.length} add / change / remove scripts give the same file, byte for byte`, first);
 }
+
+// Turn-in Race (step 3): the JS copy (loaders/minievent-turnin.js, edit/minievent-ops.js) against tools/oracle_sim.py turnin.
+// ws: a Workspace({ only: 'minievent' }) with its map files read (WdMadrigal.rgn: monster spots, area names).
+export function checkTurnIn({ FRE, py, ws, ok }) {
+  const J = JSON.stringify, T = FRE.miniEventTurnIn, O = FRE.miniEventOps, c = T.context(ws);
+  const all = T.allHints(c), mine = {};
+  for (const [id, t] of all) mine[id] = t;
+  const keys = new Set([...Object.keys(mine), ...Object.keys(py.hints)]);
+  const bad = [...keys].filter(k => mine[k] !== py.hints[k]);
+  ok(!bad.length, `where to get it: ${keys.size} items get the same ITEM_HINT text (drops with the area name, shops, Donation Shop, exchanges, boxes)`,
+    `${bad.length} differ, e.g. ${J(bad.slice(0, 4).map(k => [k, mine[k] || null, py.hints[k] || null]))}`);
+  const ab = py.areas.filter(([x, z, a, t]) => T.areaName(c.mad, x, z) !== a || T.townOf(c.mad, x, z) !== t);
+  ok(!ab.length, `area names: ${py.areas.length} spots (every 3rd monster spot, made-up points, box centres and corners) get the same "<area> (<town>)"`,
+    J(ab.slice(0, 2).map(([x, z, a, t]) => [x, z, a, t, T.areaName(c.mad, x, z), T.townOf(c.mad, x, z)])));
+  const tb0 = py.tiers.filter(([rk, pb, t]) => T.tierOf(rk, pb) !== t);
+  ok(!tb0.length, `which drops count as "normal monster, 1 %+": ${py.tiers.length} rank x chance edges`, J(tb0.slice(0, 3)));
+  const P = T.pools(c), pj = [P.parts.map(x => x.id), P.food.map(x => x.id), P.gear.map(x => x.id)];
+  ok(J(pj) === J(py.pools), `random recipes: the same item pools (${pj.map(x => x.length).join(' / ')} parts / supplies / gear)`,
+    pj.map((x, i) => `${x.length} vs ${py.pools[i].length}: +${x.filter(v => !py.pools[i].includes(v)).slice(0, 5)} -${py.pools[i].filter(v => !x.includes(v)).slice(0, 5)}`).join('; '));
+  const m = ws.models.minievent, skip0 = new Set(m.events[5].recipes.map(r => T.comboKey(r.items.map(x => x.id))));
+  const gb = py.gens.filter(g => J(T.generate(c, g.n, g.seed, g.skip ? skip0 : new Set()).map(r => ({ title: r.title, items: r.items }))) !== J(g.out));
+  ok(!gb.length, `random recipes: ${py.gens.length} lists (5 - 1,000 recipes, other seeds, without the file's combinations) are the same, recipe by recipe`,
+    gb.length ? `n ${gb[0].n} seed ${gb[0].seed}: ${J(T.generate(c, gb[0].n, gb[0].seed, gb[0].skip ? skip0 : new Set()).slice(0, 2))} vs ${J(gb[0].out.slice(0, 2))}` : '');
+  const tb = py.turns.filter(t => { const r = T.turnIn({ items: t.items }, t.bag); return J([r.ok, r.missing.map(x => [x.id, x.n, x.have]), r.bag]) !== J([t.res.ok, t.res.missing, t.res.bag]); });
+  ok(!tb.length, `turning in: ${py.turns.length} made-up bags (equipped / locked items, several stacks, too few) give the same result and the same bag after`, J(tb.slice(0, 1)));
+  // recipe / hint edits: the editor's splices = the Python copy's line edits
+  const real = ws.files.get('minievent.inc').text;
+  const oc = { itemOk: id => !!ws.itemById(id), keyOf: id => ws.itemById(id).define, nameOf: id => ws.itemById(id).name };
+  const load = text => FRE.miniEvent.loadMiniEvent({ name: 'MiniEvent.inc', text }, { defines: ws.defines.defines, items: ws.items.items, movers: ws.movers.movers, charKeys: m.charKeys });
+  let eb = 0, first = '';
+  py.edits.forEach((cs, k) => {
+    let text = real;
+    try {
+      for (const op of cs.script) {
+        const mm = load(text), rs = mm.events[5].recipes, at = op.n < 0 ? rs.length + op.n : op.n;
+        let sp;
+        if (op.op === 'add') sp = O.addRecipe(text, mm, op.r, oc);
+        else if (op.op === 'edit') sp = O.editRecipe(text, rs[at], op.r, oc);
+        else if (op.op === 'remove') sp = O.removeRecipe(text, rs[at]);
+        else if (op.op === 'hint') sp = O.setHint(text, mm, op.map[0][0], op.map[0][1], oc.keyOf);
+        else if (op.op === 'hints') sp = O.addHints(text, mm, new Map(op.map), oc.keyOf);
+        else if (op.op === 'unhint') sp = O.removeHint(text, mm, op.id);
+        else if (op.op === 'replace') sp = O.putRecipes(text, mm, op.list, oc, 'replace');
+        for (const x of [...sp].sort((a, b) => b.start - a.start)) text = text.slice(0, x.start) + x.insert + text.slice(x.end);
+      }
+    } catch (er) { text = 'ERROR ' + er.message; }
+    if (text !== cs.text) { eb++; if (!first) { let i = 0; while (text[i] === cs.text[i]) i++; first = `script ${k} at ${i}: ${J(text.slice(i - 60, i + 80))} vs ${J(cs.text.slice(i - 60, i + 80))}`; } }
+  });
+  ok(!eb, `recipe / hint edits: ${py.edits.length} scripts (add, change, remove, 4 items, a ' in a title, hints set / kept / removed, a whole new list) give the same file, byte for byte`, first);
+}

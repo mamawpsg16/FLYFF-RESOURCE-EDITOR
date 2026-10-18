@@ -2,6 +2,8 @@
 
 _Last updated 2026-10-12 (PvP Events built, waiting for the test. Before: G part 1 pushed `372cbfb`; G part 2, Weapon Effects, built, waiting for the user's Brave test. C, L and M dropped (the user, 2026-10-10). Next after G: the "Next, after the resource editor" features in FLYFF TODOS.md, planned one at a time)._
 
+> **Handoff (2026-10-18, evening) — Mini Events step 3 built: the Turn-in Race page (recipes, hints, 🎲 random recipes, Try turning in) + the in-game `/eventrecipe` GM command in V19 `4a733f19` (session branch `ccr-0b3bb63d-dj4bft`, not merged, NOT built / tested: WorldServer + Neuz). Next: step 4 Hide and Seek spots (add / change / remove), step 5 the week. User's test: guides `RESOURCE-EDITOR-IN-GAME-TEST.md` item 26.**
+>
 > **Handoff (2026-10-18, later) — Mini Events, steps 1-2 of 5 built (settings, prizes, round points; the Quick Hands / O/X question lists: add / change / remove / search, asked last, the next events' questions, Try typing): one page per event + Start times.** Plan: guides `NEXT_TASKS_PLAN.md` §1b, re-ordered by the user's wish for a page per event: 1 settings / prizes / points (done), 2 Quick Hands + O/X question lists (done; the user: "make sure we can add edit etc for all things like in questions": recipes and spots get the same add / change / remove), 3 Turn-in recipes + ITEM_HINT, 4 Hide and Seek spots on the map, 5 the week schedule. Python `oracle_sim.py minievent` agrees on every case (15 of 16 + 12 of 12 planted bugs). User's test: guides `RESOURCE-EDITOR-IN-GAME-TEST.md` items 24 and 25.
 
 > **Handoff (2026-10-18) — Mounts task: built and tested in the cloud container, NOT yet tested by the user. Plan: guides `PLANS/Resource Editor/NEXT_TASKS_PLAN.md` §2 (the user picked Mounts before Mini Events).**

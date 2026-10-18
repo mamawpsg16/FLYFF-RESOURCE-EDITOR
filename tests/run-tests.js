@@ -10,7 +10,7 @@ import { FRE, ROOT, readBytes, listDir, loadFolder, openSource, exists, loadWorl
 const ORACLE_SIM = GLib.getenv('ORACLE_SIM') || ROOT + '/tools/oracle_sim.py';
 import { bpServer } from './bp-server.js';
 import { checkMounts } from './mount-check.js';
-import { checkMiniEvent } from './minievent-check.js';
+import { checkMiniEvent, checkTurnIn } from './minievent-check.js';
 
 const FIXTURES = ROOT + '/test-data/fixtures/Resource';
 const REAL = ROOT + '/../FLYFF-V19-SOURCE/Server/Resource';
@@ -4184,6 +4184,14 @@ section('Mini Events: MiniEvent.inc, round points, places, prizes, edits (JS and
   let py = null;
   try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py minievent) gave no readable result', e.message); }
   if (py) checkMiniEvent({ FRE, py, ws: W, ok });
+  {   // Turn-in Race (step 3): hints, random recipes, turn-ins, recipe / hint edits (needs WdMadrigal.rgn)
+    const tw = new FRE.Workspace(fixtureFiles(), { only: 'minievent' }).load();
+    const { dyoFiles, worldFiles } = loadWorldFiles(FIXTURES, tw); tw.setMapFiles(dyoFiles, worldFiles);
+    const [, o2] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} turnin ${FIXTURES}`);
+    let p2 = null;
+    try { p2 = JSON.parse(new TextDecoder().decode(o2)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py turnin) gave no readable result', e.message); }
+    if (p2) checkTurnIn({ FRE, py: p2, ws: tw, ok });
+  }
   // edits: one value / a prize of one event only / a new POINTS line; undo = the same bytes
   const f = W.files.get('minievent.inc'), before = f.serialize();
   W.apply('minievent.inc', O.setKey(f.text, W.models.minievent, 3, 'ROUNDS', 12), 'x');

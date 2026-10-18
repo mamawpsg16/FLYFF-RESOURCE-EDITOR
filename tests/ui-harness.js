@@ -192,6 +192,13 @@
     ok(/O\/X Quiz/.test(ed().querySelector('h2').textContent) && /Prizes/.test(ed().textContent) && /Round points/.test(ed().textContent) && ed().querySelector('input[data-key="me|3|ROUNDS"]').value === '10'
       && /Questions \(364\)/.test(ed().textContent) && /Try it/.test(ed().textContent), 'O/X Quiz page: its settings, its prizes, its points, 364 questions, Try it');
     if (STOP === 'minievent') { $('toasts').textContent = ''; return; }
+    if (STOP === 'mineventprizes') {      // the Turn-in Race page scrolled to its prizes (a screenshot for the user)
+      click(items().find(x => x.dataset.page === '5'));
+      const hp = [...ed().querySelectorAll('h3')].find(x => /^Prizes/.test(x.textContent));
+      ok(!!hp && ed().querySelectorAll('input[data-key^="mepn|5|"]').length === 11, 'Turn-in Race: 11 prize rows (1st-10th + everyone else)');
+      if (hp) hp.scrollIntoView();
+      $('toasts').textContent = ''; return;
+    }
     // the question lists (?stop=mineventqs): Quick Hands add / change / remove / search, O/X answer, Try typing
     {
       const qrows = () => [...ed().querySelectorAll('table.items tr')].filter(r => r.querySelector('input[data-key^="meqt|"]'));
@@ -226,6 +233,43 @@
       ok(/ASK\tOXQUIZ\tO\t"Magicians fight with a bow\."/.test(txt()), 'O/X question 2: answer X -> O, nothing else changes');
       click($('btn-undo'));
       ok(/ASK\tOXQUIZ\tX\t"Magicians fight with a bow\."/.test(txt()), 'undo: X again');
+    }
+    // Turn-in Race (?stop=mineventturnin): recipes, 🎲 random recipes + hints, edit / remove, hints, Try turning in
+    if (STOP === 'mineventturnin') {
+      const set = (el, v, ev) => { el.value = v; el.dispatchEvent(new Event(ev)); };
+      const recipes = () => (txt().match(/^RECIPE\t/gm) || []).length, hints = () => (txt().match(/^ITEM_HINT\t/gm) || []).length;
+      click(items().find(x => x.dataset.page === '5'));
+      const r0 = recipes(), h0 = hints();
+      ok(/Recipes \(68\)/.test(ed().textContent) && /Where to get it \(98 hints\)/.test(ed().textContent) && /eventrecipe/.test(ed().textContent) && /Try turning in/.test(ed().textContent),
+        'Turn-in Race page: 68 recipes, 98 hints, the /eventrecipe note, Try turning in');
+      ok(/✓ Turned in!/.test(ed().textContent), 'Try turning in: the default bag has every item -> turned in');
+      const lk = ed().querySelector('input[data-key^="metr-bag|"]');
+      set(lk, '1', 'change');
+      ok(/Not yet\. Need/.test(ed().textContent), 'Try turning in: 1 in the bag -> "Not yet. Need ..."');
+      set(ed().querySelector('input[data-key="metr-gn"]'), '5', 'change');
+      click(btnByText(ed(), 'Preview'));
+      ok(/Write 5 recipes/.test(ed().textContent), '🎲 preview of 5 random recipes');
+      click(btnByText(ed(), 'Write 5 recipes'));
+      ok(recipes() === r0 + 5 && hints() >= h0 && /Recipes \(73\)/.test(ed().textContent), `5 random recipes written (hints ${h0} -> ${hints()})`);
+      if (hints() > h0) click($('btn-undo'));
+      click($('btn-undo'));
+      ok(recipes() === r0 && hints() === h0, 'undo: the list is back');
+      const t1 = ed().querySelector('input[data-key="metr-t|0"]');
+      set(t1, 'Garbage Run', 'change');
+      ok(/^RECIPE\t"Garbage Run"\t2\tII_GEN_GEM_GEM_GARBAGETON 20 II_GEN_FOO_INS_BISCUIT 30\t\/\/ 20 Garbageton, 30 Biscuit$/m.test(txt()), 'title of recipe 1 changed: the whole line rewritten in the same style');
+      click($('btn-undo'));
+      const n0 = txt().length;
+      click([...ed().querySelectorAll('table.items tr')].find(r => r.querySelector('input[data-key="metr-t|1"]')).querySelector('button.danger'));
+      ok(recipes() === r0 - 1 && /removed recipe/.test(lastToast()), 'remove recipe 2');
+      click($('btn-undo'));
+      ok(txt().length === n0, 'undo: back');
+      click(btnByText(ed(), 'Write hints for every item with a source'));
+      ok(hints() > 1000 && /every item with a source/.test(lastToast()), `hints for every item with a source: ${hints()}`);
+      click($('btn-undo'));
+      ok(hints() === h0, 'undo: 98 hints again');
+      const hq = [...ed().querySelectorAll('h3')].find(x => /^Recipes/.test(x.textContent));
+      if (hq) hq.scrollIntoView();
+      $('toasts').textContent = ''; return;
     }
     if (STOP === 'mineventqs') {
       click(items().find(x => x.dataset.page === '2'));
@@ -346,7 +390,7 @@
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     if (STOP === 'dungeon') { await dungeonStage(); return; }
-    if (STOP === 'minievent' || STOP === 'mineventqs' || STOP === 'mineventedit' || STOP === 'mineventsave') { await miniEventStage(); return; }
+    if (STOP === 'minievent' || STOP === 'mineventprizes' || STOP === 'mineventqs' || STOP === 'mineventturnin' || STOP === 'mineventedit' || STOP === 'mineventsave') { await miniEventStage(); return; }
     if (STOP === 'mounts' || STOP === 'mountsmore' || STOP === 'mountsimple' || STOP === 'mountsgame' || STOP === 'mountsedit' || STOP === 'mountsave') { await mountsStage(); return; }
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
     click(document.querySelector('.task-card[data-task="npc"]'));

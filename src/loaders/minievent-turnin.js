@@ -102,7 +102,8 @@
   const keyOf = (c, id) => { const it = c.items.get(id >>> 0); return it ? it.define : String(id >>> 0); };
   const townOfNpc = npc => TOWNS[npc.key.slice(0, 4)] || 'Madrigal';
   const npcName = npc => npc.name || npc.key;
-  const normalRank = mon => mon && (mon.rank === 'low' || mon.rank === 'normal');
+  // 0 = a RANK_LOW / RANK_NORMAL monster's line of at least 1 % (build_turnin.py's rule), 1 = any other
+  const tierOf = (rankId, prob) => ((rankId === 1 || rankId === 2) && prob >= MIN_PROB ? 0 : 1);
 
   // Madrigal monster drops: each item -> [{ mid, x, z, prob, tier }] in respawn file order (each monster once).
   // tier 0 = a normal monster's line of at least 1 % (build_turnin.py's rule); tier 1 = any other Madrigal drop line
@@ -117,7 +118,7 @@
       for (const e of mon.list) {
         if (e.kind !== 'item' || e.event || !c.items.get(e.itemId) || !(e.probability > 0)) continue;
         const prob = Math.min(e.probability, 2147483647);
-        const tier = normalRank(mv) && prob >= MIN_PROB ? 0 : 1;
+        const tier = tierOf(mv.rankId, prob);
         if (!out.has(e.itemId)) out.set(e.itemId, []);
         out.get(e.itemId).push({ mid: r.mover, x: r.x, z: r.z, prob, tier, define: e.define });
       }
@@ -301,6 +302,6 @@
     return s.split('"').join("'").slice(0, 60);
   }
 
-  FRE.miniEventTurnIn = { madrigal, townOf, areaName, context, madrigalDrops, hintFor, allHints, pools, generate, comboKey, turnIn, gmTitle,
+  FRE.miniEventTurnIn = { tierOf, madrigal, townOf, areaName, context, madrigalDrops, hintFor, allHints, pools, generate, comboKey, turnIn, gmTitle,
     nameOf, keyOf, TOWNS, HINT_LEN, TITLE_LEN };
 })(globalThis.FRE = globalThis.FRE || {});

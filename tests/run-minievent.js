@@ -2,8 +2,8 @@
 //   gjs -m tests/run-minievent.js     (or under Node: node --import ./tests/node-shim/register.mjs tests/run-minievent.js)
 import GLib from 'gi://GLib';
 import System from 'system';
-import { FRE, ROOT, loadFolder, openSource } from './gjs-env.js';
-import { checkMiniEvent } from './minievent-check.js';
+import { FRE, ROOT, loadFolder, openSource, loadWorldFiles } from './gjs-env.js';
+import { checkMiniEvent, checkTurnIn } from './minievent-check.js';
 const ORACLE_SIM = GLib.getenv('ORACLE_SIM') || ROOT + '/tools/oracle_sim.py';
 const FIXTURES = ROOT + '/test-data/fixtures/Resource';
 let pass = 0, fail = 0;
@@ -15,5 +15,13 @@ const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} minievent ${
 let py = null;
 try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py minievent) gave no readable result', e.message); }
 if (py) checkMiniEvent({ FRE, py, ws, ok });
+{
+  const tw = new FRE.Workspace(files, { only: 'minievent' }).load();
+  const { dyoFiles, worldFiles } = loadWorldFiles(FIXTURES, tw); tw.setMapFiles(dyoFiles, worldFiles);
+  const [, o2] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} turnin ${FIXTURES}`);
+  let p2 = null;
+  try { p2 = JSON.parse(new TextDecoder().decode(o2)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py turnin) gave no readable result', e.message); }
+  if (p2) checkTurnIn({ FRE, py: p2, ws: tw, ok });
+}
 print(`\n${pass} passed, ${fail} failed`);
 if (fail) System.exit(1);

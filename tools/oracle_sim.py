@@ -12835,6 +12835,412 @@ def me_edit_cases(real):
     return out
 
 
+# ---- Turn-in Race (step 3): ITEM_HINT texts, the random RECIPE list, a turn-in. Written from V19 Tools/minievent/build_turnin.py
+# + medata.py (3b12a4bb: how the first hints / recipes were made) and MiniEventMng.cpp TurnIn :1422 / MECountTurnInItem :1410;
+# the editor's extra sources (other drops, chip shops, Donation Shop, exchanges, boxes) in this order:
+#   normal Madrigal drop (1 %+) > Penya shop > other Madrigal drop > chip shop > Donation Shop > exchange > box > drop elsewhere
+TI_TOWNS = {'MaFl': 'Flaris', 'MaSa': 'Saint Morning', 'MaDa': 'Darkon', 'MaHa': 'Harmonin', 'MaEw': 'Eillun', 'MaRu': 'Ruendera'}
+TI_TOWN_NAMES = {'flaris': 'Flaris', 'saintmorning': 'Saint Morning', 'darkon1': 'Darkon 1', 'harmonin': 'Shaduwar', 'elliun': 'Eillun', 'ruendera': 'Eillun'}
+TI_KINDS = ('II_GEN_GEM_', 'II_GEN_FOO_', 'II_GEN_POT_', 'II_SYS_SYS_QUE_')
+TI_CURRENCY = ['Penya', 'Red Chips', 'Donate Chips', 'PVP Tokens', 'Perins']
+
+
+def ti_tier(rank, prob):
+    return 0 if rank in (1, 2) and prob >= 30000000 else 1
+
+
+def ti_read(path):
+    b = open(path, 'rb').read()
+    if b[:2] == b'\xff\xfe':
+        return b[2:].decode('utf-16-le')
+    if b[:3] == b'\xef\xbb\xbf':
+        return b[3:].decode('utf-8')
+    try:
+        return b.decode('utf-8')
+    except UnicodeDecodeError:
+        return b.decode('cp949', 'replace')
+
+
+def ti_clean(s, n):
+    s = s.replace('"', "'")
+    return ''.join(c if 0x20 <= ord(c) <= 0x7e else '?' for c in s)[:n]
+
+
+class TiWorld:
+    def __init__(self, root):
+        A = NNData(root)
+        self.W = DrWorld(root)
+        # dr_defines skips /* */ blocks (defineObj.h:1852-1921 holds old MI_ numbers): NNData's reader does not
+        self.D, self.S = self.W.D, A.S
+        D = self.D
+        # items: id -> define, name, ik1, ik2, ik3 (Spec_Item rows of version <= 19, the last row of an id wins)
+        self.items = {}
+        for r in dr_columns(os.path.join(root, 'Spec_Item.txt'), ['ver6', 'dwID', 'szName', 'dwItemKind1', 'dwItemKind2', 'dwItemKind3']):
+            if dr_val(r['ver6'], D) > 19:
+                continue
+            i = dr_val(r['dwID'], D) & 0xFFFFFFFF
+            self.items[i] = {'define': r['dwID'], 'name': self.S.get(r['szName'], r['szName']).rstrip(),
+                             'ik1': dr_val(r['dwItemKind1'], D), 'ik2': dr_val(r['dwItemKind2'], D), 'ik3': dr_val(r['dwItemKind3'], D)}
+        self.mnames = {}
+        for r in dr_columns(os.path.join(root, 'propMover.txt'), ['dwID', 'szName']):
+            self.mnames[dr_val(r['dwID'], D)] = self.S.get(r['szName'], r['szName']).rstrip()
+        # shops: the NPCs in file order, each one's items in its tabs (the same listing as wh_facts)
+        texts = {f: nn_text16(A.raw[f]) for f in NN_CHAR_FILES if f in A.raw}
+        self.npcs = sh_npcs(texts, A.D, A.S)
+        I = A.I
+        props = I[0]
+        self.penya, self.chip, self.special = {}, {}, set()
+        for f, x in self.npcs:
+            if not x['shop']:
+                continue
+            chip = x['vtype'] != 0
+            for tab in range(4):
+                ent = []
+                if x['vtype'] in (1, 2, 3, 4):
+                    for sx in x['shop']:
+                        if sx[0] == 'chip' and sx[1] == tab:
+                            pp = props.get(U32(sx[2]))
+                            if pp and pp['chip'] >= 1 and len(ent) < 100:
+                                ent.append(pp['id'])
+                else:
+                    gen = []
+                    for sx in x['shop']:
+                        if sx[0] == 'gen' and sx[1] == tab and len(gen) < 100:
+                            for pp in nn_rule_items(I, sx[2], sx[3], sx[4], sx[5]):
+                                if len(gen) < 100:
+                                    gen.append(pp)
+                    ent += [pp['id'] for pp in gen]
+                full = len(ent) >= 100
+                for sx in x['shop']:
+                    if sx[0] == 'fixed' and sx[1] == tab:
+                        pp = props.get(U32(sx[2]))
+                        if not pp:
+                            continue
+                        if full or len(ent) >= 100:
+                            full = True
+                            continue
+                        ent.append(pp['id'])
+                for iid in ent:
+                    iid &= 0xFFFFFFFF
+                    if chip:
+                        self.special.add(iid)
+                        self.chip.setdefault(iid, x)
+                    else:
+                        self.penya.setdefault(iid, x)
+        ds = os.path.join(root, 'DonationShop.inc')
+        self.donation = set(ds_catalog(open(ds, 'rb').read().decode('latin-1'), D).keys()) if os.path.exists(ds) else set()
+        # exchanges: the first menu in the file giving the item -> the first NPC (file order) with that menu
+        self.ex = {}
+        exf = os.path.join(root, 'Exchange_Script.txt')
+        if os.path.exists(exf):
+            for mmi, sets in load_script(open(exf, 'rb').read(), D).items():
+                who = [x for f, x in self.npcs if mmi in x['menus']]
+                if not who:
+                    continue
+                for st in sets:
+                    for pp in st['pay']:
+                        self.ex.setdefault(pp[0] & 0xFFFFFFFF, who[0])
+        self.pack = bx_pack(open(os.path.join(root, 'propPackItem.inc'), 'rb').read(), D)['boxes']
+        self.gift = bx_gift(open(os.path.join(root, 'propGiftbox.inc'), 'rb').read(), D)['boxes']
+        # WdMadrigal.rgn (medata.py madrigal_respawns / madrigal_regions / madrigal_towns)
+        L = ti_read(os.path.join(root, 'World', 'WdMadrigal', 'WdMadrigal.rgn')).splitlines()
+        tx = os.path.join(root, 'World', 'WdMadrigal', 'wdMadrigal.txt.txt')
+        names = {}
+        if os.path.exists(tx):
+            for l in ti_read(tx).splitlines():
+                q = l.split('\t', 1)
+                if len(q) == 2:
+                    names[q[0].strip()] = q[1].strip()
+        self.respawns, self.regions, self.towns = [], [], []
+        for i, l in enumerate(L):
+            f = l.split()
+            if f and f[0] == 'respawn7' and f[1] == '5':
+                self.respawns.append((int(f[2]), float(f[3]), float(f[5])))
+            if l.startswith('region3'):
+                g = re.findall(r'"[^"]*"|\S+', l)
+                if g[2] == '13' and g[19].strip('"'):
+                    self.towns.append((g[19].strip('"').lower(), float(g[3]), float(g[5])))
+                title = ''
+                if i + 3 < len(L) and L[i + 1].startswith('title') and L[i + 2].strip() == '{':
+                    title = names.get(L[i + 3].strip(), '')
+                if title:
+                    self.regions.append((int(g[15]), int(g[16]), int(g[17]), int(g[18]),
+                                         [x.strip() for x in title.replace('\\n', '\n').split('\n') if x.strip()]))
+        # Madrigal drops: item -> [(mid, x, z, prob, tier, define)] (respawn order, each monster once)
+        self.mdrops = {}
+        seen = set()
+        for mid, x, z in self.respawns:
+            if mid in seen:
+                continue
+            seen.add(mid)
+            if mid not in self.W.mons or mid not in self.mnames:
+                continue
+            rank = self.W.mv.get(mid, {}).get('rank')
+            for e in self.W.mons[mid]['list']:
+                if e[0] != 'item' or (e[1] & 0xFFFFFFFF) not in self.items or e[2] <= 0:
+                    continue
+                prob = min(e[2], 2147483647)
+                tier = ti_tier(rank, prob)
+                self.mdrops.setdefault(e[1] & 0xFFFFFFFF, []).append((mid, x, z, prob, tier, self.items[e[1] & 0xFFFFFFFF]['define']))
+
+    def town_of(self, x, z):
+        if x < 3600:
+            return 'Darkon 3'
+        if not self.towns:
+            return 'Madrigal'
+        key, tx, tz = min(self.towns, key=lambda t: (t[1] - x) ** 2 + (t[2] - z) ** 2)
+        if key == 'darkon':
+            return 'Darkon 1' if tx > 4800 else 'Darkon 2'
+        return TI_TOWN_NAMES.get(key, key.title())
+
+    def area(self, x, z):
+        regs = [r for r in self.regions if (r[2] - r[0]) * (r[3] - r[1]) >= 5000
+                and not any(w in ' '.join(r[4]) for w in ('Guild Combat', 'Collecting', 'Entrance', 'Altar'))]
+        if not regs:
+            return self.town_of(x, z)
+        inside = [r for r in regs if r[0] <= x <= r[2] and r[1] <= z <= r[3]]
+        if inside:
+            r = min(inside, key=lambda r: (r[2] - r[0]) * (r[3] - r[1]))
+        else:
+            r = min(regs, key=lambda r: (x - (r[0] + r[2]) / 2) ** 2 + (z - (r[1] + r[3]) / 2) ** 2)
+        name = r[4][-1]
+        if any(w in name.lower() for w in ('darkon', 'saint', 'eillun', 'shaduwar', 'flaris', 'flarine')):
+            return name
+        return '%s (%s)' % (name, self.town_of(x, z))
+
+    def hint(self, iid):
+        town = lambda x: TI_TOWNS.get(x['key'][:4], 'Madrigal')
+        nm = lambda x: x['name'] or x['key']
+        md = self.mdrops.get(iid, [])
+        drop = lambda d: ti_clean('Drop: %s - %s' % (self.mnames[d[0]], self.area(d[1], d[2])), 100)
+        t0 = [d for d in md if d[4] == 0]
+        if t0:
+            return drop(t0[0])
+        if iid in self.penya:
+            return ti_clean('Shop: %s - %s' % (nm(self.penya[iid]), town(self.penya[iid])), 100)
+        if md:
+            return drop(md[0])
+        if iid in self.chip:
+            x = self.chip[iid]
+            cur = TI_CURRENCY[x['vtype']] if 0 <= x['vtype'] < len(TI_CURRENCY) else 'chips'
+            return ti_clean('Shop: %s (%s) - %s' % (nm(x), cur, town(x)), 100)
+        if iid in self.donation:
+            return 'Shop: Donation Shop (Donate Chips) - Flaris'
+        if iid in self.ex:
+            return ti_clean('Exchange: %s - %s' % (nm(self.ex[iid]), town(self.ex[iid])), 100)
+        for boxes in (self.pack, self.gift):
+            ids = [b for b, v in boxes.items() if b in self.items and any((l[0] & 0xFFFFFFFF) == iid for l in v['lines'])]
+            if ids:
+                return ti_clean('Box: %s' % (self.items[min(ids)]['name'] or self.items[min(ids)]['define']), 100)
+        for mid, m in self.W.mons.items():
+            if mid in self.mnames and any(e[0] == 'item' and (e[1] & 0xFFFFFFFF) == iid and e[2] > 0 for e in m['list']):
+                return ti_clean('Drop: %s' % self.mnames[mid], 100)
+        return None
+
+    def pools(self):
+        D = self.D
+        best = {}
+        for iid, lst in self.mdrops.items():
+            for mid, x, z, prob, tier, define in lst:
+                if tier != 0 or iid in self.special or not define.startswith(TI_KINDS):
+                    continue
+                if iid not in best or prob > best[iid][1]:
+                    best[iid] = (iid, prob, mid, define)
+        parts = sorted([b for b in best.values() if b[3].startswith('II_GEN_GEM_')], key=lambda b: b[3])
+        food = sorted([b for b in best.values() if not b[3].startswith('II_GEN_GEM_')], key=lambda b: b[3])
+        infood = {b[0] for b in food}
+        cons = {D.get(n) for n in ('IK3_REFRESHER', 'IK3_DRINK', 'IK3_INSTANT', 'IK3_PILL', 'IK3_FOOD')}
+        shop = sorted([(i, self.items[i]['define']) for i in self.penya if i in self.items], key=lambda t: t[1])
+        for i, d in shop:
+            if '_EVE_' in d or i in self.special or i in infood or self.items[i]['ik3'] not in cons:
+                continue
+            food.append((i, 3000000000 // 8, None, d))
+        gear = [(i, d) for i, d in shop if self.items[i]['ik1'] in (D.get('IK1_WEAPON'), D.get('IK1_ARMOR')) and '_EVE_' not in d
+                and d.startswith(('II_WEA_', 'II_ARM_')) and '_CHR_' not in d and '_SEC_' not in d]
+        return parts, food, gear
+
+    def generate(self, n, seed, skip=()):
+        parts, food, gear = self.pools()
+        R = Rand(seed or 1)
+        def shuffle(a):
+            for i in range(len(a) - 1, 0, -1):
+                j = R(i + 1)
+                a[i], a[j] = a[j], a[i]
+            return a
+        P, F = shuffle(list(parts)), shuffle(list(food))
+        mn = lambda b: self.mnames[b[2]] if b[2] is not None else ''
+        out, used = [], set(skip)
+        for i, a in enumerate(P):
+            if len(out) >= n:
+                break
+            kind = R(100)
+            sup = F[R(len(F))] if F else None
+            if kind < 35 or sup is None:
+                picks, title = [(a[0], (30, 40, 50)[R(3)])], '%s Hunt' % mn(a)
+            elif kind < 65:
+                picks = [(a[0], (20, 30)[R(2)]), (sup[0], (20, 30, 50)[R(3)])]
+                title = '%s and Supplies' % mn(a)
+            elif kind < 85 and gear:
+                picks, title = [(gear[R(len(gear))][0], 1), (a[0], 20), (sup[0], 20)], '%s Expedition' % mn(a)
+            else:
+                if len(P) < 2:
+                    continue
+                b = P[(i + 1 + R(len(P) - 1)) % len(P)]
+                picks, title = [(a[0], 20), (b[0], 20)], '%s and %s' % (mn(a), mn(b))
+            key = ','.join(str(v) for v in sorted(p[0] for p in picks))
+            if len({p[0] for p in picks}) != len(picks) or key in used:
+                continue
+            used.add(key)
+            out.append({'title': ti_clean(title, 60), 'items': [list(p) for p in picks]})
+        return out
+
+
+def ti_turnin(items, bag):
+    """TurnIn: count bag items not equipped and usable; all present -> take each amount in object-id order"""
+    usable = lambda sl: sl is not None and not sl.get('equip') and sl.get('usable', True)
+    have = lambda i: sum(sl['n'] for sl in bag if usable(sl) and sl['id'] == i)
+    miss = [[i, n, have(i)] for i, n in items if have(i) < n]
+    if miss:
+        return {'ok': False, 'missing': miss, 'bag': bag}
+    after = [dict(sl) if sl else None for sl in bag]
+    for i, n in items:
+        left = n
+        for k, sl in enumerate(after):
+            if left <= 0:
+                break
+            if not usable(sl) or sl['id'] != i:
+                continue
+            take = min(left, sl['n'])
+            left -= take
+            sl['n'] -= take
+            if sl['n'] == 0:
+                after[k] = None
+    return {'ok': True, 'missing': [], 'bag': after}
+
+
+def ti_run(root):
+    T = TiWorld(root)
+    ids = set(T.mdrops) | set(T.penya) | set(T.chip) | T.donation | set(T.ex)
+    for boxes in (T.pack, T.gift):
+        for v in boxes.values():
+            ids |= {l[0] & 0xFFFFFFFF for l in v['lines']}
+    for m in T.W.mons.values():
+        ids |= {e[1] & 0xFFFFFFFF for e in m['list'] if e[0] == 'item' and e[2] > 0}
+    hints = {}
+    for i in sorted(ids):
+        if i in T.items:
+            h = T.hint(i)
+            if h:
+                hints[str(i)] = h
+    parts, food, gear = T.pools()
+    gens = []
+    real = ti_read(os.path.join(root, 'MiniEvent.inc'))
+    skip0 = set()
+    for m in re.finditer(r'^RECIPE\t"[^"]*"\t(\d+)\t([^\t\n/]*)', real, re.M):
+        toks = m.group(2).split()
+        skip0.add(','.join(str(v) for v in sorted(T.D[toks[k]] & 0xFFFFFFFF for k in range(0, len(toks), 2))))
+    for n, seed, sk in ((5, 1, False), (50, 12345, False), (100, 777, True), (1000, 99, True), (40, 2026, True), (3, 0xFFFFFFFF, False)):
+        gens.append({'n': n, 'seed': seed, 'skip': sk, 'out': T.generate(n, seed, skip0 if sk else ())})
+    # turn-ins: made-up bags against made-up recipes
+    rnd = random.Random(1422)
+    some = sorted(T.items)[:4000]
+    turns = []
+    for k in range(300):
+        its = rnd.sample(some, rnd.randint(1, 4))
+        recipe = [[i, rnd.choice([1, 2, 5, 20, 30, 50, 9999])] for i in its]
+        bag = []
+        for i, n in recipe:
+            for _ in range(rnd.randint(0, 3)):
+                bag.append({'id': i, 'n': rnd.choice([1, n // 2 or 1, n, n + 1, 3]), 'equip': rnd.random() < 0.15, 'usable': rnd.random() > 0.1})
+            if rnd.random() < 0.3:
+                bag.append(None)
+        if rnd.random() < 0.3:
+            bag.append({'id': some[0], 'n': 1})
+        rnd.shuffle(bag)
+        turns.append({'items': recipe, 'bag': bag, 'res': ti_turnin(recipe, bag)})
+    # area names: every respawn spot + 600 made-up points (nested titled boxes, outside every box, the town edges)
+    pts = [(x, z) for _, x, z in T.respawns[::3]]
+    for _ in range(600):
+        pts.append((rnd.uniform(0, 10000), rnd.uniform(0, 10000)))
+    for r in T.regions[:40]:
+        pts.append(((r[0] + r[2]) / 2, (r[1] + r[3]) / 2))
+        pts.append((r[0], r[1]))
+    areas = [[x, z, T.area(x, z), T.town_of(x, z)] for x, z in pts]
+    tiers = [[rk, pb, ti_tier(rk, pb)] for rk in range(0, 10) for pb in (1, 29999999, 30000000, 30000001, 2147483647)]
+    return {'areas': areas, 'tiers': tiers, 'hints': hints, 'pools': [[b[0] for b in parts], [b[0] for b in food], [g[0] for g in gear]], 'gens': gens, 'turns': turns,
+            'edits': ti_edit_cases(real, T)}
+
+
+# recipe / hint edits, line by line: add after the last RECIPE (ITEM_HINT) line, change = the whole RECIPE line, remove = the line
+def ti_recipe_line(T, r):
+    cols = ' '.join('%s %d' % (T.items[i]['define'], n) for i, n in r['items'])
+    names = ', '.join('%d %s' % (n, T.items[i]['name']) for i, n in r['items'])
+    names = ''.join(c if 0x20 <= ord(c) <= 0x7e else '?' for c in names)
+    return 'RECIPE\t"%s"\t%d\t%s\t// %s' % (r['title'], len(r['items']), cols, names)
+
+
+def ti_edit(T, text, op):
+    lines = text.split('\n')
+    rec = [i for i, l in enumerate(lines) if l.startswith('RECIPE\t')]
+    hin = [i for i, l in enumerate(lines) if l.startswith('ITEM_HINT\t')]
+    if op['op'] == 'add':
+        lines.insert(rec[-1] + 1, ti_recipe_line(T, op['r']))
+    elif op['op'] == 'edit':
+        lines[rec[op['n']]] = ti_recipe_line(T, op['r'])
+    elif op['op'] == 'remove':
+        del lines[rec[op['n']]]
+    elif op['op'] in ('hint', 'hints'):
+        new = []
+        for iid, t in op['map']:
+            have = [i for i in hin if lines[i].split('\t')[1] == T.items[iid]['define']]
+            if have and op['op'] == 'hint':
+                k = have[-1]
+                lines[k] = re.sub(r'"[^"]*"', '"%s"' % t.replace('\\', '\\\\'), lines[k], count=1)
+            elif not have:
+                new.append('ITEM_HINT\t%s\t"%s"' % (T.items[iid]['define'], t))
+        at = hin[-1] if hin else rec[-1]
+        lines[at + 1:at + 1] = new
+    elif op['op'] == 'unhint':
+        drop = {i for i in hin if lines[i].split('\t')[1] == T.items[op['id']]['define']}
+        lines = [l for i, l in enumerate(lines) if i not in drop]
+    elif op['op'] == 'replace':
+        first = rec[0]
+        rows = [ti_recipe_line(T, r) for r in op['list']]
+        keep = [l for i, l in enumerate(lines) if i not in rec[1:]]
+        k = keep.index(lines[first])
+        keep[k:k + 1] = rows
+        lines = keep
+    return '\n'.join(lines)
+
+
+def ti_edit_cases(real, T):
+    D = T.D
+    d = lambda n: D[n] & 0xFFFFFFFF
+    g = T.generate(6, 4242)
+    scripts = [
+        [{'op': 'add', 'r': {'title': 'Test Hunt', 'items': [[d('II_GEN_GEM_GEM_RNAMOND'), 30]]}}],
+        [{'op': 'edit', 'n': 0, 'r': {'title': 'Garbage Run', 'items': [[d('II_GEN_GEM_GEM_GARBAGETON'), 25]]}}],
+        [{'op': 'edit', 'n': 5, 'r': {'title': "It's four", 'items': [[d('II_GEN_GEM_GEM_RNAMOND'), 1], [d('II_GEN_FOO_INS_BISCUIT'), 9999], [d('II_SYS_SYS_EVENT_TOKEN'), 2], [d('II_GEN_GEM_GEM_DROIL'), 3]]}}],
+        [{'op': 'remove', 'n': 0}],
+        [{'op': 'remove', 'n': -1}],
+        [{'op': 'hint', 'map': [[d('II_GEN_GEM_GEM_RNAMOND'), 'Drop: somewhere']]}],
+        [{'op': 'hint', 'map': [[d('II_SYS_SYS_EVENT_TOKEN'), 'Mini Events']]}],
+        [{'op': 'hints', 'map': [[d('II_SYS_SYS_EVENT_TOKEN'), 'Mini Events'], [d('II_GEN_GEM_GEM_RNAMOND'), 'not written: it has one']]}],
+        [{'op': 'unhint', 'id': d('II_GEN_GEM_GEM_RNAMOND')}],
+        [{'op': 'add', 'r': g[0]}, {'op': 'add', 'r': g[1]}, {'op': 'remove', 'n': 2}, {'op': 'edit', 'n': -1, 'r': g[2]}],
+        [{'op': 'replace', 'list': g}],
+    ]
+    out = []
+    for sc in scripts:
+        text = real
+        for op in sc:
+            if op['op'] in ('edit', 'remove') and op['n'] < 0:
+                op = dict(op, n=len([1 for l in text.split('\n') if l.startswith('RECIPE\t')]) + op['n'])
+            text = ti_edit(T, text, op)
+        out.append({'script': sc, 'text': text})
+    return out
+
+
 def me_round(x):
     return int(math.floor(x + 0.5)) if x >= 0 else -int(math.floor(-x + 0.5))
 
@@ -13063,6 +13469,8 @@ if __name__ == '__main__':
         print(json.dumps(we_run_all(root)))
     elif what == 'consumables':                 # consumable stats: use, use again, same-kind blocks, expiry, edits
         print(json.dumps(cs_run_all(root)))
+    elif what == 'turnin':                      # Mini Events, Turn-in Race: hints, random recipes, turn-ins, recipe / hint edits
+        print(json.dumps(ti_run(root)))
     elif what == 'minievent':                   # Mini Events: MiniEvent.inc (ReadConfig), round points, ranking, prizes
         print(json.dumps(me_run(root)))
     elif what == 'mount':                       # Mounts: Mount.inc (LoadMountAnimationList), loops, ground, flight, take-off, edits
