@@ -39,6 +39,7 @@
     { key: 'ASK_DAYS', def: 7, label: 'Repeat warning (days)', min: 0, max: 3650, only: [2, 3], help: 'A question asked again within this many days only logs a warning (error_*.txt).' },
     { key: 'END_AT', def: 10, label: 'Round ends after (turn-ins)', min: 1, max: 500, only: [5], help: 'The round ends early when this many players have turned in.' },
     { key: 'IN_RANDOM', def: 1, label: 'Picked by a RANDOM start time', min: 0, max: 1, bool: true, help: 'Off = only started by a fixed start time or GM /eventstart.' },
+    { key: 'READY', def: 15, label: 'Frozen before GO (seconds)', min: 0, max: 60, only: [7], help: 'Every round starts frozen on the start line: the game shows READY, then 10 ... 1, then GO! (V19 e97a70b6).' },
   ];
   const KEY = new Map(KEYS.map(k => [k.key, k]));
   const roundMax = type => (type === 5 || type === 6 || type === 7 ? 600 : 120);
@@ -218,6 +219,7 @@
       else if (v.ROUND_TIME < 5 || v.ROUND_TIME > roundMax(i)) fail(`${K} ROUND_TIME must be 5 - ${roundMax(i)} seconds`);
       else if (v.SCORE_TIME < 2 || v.SCORE_TIME > 60) fail(`${K} SCORE_TIME must be 2 - 60 seconds`);
       else if (v.END_AT < 1 || v.END_AT > 500) fail(`${K} END_AT must be 1 - 500`);
+      else if (v.READY < 0 || v.READY > 60) fail(`${K} READY must be 0 - 60 seconds`);
       else if ((i === 2 || i === 3) && e.asks.length < v.ROUNDS) fail(`${K} needs at least ${v.ROUNDS} ASK lines (one per round), has ${e.asks.length}`);
       else if (i === 5 && e.recipes.length < v.ROUNDS) fail(`TURNIN needs at least ${v.ROUNDS} RECIPE lines (one per round), has ${e.recipes.length}`);
       else if (i === 6 && e.spots.length < v.ROUNDS) fail(`HIDESEEK needs at least ${v.ROUNDS} SPOT lines (one per round), has ${e.spots.length}`);

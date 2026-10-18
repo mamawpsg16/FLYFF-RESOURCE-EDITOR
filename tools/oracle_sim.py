@@ -12502,9 +12502,9 @@ def mt_run(root):
 # After an error the server stops reading (every Mini Event off); this copy, like the editor, records it and goes on from the
 # next word, so every mistake in a file is listed.
 ME_KEYS = ['COLORGAME', 'TYPER', 'OXQUIZ', 'LUCKYDRAW', 'TURNIN', 'HIDESEEK', 'RACE']     # RACE = 7, V19 ce1659f6 (not yet built)
-ME_SET = ['MIN_LEVEL', 'MIN_PLAYERS', 'MAX_PLAYERS', 'MAX_PER_IP', 'REGISTER', 'ROUNDS', 'ROUND_TIME', 'SCORE_TIME', 'ASK_DAYS', 'END_AT', 'IN_RANDOM']
+ME_SET = ['MIN_LEVEL', 'MIN_PLAYERS', 'MAX_PLAYERS', 'MAX_PER_IP', 'REGISTER', 'ROUNDS', 'ROUND_TIME', 'SCORE_TIME', 'ASK_DAYS', 'END_AT', 'IN_RANDOM', 'READY']
 ME_DEF = {'MIN_LEVEL': 120, 'MIN_PLAYERS': 5, 'MAX_PLAYERS': 100, 'MAX_PER_IP': 1, 'REGISTER': 5, 'ROUNDS': 10, 'ROUND_TIME': 15,
-          'SCORE_TIME': 5, 'ASK_DAYS': 7, 'END_AT': 10, 'IN_RANDOM': 1}
+          'SCORE_TIME': 5, 'ASK_DAYS': 7, 'END_AT': 10, 'IN_RANDOM': 1, 'READY': 15}
 
 
 def me_type(w):
@@ -12695,6 +12695,7 @@ def me_load(text, D, items, movers, chars, race=None):
         elif v['ROUND_TIME'] < 5 or v['ROUND_TIME'] > rmax: errors.append('%s ROUND_TIME must be 5 - %d seconds' % (K, rmax))
         elif v['SCORE_TIME'] < 2 or v['SCORE_TIME'] > 60: errors.append('%s SCORE_TIME must be 2 - 60 seconds' % K)
         elif v['END_AT'] < 1 or v['END_AT'] > 500: errors.append('%s END_AT must be 1 - 500' % K)
+        elif v['READY'] < 0 or v['READY'] > 60: errors.append('%s READY must be 0 - 60 seconds' % K)
         elif i in (2, 3) and e['asks'] < v['ROUNDS']: errors.append('%s needs at least %d ASK lines (one per round), has %d' % (K, v['ROUNDS'], e['asks']))
         elif i == 5 and e['recipes'] < v['ROUNDS']: errors.append('TURNIN needs at least %d RECIPE lines (one per round), has %d' % (v['ROUNDS'], e['recipes']))
         elif i == 6 and e['spots'] < v['ROUNDS']: errors.append('HIDESEEK needs at least %d SPOT lines (one per round), has %d' % (v['ROUNDS'], e['spots']))
@@ -13988,6 +13989,9 @@ RA_SMALL = [
     'EVENT\tRACE\nRACE_START\t0\t0\nPOINTS\tRACE\t5 5 5 5 5 5 5 5 5 6\t1\n',
     'EVENT\tRACE\nRACE_START\t+12.5\t7\nBEGIN\tRACE\t0\t12\t30\nBEGIN\tVAGRANTRACE\t1\t1\t1\n',
     'EVENT\tRACE\nRACE_POINT\t600\t700\nRACE_POINT\t0\t5\nRACE_POINT\t-3\t9\nRACE_POINT\t1034.4\t959.6\nRACE_POINT\t=\t1\n',
+    'EVENT\tRACE\tREADY 61\n',                        # READY: 0 - 60 (e97a70b6)
+    'EVENT\tRACE\tREADY 0\tEND_AT 0\n',
+    'EVENT\tCOLORGAME\tREADY -1\n',
 ]
 
 

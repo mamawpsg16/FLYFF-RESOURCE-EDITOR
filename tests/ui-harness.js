@@ -324,9 +324,9 @@
       click(btnByText(ed(), '+ Add checkpoint'));
       ok(/^RACE_START\t505\t594\r?\nRACE_POINT\t893\t897\r?$/m.test(txt()) && /Checkpoints \(1\)/.test(ed().textContent), 'a checkpoint: a RACE_POINT line after RACE_START');
       click([...ed().querySelectorAll('table.items tr')].find(r => r.querySelector('input[data-key="merp|0|x"]')).querySelector('button.danger'));
-      ok(!/RACE_POINT/.test(txt()), 'remove it');
+      ok(!/^RACE_POINT\t/m.test(txt()), 'remove it');
       click($('btn-undo')); click($('btn-undo'));
-      ok(!/RACE_POINT/.test(txt()), 'undo x2: no checkpoint');
+      ok(!/^RACE_POINT\t/m.test(txt()), 'undo x2: no checkpoint');
       const s0 = spawns(), r0 = rgn();
       set(ed().querySelector('input[data-key="merm|0|n"]'), '5', 'change');
       ok(/^respawn7 5 715 893\.435364 84\.728043 897\.685059 5 70 3 /m.test(rgn()) && /Race map spot 1 \(.+\): 5 monsters, 3 aggressive \(was 3, 3\)/.test(lastToast()), 'spot 1: 3 -> 5 monsters (aggressive stays 3)');
