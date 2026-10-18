@@ -1813,7 +1813,7 @@ def nn_check(A, form):
     tabs = form.get('tabs') or []
     has = lambda t: bool(t.get('items') or t.get('rules'))
     st = form.get('shopType', 0)
-    if trade and st not in (0, 1, 2, 3, 4): add('NN_SHOP_TYPE', 'tabs')
+    if trade and st not in (0, 1, 2, 3, 4, 5): add('NN_SHOP_TYPE', 'tabs')        # 5 = Event Token (V19 0e9cd3e1)
     chip = st in (1, 2, 3, 4, 5)
     if not trade and any(has(t) for t in tabs): add('NN_SHOP_NO_TRADE', 'tabs')
     if trade and not any(has(t) for t in tabs): add('NN_SHOP_EMPTY', 'tabs')
@@ -2130,7 +2130,8 @@ def nn_cases(A):
     case('pvp price 0', shopType=3, tabs=tab0(items=[dict(define=chipped, cost=0)]))
     case('pvp rule', shopType=3, tabs=tab0(rules=[dict(ik3='IK3_SCROLL', job=-1, min=1, max=10)]))
     case('perin shop', game=True, shopType=4, tabs=tab0(items=[dict(define=chipped)]))
-    case('shop type 5', shopType=5)
+    case('shop type 5', shopType=5)                 # Event Token: a chip shop
+    case('shop type 6', shopType=6)                 # no such currency
     case('penya shop type 0', game=True, shopType=0)
     case('no trade, chip type', shopType=3, menus=['MMI_BANKING'], tabs=[])
     case('four tabs', game=True, tabs=[dict(slot=s, title=f'Tab {s}', rules=[], items=[dict(define='II_SYS_SYS_SCR_BLESSEDNESS')]) for s in (3, 1, 0, 2)])
