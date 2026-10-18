@@ -35,7 +35,7 @@
   function loadPropMover(file, ctx) {
     const script = new Script(file.text, { file: file.name, defines: ctx.defines, strings: ctx.strings, diags: [] });
     const movers = new Map();       // id -> { id, define, name, level, rank, start }
-    let stopped = null;
+    let stopped = null, miOf = null;
     for (;;) {
       const id = script.getNumber();
       if (script.eof) break;
@@ -52,8 +52,11 @@
         vals[i] = k === 't' ? script.getToken().text : (k === 'f' ? script.getFloat() : k === 'e' ? script.getInt64() : script.getNumber()).value;
       }
       const name = String(nameTok.text || '').replace(/\s+$/, '');
+      // a row keyed by a plain number (the 69 premium pets of V19 4cb24824: `1544` = MI_PET_PRM_DIABLOMURLOC) still has
+      // its MI_ define: other files name it that way, so the editor does too (the first MI_ with that value)
+      if (!id.define && !miOf) { miOf = new Map(); for (const [k, v] of ctx.defines || []) if (/^MI_/.test(k) && !miOf.has(v)) miOf.set(v, k); }
       movers.set(id.value, {
-        id: id.value, define: id.define || file.text.slice(id.start, id.end),
+        id: id.value, define: id.define || miOf.get(id.value) || file.text.slice(id.start, id.end),
         name, nameKey: nameTok.stringKey || null,
         level: vals[LEVEL], rankId: vals[CLASS], rank: RANKS[vals[CLASS]] || `rank ${vals[CLASS]}`,
         flying: vals[FLYING], correction: vals[CORRECTION], exp: vals[EXPVALUE],   // the kill path: drops into the bag; DropKind's chance % (Mover.cpp:8613 / 8866)

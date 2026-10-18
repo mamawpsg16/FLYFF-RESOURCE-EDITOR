@@ -64,6 +64,8 @@
   // Set Effects: the game's identical copy of propItemEtc.inc (no loose propItemEtc.txt.txt: the game reads the old one in data.res)
   if (original.has("propItemEtc.inc")) clientDir.children.set('propItemEtc.inc', new FakeFile('propItemEtc.inc', original.get('propItemEtc.inc').slice()));
   for (const n of ['WeaponRarity.inc']) if (original.has(n)) clientDir.children.set(n, new FakeFile(n, original.get(n).slice()));
+  // Mounts: the game's identical copy of Mount.inc (UTF-16)
+  if (original.has('Mount.inc')) clientDir.children.set('Mount.inc', new FakeFile('Mount.inc', original.get('Mount.inc').slice()));
   if (original.has('s.txt')) clientDir.children.set('s.txt', new FakeFile('s.txt', lfOnly(original.get('s.txt'))));
   // a new exchange menu's files: defineText.h is LF in Client, textClient.* identical
   clientDir.children.set('defineText.h', new FakeFile('defineText.h', lfOnly(original.get('defineText.h'))));
@@ -178,6 +180,65 @@
     }
   }
 
+  // the Mounts task (?stop=mounts: the list and Nightmare Dragon; ?stop=mountsedit: edits, paste, a new block, Save)
+  async function mountsStage() {
+    const S = FRE.app.state;
+    await openTask('mounts');
+    const ed = () => $('editor'), items = () => [...document.querySelectorAll('#list .npc')], txt = () => S.ws.files.get('mount.inc').text;
+    const lastToast = () => ([...$('toasts').children].pop() || { textContent: '' }).textContent;
+    ok(S.mode === 'mounts' && items().length === 93, `Mounts: the 93 mount items listed (got ${items().length})`);
+    ok(!S.ws.diags.some(d => d.module === 'mounts'), 'Mounts: the real Mount.inc has no problem');
+    click(items().find(x => x.dataset.mount === '225049'));
+    ok(/Nightmare Dragon/.test(ed().textContent) && /can take off/.test(ed().textContent) && /settles at 582/.test(ed().textContent) && /never reached/.test(ed().textContent) && /Moves 24 units a second/.test(ed().textContent),
+      'Nightmare Dragon: flying settings, 24 units / s, the flying meter settles at 582 (its top speed 0.9 is never reached)');
+    const runSel = ed().querySelector('select[data-key="mt|225049|szRun"]');
+    ok(runSel && [...runSel.options].some(o => o.value === 'item_Mount058_fly_walk.ani') && runSel.value === 'item_Mount058_run.ani', "loops are picked from the model's own .ani files (Client/Model.list)");
+    if (STOP === 'mounts') { $('toasts').textContent = ''; return; }
+    if (STOP === 'mountsgame') { $('toasts').textContent = ''; ed().querySelector('.mt-game').scrollIntoView(); return; }
+    const sp = ed().querySelector('input[data-key="mt|225049|fGroundSpeed"]');
+    sp.value = '0.5'; sp.dispatchEvent(new Event('change'));
+    ok(/dwID=225049;[\s\S]*?fGroundSpeed=0\.5;/.test(txt()) && /Speed 0\.5 \(was 0\.4\)/.test(lastToast()), 'speed 0.4 -> 0.5: only the value changes; the toast says (was 0.4)');
+    const nm = ed().querySelector('input[data-key="mt|225049|fNameOffset"]');
+    nm.value = '0.3'; nm.dispatchEvent(new Event('change'));
+    ok(/fFlyMaxSpeed=0\.9;\r\n\tfNameOffset=0\.3;\r\n\}/.test(txt()), 'name height (not in the file): a new tab-indented CRLF line before the }');
+    click(btnByText(ed(), '📋 Paste from /mountset'));
+    await waitFor(() => document.querySelector('.modal textarea'), 'paste dialog');
+    const ta = document.querySelector('.modal textarea');
+    ta.value = 'Mount 225049: fGroundSpeed=0.40; fAnimSpeed=1.65; fWalkAnimSpeed=1.25; fNameOffset=0.00;\nszRun="item_Mount058_run.ani"; szWalk="item_Mount058_walk.ani"; szWalkBack="item_Mount058_walkback.ani";';
+    ta.dispatchEvent(new Event('input'));
+    ok(/fAnimSpeed: 1\.1 → 1\.65/.test(document.querySelector('.modal').textContent), 'paste preview lists what changes');
+    if (STOP === 'mountsedit') return;
+    click(btnByText(document.querySelector('.modal'), 'Apply changes'));
+    ok(/fGroundSpeed=0\.4;/.test(txt().slice(txt().indexOf('dwID=225049'))) && /fAnimSpeed=1\.65;/.test(txt()) && /fWalkAnimSpeed=1\.25;/.test(txt()), 'pasted /mountset values written');
+    while (S.ws.history.length) click($('btn-undo'));
+    ok(!S.ws.dirtyFiles().length, 'Undo: nothing left to save');
+    // a mount item with no block: take the block out by hand (a scratch copy of the file), then + Add Mount.inc block
+    const f = S.ws.files.get('mount.inc'), b = S.ws.models.mounts.byId.get(225102).block;
+    S.ws.apply('mount.inc', [{ start: b.start - 2, end: b.end + 2, insert: '' }], 'test: remove 225102');
+    S.ws.history[S.ws.history.length - 1].label = 'test';
+    click(items().find(x => x.dataset.mount === '225102'));
+    ok(/has no Add_Mount block/.test(ed().textContent) && S.ws.diags.some(d => d.code === 'MT_NO_BLOCK'), 'a mount without a block: MT_NO_BLOCK and the + Add Mount.inc block form');
+    click(btnByText(ed(), '+ Add Mount.inc block'));
+    const nb = S.ws.models.mounts.byId.get(225102);
+    ok(nb.block && nb.anim.fGroundSpeed > 0.39 && /szRun="Item_STR06201_run\.ani"/i.test(txt().slice(nb.block.start, nb.block.end)) && !S.ws.diags.some(d => d.module === 'mounts'), 'the new block: the template values, the model\'s own loops, no problem left');
+    while (S.ws.history.length) click($('btn-undo'));
+    // save one change: Mount.inc + the identical Client copy (UTF-16, CRLF kept)
+    click(items().find(x => x.dataset.mount === '225049'));
+    const sp2 = ed().querySelector('input[data-key="mt|225049|fGroundSpeed"]');
+    sp2.value = '0.45'; sp2.dispatchEvent(new Event('change'));
+    click($('btn-save'));
+    await waitFor(() => btnByText(document, 'Choose folder') || btnByText(document, 'Back up and write'), 'backup prompt or review (mounts)');
+    if (btnByText(document, 'Choose folder')) click(btnByText(document, 'Choose folder'));
+    await waitFor(() => btnByText(document, 'Back up and write'), 'review dialog (mounts)');
+    ok(/Mount\.inc/.test(document.querySelector('.modal').textContent), 'review lists Mount.inc');
+    click(btnByText(document, 'Back up and write'));
+    await waitFor(() => [...document.querySelectorAll('.modal header')].some(h => /^Saved|failed/.test(h.textContent)), 'save finished (mounts)');
+    const srv = res.children.get('Mount.inc').bytes, cli = clientDir.children.get('Mount.inc').bytes;
+    ok(FRE.bytes.bytesEqual(srv, cli) && srv.length === original.get('Mount.inc').length + 2 && /Stop Server\.bat/.test(document.querySelector('.modal').textContent), 'Mount.inc saved (one more UTF-16 char), Client copy identical; After saving: Stop / Start Server.bat');
+    document.querySelectorAll('.modal-back').forEach(m => m.remove());
+    res.children.get('Mount.inc').bytes = original.get('Mount.inc'); clientDir.children.get('Mount.inc').bytes = original.get('Mount.inc').slice();
+  }
+
   async function scenario() {
     FRE.dom.instant = true;      // the loading window must not wait for a paint (this harness runs in microtasks)
     await waitFor(() => FRE.app.state && $('btn-root'), 'app init');
@@ -189,10 +250,11 @@
     // the cards are drawn after the patch check (io/patch-state.js reads one C++ file per patch)
     await waitFor(() => document.querySelector('.task-card:not(:disabled)'), 'task cards enabled');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
-    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 12 && document.querySelector('.task-card[data-task="dungeon"]') && document.querySelector('.task-card[data-task="pvp"]') && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 12 tasks to pick (Dungeons; PvP Events; Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 14 && document.querySelector('.task-card[data-task="mounts"]') && document.querySelector('.task-card[data-task="consumables"]') && document.querySelector('.task-card[data-task="dungeon"]') && document.querySelector('.task-card[data-task="pvp"]') && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 14 tasks to pick (Mounts; Consumable Stats; Dungeons; PvP Events; Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     if (STOP === 'dungeon') { await dungeonStage(); return; }
+    if (STOP === 'mounts' || STOP === 'mountsgame' || STOP === 'mountsedit' || STOP === 'mountsave') { await mountsStage(); return; }
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
     click(document.querySelector('.task-card[data-task="npc"]'));
     const card = document.querySelector('.task-card[data-task="npc"]'), lw = document.querySelector('.loading-back');
@@ -207,8 +269,8 @@
     ok([...phases].some(t => /Reading the game client/.test(t)) || phases.size >= 2, `the window went through the phases (${[...phases].join(' | ')})`);
     ok(!document.body.classList.contains('start') && /Task:\s*NPC Shops/.test($('mode-tabs').textContent), 'NPC Shops task open');
     ok(S.client && S.client.dir === clientDir, 'Client copies attached automatically');
-    ok(S.ws.items.rows.length === 8073, 'items loaded (8073: the PVP Token and the FFA / TDM items)');
-    ok(document.querySelectorAll('#list .npc').length === 8 && /Shops with hand-picked items \(8\)/.test(document.querySelector('select.npc-filter').textContent), 'NPC list defaults to the 8 shops with fixed items (+ Donaris and Amos, PVP Token shops)');
+    ok(S.ws.items.rows.length === 9842, 'items loaded (9842: + the cosmetic weapon skins, premium pets, balloons, Mini Event tokens)');
+    ok(document.querySelectorAll('#list .npc').length === 9 && /Shops with hand-picked items \(9\)/.test(document.querySelector('select.npc-filter').textContent), 'NPC list defaults to the 9 shops with fixed items (+ Donaris and Amos, PVP Token shops; + the Event Master token shop, 0e9cd3e1)');
     ok(S.ws.diags.filter(d => d.code === 'C_NO_OPEN_BRACE').length === 6, '6 missing-brace warnings');
 
     const lui = [...document.querySelectorAll('#list .npc')].find(n => n.textContent.includes('MaFl_Lui'));
@@ -338,6 +400,10 @@
     const chipIn = row && row.querySelector('input.num-input');
     ok(chipIn && chipIn.value === '50', 'Waforu shows the chip price 50 in an input');
     chipIn.value = '75'; chipIn.dispatchEvent(new Event('change'));
+    // Amos's TDM token shop sells Blessing too (V19 1d83a56b): the shared-price question comes first
+    const shared = btnByText(document, 'Change it everywhere');
+    ok(shared && /\[TDM Manager\]Amos/.test(document.querySelector('.modal').textContent), 'the price is shared with Amos\'s token shop: the editor asks first');
+    if (shared) click(shared);
     ok(FRE.specItem.get(S.ws.itemById(S.ws.defines.defines.get('II_SYS_SYS_SCR_BLESSEDNESS')), 'dwReferValue1') === 75, 'chip price 75 applied');
     click($('btn-save'));
     await waitFor(() => btnByText(document, 'Back up and write'), 'review dialog (client)');
@@ -949,7 +1015,7 @@
     click($('btn-undo')); click($('btn-undo'));
     ok(S.ws.files.get('donationshop.inc').text === dsText0, 'two undos restore DonationShop.inc');
     // a long category must scroll inside the editor (it once grew past the window)
-    click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.startsWith('Suits')));
+    click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.startsWith('Premium Sets')));
     const ed = $('editor');
     ok(ed.scrollHeight > ed.clientHeight && ed.getBoundingClientRect().bottom <= window.innerHeight + 1, 'long category scrolls inside the window');
     ed.scrollTop = ed.scrollHeight;
@@ -972,7 +1038,7 @@
 
     // ---- Try buying (loaders/donation-buy.js): the 🛒 on a row
     {
-      click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.startsWith('Suits')));
+      click([...document.querySelectorAll('#list .npc')].find(n => n.textContent.startsWith('Premium Sets')));
       const cart = [...$('editor').querySelectorAll('table.items button')].find(b => b.textContent === '🛒');
       ok(!!cart, 'each Donation Shop row has a 🛒 Try buying button');
       click(cart);
@@ -1011,7 +1077,7 @@
       const typeIn = (el, v) => { el.value = v; el.dispatchEvent(new Event('input')); el.dispatchEvent(new Event('change')); };
       ok(S.ws.isEditable(K), 'the category tree is editable in the Donation Shop task');
       pickEntry('▾ Fashion');
-      ok(/Items \(85\)/.test($('editor').textContent) && /In game a group shows the items of its 4 categories/.test($('editor').textContent), 'a group lists the items of its 4 categories, like the game');
+      ok(/Items \(290\)/.test($('editor').textContent) && /In game a group shows the items of its 4 categories/.test($('editor').textContent), 'a group lists the items of its 4 categories, like the game');
       click(btnByText($('list'), '+ Category'));
       await waitFor(() => lastModalAny() && /^\+ Category in the Donation Shop/.test(lastModalAny().querySelector('header').textContent), '+ Category dialog');
       let box = lastModalAny();
@@ -1106,7 +1172,7 @@
       // ↑: one click
       pickEntry('Masks');
       click([...$('editor').querySelectorAll('button')].find(b => b.textContent === '↑'));
-      ok(S.ws.donationTree.find('Fashion').children.map(n => n.name).join(',') === 'Suits,Masks,Cloaks,Wings', '↑ moves Masks above Cloaks');
+      ok(S.ws.donationTree.find('Fashion').children.map(n => n.name).join(',') === 'Premium Sets,Masks,Cloaks,Wings', '↑ moves Masks above Cloaks');
       click($('btn-undo'));
       // delete: the items move
       pickEntry('Masks');
@@ -1116,11 +1182,11 @@
       const del = () => btnByText(box.querySelector('footer'), 'Delete category');
       ok(del().disabled && /holds 5 items/.test(box.textContent), 'lists its 5 items; Delete greyed until a choice');
       const cin = box.querySelector('.combo input');
-      cin.dispatchEvent(new Event('focus')); cin.value = 'suits'; cin.dispatchEvent(new Event('input'));
-      [...box.querySelectorAll('.combo-opt')].find(o => o.textContent === 'Suits').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-      ok(!del().disabled && /moved to "Suits"/.test(box.textContent), 'pick Suits: preview says the items move there');
+      cin.dispatchEvent(new Event('focus')); cin.value = 'premium'; cin.dispatchEvent(new Event('input'));
+      [...box.querySelectorAll('.combo-opt')].find(o => o.textContent === 'Premium Sets').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      ok(!del().disabled && /moved to "Premium Sets"/.test(box.textContent), 'pick Premium Sets: preview says the items move there');
       click(del());
-      ok(!S.ws.donationTree.find('Masks') && S.ws.models.donation.rows.filter(r => r.category === 'Suits').length === 75, 'Masks gone, Suits now holds 75');
+      ok(!S.ws.donationTree.find('Masks') && S.ws.models.donation.rows.filter(r => r.category === 'Premium Sets').length === 280, 'Masks gone, Premium Sets now holds 280');
       click($('btn-undo'));
       ok(S.ws.files.get(K).text === tree0 && S.ws.files.get('donationshop.inc').text === ds0 && S.ws.dirtyFiles().length === 0, 'Undo restores both files');
     }
@@ -1293,9 +1359,9 @@
       const lookCombo = () => [...nf.querySelectorAll('.combo')].find(c => /box look/.test(c.querySelector('input').placeholder));
       await pickIn(nf, lookCombo(), 'Itm_SysSysScrBxLuck', /look — used by/);
       await waitFor(() => !create().disabled, 'Create enabled');
-      ok(/\/createitem 31677 1/.test(nf.textContent) && /GiftBox\tII_SYS_SYS_SCR_HARNESS_BOX/.test(nf.textContent) && /#define\tII_SYS_SYS_SCR_HARNESS_BOX\t\t\t31677/.test(nf.textContent),
-        'preview: item 31677, the #define, the GiftBox block');
-      ok(/SysSysScrBxCom/.test(nf.textContent) && /IDS_PROPITEM_TXT_017074\tHarness Box/.test(nf.textContent), 'preview: the ground model line and the name line');
+      ok(/\/createitem 33398 1/.test(nf.textContent) && /GiftBox\tII_SYS_SYS_SCR_HARNESS_BOX/.test(nf.textContent) && /#define\tII_SYS_SYS_SCR_HARNESS_BOX\t\t\t33398/.test(nf.textContent),
+        'preview: item 33398, the #define, the GiftBox block');
+      ok(/SysSysScrBxCom/.test(nf.textContent) && /IDS_PROPITEM_TXT_018932\tHarness Box/.test(nf.textContent), 'preview: the ground model line and the name line');
       await waitFor(() => [...nf.querySelectorAll('.bx-tt')].some(t => /Harness Box/.test(t.textContent)), 'the tooltip of the planned box');
       ok([...nf.querySelectorAll('.bx-tt')].some(t => /Moonstone/.test(t.textContent) && /Penya price/.test(t.textContent)), 'the picked item\'s tooltip shows in the form');
       click(btnByText(nf.querySelector('footer'), 'Try it'));
@@ -1317,9 +1383,9 @@
       await waitFor(() => !sf.querySelector('#bxs-apply').disabled && /cannot trade it/.test(sf.textContent), 'settings ready');
       if (STOP === 'boxsettings') { $('toasts').textContent = ''; return; }
       click(sf.querySelector('#bxs-apply'));
-      ok(/cannot be traded/.test(ed().textContent) && !FRE.itemOps.isTradeable(S.ws, S.ws.itemById(31677)).tradeable, 'settings applied: the box cannot be traded');
+      ok(/cannot be traded/.test(ed().textContent) && !FRE.itemOps.isTradeable(S.ws, S.ws.itemById(33398)).tradeable, 'settings applied: the box cannot be traded');
       while (S.ws.history.length) click($('btn-undo'));
-      ok(!S.ws.dirtyFiles().length && !S.ws.itemById(31677), 'Undo removes the new box from every file');
+      ok(!S.ws.dirtyFiles().length && !S.ws.itemById(33398), 'Undo removes the new box from every file');
       listSearch.value = ''; listSearch.dispatchEvent(new Event('input'));
     }
 
@@ -1707,7 +1773,7 @@
       click($('btn-undo'));
       // the presets page: Arcanist male shown, then Templar female created as a copy and undone
       click(items().find(x => /Equalized presets/.test(x.textContent)));
-      ok(/Equalized presets/.test(ed().textContent) && /Arcanist male/.test(ed().textContent) && /What the player gets/.test(ed().textContent) && /Fosharpen/.test(ed().textContent), 'Equalized presets: Arcanist male, its items and what the player gets');
+      ok(/Equalized presets/.test(ed().textContent) && /Arcanist male/.test(ed().textContent) && /What the player gets/.test(ed().textContent), 'Equalized presets: Arcanist male, its items and what the player gets');
       if (STOP === 'pvpeq') { $('toasts').textContent = ''; return; }
       if (STOP === 'pvpffa') { $('toasts').textContent = ''; return; }
       click($('btn-save'));

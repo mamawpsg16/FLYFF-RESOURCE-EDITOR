@@ -9,6 +9,7 @@ import { FRE, ROOT, readBytes, listDir, loadFolder, openSource, exists, loadWorl
 // the independent Python copy; ORACLE_SIM points at a copy when bugs are planted in it (never mutate tools/ in place)
 const ORACLE_SIM = GLib.getenv('ORACLE_SIM') || ROOT + '/tools/oracle_sim.py';
 import { bpServer } from './bp-server.js';
+import { checkMounts } from './mount-check.js';
 
 const FIXTURES = ROOT + '/test-data/fixtures/Resource';
 const REAL = ROOT + '/../FLYFF-V19-SOURCE/Server/Resource';
@@ -116,11 +117,11 @@ const W = freshWorkspace();
 {
   eq(W.missing.length, 0, 'all required files present');
   eq(FRE.specItem.VALUES_PER_RECORD, 175, 'Spec_Item record = 175 values');
-  eq(W.items.rows.length, 8073, 'Spec_Item rows');
-  eq(W.items.items.size, 8073, 'Spec_Item items loaded');
+  eq(W.items.rows.length, 9842, 'Spec_Item rows');
+  eq(W.items.items.size, 9842, 'Spec_Item items loaded');
   eq(W.items.stopped, null, 'Spec_Item parse did not stop');
   eq(W.items.skippedVer, 0, 'no rows above __VER 19');
-  eq(W.chars.npcs.length, 594, 'NPC blocks across 3 files');
+  eq(W.chars.npcs.length, 595, 'NPC blocks across 3 files');
   eq(W.diags.filter(d => d.code === 'C_NO_OPEN_BRACE').length, 6, '6 NPCs without "{"');
   eq(W.diags.filter(d => d.severity === 'BLOCK').length, 0, 'no blocking problems in the current data');
   const cnt = {};
@@ -405,7 +406,7 @@ section('item tooltip');
   ok(T('II_GEN_REF_REF_FIRST').game.includes('Restore MP: 25'), 'refresher: Restore MP');
   eq(FRE.itemTooltip.cfmt('%s%s%%', 'Attack Speed', '+7'), 'Attack Speed+7%', 'rate format');
   let n = 0; for (const it of W.items.items.values()) { FRE.itemTooltip.build(W, it); n++; }
-  eq(n, 8073, 'every item builds a tooltip');
+  eq(n, 9842, 'every item builds a tooltip');
 }
 
 // ---------------------------------------------------------------- Donation Shop (DonationShop.inc, commit 7d7df4f9)
@@ -414,13 +415,13 @@ section('donation shop');
   const m = W.models.donation;
   const [okp, out] = GLib.spawn_command_line_sync(`python3 ${ROOT}/tools/oracle.py ${FIXTURES}`);
   const oracle = JSON.parse(new TextDecoder().decode(out)).donation;
-  eq(m.rows.length, 341, 'Donation Shop: 341 rows');
+  eq(m.rows.length, 1010, 'Donation Shop: 1010 rows');
   eq(m.categories.length, 20, 'Donation Shop: 20 categories');
   eq(oracle.rows, m.rows.length, 'oracle agrees: rows');
   eq(JSON.stringify(oracle.categories), JSON.stringify(m.categories), 'oracle agrees: categories in order');
   eq(oracle.eol, 'lf', 'DonationShop.inc is LF (its own header comment says CRLF)');
   const dd = W.moduleDiags.donation;
-  eq(dd.filter(d => d.code === 'DS_NO_PRICE').length, 9, '9 shields have no donate-chip price');
+  eq(dd.filter(d => d.code === 'DS_NO_PRICE').length, 0, 'every listed item has a donate-chip price (the 9 shields were priced, 10fe3ada)');
   eq(dd.filter(d => d.code === 'DS_CRASH').length, 0, 'the two crash shields are not listed (ae345504)');
   const TREE = ROOT + '/test-data/fixtures/Client/Client/DonationShopTree.inc';
   if (exists(TREE)) {
@@ -448,7 +449,7 @@ editCase('donation: add / move / remove keep LF and bytes', w => {
   w.apply('donationshop.inc', FRE.donationOps.removeItem(f.text, dsRows(w, 'II_SYS_SYS_SCR_BLESSEDNESS')[0]), 'remove');
   ok(B.bytesEqual(f.serialize(), before), 'add + move + remove = identical bytes');
   w.apply('donationshop.inc', FRE.donationOps.removeItem(f.text, dsRows(w, 'II_SYS_SYS_SCR_PET_LIFE')[0]), 'remove');
-  eq(w.models.donation.rows.length, 340, 'removed a real row');
+  eq(w.models.donation.rows.length, 1009, 'removed a real row');
   eq(changedLines(f).length, 1, 'remove deletes exactly one line');
   eq(w.newBlocking().length, 0, 'no new blocking problems');
   while (w.undo());
@@ -572,7 +573,9 @@ section('donation shop categories: checks');
 if (exists(DS_TREE)) {
   const w = dsWs(), O = FRE.donationOps, T = FRE.donationTree, K = T.KEY;
   ok(w.isEditable(K), 'the tree is editable in the Donation Shop task');
-  eq(w.diags.filter(d => /^DT_/.test(d.code)).length, 0, 'the real tree has no DT_ problem');
+  // the tree renamed Suits -> Premium Sets (V19 10fe3ada) but s_szDonationCatOrder (WndDonationShop.cpp:280) still says Suits
+  eq(w.diags.filter(d => /^DT_/.test(d.code)).map(d => d.code + ' ' + /"([^"]+)"/.exec(d.message)[1]).join(','), 'DT_PATCH Premium Sets',
+    'the real tree: only Premium Sets is missing from the compiled order');
   const np = n => T.nameProblems(w.donationTree, n).map(p => p.code).join(',');
   eq(np('Hats'), '', 'a free name is fine');
   eq(np('masks'), 'DT_DUP', 'a taken name (any case) is DT_DUP');
@@ -586,8 +589,8 @@ if (exists(DS_TREE)) {
   throws(() => O.moveToGroup(w.files.get(K).text, w.donationTree.find('Fashion'), w.donationTree.find('Fashion')), 'a group can\'t go into itself');
   throws(() => O.moveNode(w.files.get(K).text, w.donationTree.find('Consumables'), -1), 'the first can\'t move up');
   w.applyGroup(O.addCategory(w.files.get(K).text, w.donationTree, w.donationTree.find('Fashion'), 'Hats'), 'add');
-  const d = w.diags.find(x => x.code === 'DT_PATCH');
-  ok(d && d.severity === 'WARN' && /Hats/.test(d.message), 'a new category -> DT_PATCH warning (needs donation-tree.diff)');
+  const d = w.diags.find(x => x.code === 'DT_PATCH' && /Hats/.test(x.message));
+  ok(d && d.severity === 'WARN', 'a new category -> DT_PATCH warning (needs donation-tree.diff)');
   w.undo();
   w.applyGroup(O.moveNode(w.files.get(K).text, w.donationTree.find('Functional'), -1), 'move');
   ok(w.diags.some(x => x.code === 'DT_ORDER' && x.severity === 'INFO'), 'a new order -> DT_ORDER note');
@@ -622,7 +625,7 @@ section('battle pass');
   eq(reach, o.reach_top, 'oracle agrees: points to reach the top level (146,000)');
   // propMover port: every BP monster's level and rank match a column-based read of propMover.txt
   const mv = W.movers.movers;
-  eq(mv.size, 1114, 'propMover.txt: 1114 movers');
+  eq(mv.size, 1183, 'propMover.txt: 1183 movers');
   ok(m.rows.BP5.every(r => { const x = mv.get(r.id), y = o.mover_levels[r.define]; return x && y && x.level === y[0] && x.rankId === y[1]; }), 'oracle agrees: level and rank of every listed monster');
   eq(mv.get(W.defines.defines.get('MI_KINGSTER01')).name, 'Small Kingster', 'mover display name from propMover.txt.txt');
   eq(o.off_band, 0, 'oracle: every monster pays its band price');
@@ -869,7 +872,7 @@ section('exchange');
   ok(unknown.every(n => heads.includes(n) || lost.has(n)), 'every menu with an unknown SET_ block is a chain head or lost');
   ok(['MMI_MAPLE_TRADE', 'MMI_EVENT_2012HAPPYMONEYMENU', 'MMI_SEAKINGMASKCHANGEMENU'].every(n => lost.has(n) && !byName.has(n)), 'normal menus swallowed by a chain are lost (never loaded)');
   const codes = {}; for (const d of [...W.moduleDiags.exchange].sort((a, b) => a.code < b.code ? 1 : -1)) codes[d.code] = (codes[d.code] || 0) + 1;
-  eq(JSON.stringify(codes), JSON.stringify({ EX_OUT_OF_STEP: 3, EX_NO_NPC: 24 }), 'real file: 3 out-of-step chains, 24 menus no NPC opens');
+  eq(JSON.stringify(codes), JSON.stringify({ EX_OUT_OF_STEP: 3, EX_NO_NPC: 25 }), 'real file: 3 out-of-step chains, 25 menus no NPC opens (+1 since the Baruna rework ad93a9af)');
   const col = byName.get('MMI_COLLECT01');
   eq(col.sets.length, 8, "Collins: 8 recipes (15091d5f)");
   ok(W.npcsByMenu().get(col.mmi.value).some(n => /Collins/.test(n)), 'Collins opens MMI_COLLECT01');
@@ -1505,7 +1508,7 @@ section('add new NPC: bytes, rules, simulator (JS and Python copies agree)');
   const jur = mad.placements.find(p => p.key === 'MaFl_Juria');
   ok(jur && jur.model === 212 && Math.abs(jur.angle - 182.38) < 0.01 && Math.abs(jur.x - 1739.61 * 4) < 0.1 && jur.y === 100 && Math.abs(jur.z - 802.95 * 4) < 0.1,
     "Juria's record: model 212, angle 182.38, file x 1739.61 = 6958.4 in game (x4, Obj.cpp:525)");
-  eq(FRE.npcOps.lastStringId(w), 1188, 'highest IDS_CHARACTER_INC_ is 001188');
+  eq(FRE.npcOps.lastStringId(w), 1189, 'highest IDS_CHARACTER_INC_ is 001189 (Lost Fwanki, Mini Events)');
 
   // the §5 example: golden output (handoff §6.5.4) and re-read through the loaders (§6.5.5)
   const form = { key: 'MaFl_Lumi', name: 'Lumi', model: 'MI_MAFL_JURIA', image: 'IDS_CHARACTER_INC_000056', structure: 'SRT_GENERAL',
@@ -1519,9 +1522,9 @@ section('add new NPC: bytes, rules, simulator (JS and Python copies agree)');
   const tail = (a, b) => B.bytesEqual(b.subarray(0, a.length), a) ? FRE.bytes.utf16leToString(b.subarray(a.length), 0) : null;
   eq(tail(before.inc, inc), '\r\nMaFl_Lumi\r\n{\r\n\tsetting\r\n\t{\r\n\t\tAddMenu( MMI_TRADE );\r\n\t\tAddMenu( MMI_BANKING );\r\n\t\tAddShopItem( 0, II_SYS_SYS_SCR_BLESSEDNESS );\r\n' +
     '\t\tAddVendorItem( 1, IK3_SCROLL, -1, 1, 150, 100 );\r\n\t\tm_nStructure= SRT_GENERAL;\r\n\t\tSetImage\r\n\t\t(\r\n\t\tIDS_CHARACTER_INC_000056\r\n\t\t);\r\n\t}\r\n' +
-    '\tSetName\r\n\t(\r\n\tIDS_CHARACTER_INC_001189\r\n\t);\r\n\tAddVendorSlot( 0, IDS_CHARACTER_INC_001190 );\r\n\tAddVendorSlot( 1, IDS_CHARACTER_INC_001191 );\r\n}\r\n',
+    '\tSetName\r\n\t(\r\n\tIDS_CHARACTER_INC_001190\r\n\t);\r\n\tAddVendorSlot( 0, IDS_CHARACTER_INC_001191 );\r\n\tAddVendorSlot( 1, IDS_CHARACTER_INC_001192 );\r\n}\r\n',
     'character.inc: only the §5.2 block is appended (UTF-16LE, CRLF, BOM kept)');
-  eq(tail(before.txt, txt), 'IDS_CHARACTER_INC_001189\tLumi\r\nIDS_CHARACTER_INC_001190\tGeneral Goods\r\nIDS_CHARACTER_INC_001191\tScrolls\r\n', 'character.txt.txt: 3 lines appended');
+  eq(tail(before.txt, txt), 'IDS_CHARACTER_INC_001190\tLumi\r\nIDS_CHARACTER_INC_001191\tGeneral Goods\r\nIDS_CHARACTER_INC_001192\tScrolls\r\n', 'character.txt.txt: 3 lines appended');
   eq(dyo.length, before.dyo.length + 200, '.dyo is 200 bytes longer');
   ok(B.bytesEqual(dyo.subarray(0, plan.insertAt), before.dyo.subarray(0, plan.insertAt)) && B.bytesEqual(dyo.subarray(plan.insertAt + 200), before.dyo.subarray(plan.insertAt)),
     '.dyo: bytes before and after the new record are unchanged');
@@ -1607,7 +1610,7 @@ section('add new NPC: bytes, rules, simulator (JS and Python copies agree)');
   // the independent Python copy: same rules, same bytes, same game state for every case
   const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} newnpc ${FIXTURES}`);
   const py = JSON.parse(new TextDecoder().decode(out));
-  eq(py.lastId, 1188, 'Python: highest IDS_CHARACTER_INC_ 1188');
+  eq(py.lastId, 1189, 'Python: highest IDS_CHARACTER_INC_ 1189');
   let agree = 0, built = 0, games = 0;
   const hex = b => Array.from(b, x => x.toString(16).padStart(2, '0')).join('');
   for (const c of py.cases) {
@@ -1665,7 +1668,7 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
   ok(names.every(n => w.isEditable(n)) && ['defineText.h', 'textClient.inc', 'textClient.txt.txt', 'Exchange_Script.txt'].every(n => w.clientFileNames().includes(n)),
     'NPC task may write (and client-sync) defineText.h, textClient.inc, textClient.txt.txt, Exchange_Script.txt');
   ok(w.models.exchange && w.models.exchange.menus.length > 70, 'NPC task reads the exchange menus');
-  eq(FRE.menuOps.freeMenuIds(w).slice(0, 6).join(), '284,285,286,287,291,292', 'free menu ids: 284-287, then 291 (282 statue buff, 283 FFA Arena, 288-290 TDM Arena / FFA / TDM Rules)');
+  eq(FRE.menuOps.freeMenuIds(w).slice(0, 6).join(), '284,285,286,287,298,299', 'free menu ids: 284-287, then 298 (282 statue buff, 283 FFA Arena, 288-290 TDM Arena / FFA / TDM Rules, 291-293 Baruna, 294-297 Mini Events + arena entry)');
   eq(FRE.menuOps.nextTid(w), 8044, 'next free TID: 8044 (after TID_TOOLTIP_SKILLDMG 8043)');
   eq(FRE.menuOps.nextTextId(w), 3929, 'next textClient key: IDS_TEXTCLIENT_INC_003929');
 
@@ -1673,7 +1676,7 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
   const jeff = JSON.parse(readText(ROOT + '/tools/jeff-menus.json'));
   eq(FRE.validateNewMenus(w, jeff).length, 0, "Jeff's 6 menus: no problem");
   const plan = FRE.menuOps.newMenusPlan(w, jeff);
-  eq(plan.ids.join(), '284,285,286,287,291,292', 'Jeff: menu ids 284-287, 291, 292 (Ankou = 291)');
+  eq(plan.ids.join(), '284,285,286,287,298,299', 'Jeff: menu ids 284-287, 298, 299 (Ankou = 298)');
   {
     // Try it before Create (menuOps.tryTable): a scratch load, the workspace untouched, the new texts shown
     const snap = names.map(n => w.files.get(n).text), hist = w.history.length, defs = w.defines.defines.size;
@@ -1682,14 +1685,14 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
       'Try before Create: no file, undo step or define changes');
     eq(plan.ids.map(id => T0.table.find(id) ? T0.table.find(id).sets.length : 0).join(), '10,10,10,10,11,10', "Try before Create: the scratch load has Jeff's 6 menus with all their exchanges");
     eq(T0.env.text(plan.results[0]), 'You received your weapon.', 'Try before Create: the new success message is shown (not yet in textClient)');
-    const r0 = XS0 => XS0.resultExchange(T0.env, T0.table, XS0.stockedPlayer(T0.env, T0.table.find(291).sets[0], { free: 1 }), 291, 0, XS0.rng(1));
+    const r0 = XS0 => XS0.resultExchange(T0.env, T0.table, XS0.stockedPlayer(T0.env, T0.table.find(298).sets[0], { free: 1 }), 298, 0, XS0.rng(1));
     const rr = r0(FRE.exchangeSim);
     ok(rr.result === 'SUCCESS' && rr.given[0].id === w.defines.defines.get('II_WEA_SWO_BEHESWORD'), 'Try before Create: Ankou #1 gives Curtana on the scratch load');
-    eq(FRE.exchangeSim.clientReply(T0.env, T0.table, 291, 0, rr).box, 'You received your weapon.', 'Try before Create: the player reads the new success message');
+    eq(FRE.exchangeSim.clientReply(T0.env, T0.table, 298, 0, rr).box, 'You received your weapon.', 'Try before Create: the player reads the new success message');
   }
   w.applyGroup(plan.parts, 'Jeff');
   const txt = n => w.files.get(n).text;
-  ok(txt('defineneuz.h').includes('#define MMI_TDM_RULES\t290\t// Amos: TDM rules window (Client/NpcBoard_290.inc)\r\n#define MMI_WPNPIECE_ENTANESS\t284\t// MaFl_Jeff exchange menu\r\n'), 'defineNeuz.h: MMI_WPNPIECE_ENTANESS 284 after the last menu define (MMI_TDM_RULES 290)');
+  ok(txt('defineneuz.h').includes('#define MMI_HIDE_FOUND\t\t\t297\t// Lost Fwanki (Hide and Seek mini event): "Found it!" (__MINI_EVENT)\r\n#define MMI_WPNPIECE_ENTANESS\t284\t// MaFl_Jeff exchange menu\r\n'), 'defineNeuz.h: MMI_WPNPIECE_ENTANESS 284 after the last menu define (MMI_HIDE_FOUND 297)');
   ok(/TID_MMI_MUSICFESTIVALGUITAR\t\t\t7279[^\n]*\n#define\tTID_MMI_WPNPIECE_ENTANESS\t\t\t7284\r\n/.test(txt('definetext.h')) && txt('definetext.h').endsWith('#define\tTID_GAME_WPNPIECE_FAIL\t\t\t\t\t8045\r\n'),
     'defineText.h: TID_MMI_ labels 7284.. after TID_MMI_MUSICFESTIVALGUITAR 7279; result TIDs 8044/8045 at the end');
   ok(txt('textclient.txt.txt').endsWith('IDS_TEXTCLIENT_INC_003934\tCrystal Lusaka Weapons\r\nIDS_TEXTCLIENT_INC_003935\tYou received your weapon.\r\nIDS_TEXTCLIENT_INC_003936\tYou need the weapon pieces, the boss item and a free inventory slot.\r\n'),
@@ -1701,9 +1704,9 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
     "in game: Jeff's right-click = Dialog + the 6 labels, each opening the exchange window with its weapons");
   eq(w.diags.filter(d => d.module === 'exchange' && d.severity === 'BLOCK').length, 0, 'the exchange loader reads the new menus without a problem');
   const XS = FRE.exchangeSim, env = XS.envFromWorkspace(w), table = XS.serverTable(w.models.exchange);
-  const ank = table.find(291);
+  const ank = table.find(298);
   const p1 = XS.stockedPlayer(env, ank.sets[0], { free: 1 });
-  const r1 = XS.resultExchange(env, table, p1, 291, 0, XS.rng(1));
+  const r1 = XS.resultExchange(env, table, p1, 298, 0, XS.rng(1));
   ok(r1.result === 'SUCCESS' && r1.given.length === 1 && r1.given[0].id === w.defines.defines.get('II_WEA_SWO_BEHESWORD') && r1.taken.length === 2, 'Ankou #1: 200 pieces + 1 Ankou\'s Scale -> Curtana');
   w.undo();
   ok(names.every((n, i) => B.bytesEqual(w.files.get(n).serialize(), before[i])) && !w.defines.defines.has('MMI_WPNPIECE_ENTANESS'), 'one Undo restores all 6 files and the defines');
@@ -2370,7 +2373,7 @@ section('donation shop buying: what the edits do in game');
   const bag = n => B.playerOf({ unlocked: 168, slots: { 0: [chip, n, 0] }, fill: 100 });
   const spec = () => w.files.get('spec_item.txt').text;
   let p = bag(5000), r = B.buy(env(), p, id, 2);
-  eq(r.server && r.server.paid, 1200, `${def}: 2 cost 2 x 600 = 1,200 Donate Chips`);
+  eq(r.server && r.server.paid, 1000, `${def}: 2 cost 2 x 500 = 1,000 Donate Chips (prices aligned, 10fe3ada)`);
   w.apply('spec_item.txt', FRE.itemOps.setChipPrice(spec(), itemOfDef(w, def), 450, D), 'price');
   p = bag(5000); r = B.buy(env(), p, id, 2);
   eq(r.server && r.server.paid, 900, 'after the price edit (450) the server charges 900');
@@ -2644,7 +2647,7 @@ section('boxes: loader, checks, opening boxes, edits, icons (JS and Python copie
   const w = new FRE.Workspace(files, { only: 'boxes' }).load();
   const m = w.models.boxes, Bx = FRE.boxes, Sim = FRE.boxesSim, O = FRE.boxesOps, Dm = w.defines.defines;
   eq(m.gift.boxes.size, 487, 'propGiftbox.inc: 487 random boxes');
-  eq(m.pack.boxes.size, 829, 'propPackItem.inc: 829 sets');
+  eq(m.pack.boxes.size, 1037, 'propPackItem.inc: 1037 sets');
   {
     // the Boxes list's "What's inside" filter (FRE.itemCategory.holds: the editor's item groups, not game behaviour)
     const isBox = id => m.gift.boxes.has(id) || m.pack.boxes.has(id);
@@ -3676,7 +3679,7 @@ section('weapon effects (G part 2): each weapon\'s own stats, rarity, hands, too
   try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py weapons) gave no readable result', e.message); }
   const fresh = () => { const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e)); return new FRE.Workspace(fs, { only: 'weapons' }).load(); };
   const ws = fresh(), D = ws.defines.defines, M = ws.models.weapons, Sim = FRE.weaponsSim;
-  eq(M.weapons.length, 926, '926 weapons (IK2_WEAPON_DIRECT / MAGIC)');
+  eq(M.weapons.length, 1383, '1383 weapons (IK2_WEAPON_DIRECT / MAGIC; + the cosmetic weapon skins, 10fe3ada)');
   eq(M.weapons.filter(w => w.slots.some(s => s.on)).length, 534, '… 534 with own stats');
   ok(M.byDefine.get('II_WEA_SWT_ANGEL').twin === M.byDefine.get('II_WEA_SWT_ANGELUM') && M.byDefine.get('II_WEA_SWT_LUZAM').twinOf === null, 'Ultimate twins pair by define + UM (LUZAM is the Crystal tier, not a twin)');
   if (py) {
@@ -3761,7 +3764,8 @@ section('consumable stats (L): use, use again, same-kind blocks, the timer, edit
     const b = M.byDefine.get('II_CHR_FOO_COO_BULLHAMS'), hp = D.get('DST_HP_MAX');
     const r = Sim.run(env, [['use', b.id], ['tick', 1800000], ['use', b.id]], 1);
     eq(J([r.results[1].ok, r.results[1].why]), J([false, 'active']), 'Bull Hams twice: the second is refused while the first is on (DoUseItemKeep)');
-    eq(r.p.stats.get(hp), 1200, '… and its Max HP is not added twice');
+    const s1 = b.slots.find(x => x.on);     // Bull Hams: STA +20 since the user's in-game test (2026-10-15)
+    eq(r.p.stats.get(s1.dst), s1.adj, `… and its ${ws.defines.byValue('DST_', s1.dst)} +${s1.adj} is not added twice`);
     const s = M.byDefine.get('II_SYS_SYS_SCR_STR'), st2 = Sim.run(env, [['use', s.id], ['tick', 600000], ['use', s.id]], 1);
     eq(st2.results[1].ok, false, 'a STR elixir twice: refused (IsDoUseBuff: same IK3_POTION_BUFF_STR)');
     const W = fresh(), f = W.files.get('spec_item.txt'), x = W.models.consumables.byDefine.get('II_SYS_SYS_SCR_STR');
@@ -4003,7 +4007,8 @@ section('Equalized PvP: event switches, class limits, shared presets, what a pla
   }
   // the real files: no BLOCK
   eq(base.diags.filter(d => /^EQ_/.test(d.code) && d.severity === 'BLOCK').length, 0, 'the real Equalized files have no BLOCK problem');
-  ok(base.diags.some(d => d.code === 'EQ_PRESET_MISSING'), 'classes without a preset are flagged (they enter naked)');
+  // today's file has a preset for every class + gender, so nobody enters naked (the check itself is run on a copy below)
+  ok(!base.diags.some(d => d.code === 'EQ_PRESET_MISSING'), 'every class + gender has a preset today: no EQ_PRESET_MISSING');
   // edits: byte-exact, read back as intended
   const PF = base.files.get('equalizedpresets.inc'), EF = base.files.get('equalizedpvp.inc');
   const splice = (f, sp) => FRE.SourceFile.spliceText(f.text, sp, f.kind, f.name);
@@ -4020,14 +4025,17 @@ section('Equalized PvP: event switches, class limits, shared presets, what a pla
   {
     const pr = base.models.pvp.eq.presets, b = pr.byKey.get('5|0');
     const nameOf = id => base.itemById(id >>> 0).define, dstOf = v => base.defines.byValue('DST_', v);
-    // copy male -> Templar female, then remove it again: back to the same bytes
-    const t1 = splice(PF, O.addPreset(pr, PF.text, 1, 1, b, nameOf, dstOf));
+    // today's file already has Templar female: take it out first (a copy), then copy male -> Templar female and remove it again
+    const PFx = pr.byKey.has('1|1') ? { text: splice(PF, O.removePreset(pr, PF.text, pr.byKey.get('1|1'))), kind: PF.kind, name: PF.name } : PF;
+    const prx = Eq.readPresets(tf(PFx.text), { defines: D, items });
+    ok(!prx.byKey.has('1|1') && prx.byKey.has('5|0'), 'removePreset: Templar female taken out of a copy');
+    const t1 = splice(PFx, O.addPreset(prx, PFx.text, 1, 1, prx.byKey.get('5|0'), nameOf, dstOf));
     const p1 = Eq.readPresets(tf(t1), { defines: D, items });
     ok(p1.byKey.has('1|1') && !p1.stopped && !p1.problems.length, 'addPreset: Templar female added (a copy), the file still loads cleanly');
     eq(J(presJ(p1)['1|1'].items), J(presJ(pr)['5|0'].items), 'addPreset: the copy has the same items, upgrades, elements, awakes');
-    ok(!/[^\r]\n/.test(t1.slice(PF.text.length)) && /\r\n$/.test(t1), 'addPreset: CRLF like the file');
+    ok(/\r\n/.test(PFx.text) ? !/[^\r]\n/.test(t1) : !/\r/.test(t1), 'addPreset: the file\'s own line ends (LF in the git copy, CRLF on the Windows PC)');
     const back = splice({ text: t1, kind: PF.kind, name: PF.name }, O.removePreset(p1, t1, p1.byKey.get('1|1')));
-    eq(back, PF.text, 'removePreset after addPreset: the same bytes as before');
+    eq(back, PFx.text, 'removePreset after addPreset: the same bytes as before');
     // add an item to BAG, change it, remove it
     const spec = { item: 'II_GEN_JEW_RIN_STRRING01', upgrade: 5, elem: 0, elemLv: 0, awakes: [{ dst: 'DST_STR', adj: 7 }], cards: [], count: 1 };
     const t2 = splice(PF, O.addItem(pr, PF.text, b, 'HP', spec));
@@ -4089,7 +4097,7 @@ section('Dungeons: PartyDungeon.lua, entering, the clock, map monsters, edits (J
     for (const f of py.files) {
       const text = f.label === 'PartyDungeon.lua' ? W.files.get('partydungeon.lua').text : f.text;
       const j = J(facts(text, f.label === 'PartyDungeon.lua')), p = J({ blocks: f.blocks, server: f.server, mons: f.mons });
-      if (j === p) same++; else print(`   ${f.label}: js ${j.slice(0, 300)}\n   py ${p.slice(0, 300)}`);
+      if (j === p) same++; else { let k = 0; while (j[k] === p[k]) k++; print(`   ${f.label}: first difference at ${k}: js …${j.slice(Math.max(0, k - 200), k + 200)}\n   py …${p.slice(Math.max(0, k - 200), k + 200)}`); }
     }
     eq(same, py.files.length, `what the server keeps and each dungeon's monsters (SetMonster + the map's .rgn): ${py.files.map(f => f.label).join(', ')}`);
 
@@ -4160,6 +4168,58 @@ section('Dungeons: PartyDungeon.lua, entering, the clock, map monsters, edits (J
   // the made-up file's checks
   const bad = Dg.validateDungeons(Dg.loadDungeons({ text: 'SetLevel( 1, 2 )\nAddDungeon( "WI_NOPE" )\n\tSetLevel( 9, 3 )\n\tSetClass( )\n\tSetMonster( ID_BOSS, "MI_NOPE", true, 1, 2, 3 )\nAddDungeon( "WI_INSTANCE_KALGAS" )\nAddDungeon( "WI_INSTANCE_KALGAS" )\n\tSetDungeonTime( SEC(30) )\n\tSetCoolTime( FOO )\n' }, { defines: Dm }), { defines: Dm, movers: W.movers.movers });
   eq([...new Set(bad.map(d => d.code))].sort().join(), 'DG_CLASS,DG_DUP,DG_LEVEL,DG_MONSTER,DG_NAME,DG_NO_DUNGEON,DG_SHORT,DG_WORLD', 'a broken file: every check fires');
+}
+
+// ---------------------------------------------------------------- Mounts (Mount.inc)
+section('Mounts: Mount.inc, leg loops, ground, flying, take-off, edits (JS and Python copies agree)');
+{
+  const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e));
+  const W = new FRE.Workspace(fs, { only: 'mounts' }).load();
+  W.setClientModels(readText(ROOT + '/test-data/fixtures/Client/Model.list').split('\n').map(x => x.trim()).filter(Boolean));
+  const m = W.models.mounts, J = JSON.stringify, O = FRE.mountsOps, Sim = FRE.mountSim;
+  eq(m.blocks.length, 93, 'the real Mount.inc: 93 Add_Mount blocks');
+  eq(m.mounts.filter(x => x.isMount).length, 93, '93 IK3_MOUNT items, every one with a block and a model');
+  ok(m.mounts.every(x => x.block && x.model), 'every mount item has its block and its mdlDyna.inc model');
+  eq(W.diags.filter(d => d.module === 'mounts').length, 0, 'the real file has no problem');
+  const nd = m.byId.get(225049);
+  eq(J([nd.name, nd.model, nd.anim.nType, nd.anim.fFlyMaxSpeed]), J(['Nightmare Dragon Mount', 'Mount058', 1, Math.fround(0.9)]), 'Nightmare Dragon: Mount058, can fly, top speed 0.9 (a5325b65)');
+  const g = Sim.ground(nd.anim);
+  eq(J([g.perSec.run, g.perSec.walk]), J([24, 6]), 'speed 0.4 a frame = 24 units a second; walk mode 6');
+  const fl = Sim.fly(nd.anim, { fFlightSpeed: nd.itemFlight });
+  eq(J([fl.top, fl.steadyShown]), J([581, 582]), 'its flying meter tops out at 581 (582 held: the clamp, then air friction)');
+  eq(J(Sim.takeOff(nd.anim, { dwFlightLimit: nd.flightLimit }, { worldFly: true, flyLv: 99 })), J({ ok: true, text: null }), 'it may take off on a flying map');
+  eq(Sim.takeOff(m.byId.get(225000).anim, null, { worldFly: true }).text, 'This mount cannot fly.', 'a ground mount: "This mount cannot fly."');
+  // the Python copy
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} mount ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py mount) gave no readable result', e.message); }
+  if (py) checkMounts({ FRE, py, ws: W, ok, eq });
+  // through the workspace: one value, a missing key, a reset, undo = the same bytes; the Client copy is the same file
+  const f = W.files.get('mount.inc'), before = f.serialize(), nLines = f.text.split('\n').length;
+  W.apply('mount.inc', O.setValue(f.text, m.byId.get(225049).block, 'fGroundSpeed', 0.5), 'speed');
+  eq(W.models.mounts.byId.get(225049).anim.fGroundSpeed, 0.5, 'speed 0.4 -> 0.5: the model follows');
+  eq(f.text.split('\n').length, nLines, 'no line added or removed');
+  W.apply('mount.inc', O.setValue(f.text, W.models.mounts.byId.get(225049).block, 'fNameOffset', 0.3), 'name');
+  ok(/fFlyMaxSpeed=0\.9;\r\n\tfNameOffset=0\.3;\r\n\}/.test(f.text), 'a key not in the block: a new tab-indented CRLF line before the }');
+  W.apply('mount.inc', O.resetKey(f.text, W.models.mounts.byId.get(225049).block, 'fNameOffset'), 'reset');
+  ok(!/fNameOffset/.test(f.text.slice(W.models.mounts.byId.get(225049).block.start, W.models.mounts.byId.get(225049).block.end)), '↺ removes the line again');
+  while (W.undo());
+  ok(B.bytesEqual(f.serialize(), before), 'undo: Mount.inc is byte-identical (UTF-16LE + BOM, CRLF)');
+  eq(O.fmt(FRE.mounts.BY_KEY.get('fGroundSpeed'), Math.fround(0.4)), '0.4', 'a float read from the file is written back short (0.4, not 0.4000000059604645)');
+  throws(() => O.setValue(f.text, m.byId.get(225049).block, 'fGroundSpeed', 0), 'speed 0 is refused (the rider could not move; /mountset refuses it too)');
+  throws(() => O.setValue(f.text, m.byId.get(225049).block, 'fFlightSpeed', 0.05), 'a flying push above 0.02 is refused (/mountset fly)');
+  throws(() => O.setValue(f.text, m.byId.get(225049).block, 'szRun', 'a "b".ani'), 'a loop name with a quote is refused');
+  throws(() => O.addBlock(f.text, m, 225049, null, {}), 'a second block for a mount that has one is refused');
+  // the checks on made-up files
+  const chk = t => { const mm = FRE.mounts.loadMounts({ name: 'Mount.inc', text: t }, { defines: W.defines.defines }); return FRE.mountChecks(Object.assign(mm, { mounts: [], byId: new Map() }), {}).map(d => d.code); };
+  eq(chk('Add_Mount\r\n{\r\n\tdwID=225049;\r\n\tfGroundSpeed=0.4;\r\n').join(), 'MT_UNCLOSED', 'no } at the end: MT_UNCLOSED (the startup hangs)');
+  eq([...new Set(chk('Add_Mount\r\n{\r\n\tdwID=225049;\r\n\tnType=2;\r\n}\r\nAdd_Mount\r\n{\r\n\tdwID=225049;\r\n\tnType=1;\r\n\tfAnimSpeed=20;\r\n}\r\n'))].sort().join(),
+    'MT_DUP_ID,MT_FLY_NO_LOOPS,MT_NOT_ITEM,MT_RANGE,MT_SPEED_ZERO', 'a duplicate, no speed, can fly without loops, a leg speed of 20');
+  for (const k of ['MT_UNCLOSED', 'MT_DUP_ID', 'MT_NO_ID', 'MT_NOT_ITEM', 'MT_NOT_MOUNT', 'MT_NO_BLOCK', 'MT_SPEED_ZERO', 'MT_TYPE', 'MT_FLY_NO_LOOPS', 'MT_FLY_UNUSED', 'MT_RANGE', 'MT_ANI_MISSING']) ok(FRE.diagHelp[k], `help text for ${k}`);
+  eq(FRE.afterSave.compute({ changes: [{ label: 'x', files: ['mount.inc'] }] }).steps.map(s => s.id).join(), 'servers', 'Mount.inc: Stop / Start Server.bat (the WorldServer and the game read it once at start)');
+  // a pasted /mountset reply
+  const p = FRE.mounts.parsePaste('Mount 225049: fGroundSpeed=0.40; fAnimSpeed=1.65; fWalkAnimSpeed=1.25; fNameOffset=0.00;\nszRun="item_Mount058_run.ani"; szWalk="item_Mount058_walk.ani"; szWalkBack="item_Mount058_walkback.ani";');
+  eq(J([p.id, Object.keys(p.values).length, p.values.fAnimSpeed, p.values.szWalkBack]), J([225049, 7, 1.65, 'item_Mount058_walkback.ani']), 'a /mountset reply: the mount id and its 7 values');
 }
 
 print(`\n${pass} passed, ${fail} failed`);

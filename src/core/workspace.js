@@ -201,6 +201,15 @@
       validate(ws, model) { return FRE.consumableChecks(model, { ws }); },
     },
     {
+      // Mounts (loaders/mounts.js): Mount.inc, how each mount item sits, moves, plays its leg loops and flies (LoadMountAnimationList
+      // Project.cpp:618, called at :1102 by the WorldServer AND the game; V19 b43949aa, a5325b65). UTF-16LE, CRLF; identical Client
+      // copy. mdlDyna.inc gives each mount item's model (its .ani files are the loop choices).
+      id: 'mounts', label: 'Mounts',
+      required: ['Mount.inc'], optional: ['mdlDyna.inc'], editable: ['Mount.inc'], client: ['Mount.inc'], deps: ['mdlDyna.inc'],
+      parse(ws) { return FRE.mounts.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.mountChecks(model, { hasModels: ws.clientModels }); },
+    },
+    {
       // PvP Events (loaders/pvp.js): FFAManager.inc / TDMManager.inc (ReadConfig: WorldServer start + /ffareload, /tdmreload),
       // GuildCombat.txt (the siege day / time AUTO_OPEN_IDC and the minimum bid JOINPENYA, CGuildCombat::LoadScript),
       // GuildSiegePrize.lua (the siege prizes, PvP events part B 6de6da39). Server files only; the rules boards players read are
@@ -369,7 +378,9 @@
     // lowercase file names in Client/Model (Add New NPC: does a model have all its files?)
     setClientModels(names) {
       this.clientModels = names ? new Set([...names].map(n => n.toLowerCase())) : null;
+      this.clientModelNames = names ? [...names] : null;     // real case: the Mounts task offers a model's own .ani files
       if (this.available.npc && this.available.npc.ok) this.reparse('character.inc');
+      if (this.available.mounts && this.available.mounts.ok) this.reparse('mount.inc');
     }
 
     // Client/Model/Texture file names, and the textures of .o3d files already read (Map lowercase o3d -> [names])

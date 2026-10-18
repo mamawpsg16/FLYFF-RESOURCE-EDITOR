@@ -487,7 +487,7 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "79+", "when": "Thu 15 Oct 2026, 08:58", "rev": "92bc993", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "57+", "when": "Sun 18 Oct 2026, 03:23", "rev": "6da0762", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -1845,7 +1845,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "79+", "when
   function loadPropMover(file, ctx) {
     const script = new Script(file.text, { file: file.name, defines: ctx.defines, strings: ctx.strings, diags: [] });
     const movers = new Map();       // id -> { id, define, name, level, rank, start }
-    let stopped = null;
+    let stopped = null, miOf = null;
     for (;;) {
       const id = script.getNumber();
       if (script.eof) break;
@@ -1862,8 +1862,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "79+", "when
         vals[i] = k === 't' ? script.getToken().text : (k === 'f' ? script.getFloat() : k === 'e' ? script.getInt64() : script.getNumber()).value;
       }
       const name = String(nameTok.text || '').replace(/\s+$/, '');
+      // a row keyed by a plain number (the 69 premium pets of V19 4cb24824: `1544` = MI_PET_PRM_DIABLOMURLOC) still has
+      // its MI_ define: other files name it that way, so the editor does too (the first MI_ with that value)
+      if (!id.define && !miOf) { miOf = new Map(); for (const [k, v] of ctx.defines || []) if (/^MI_/.test(k) && !miOf.has(v)) miOf.set(v, k); }
       movers.set(id.value, {
-        id: id.value, define: id.define || file.text.slice(id.start, id.end),
+        id: id.value, define: id.define || miOf.get(id.value) || file.text.slice(id.start, id.end),
         name, nameKey: nameTok.stringKey || null,
         level: vals[LEVEL], rankId: vals[CLASS], rank: RANKS[vals[CLASS]] || `rank ${vals[CLASS]}`,
         flying: vals[FLYING], correction: vals[CORRECTION], exp: vals[EXPVALUE],   // the kill path: drops into the bag; DropKind's chance % (Mover.cpp:8613 / 8866)
@@ -6325,6 +6328,19 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "79+", "when
     CS_DST_DROPPED: ['Stats numbered 118 (MAX_ADJPARAMARY) and up are dropped by SetDestParam unless they have their own code: the slot does nothing.', 'Pick another stat.'],
     CS_SLOT_DUP: ['The same stat is in two slots: both are added.', 'Merge them into one slot.'],
     UP_STALE_COMMENT: ['The line\'s number changed, but its comment (after -- or //) may still describe the old number.', 'Update or remove the comment by hand if you want the file to stay clear.'],
+    // Mounts (Mount.inc, LoadMountAnimationList Project.cpp:618)
+    MT_UNCLOSED: ['An Add_Mount block has no closing "}". The loader keeps reading for it past the end of the file and never stops, so the WorldServer and the game hang at startup.', 'Add the missing } at the end of the block.'],
+    MT_DUP_ID: ['Two Add_Mount blocks have the same dwID. Both are read and the last one replaces the first, so the earlier block does nothing.', 'Keep one block per mount: edit the last one, delete the other by hand.'],
+    MT_NO_ID: ['An Add_Mount block has no dwID line. It is filed under item 0, which no mount uses.', 'Add dwID=<the mount item id>; or remove the block.'],
+    MT_NOT_ITEM: ['The dwID is not an item in Spec_Item.txt, so nobody can ride it.', 'Check the number, or remove the block.'],
+    MT_NOT_MOUNT: ['The dwID is an item, but not a mount (its dwItemKind3 is not IK3_MOUNT), so it can\'t be ridden and the block is never used.', 'Check the number.'],
+    MT_NO_BLOCK: ['A mount item (IK3_MOUNT) has no Add_Mount block. When ridden, the seat code is skipped, so the rider is not placed on the mount, and the rider keeps their own speed.', 'Add a block for it (+ Add Mount.inc block), then tune the seat in game with /mountset.'],
+    MT_SPEED_ZERO: ['fGroundSpeed is 0 (or missing: a block starts at 0). The mount\'s speed replaces the rider\'s, so the rider can\'t move.', 'Give it a speed (every mount uses 0.4 today).'],
+    MT_TYPE: ['nType is not 0 or 1. Only 1 (MOUNT_WALK_FLY) lets the mount take off; 2 is never accepted by the server.', 'Use 0 for a ground mount, 1 for one that can fly.'],
+    MT_FLY_NO_LOOPS: ['The mount can fly but has no hovering (szFlyStand) or flying (szFlyWalk) loop, so in the air it plays its walk or standing loop.', 'Pick its fly loops (item_<model>_fly_stand.ani / _fly_walk.ani) if the model has them.'],
+    MT_FLY_UNUSED: ['A ground mount (nType 0) has flying values. They are read but never used.', 'Nothing to do; set "Can fly" if the mount should fly.'],
+    MT_RANGE: ['The value is outside what the GM command /mountset accepts for it. The loader takes it anyway, but it was never tuned that way in game.', 'Use a value in the range shown, or check it in game.'],
+    MT_ANI_MISSING: ['The loop file is not in Client/Model. The game finds no animation for that state.', 'Pick one of the model\'s own .ani files.'],
     // PvP Events (FFAManager.inc, TDMManager.inc, GuildCombat.txt, GuildSiegePrize.lua, the rules boards)
     PVP_OFF: ['The WorldServer reads FFAManager.inc / TDMManager.inc at startup and on /ffareload or /tdmreload. Any mistake (an unknown word, a value out of range, a bad start time) switches that event off until the file is fixed: no runs, the NPC says it is not available.', 'Fix the value shown, then type /ffareload or /tdmreload in game (or restart the servers).'],
     PVP_NO_TIMES: ['There is no start time (FFA_BEGIN / TDM_BEGIN), so the event never starts on its own.', 'Add a start time, or leave it on purpose (a GM can still start one).'],
@@ -9762,6 +9778,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "79+", "when
     'MMI_BLESSING_CANCEL', 'MMI_BUFFPET_RELEASE', 'MMI_BUFFPET_STATUS', 'MMI_CHANGEELEM', 'MMI_CHEER', 'MMI_COLLECTOR_DETAILS',
     'MMI_COLOSSEUM_COLOENTER01', 'MMI_COSTUMEMIX01', 'MMI_DIALOG', 'MMI_DUEL', 'MMI_DUEL_PARTY', 'MMI_FINDWORD', 'MMI_FIVESYSTEM',
     'MMI_FFA_ARENA', 'MMI_FFA_RULES', 'MMI_TDM_ARENA', 'MMI_TDM_RULES', 'MMI_GW_STATUE_BUFF',   // FFA / TDM (0600d7e9 .. 8362fbc6), GS statues (d7706de4)
+    'MMI_BARUNA_ELEMENT_SMELT', 'MMI_BARUNA_GUIDE', 'MMI_BARUNA_ULTIMATE', 'MMI_BARUNA_RUNE_REMOVE',   // Baruna rework (ad93a9af)
+    'MMI_FFA_ENTER', 'MMI_TDM_ENTER', 'MMI_MINI_EVENT', 'MMI_HIDE_FOUND',   // arena entry (1d83a56b), Mini Events (25e4f227, 3b12a4bb)
     'MMI_GUILDBANKING', 'MMI_GUILDCOMBAT_1TO1_CANCEL', 'MMI_GUILDCOMBAT_1TO1_ENTRANCE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_ENTRY',
     'MMI_GUILDCOMBAT_1TO1_GUIDE_PRIZE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_RULE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_TEX',
     'MMI_GUILDCOMBAT_1TO1_GUIDE_WIN', 'MMI_GUILDCOMBAT_1TO1_OFFER', 'MMI_GUILDCOMBAT_1TO1_OFFERSTATE', 'MMI_GUILDCOMBAT_1TO1_REPAYMENT',
@@ -13852,6 +13870,561 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "79+", "when
   FRE.consumableChecks = consumableChecks;
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/mounts.js ----
+// Mounts (Mount.inc): how each mount item sits, moves, plays its leg loops and flies. Port of
+// CProject::LoadMountAnimationList (_Common/Project.cpp:618-790, V19 b43949aa speeds + loops, a5325b65 flying), called once at
+// startup by the WorldServer AND the game (Project.cpp:1102): UTF-16LE + BOM, CRLF; Server + identical Client copy.
+//   Add_Mount { dwID=<item>; nType=<0|1>; ... }   each block starts from the defaults below; keys in any order;
+//   an unknown word is skipped one token at a time (the loop just reads the next token);
+//   the same dwID twice: the LAST block wins (m_mapMountAnimation[ dwID ] = mountAnim);
+//   a block without its "}" never ends (while( s.Token != "}" ) also runs at the end of the file): the startup hangs.
+// Where each value is used: loaders/mount-sim.js.
+(function (FRE) {
+  'use strict';
+  const { Script } = FRE.lexer;
+  const f32 = Math.fround;
+
+  // every key the loader knows, in the C++ order. kind: n = GetNumber, f = GetFloat (stored as float), s = a token (s.token)
+  // def = the value the block starts with (Project.cpp:633-645). min / max: the /mountset limits (FuncTextCmd.cpp:166-260)
+  // where that command can set the key; the editor uses the same ranges.
+  const FIELDS = [
+    { key: 'dwID', kind: 'n', def: 0, group: 'id', label: 'Mount item' },
+    { key: 'nType', kind: 'n', def: 0, group: 'fly', label: 'Can fly' },
+    { key: 'nBindBone', kind: 'n', def: 0, group: 'seat', label: 'Seat bone' },
+    { key: 'fOffSetX', kind: 'f', def: 0, group: 'seat', label: 'Seat offset X' },
+    { key: 'fOffSetY', kind: 'f', def: 0, group: 'seat', label: 'Seat offset Y' },
+    { key: 'fOffSetZ', kind: 'f', def: 0, group: 'seat', label: 'Seat offset Z' },
+    { key: 'fRotX', kind: 'f', def: 0, group: 'seat', label: 'Seat turn X (degrees)' },
+    { key: 'fRotY', kind: 'f', def: 0, group: 'seat', label: 'Seat turn Y (degrees)' },
+    { key: 'fRotZ', kind: 'f', def: 0, group: 'seat', label: 'Seat turn Z (degrees)' },
+    { key: 'fGroundSpeed', kind: 'f', def: 0, group: 'ground', label: 'Speed', min: 0, minOpen: true, max: 10, cmd: 'speed' },
+    { key: 'szStand', kind: 's', def: '', group: 'loops', label: 'Standing loop' },
+    { key: 'szWalk', kind: 's', def: '', group: 'loops', label: 'Walk-mode loop', cmd: 'walkani' },
+    { key: 'szRun', kind: 's', def: '', group: 'loops', label: 'Moving loop', cmd: 'runani' },
+    { key: 'szWalkBack', kind: 's', def: '', group: 'loops', label: 'Backing-up loop', cmd: 'backani' },
+    { key: 'fAnimSpeed', kind: 'f', def: 1, group: 'ground', label: 'Moving leg speed', min: 0, minOpen: true, max: 10, cmd: 'run' },
+    { key: 'fWalkAnimSpeed', kind: 'f', def: 1, group: 'ground', label: 'Walk / back leg speed', min: 0, minOpen: true, max: 10, cmd: 'walk' },
+    { key: 'fNameOffset', kind: 'f', def: 0, group: 'name', label: 'Name height', min: -5, max: 10, cmd: 'name' },
+    { key: 'fFlightSpeed', kind: 'f', def: 0, group: 'fly', label: 'Flying push', min: 0, max: 0.02, cmd: 'fly' },
+    { key: 'fFlyAnimSpeed', kind: 'f', def: 1, group: 'fly', label: 'Flying leg speed', min: 0, minOpen: true, max: 10, cmd: 'flyanim' },
+    { key: 'fFlyMaxSpeed', kind: 'f', def: 0, group: 'fly', label: 'Flying top speed', min: 0, max: 2, cmd: 'flymax' },
+    { key: 'szFlyStand', kind: 's', def: '', group: 'flyloops', label: 'Hovering loop' },
+    { key: 'szFlyWalk', kind: 's', def: '', group: 'flyloops', label: 'Flying-forward loop' },
+    { key: 'szFlyStart', kind: 's', def: '', group: 'flyloops', label: 'Take-off (plays once)' },
+    { key: 'szFlyLand', kind: 's', def: '', group: 'flyloops', label: 'Landing (plays once)' },
+  ];
+  const BY_KEY = new Map(FIELDS.map(f => [f.key, f]));
+  // MOUNT_MOVE_TYPE (ProjectCmn.h:625): only MOUNT_WALK_FLY (1) may take off (DPSrvr.cpp:7844 OnMountFly)
+  const MOUNT_WALK = 0, MOUNT_WALK_FLY = 1, MOUNT_FLY = 2;
+
+  function defaults() {
+    const a = {};
+    for (const f of FIELDS) a[f.key] = f.def;
+    return a;
+  }
+
+  // file: a SourceFile (text). ctx: { defines }. -> { file, blocks, anims: Map(id -> block that wins), hang: block | null, diags }
+  //   block: { start, end, open, close, id, anim, entries: [{ key, field, keyTok, value: {start,end}, raw, stmtEnd }], unknown: [tok] }
+  function loadMounts(file, ctx = {}) {
+    const text = file.text;
+    const s = new Script(text, { file: file.name, defines: ctx.defines || new Map(), diags: [] });
+    const blocks = [], anims = new Map();
+    let hang = null;
+    let t = s.getToken();
+    while (t.type !== 'eof') {
+      if (t.text === 'Add_Mount') {
+        const b = { start: t.start, end: t.end, open: null, close: null, id: 0, anim: defaults(), entries: [], unknown: [] };
+        b.open = s.getToken();                                     // { (not checked)
+        let tok = b.open;
+        for (;;) {
+          if (tok.text === '}') { b.close = tok; break; }
+          if (tok.type === 'eof') { hang = b; break; }           // the C++ loops here forever
+          const field = BY_KEY.get(tok.text);
+          if (field && tok.type !== 'string') {
+            s.getToken();                                          // =
+            let value, raw;
+            if (field.kind === 's') {
+              const v = s.getToken();
+              value = { start: v.start, end: v.end, quoted: v.type === 'string' }; raw = v.text;
+              b.anim[field.key] = v.text;
+            } else {
+              const v = field.kind === 'n' ? s.getNumber() : s.getFloat();
+              value = { start: v.start, end: v.end }; raw = text.slice(v.start, v.end);
+              b.anim[field.key] = field.kind === 'n' ? (field.key === 'dwID' ? v.value >>> 0 : v.value | 0) : f32(v.value);
+            }
+            const semi = s.getToken();                             // ;
+            b.entries.push({ key: field.key, field, keyTok: tok, value, raw, stmtEnd: semi.end });
+          } else b.unknown.push(tok);
+          tok = s.getToken();
+        }
+        if (hang) { b.end = text.length; blocks.push(b); break; }
+        b.end = b.close.end;
+        b.id = b.anim.dwID;
+        blocks.push(b);
+        anims.set(b.id, b);                                        // the last block with an id wins
+      }
+      t = s.getToken();
+    }
+    return { file: file.name, blocks, anims, hang, diags: s.diags };
+  }
+
+  // the value of one key in a block: the last statement of that key wins (each one overwrites the field)
+  function entryOf(b, key) {
+    let e = null;
+    for (const x of b.entries) if (x.key === key) e = x;
+    return e;
+  }
+
+  // "/mountset" alone prints (FuncTextCmd.cpp:252-256):
+  //   Mount 225049: fGroundSpeed=0.40; fAnimSpeed=1.65; fWalkAnimSpeed=1.25; fNameOffset=0.00;
+  //   szRun="item_X_run.ani"; szWalk="item_X_walk.ani"; szWalkBack="item_X_walkback.ani";
+  // (+ the fly line when the mount flies). Reads every key=value; a pasted Mount.inc block works too.
+  function parsePaste(str) {
+    const out = { id: null, values: {}, unknown: [] };
+    const m = /Mount\s+(\d+)\s*:/.exec(str) || /dwID\s*=\s*(\d+)/.exec(str);
+    if (m) out.id = Number(m[1]);
+    const re = /(\b[A-Za-z]\w*)\s*=\s*("([^"\r\n]*)"|[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*;?/g;
+    for (let r; (r = re.exec(str));) {
+      const f = BY_KEY.get(r[1]);
+      if (!f || f.key === 'dwID') { if (!f) out.unknown.push(r[1]); continue; }
+      if (f.kind === 's') { if (r[3] !== undefined) out.values[f.key] = r[3]; else out.unknown.push(r[1]); }
+      else if (r[3] === undefined) out.values[f.key] = f.kind === 'n' ? parseInt(r[2], 10) : Number(r[2]);
+    }
+    return out;
+  }
+
+  // a model's own motion file: CModelObject::GetMotionFileName (item_<model>_<motion>.ani for an OT_ITEM model)
+  const motionFile = (model, motion) => `item_${model}_${motion}.ani`;
+
+  // the mount task's view of the workspace: every IK3_MOUNT item and every block, with names, models, the model's .ani files
+  function fromWorkspace(ws) {
+    const D = ws.defines.defines;
+    const f = ws.files.get('mount.inc');
+    const m = loadMounts(f, { defines: D });
+    const mf = ws.files.get('mdldyna.inc');
+    const mdl = mf ? FRE.mdlDyna.loadMdlDyna(mf, { defines: D }) : null;
+    const IK3_MOUNT = D.has('IK3_MOUNT') ? D.get('IK3_MOUNT') : -2;
+    const names = ws.clientModelNames || null;           // Client/Model file names (real case), when the Client folder is picked
+    // the .ani files of each mount model (item_<model>_*.ani), read once
+    const anis = names ? names.filter(n => /^item_.*\.ani$/i.test(n)) : [];
+    const anisOf = model => { const p = `item_${model.toLowerCase()}_`; return anis.filter(n => n.toLowerCase().startsWith(p)).sort(); };
+    const mounts = [], byId = new Map();
+    const add = id => {
+      if (byId.has(id)) return byId.get(id);
+      const it = ws.items.items.get(id) || null;
+      const info = it ? ws.itemInfo(it) : null;
+      const e = mdl ? mdl.items.get(id) : null;
+      const g = fld => it ? FRE.specItem.get(it, fld) : 0;
+      const x = { id, define: it ? it.define : null, item: it, info, name: info ? (info.name || it.define) : `#${id}`,
+        isMount: !!it && g('dwItemKind3') === IK3_MOUNT, model: e ? e.name : null,
+        itemFlight: it ? f32(g('fFlightSpeed')) : 0, flightLimit: it ? g('dwFlightLimit') | 0 : 0,
+        blocks: [], block: null, anim: null };
+      x.anis = x.model ? anisOf(x.model) : [];
+      mounts.push(x); byId.set(id, x);
+      return x;
+    };
+    for (const it of ws.items.items.values()) if (FRE.specItem.get(it, 'dwItemKind3') === IK3_MOUNT) add(it.id);
+    for (const b of m.blocks) {
+      if (b === m.hang) continue;
+      const x = add(b.id);
+      x.blocks.push(b);
+    }
+    for (const x of mounts) { x.block = m.anims.get(x.id) || null; x.anim = x.block ? x.block.anim : null; }
+    mounts.sort((a, b) => a.id - b.id);
+    return Object.assign(m, { mounts, byId, mdl, hasModels: !!names, IK3_MOUNT });
+  }
+
+  FRE.mounts = { loadMounts, fromWorkspace, entryOf, parsePaste, defaults, motionFile, FIELDS, BY_KEY, MOUNT_WALK, MOUNT_WALK_FLY, MOUNT_FLY, FILE: 'Mount.inc' };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/mount-sim.js ----
+// Mounts simulator: what Mount.inc does in game, a port of the code that USES each value (V19 b43949aa, a5325b65):
+//   loops()      the mount's leg loop each frame: CMover::... FrameMove mount part (_Common/Mover.cpp:4087-4160); the first loop
+//                when you mount (OBJMSG_MOUNT_ON, _AIInterface/ActionMoverMsg.cpp:1124-1133)
+//   ground()     how far a rider moves per tick: the mount's fGroundSpeed REPLACES CMover::GetSpeed (ActionMover.cpp:236-243),
+//                walk mode / 4, backing up / 5, sideways / 4 (ActionMoverState.cpp:203-230, ActionMover.cpp:395-430); 60 ticks a
+//                second (FRAME_PER_SEC, timer.h:133). A mount item with no Mount.inc block keeps the player's own speed.
+//   fly()        straight level flight: CActionMover::ProcessFlyMove (ActionMoverState2.cpp:350-470) with the push of ProcessState2
+//                OBJSTA_FMOVE (:505-516): (Mount.inc fFlightSpeed > 0 ? it : the item's fFlightSpeed) x 0.75, turbo x 1.2; top
+//                speed fFlyMaxSpeed > 0 ? it : 0.3, turbo x 1.1; the push is added only below the top speed and clamped to it,
+//                then air friction x (1 - 0.011); the number the game shows: (int)((int)(len x 60 x 60 x 60) / 200) (:463-466).
+//                All in float32. Letting go of the key (OBJSTA_STAND, m_fAccPower = 0) glides until len < 0.0002.
+//   takeOff()    the server's answer to the take-off key: CDPSrvr::OnMountFly (WORLDSERVER/DPSrvr.cpp:7830-7885).
+// Not modelled: the seat (MoverRender.cpp:367-390 needs the bone matrices of the .chr file), turning / climbing / the drift
+// boost on a turn (a straight line only), turbo fuel running out, packets and other players' views, terrain and collision.
+(function (FRE) {
+  'use strict';
+  const f32 = Math.fround;
+  const FRIC_AIR = f32(0.011);          // ActionMoverState2.cpp:17
+  const TICKS = 60;                     // FRAME_PER_SEC, timer.h:133
+  const BROOM_MAX = f32(0.3);           // ProcessFlyMove fMaxSpeed
+
+  // one frame of the leg-loop picker. prev = m_nMountMotion (-1 after mounting / ResetMountMotion, Mover.h:1327 / 1330)
+  //   in: { fly, moving (sideways m_vDelta > 0 on the ground; any m_vDelta length^2 > 0.0001 in the air), move: 'F' | 'B' | 'L' |
+  //         'R' | 'LM' | 'RM' | null (the move state), walk (OBJSTAF_WALK), end (the playing one-shot reached its end frame) }
+  //   -> { motion, speed (frame speed), file (when the loop changes, else null), changed, once }
+  function frame(anim, model, prev, inp) {
+    let n = 0;
+    if (!inp.fly && inp.moving) {
+      if (inp.move === 'B') n = 3;
+      else if (inp.walk) n = 1;
+      else n = 2;
+    }
+    const moveKey = ['F', 'B', 'L', 'R', 'LM', 'RM'].includes(inp.move);
+    if (inp.fly) n = inp.moving ? 5 : 4;
+    if (inp.fly && prev >= 0 && prev <= 3 && anim.szFlyStart !== '' && n === 4) n = 6;
+    else if (inp.fly && prev === 6 && !inp.end && n === 4) n = 6;
+    else if (!inp.fly && prev >= 4 && prev <= 6 && anim.szFlyLand !== '' && !moveKey) n = 7;
+    else if (!inp.fly && prev === 7 && !inp.end && !moveKey) n = 7;
+    let speed = 1;
+    if (n === 2) speed = anim.fAnimSpeed;
+    else if (n === 1 || n === 3) speed = anim.fWalkAnimSpeed;
+    else if (n >= 4) speed = anim.fFlyAnimSpeed;
+    let file = null;
+    const changed = n !== prev;
+    if (changed) {
+      const pick = ['szStand', 'szWalk', 'szRun', 'szWalkBack', 'szFlyStand', 'szFlyWalk', 'szFlyStart', 'szFlyLand'][n];
+      let s = n === 1 ? '' : anim[pick];            // state 1 has no own key: it starts empty and takes szWalk below
+      if (s === '' && (n === 1 || n === 2 || n === 3 || n === 5)) s = anim.szWalk;
+      if (s === '' && n !== 0) s = anim.szStand;
+      if (s === '') s = model ? FRE.mounts.motionFile(model, n === 0 || n >= 4 ? 'stand' : 'walk') : '';
+      file = s;                                       // '' = nothing loaded: the old loop keeps playing
+    }
+    return { motion: n, speed, file, changed, once: n === 6 || n === 7 };
+  }
+
+  const NAMES = ['standing', 'walk mode', 'moving', 'backing up', 'hovering', 'flying forward', 'taking off', 'landing'];
+
+  // a sequence of frames from mounting: the loop each one plays. steps: [inp], each held for one frame
+  function loops(anim, model, steps) {
+    let prev = -1, playing = mountOn(anim, model);
+    const out = [];
+    for (const inp of steps) {
+      const r = frame(anim, model, prev, inp);
+      if (r.changed && r.file) playing = r.file;
+      out.push({ motion: r.motion, state: NAMES[r.motion], speed: r.speed, file: playing, loaded: r.changed ? r.file : null, once: r.once });
+      prev = r.motion;
+    }
+    return out;
+  }
+  // OBJMSG_MOUNT_ON: szStand, else the model's own "stand" motion
+  const mountOn = (anim, model) => (anim && anim.szStand !== '') ? anim.szStand : (model ? FRE.mounts.motionFile(model, 'stand') : '');
+
+  // ground movement per tick (float32, the delta's length along the heading) and per second
+  //   footSpeed: the player's own speed for a mount item without a block (GetSpeed, no buffs modelled)
+  function ground(anim, footSpeed = null) {
+    if (!anim) return { block: false, run: footSpeed, walk: footSpeed === null ? null : f32(footSpeed / 4), back: footSpeed === null ? null : f32(footSpeed / 5) };
+    const s = f32(anim.fGroundSpeed);
+    const per = { run: s, walk: f32(s / 4), back: f32(s / 5), side: f32(s / 4) };
+    const sec = {};
+    for (const k of Object.keys(per)) sec[k] = f32(per[k] * TICKS);
+    return { block: true, perTick: per, perSec: sec };
+  }
+
+  // straight level flight from standing still, holding forward for `ticks` frames, then letting go
+  //   item: { fFlightSpeed } of the mount item (Spec_Item); opt: { turbo, ticks (holding), glide (max frames after letting go) }
+  function fly(anim, item, opt = {}) {
+    const holdTicks = opt.ticks == null ? 600 : opt.ticks;
+    const turbo = !!opt.turbo;
+    let push = f32(f32(item.fFlightSpeed) * f32(0.75));
+    if (anim && anim.fFlightSpeed > 0) push = f32(f32(anim.fFlightSpeed) * f32(0.75));
+    if (turbo) push = f32(push * f32(1.2));
+    let max = BROOM_MAX;
+    if (anim && anim.fFlyMaxSpeed > 0) max = f32(anim.fFlyMaxSpeed);
+    if (turbo) max = f32(max * f32(1.1));
+    const shown = d => Math.trunc(f32(Math.trunc(f32(f32(f32(f32(Math.sqrt(f32(d * d))) * 60) * 60) * 60)) / 200));
+    let d = f32(0), top = 0, reach = null;
+    const perSec = [];
+    for (let t = 1; t <= holdTicks; t++) {
+      if (push > 0) {
+        const lenSq = f32(d * d);
+        if (lenSq < f32(max * max)) {
+          d = f32(d + push);
+          const len = f32(Math.sqrt(f32(d * d)));
+          if (len > max) d = f32(d * f32(max / len));
+        }
+      }
+      d = f32(d * f32(1 - FRIC_AIR));
+      const sh = shown(d);
+      if (sh > top) { top = sh; reach = t; }
+      if (t % TICKS === 0) perSec.push(sh);
+    }
+    // let go: m_fAccPower = 0, friction only, stops below 0.0002 (ActionMoverState2.cpp:458)
+    let glide = 0;
+    const maxGlide = opt.glide == null ? 6000 : opt.glide;
+    while (d !== 0 && glide < maxGlide) {
+      glide++;
+      d = f32(d * f32(1 - FRIC_AIR));
+      if (f32(d * d) < f32(f32(0.0002) * f32(0.0002))) d = 0;
+    }
+    const steady = lastSteady(push, max);
+    return { push, max, top, reachTicks: reach, shownPerSec: perSec, steady, steadyShown: shown(steady), steadyPerSec: f32(steady * TICKS),
+      glideTicks: glide };
+  }
+  // the speed a held key settles at (the tick after a clamp): run the loop until it repeats
+  function lastSteady(push, max) {
+    let d = f32(0);
+    for (let t = 0; t < 20000; t++) {
+      const before = d;
+      if (push > 0 && f32(d * d) < f32(max * max)) {
+        d = f32(d + push);
+        const len = f32(Math.sqrt(f32(d * d)));
+        if (len > max) d = f32(d * f32(max / len));
+      }
+      d = f32(d * f32(1 - FRIC_AIR));
+      if (d === before) break;
+    }
+    return d;
+  }
+
+  // the server's answer to the take-off key (OnMountFly). ctx: { flyLv, worldFly (m_bFly), noFly (HATTR_NOFLY here),
+  //   tooSoon (less than 1 s since the last switch), flying (already in the air), land (the land key) }
+  // -> { ok, text } (text = what the player reads; null = silently ignored)
+  function takeOff(anim, item, ctx = {}) {
+    if (ctx.tooSoon) return { ok: false, text: null };
+    if (!anim || anim.nType !== FRE.mounts.MOUNT_WALK_FLY) return { ok: false, text: 'This mount cannot fly.' };
+    const want = !ctx.land;
+    if (want && !ctx.flying) {
+      if (!ctx.worldFly || ctx.noFly) return { ok: false, text: 'You cannot fly here.' };
+      if (item && (ctx.flyLv | 0) < (item.dwFlightLimit | 0)) return { ok: false, text: 'Your flight level is too low to fly this mount.' };
+      return { ok: true, text: null };
+    }
+    if (!want && ctx.flying) return { ok: true, text: null };
+    return { ok: false, text: null };
+  }
+
+  // the name above the rider: GetOverheadPos + fNameOffset (MoverRender.cpp:1277-1279)
+  const nameLift = anim => anim ? f32(anim.fNameOffset) : 0;
+
+  // plain-words summary for the editor's "What happens in game" box
+  function describe(x, opt = {}) {
+    const a = x.anim, out = {};
+    out.ground = ground(a, opt.footSpeed == null ? null : opt.footSpeed);
+    out.mountOn = mountOn(a, x.model);
+    const seq = [{ moving: true, move: 'F' }, { moving: true, move: 'F', walk: true }, { moving: true, move: 'B' }, {}];
+    out.loops = a ? loops(a, x.model, seq) : [];
+    out.flies = !!a && a.nType === FRE.mounts.MOUNT_WALK_FLY;
+    if (out.flies) {
+      out.fly = fly(a, { fFlightSpeed: x.itemFlight }, {});
+      out.turbo = fly(a, { fFlightSpeed: x.itemFlight }, { turbo: true });
+      out.air = loops(a, x.model, [{}, { fly: true }, { fly: true, end: true }, { fly: true, moving: true, move: 'F' }, { fly: true }, {}, { end: true }]);
+    }
+    out.name = nameLift(a);
+    return out;
+  }
+
+  FRE.mountSim = { frame, loops, mountOn, ground, fly, takeOff, nameLift, describe, NAMES, TICKS, FRIC_AIR, BROOM_MAX };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- edit/mounts-ops.js ----
+// Mounts edits (Mount.inc, UTF-16LE + BOM, CRLF; Server + identical Client copy written by the core client sync).
+// The b43949aa / a5325b65 way: one "key=value;" statement per line, tab-indented, inside an Add_Mount { } block.
+//   set a value     -> only the value's own characters change (a "quoted" loop keeps its quotes)
+//   a missing key   -> a new line after the block's last statement line, with that line's indent and EOL
+//   back to default -> the key's line is removed (the block then starts from the loader's default, Project.cpp:633-645)
+//   + block         -> a new Add_Mount block after the last one, blank line before it, the file's own indent and EOL
+// Several keys of one block change in one plan (copy from another mount, a pasted /mountset reply), so the splices never overlap.
+(function (FRE) {
+  'use strict';
+  const T = FRE.textOps;
+  const M = () => FRE.mounts;
+
+  // a value as written: whole numbers for n, the shortest float text for f (0.4, 1.65, -0.3), "quoted" for s
+  function fmt(field, v) {
+    if (field.kind === 's') return `"${v}"`;
+    if (field.kind === 'n') return String(v);
+    // the shortest text that reads back as the same float (the loader keeps a float: 0.4 is 0.4000000059604645 in memory)
+    const n = Number(v), f = Math.fround(n);
+    for (let p = 1; p <= 9; p++) {
+      const t = Number(n.toPrecision(p));
+      if (Math.fround(t) === f) return plain(t);
+    }
+    return plain(f);
+  }
+  // a number without an exponent (atof reads both, the file never uses one)
+  function plain(t) {
+    const s = String(t);
+    if (!/e/i.test(s)) return s;
+    return t.toFixed(20).replace(/0+$/, '').replace(/\.$/, '');
+  }
+
+  function check(field, v) {
+    if (field.kind === 's') {
+      if (typeof v !== 'string' || !/^[\x21\x23-\x7e][\x20\x21\x23-\x7e]*$/.test(v) || /\s$/.test(v) || v.length > 127)
+        throw new Error(`${field.label}: a file name (ASCII, no quotes, no spaces at the ends)`);
+      return;
+    }
+    if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error(`${field.label}: a number`);
+    if (field.kind === 'n' && !Number.isInteger(v)) throw new Error(`${field.label}: a whole number`);
+    if (field.key === 'dwID' && (v < 1 || v > 0x7FFFFFFF)) throw new Error('dwID: an item id');
+    if (field.min !== undefined && ((field.minOpen ? v <= field.min : v < field.min) || v > field.max))
+      throw new Error(`${field.label}: ${field.minOpen ? 'above ' : ''}${field.min} to ${field.max} (what /mountset ${field.cmd} accepts)`);
+  }
+
+  // the line of a statement, if the line holds nothing else (then removing it removes the whole line)
+  function stmtLine(text, e) {
+    const ls = T.lineStart(text, e.keyTok.start), le = T.lineEnd(text, e.stmtEnd);
+    const before = text.slice(ls, e.keyTok.start), after = text.slice(e.stmtEnd, T.lineContentEnd(text, e.stmtEnd));
+    if (/^[ \t]*$/.test(before) && /^[ \t]*$/.test(after)) return { start: ls, end: le };
+    return { start: e.keyTok.start, end: e.stmtEnd };
+  }
+
+  // changes: { key: value | null (null = remove the line: back to the default) } for one block -> splices
+  function plan(text, block, changes) {
+    if (!block) throw new Error('This mount has no Add_Mount block yet: add one first');
+    if (block.close === null) throw new Error('This block has no "}"');
+    const out = [], adds = [];
+    for (const [key, v] of Object.entries(changes)) {
+      const field = M().BY_KEY.get(key);
+      if (!field) throw new Error(`Unknown key ${key}`);
+      const all = block.entries.filter(e => e.key === key);
+      if (v === null) {
+        if (key === 'dwID') throw new Error('dwID can\'t be removed');
+        for (const e of all) out.push(Object.assign(stmtLine(text, e), { insert: '' }));
+        continue;
+      }
+      check(field, v);
+      const ins = fmt(field, v);
+      if (all.length) {
+        // the last statement is the one the loader keeps; earlier copies of the same key are removed so the file says one thing
+        const last = all[all.length - 1];
+        for (const e of all.slice(0, -1)) out.push(Object.assign(stmtLine(text, e), { insert: '' }));
+        const cur = text.slice(last.value.start, last.value.end);
+        const insLast = field.kind === 's' && !last.value.quoted ? String(v) : ins;
+        if (cur !== insLast) out.push({ start: last.value.start, end: last.value.end, insert: insLast });
+      } else if (v !== field.def || key === 'dwID') adds.push(`${key}=${ins};`);
+    }
+    if (adds.length) {
+      // after the block's last statement line (or after the "{" line), in FIELDS order
+      const order = new Map(M().FIELDS.map((f, i) => [f.key, i]));
+      adds.sort((a, b) => order.get(a.split('=')[0]) - order.get(b.split('=')[0]));
+      const lastE = block.entries[block.entries.length - 1];
+      const anchor = lastE ? lastE.keyTok.start : block.open.start;
+      const eol = T.eolAt(text, anchor) || T.dominantEol(text);
+      const indent = lastE ? T.indentOf(text, lastE.keyTok.start) : '\t';
+      const at = T.lineEnd(text, lastE ? lastE.stmtEnd : block.open.end);
+      const lead = /[\r\n]$/.test(text.slice(0, at)) ? '' : eol;
+      out.push({ start: at, end: at, insert: lead + adds.map(l => indent + l + eol).join('') });
+    }
+    out.sort((a, b) => a.start - b.start);
+    for (let i = 1; i < out.length; i++) if (out[i].start < out[i - 1].end) throw new Error('Two changes touch the same text');
+    return out;
+  }
+
+  const setValue = (text, block, key, v) => plan(text, block, { [key]: v });
+  const resetKey = (text, block, key) => plan(text, block, { [key]: null });
+
+  // what copying from another mount changes. keys: which FIELDS (default: speeds, leg speeds, name height; loops only when
+  // both mounts use the same model, since a loop file is the model's own)
+  const COPY_SPEEDS = ['fGroundSpeed', 'fAnimSpeed', 'fWalkAnimSpeed', 'fNameOffset', 'nType', 'fFlightSpeed', 'fFlyAnimSpeed', 'fFlyMaxSpeed'];
+  const COPY_SEAT = ['nBindBone', 'fOffSetX', 'fOffSetY', 'fOffSetZ', 'fRotX', 'fRotY', 'fRotZ'];
+  const COPY_LOOPS = ['szStand', 'szWalk', 'szRun', 'szWalkBack', 'szFlyStand', 'szFlyWalk', 'szFlyStart', 'szFlyLand'];
+  function copyChanges(src, keys) {
+    const ch = {};
+    for (const k of keys) {
+      const e = M().entryOf(src, k);
+      ch[k] = e ? src.anim[k] : null;
+    }
+    return ch;
+  }
+  // a pasted /mountset reply (or a pasted block) -> changes; dwID never changes
+  function pasteChanges(str) {
+    const p = M().parsePaste(str);
+    if (!Object.keys(p.values).length) throw new Error('Nothing to read: paste the lines /mountset prints in game (Mount 225049: fGroundSpeed=…)');
+    return p;
+  }
+
+  // a new Add_Mount block for item `id` after the last block. tmpl: a block to copy every value from (dwID replaced), or null;
+  // loops: { key: file } for the new model's own files (replaces the template's loop keys)
+  function addBlock(text, model, id, tmpl, loops = {}) {
+    if (!Number.isInteger(id) || id < 1) throw new Error('Pick a mount item');
+    if (model.anims.has(id)) throw new Error(`Item ${id} already has an Add_Mount block`);
+    if (model.hang) throw new Error('The file has a block without "}": fix it first');
+    const last = model.blocks[model.blocks.length - 1];
+    const eol = last ? (T.eolAt(text, last.start) || '\r\n') : T.dominantEol(text);
+    // the template's statements as written, in its order (not dwID, not its loops: those are its model's files), then the new
+    // model's own loops (szRun, szWalk, szWalkBack)
+    const lines = [`dwID=${id};`];
+    if (tmpl) {
+      for (const e of tmpl.entries) if (e.key !== 'dwID' && !COPY_LOOPS.includes(e.key)) lines.push(text.slice(e.keyTok.start, e.stmtEnd));
+    } else lines.push('fGroundSpeed=0.4;');
+    for (const k of ['szRun', 'szWalk', 'szWalkBack']) if (loops[k]) { check(M().BY_KEY.get(k), loops[k]); lines.push(`${k}="${loops[k]}";`); }
+    const body = `Add_Mount${eol}{${eol}${lines.map(l => '\t' + l + eol).join('')}}${eol}`;
+    if (!last) return [{ start: text.length, end: text.length, insert: (text && !/\n$/.test(text) ? eol : '') + eol + body }];
+    const at = T.lineEnd(text, last.end);
+    const lead = /[\r\n]$/.test(text.slice(0, at)) ? '' : eol;
+    return [{ start: at, end: at, insert: lead + eol + body }];
+  }
+
+  // the loop files a model of its own offers for each key (item_<model>_<motion>.ani), when they exist
+  function ownLoops(x) {
+    const has = new Set(x.anis.map(n => n.toLowerCase()));
+    const pick = (...m) => { for (const n of m) { const f = M().motionFile(x.model, n); if (has.has(f.toLowerCase())) return x.anis.find(a => a.toLowerCase() === f.toLowerCase()); } return null; };
+    const out = {};
+    const run = pick('run', 'walk'), walk = pick('walk'), back = pick('walkback');
+    if (run) out.szRun = run;
+    if (walk) out.szWalk = walk;
+    if (back) out.szWalkBack = back;
+    return out;
+  }
+
+  FRE.mountsOps = { plan, setValue, resetKey, copyChanges, pasteChanges, addBlock, ownLoops, fmt, check, COPY_SPEEDS, COPY_SEAT, COPY_LOOPS };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- validate/mounts.js ----
+// Mounts checks. loaders/mounts.js reads Mount.inc the way LoadMountAnimationList does, loaders/mount-sim.js what the game does.
+(function (FRE) {
+  'use strict';
+  const LOOPS = ['szStand', 'szWalk', 'szRun', 'szWalkBack', 'szFlyStand', 'szFlyWalk', 'szFlyStart', 'szFlyLand'];
+
+  function mountChecks(model, opts = {}) {
+    const out = [], F = FRE.mounts.FILE, M = FRE.mounts;
+    const push = (span, code, severity, message, k) => out.push({ module: 'mounts', file: F, code, severity, start: span.start, end: span.end,
+      key: `${code}|${k}`, message });
+    if (model.hang) push(model.hang, 'MT_UNCLOSED', 'BLOCK', `The Add_Mount block at the end has no "}": the loader reads past the end of the file forever, so the WorldServer and the game hang at startup.`, 'end');
+    const seen = new Map();
+    for (const b of model.blocks) {
+      if (b === model.hang) continue;
+      const x = model.byId.get(b.id), name = x ? x.name : `#${b.id}`, k = String(b.id);
+      if (seen.has(b.id)) push(b, 'MT_DUP_ID', 'WARN', `${name} (${b.id}) has another Add_Mount block above: the last one is used, the earlier one does nothing.`, `${k}|${b.start}`);
+      seen.set(b.id, b);
+      if (!M.entryOf(b, 'dwID')) push(b, 'MT_NO_ID', 'WARN', 'This Add_Mount block has no dwID: it is filed under item 0 and no mount uses it.', `noid|${b.start}`);
+      else if (!x || !x.item) push(b, 'MT_NOT_ITEM', 'WARN', `dwID ${b.id} is not an item in Spec_Item.txt: no mount uses this block.`, k);
+      else if (!x.isMount) push(b, 'MT_NOT_MOUNT', 'WARN', `${name} (${b.id}) is not a mount item (dwItemKind3 is not IK3_MOUNT): it can't be ridden, so the block is never used.`, k);
+      if (model.anims.get(b.id) !== b) continue;            // only the block that wins matters from here
+      const a = b.anim;
+      if (!(a.fGroundSpeed > 0)) push(b, 'MT_SPEED_ZERO', 'WARN', `${name}: speed ${a.fGroundSpeed}${M.entryOf(b, 'fGroundSpeed') ? '' : ' (no fGroundSpeed line)'}: the mount replaces the rider's speed, so the rider can't move.`, k);
+      if (a.nType !== M.MOUNT_WALK && a.nType !== M.MOUNT_WALK_FLY) push(b, 'MT_TYPE', 'WARN', `${name}: nType ${a.nType}: only 0 (ground) and 1 (can fly) mean anything; the server refuses take-off for anything but 1.`, k);
+      if (a.nType === M.MOUNT_WALK_FLY && !a.szFlyStand && !a.szFlyWalk) push(b, 'MT_FLY_NO_LOOPS', 'WARN', `${name} can fly but has no hovering / flying loop: in the air it plays its walk / standing loop.`, k);
+      if (a.nType !== M.MOUNT_WALK_FLY) {
+        const used = ['fFlightSpeed', 'fFlyMaxSpeed', 'fFlyAnimSpeed', 'szFlyStand', 'szFlyWalk', 'szFlyStart', 'szFlyLand'].filter(n => M.entryOf(b, n));
+        if (used.length) push(b, 'MT_FLY_UNUSED', 'INFO', `${name} is a ground mount (nType ${a.nType}): ${used.join(', ')} ${used.length > 1 ? 'are' : 'is'} never used.`, k);
+      }
+      for (const f of M.FIELDS) {
+        if (f.min === undefined) continue;
+        const e = M.entryOf(b, f.key);
+        if (!e) continue;
+        const v = a[f.key];
+        if ((f.minOpen ? v <= f.min : v < f.min) || v > f.max)
+          push(e.value, 'MT_RANGE', 'WARN', `${name}: ${f.key} ${e.raw} is outside what /mountset ${f.cmd} accepts (${f.minOpen ? 'above ' : ''}${f.min} to ${f.max}).`, `${k}|${f.key}`);
+      }
+      if (x && x.model && opts.hasModels) {
+        for (const n of LOOPS) {
+          const e = M.entryOf(b, n);
+          if (!e || !a[n]) continue;
+          if (!opts.hasModels.has(a[n].toLowerCase())) push(e.value, 'MT_ANI_MISSING', 'WARN', `${name}: ${n} "${a[n]}" is not in Client/Model: the game finds no animation for that state.`, `${k}|${n}`);
+        }
+      }
+    }
+    for (const x of model.mounts) {
+      if (x.isMount && !x.block) push({ start: 0, end: 0 }, 'MT_NO_BLOCK', 'WARN', `${x.name} (${x.id}) is a mount item with no Add_Mount block: the rider is not placed on a seat (MoverRender skips the seat code) and moves at their own speed.`, String(x.id));
+    }
+    return out;
+  }
+
+  FRE.mountChecks = mountChecks;
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- loaders/pvp.js ----
 // PvP Events (task "PvP Events"): the FFA, TDM and Guild Siege settings, read the way the servers read them, with the offsets
 // the edits need. No DOM. Each reader cites the C++ (FLYFF-V19-SOURCE/Source/Source/_Common).
@@ -15933,6 +16506,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "79+", "when
       validate(ws, model) { return FRE.consumableChecks(model, { ws }); },
     },
     {
+      // Mounts (loaders/mounts.js): Mount.inc, how each mount item sits, moves, plays its leg loops and flies (LoadMountAnimationList
+      // Project.cpp:618, called at :1102 by the WorldServer AND the game; V19 b43949aa, a5325b65). UTF-16LE, CRLF; identical Client
+      // copy. mdlDyna.inc gives each mount item's model (its .ani files are the loop choices).
+      id: 'mounts', label: 'Mounts',
+      required: ['Mount.inc'], optional: ['mdlDyna.inc'], editable: ['Mount.inc'], client: ['Mount.inc'], deps: ['mdlDyna.inc'],
+      parse(ws) { return FRE.mounts.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.mountChecks(model, { hasModels: ws.clientModels }); },
+    },
+    {
       // PvP Events (loaders/pvp.js): FFAManager.inc / TDMManager.inc (ReadConfig: WorldServer start + /ffareload, /tdmreload),
       // GuildCombat.txt (the siege day / time AUTO_OPEN_IDC and the minimum bid JOINPENYA, CGuildCombat::LoadScript),
       // GuildSiegePrize.lua (the siege prizes, PvP events part B 6de6da39). Server files only; the rules boards players read are
@@ -16101,7 +16683,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "79+", "when
     // lowercase file names in Client/Model (Add New NPC: does a model have all its files?)
     setClientModels(names) {
       this.clientModels = names ? new Set([...names].map(n => n.toLowerCase())) : null;
+      this.clientModelNames = names ? [...names] : null;     // real case: the Mounts task offers a model's own .ani files
       if (this.available.npc && this.available.npc.ok) this.reparse('character.inc');
+      if (this.available.mounts && this.available.mounts.ok) this.reparse('mount.inc');
     }
 
     // Client/Model/Texture file names, and the textures of .o3d files already read (Map lowercase o3d -> [names])
@@ -16547,6 +17131,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "79+", "when
     'equalizedpresets.inc': { server: RELOAD, client: null, reload: 'eq', cite: 'EqualizedPvP.cpp:~806 LoadPresetFile (after ReadConfig); /eqreload' },
     'guildsiegeprize.lua': { server: STARTUP, client: null, cite: 'eveschool.cpp:3672 LoadPrizes (WorldServer) + databaseserver/Project.cpp:216 LoadScript (DatabaseServer)' },
     // Dungeon task: time limit, cooldown, levels, kill-all (WorldServer only, read once at start; no reload command)
+    // Mounts: the seat, speed, loops and flying of every mount; both read it once at start (no reload; /mountset changes only the
+    // running copy until a restart)
+    'mount.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:1102 LoadMountAnimationList (#ifdef __MOUNT)' },
     'partydungeon.lua': { server: STARTUP, client: null, cite: 'Project.cpp:908 CInstanceDungeonParty::LoadScript -> InstanceDungeonBase.cpp:384' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };
@@ -24458,6 +25045,307 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "79+", "when
   FRE.ui.consumables = { itemView };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- ui/mounts.js ----
+// Mounts: every mount item's Mount.inc block (seat, speed, leg loops, flying, name height): what the GM command /mountset tunes in
+// game, saved to the file. loaders/mounts.js reads it (LoadMountAnimationList), loaders/mount-sim.js says what it does in game,
+// edit/mounts-ops.js writes it. The user, 2026-10-17: "edit Mount.inc per mount - speed, fly speed / fly max, run / walk / back
+// animations + leg speeds, name offset (what /mountset does in game)".
+(function (FRE) {
+  'use strict';
+  const { h, toast, keepFocus, modal } = FRE.dom;
+  const { diagRow } = FRE.ui;
+  const FILE = 'mount.inc';
+  const st = { sel: null, show: 'all', other: null };
+  const M = () => FRE.mounts, O = () => FRE.mountsOps, Sim = () => FRE.mountSim;
+  const model = ctx => ctx.ws.models.mounts;
+  const can = ctx => ctx.ws.isEditable(FILE);
+  const keyOf = id => `mounts|${id}`;
+  const iconOf = it => (it ? String(FRE.specItem.get(it, 'szIcon') || '').replace(/"/g, '').trim() : '');
+  const num = v => (v === null || v === undefined ? '' : String(Number(Number(v).toPrecision(7))));
+  const xDiags = (ctx, x) => ctx.ws.diags.filter(d => d.module === 'mounts' && (x.blocks.some(b => d.start >= b.start && d.start < b.end) ||
+    (d.code === 'MT_NO_BLOCK' && d.key === `MT_NO_BLOCK|${x.id}`)));
+  const flies = x => !!x.anim && x.anim.nType === M().MOUNT_WALK_FLY;
+
+  // a decimal box that takes any number (negative too): commits on a pause, Enter or leaving it
+  function decInput({ value, key, disabled, title, onCommit }) {
+    const el = h('input.num-input', { type: 'text', inputMode: 'decimal', value: num(value), disabled, title: title || '' });
+    if (key) el.dataset.key = key;
+    el.dataset.value = el.value;
+    const commit = quiet => {
+      if (!el.isConnected || el.value.trim() === el.dataset.value) return;
+      const t = el.value.trim().replace(',', '.');
+      const v = Number(t);
+      if (!t || !Number.isFinite(v) || !/^[-+]?(\d+\.?\d*|\.\d+)$/.test(t)) { if (!quiet) toast('Type a number (decimals allowed, e.g. 0.4 or -0.25)', 'bad'); return; }
+      el.dataset.value = el.value.trim();
+      onCommit(v);
+    };
+    FRE.dom.liveCommit(el, () => commit(true));
+    el.addEventListener('change', () => commit(false));
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') el.blur(); });
+    return el;
+  }
+
+  const SHOW = [
+    { v: 'all', label: 'All mounts', test: () => true },
+    { v: 'fly', label: 'Can fly', test: x => flies(x) },
+    { v: 'ground', label: 'Ground only', test: x => !!x.anim && !flies(x) },
+    { v: 'noblock', label: 'No Mount.inc block', test: x => x.isMount && !x.block },
+    { v: 'problems', label: 'With problems', test: (x, ctx) => xDiags(ctx, x).some(d => d.severity !== 'INFO') },
+    { v: 'edited', label: 'Edited', test: (x, ctx) => ctx.edited.has(keyOf(x.id)) },
+  ];
+
+  const mod = {
+    id: 'mounts', label: 'Mounts', searchPlaceholder: 'Search mounts (name, id, model)', noItems: true,
+    help: 'Mounts: how each mount sits, how fast it moves, its leg loops, flying and name height (Mount.inc, what /mountset tunes in game)',
+    st,
+    onLoad() { st.sel = null; st.show = 'all'; st.other = null; },
+
+    listExtra(ctx) {
+      const m = model(ctx);
+      return h('div.bx-filters',
+        h('select.npc-filter', { title: 'Which mounts', on: { change: e => { st.show = e.target.value; ctx.renderList(); } } },
+          SHOW.map(o => h('option', { value: o.v, selected: o.v === st.show }, `${o.label} (${m.mounts.filter(x => o.test(x, ctx)).length})`))));
+    },
+
+    renderList(el, ctx) {
+      const m = model(ctx), q = ctx.query.toLowerCase(), test = SHOW.find(o => o.v === st.show).test;
+      const list = m.mounts.filter(x => test(x, ctx) && (!q || x.name.toLowerCase().includes(q) || String(x.id).includes(q) ||
+        (x.define || '').toLowerCase().includes(q) || (x.model || '').toLowerCase().includes(q)));
+      for (const x of list) {
+        const ds = xDiags(ctx, x), nw = ds.filter(d => d.severity !== 'INFO').length;
+        el.appendChild(h('div.npc.bx-row' + (st.sel === x.id ? '.sel' : ''), { 'data-mount': x.id, on: { click: () => { st.sel = x.id; ctx.renderAll(false); } } },
+          FRE.dds.picture(ctx, iconOf(x.item), { cls: '.bx-icon' }),
+          h('div.bx-text', h('div.n', h('span', x.name), h('span', ctx.edited.has(keyOf(x.id)) ? h('span.tag.edit', 'edited') : null, nw ? h('span.tag.warn', '⚠' + nw) : null)),
+            h('div.k', `${x.id}${x.model ? ' · ' + x.model : ''} · ${!x.anim ? 'no block' : flies(x) ? 'can fly' : 'ground'}`))));
+      }
+      if (!list.length) el.appendChild(h('div.pad.muted', 'No mounts match.'));
+    },
+
+    renderEditor(el, ctx) {
+      keepFocus(el, () => {
+        const x = st.sel === null ? null : model(ctx).byId.get(st.sel);
+        if (!x) {
+          el.appendChild(h('p.empty-state', 'Select a mount on the left.'));
+          el.appendChild(h('p.muted.small', 'Every value here is what the GM command /mountset changes in game until a restart. Tune a mount in game, type /mountset to print its lines, then paste them here with "Paste from /mountset".'));
+          return;
+        }
+        mountView(el, ctx, x);
+      });
+    },
+
+    addTarget() { return { ok: false, title: 'Mount items are added with their model (Boxes / item tools); here you give one an Add_Mount block' }; },
+    locate(d, ctx) {
+      if (d.module !== 'mounts') return false;
+      const m = model(ctx);
+      const b = m.blocks.find(b => d.start >= b.start && d.start < b.end);
+      const x = b ? m.byId.get(b.id) : m.mounts.find(y => d.key === `MT_NO_BLOCK|${y.id}`);
+      if (x) st.sel = x.id;
+      return true;
+    },
+  };
+
+  // one plan on the block as it is now (the model is read again after every edit)
+  const edit = (ctx, id, changes, label, mergeKey) => ctx.editGroup(() => {
+    const x = model(ctx).byId.get(id);
+    return [{ file: FILE, splices: O().plan(ctx.ws.files.get(FILE).text, x.block, changes) }];
+  }, label, [keyOf(id)], mergeKey);
+
+  function fieldRow(ctx, x, key, opts = {}) {
+    const f = M().BY_KEY.get(key), a = x.anim, e = M().entryOf(x.block, key), ed = can(ctx);
+    const cur = a[key];
+    const label = `${x.name}: ${f.label}`;
+    let input;
+    if (f.kind === 's') {
+      const files = x.anis.slice();
+      if (cur && !files.some(n => n.toLowerCase() === cur.toLowerCase())) files.unshift(cur);
+      input = h('select', { disabled: !ed, 'data-key': `mt|${x.id}|${key}`, style: 'width:100%;max-width:26em', on: { change: ev => {
+        const v = ev.target.value;
+        if (v === cur) return;
+        edit(ctx, x.id, { [key]: v === '' ? null : v }, v === '' ? `${label}: removed (was ${cur || 'none'})` : `${label}: ${v}${cur ? ` (was ${cur})` : ''}`);
+      } } }, h('option', { value: '', selected: !cur }, opts.none || '(none)'), files.map(n => h('option', { value: n, selected: n === cur }, n)));
+    } else if (opts.tick) {
+      input = h('label', h('input', { type: 'checkbox', checked: cur === opts.tick.on, disabled: !ed, on: { change: ev => {
+        const v = ev.target.checked ? opts.tick.on : opts.tick.off;
+        edit(ctx, x.id, { [key]: v }, `${label}: ${ev.target.checked ? 'yes' : 'no'}`);
+      } } }), ' ', opts.tick.text);
+    } else {
+      input = decInput({ value: cur, key: `mt|${x.id}|${key}`, disabled: !ed, title: f.min !== undefined ? `${f.minOpen ? 'above ' : ''}${f.min} to ${f.max} (/mountset ${f.cmd})` : '',
+        onCommit: v => { if (f.kind === 'n' && !Number.isInteger(v)) { toast(`${f.label}: a whole number`, 'bad'); return; }
+          edit(ctx, x.id, { [key]: v }, `${label} ${num(v)} (was ${num(cur)})`, `mt|${x.id}|${key}`); } });
+    }
+    return h('tr', h('td', f.label, f.cmd ? h('span.muted.small', ` /mountset ${f.cmd}`) : null), h('td', input),
+      h('td', e ? h('span.muted.small', `line ${ctx.ws.files.get(FILE).lineOf(e.keyTok.start) + 1}`) : h('span.muted.small', `default ${f.kind === 's' ? '(none)' : num(f.def)}: not in the file`)),
+      h('td', ed && e && key !== 'dwID' ? h('button.icon', { title: `Remove the line: back to the default (${f.kind === 's' ? 'none' : num(f.def)})`,
+        on: { click: () => edit(ctx, x.id, { [key]: null }, `${label}: back to the default (was ${f.kind === 's' ? cur || 'none' : num(cur)})`) } }, '↺') : null),
+      opts.note ? h('td.muted.small', opts.note) : h('td'));
+  }
+  // the same columns in every section: name, value, line, ↺, note
+  const table = rows => h('table.items.rt.mt-table', { style: 'table-layout:fixed;width:100%' },
+    h('colgroup', ['22%', '28%', '13%', '4%', '33%'].map(w => h('col', { style: `width:${w}` }))), rows);
+
+  function mountView(el, ctx, x) {
+    const f = ctx.ws.files.get(FILE);
+    el.appendChild(h('div.npc-title', FRE.dds.picture(ctx, iconOf(x.item), { cls: '.bx-icon' }), h('h2', x.name), h('span.def', `${x.define || '?'} · ${x.id}${x.model ? ' · model ' + x.model : ''}`),
+      can(ctx) ? null : h('span.tag.bad', 'read-only'), x.block ? h('span.line', `Mount.inc L${f.lineOf(x.block.start) + 1}`) : null));
+    if (!x.block) { addBlockView(el, ctx, x); return; }
+    if (x.blocks.length > 1) el.appendChild(h('p.small.warn-text', `⚠ ${x.blocks.length} Add_Mount blocks have this dwID: the last one (line ${f.lineOf(x.block.start) + 1}) is used and shown here.`));
+    if (!ctx.ws.clientModels) el.appendChild(h('p.small.muted', 'Pick a folder with Client/Model (or test-data with Client/Model.list) to choose loops from the model\'s own .ani files.'));
+    const ed = can(ctx);
+    el.appendChild(h('div.dr-line',
+      h('button', { disabled: !ed, on: { click: () => pasteDialog(ctx, x) } }, '📋 Paste from /mountset'),
+      h('button', { disabled: !ed, on: { click: () => copyDialog(ctx, x) } }, '⧉ Copy from another mount'),
+      h('button', { title: 'Open the Donation Shop task to list this mount or set its price', on: { click: () => ctx.openTask('donation') } }, '🛒 Donation Shop')));
+
+    el.appendChild(h('h3', 'Moving on the ground'));
+    el.appendChild(table([fieldRow(ctx, x, 'fGroundSpeed', { note: 'replaces the rider\'s own speed: speed buffs do nothing while riding' }),
+      fieldRow(ctx, x, 'fAnimSpeed', { note: 'how fast the moving loop plays (1 = the file\'s own rate)' }),
+      fieldRow(ctx, x, 'fWalkAnimSpeed', { note: 'walk mode and backing up' })]));
+    el.appendChild(h('h3', 'Leg loops'));
+    el.appendChild(table([fieldRow(ctx, x, 'szStand', { none: '(none: the model\'s own stand)' }), fieldRow(ctx, x, 'szRun', { none: '(none: the walk-mode loop)' }),
+      fieldRow(ctx, x, 'szWalk', { none: '(none: the standing loop)' }), fieldRow(ctx, x, 'szWalkBack', { none: '(none: the walk-mode loop)' })]));
+    el.appendChild(h('h3', 'Flying'));
+    const rows = [fieldRow(ctx, x, 'nType', { tick: { on: 1, off: 0, text: 'can take off (Tab in game)' } })];
+    if (flies(x) || M().entryOf(x.block, 'fFlightSpeed') || M().entryOf(x.block, 'fFlyMaxSpeed')) {
+      rows.push(fieldRow(ctx, x, 'fFlightSpeed', { note: `0 = the item's own push (${num(x.itemFlight)}, Spec_Item fFlightSpeed)` }),
+        fieldRow(ctx, x, 'fFlyMaxSpeed', { note: '0 = 0.3, every broom\'s top speed' }), fieldRow(ctx, x, 'fFlyAnimSpeed'),
+        fieldRow(ctx, x, 'szFlyStand', { none: '(none: the standing loop)' }), fieldRow(ctx, x, 'szFlyWalk', { none: '(none: the walk-mode loop)' }),
+        fieldRow(ctx, x, 'szFlyStart', { none: '(none: no take-off move)' }), fieldRow(ctx, x, 'szFlyLand', { none: '(none: no landing move)' }));
+    }
+    el.appendChild(table(rows));
+    if (flies(x)) el.appendChild(h('p.muted.small', `Take-off needs flight level ${x.flightLimit} (the item's dwFlightLimit), a map where flying is allowed, and 1 second since the last take-off / landing.`));
+    el.appendChild(h('h3', 'Name and seat'));
+    el.appendChild(table([fieldRow(ctx, x, 'fNameOffset', { note: 'lifts the name, HP bar and chat balloon above the rider' }),
+      fieldRow(ctx, x, 'nBindBone'), fieldRow(ctx, x, 'fOffSetX'), fieldRow(ctx, x, 'fOffSetY'), fieldRow(ctx, x, 'fOffSetZ'),
+      fieldRow(ctx, x, 'fRotX'), fieldRow(ctx, x, 'fRotY'), fieldRow(ctx, x, 'fRotZ')]));
+    el.appendChild(h('p.muted.small', 'The seat depends on the model\'s bones, so the editor can\'t show it: tune it in game, then paste the values.'));
+
+    gameView(el, ctx, x);
+    compareView(el, ctx, x);
+    const ds = xDiags(ctx, x);
+    if (ds.length) { el.appendChild(h('h3', 'Problems')); for (const d of ds) el.appendChild(diagRow(d)); }
+    el.appendChild(h('p.muted.small', 'After saving: run Stop Server.bat, then Start Server.bat (the WorldServer reads the speed and "can fly"; the game reads the seat, loops and name height).'));
+  }
+
+  const ms = v => `${num(Math.round(v * 100) / 100)}`;
+  function gameView(el, ctx, x) {
+    const d = Sim().describe(x), g = d.ground;
+    el.appendChild(h('h3', 'What happens in game'));
+    const ul = h('ul.mt-game');
+    ul.appendChild(h('li', `Moves ${ms(g.perSec.run)} units a second (${num(g.perTick.run)} a frame, 60 frames a second); walk mode ${ms(g.perSec.walk)}, backing up ${ms(g.perSec.back)}, sideways ${ms(g.perSec.side)}.`));
+    ul.appendChild(h('li', `Mounting plays ${d.mountOn || '(nothing)'}.`));
+    for (const s of d.loops) ul.appendChild(h('li', `${s.state[0].toUpperCase() + s.state.slice(1)}: ${s.file || '(no file: the last loop keeps playing)'}${s.motion ? ` at ${num(s.speed)}×` : ''}.`));
+    if (d.flies) {
+      const sec = d.fly.shownPerSec;
+      ul.appendChild(h('li', `Flying: the speed meter shows ${sec[0]} after 1 s, ${sec[2]} after 3 s and settles at ${d.fly.steadyShown} (turbo ${d.turbo.steadyShown}), ${ms(d.fly.steadyPerSec)} units a second. Letting go, it glides for ${(d.fly.glideTicks / 60).toFixed(1)} s.`));
+      if (d.fly.steady < d.fly.max * (1 - Sim().FRIC_AIR) - 1e-6)
+        ul.appendChild(h('li.warn-text', `The flying top speed (${num(d.fly.max)}) is never reached: the push (${num(d.fly.push)} a frame) and the air friction settle at ${Number(d.fly.steady.toFixed(3))} a frame first. Raise the flying push to go faster.`));
+      const air = d.air.filter((s, i) => i > 0 && s.loaded).map(s => `${s.state} ${s.loaded}${s.once ? ' (once)' : ''}`);
+      ul.appendChild(h('li', `In the air: ${air.join(' → ')}.`));
+    } else ul.appendChild(h('li', 'Can\'t take off: the server answers "This mount cannot fly."'));
+    if (d.name) ul.appendChild(h('li', `The name sits ${num(d.name)} higher.`));
+    el.appendChild(ul);
+  }
+
+  function compareView(el, ctx, x) {
+    const m = model(ctx), others = m.mounts.filter(y => y.anim && y.id !== x.id);
+    if (!others.length) return;
+    const y = others.find(o => o.id === st.other) || others[0];
+    const row = z => { const d = Sim().describe(z); return [ms(d.ground.perSec.run), num(z.anim.fAnimSpeed), num(z.anim.fWalkAnimSpeed), d.flies ? String(d.fly.steadyShown) : '—', num(z.anim.fNameOffset)]; };
+    const a = row(x), b = row(y);
+    el.appendChild(h('h3', 'Compare with ', h('select', { on: { change: e => { st.other = Number(e.target.value); ctx.renderAll(false); } } },
+      others.map(o => h('option', { value: o.id, selected: o.id === y.id }, `${o.name} (${o.id})`)))));
+    const heads = ['Speed (units / s)', 'Moving leg speed', 'Walk leg speed', 'Flying meter (held)', 'Name height'];
+    el.appendChild(h('table.items.rt', [h('tr', h('th', ''), h('th', x.name), h('th', y.name)), ...heads.map((t, i) => h('tr', { style: a[i] !== b[i] ? 'font-weight:600' : '' }, h('td', t), h('td', a[i]), h('td', b[i])))]));
+  }
+
+  // what a plan of changes means, one line per key, for the preview of paste / copy
+  function changeLines(x, ch) {
+    return Object.entries(ch).filter(([k, v]) => {
+      const cur = M().entryOf(x.block, k) ? x.anim[k] : null;
+      return v === null ? cur !== null : (M().BY_KEY.get(k).kind === 's' ? v !== cur : cur === null || Math.fround(v) !== Math.fround(cur));
+    }).map(([k, v]) => `${k}: ${M().entryOf(x.block, k) ? num(x.anim[k]) || x.anim[k] : '(default)'} → ${v === null ? '(default)' : (typeof v === 'string' ? v : num(v))}`);
+  }
+  const onlyChanged = (x, ch) => Object.fromEntries(Object.entries(ch).filter(([k]) => changeLines(x, { [k]: ch[k] }).length));
+
+  function pasteDialog(ctx, x) {
+    const ta = h('textarea', { rows: 6, style: 'width:100%', placeholder: 'Mount 225049: fGroundSpeed=0.40; fAnimSpeed=1.65; fWalkAnimSpeed=1.25; fNameOffset=0.00;\nszRun="item_Mount058_run.ani"; szWalk="item_Mount058_walk.ani"; szWalkBack="item_Mount058_walkback.ani";' });
+    const prev = h('div.small');
+    let ch = null;
+    const show = () => {
+      prev.textContent = ''; ch = null;
+      if (!ta.value.trim()) return;
+      try {
+        const p = O().pasteChanges(ta.value);
+        if (p.id !== null && p.id !== x.id) prev.appendChild(h('p.warn-text', `⚠ These lines are for mount ${p.id}, not ${x.id}: they will be applied to ${x.name} anyway.`));
+        ch = onlyChanged(x, p.values);
+        const lines = changeLines(x, ch);
+        prev.appendChild(lines.length ? h('ul', lines.map(l => h('li', l))) : h('p.muted', 'Nothing would change.'));
+        if (p.unknown.length) prev.appendChild(h('p.muted', `Skipped: ${p.unknown.join(', ')}`));
+      } catch (e) { prev.appendChild(h('p.warn-text', e.message)); }
+    };
+    ta.addEventListener('input', show);
+    modal({ title: `Paste from /mountset: ${x.name}`, body: h('div', h('p.small', 'In game, ride the mount and type /mountset: it prints the current values. Copy those lines here.'), ta, prev),
+      buttons: [{ label: 'Apply changes', cls: 'primary', onClick: () => {
+        if (!ch || !Object.keys(ch).length) { toast('Nothing to apply', 'bad'); return false; }
+        edit(ctx, x.id, ch, `${x.name}: pasted from /mountset (${Object.keys(ch).length} value${Object.keys(ch).length > 1 ? 's' : ''})`);
+      } }, { label: 'Cancel' }] });
+  }
+
+  function copyDialog(ctx, x) {
+    const m = model(ctx), others = m.mounts.filter(y => y.block && y.id !== x.id);
+    let src = others[0] || null;
+    const pick = { speeds: true, loops: false, seat: false };
+    const prev = h('div.small');
+    const changes = () => {
+      if (!src) return {};
+      const keys = [...(pick.speeds ? O().COPY_SPEEDS : []), ...(pick.seat ? O().COPY_SEAT : []), ...(pick.loops ? O().COPY_LOOPS : [])];
+      return onlyChanged(x, O().copyChanges(src.block, keys));
+    };
+    const show = () => {
+      prev.textContent = '';
+      const lines = changeLines(x, changes());
+      prev.appendChild(lines.length ? h('ul', lines.map(l => h('li', l))) : h('p.muted', 'Nothing would change.'));
+      if (pick.loops && src && src.model !== x.model) prev.appendChild(h('p.warn-text', `⚠ ${src.name} uses model ${src.model}: its loop files are not ${x.model}'s.`));
+    };
+    const tick = (k, text) => h('label', h('input', { type: 'checkbox', checked: pick[k], on: { change: e => { pick[k] = e.target.checked; show(); } } }), ' ', text);
+    const combo = FRE.ui.combo({ options: others.map(y => ({ v: y.id, label: `${y.name} (${y.id})`, find: `${y.name} ${y.id} ${y.model || ''}` })), value: src ? src.id : null,
+      placeholder: 'Pick a mount', onPick: v => { src = m.byId.get(v); show(); } });
+    show();
+    modal({ title: `Copy from another mount: ${x.name}`, body: h('div', h('div.dr-line', h('span', 'From'), combo),
+      h('div.dr-line', tick('speeds', 'Speeds, leg speeds, name height, flying'), tick('loops', 'Loops (the model\'s files)'), tick('seat', 'Seat (per model)')), prev),
+      buttons: [{ label: 'Apply changes', cls: 'primary', onClick: () => {
+        const ch = changes();
+        if (!Object.keys(ch).length) { toast('Nothing would change', 'bad'); return false; }
+        edit(ctx, x.id, ch, `${x.name}: copied ${Object.keys(ch).length} value${Object.keys(ch).length > 1 ? 's' : ''} from ${src.name}`);
+      } }, { label: 'Cancel' }] });
+  }
+
+  function addBlockView(el, ctx, x) {
+    el.appendChild(h('p', `${x.name} has no Add_Mount block: when ridden, the rider is not placed on a seat and keeps their own speed.`));
+    if (!can(ctx)) return;
+    const m = model(ctx), tmpls = m.mounts.filter(y => y.block);
+    let tmpl = tmpls[tmpls.length - 1] || null;
+    const own = O().ownLoops(x);
+    const prev = h('pre.small');
+    const show = () => {
+      try {
+        const sp = O().addBlock(ctx.ws.files.get(FILE).text, m, x.id, tmpl ? tmpl.block : null, own);
+        prev.textContent = sp[0].insert.replace(/^\r?\n+/, '');
+      } catch (e) { prev.textContent = e.message; }
+    };
+    el.appendChild(h('div.dr-line', h('span', 'Copy the values of'), FRE.ui.combo({ options: tmpls.map(y => ({ v: y.id, label: `${y.name} (${y.id})`, find: `${y.name} ${y.id}` })),
+      value: tmpl ? tmpl.id : null, placeholder: 'Pick a mount', onPick: v => { tmpl = m.byId.get(v); show(); } }),
+      h('button.primary', { on: { click: () => ctx.editGroup(() => [{ file: FILE, splices: O().addBlock(ctx.ws.files.get(FILE).text, model(ctx), x.id, tmpl ? tmpl.block : null, own) }],
+        `${x.name}: new Add_Mount block${tmpl ? ` (values of ${tmpl.name})` : ''}`, [keyOf(x.id)]) } }, '+ Add Mount.inc block')));
+    el.appendChild(h('p.muted.small', `Its loops are ${x.model ? x.model + '\'s own files' : 'left empty (no model found)'}${Object.keys(own).length ? '' : ' (none found in Client/Model)'}; the seat is the copied mount's: tune it in game with /mountset.`));
+    show();
+    el.appendChild(prev);
+  }
+
+  FRE.ui.modules.push(mod);
+  FRE.ui.mounts = { mountView };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- ui/pvp-equalized.js ----
 // Equalized PvP pages inside the PvP Events task (ui/pvp.js calls these):
 //   eventBlock    on the FFA / TDM / Guild Siege page: equalized on / off + the most players of each class (EqualizedPvP.inc)
@@ -25990,8 +26878,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "79+", "when
     // Client/Model file names (Add New NPC checks a model's .o3d and .ani files); names only, nothing is read
     // Client/Model/Texture names; a model's .o3d is read when it is picked (S.readModel) to check its textures
     let models = null, textures = null, texIndex = null, modelDir = null;
-    // only NPC Shops needs them (+ NPC, 📍 Change model); other tasks that read the NPC files (where) skip the ~19,000 names
-    if (S.ws && S.ws.available.npc && S.ws.available.npc.ok && S.ws.shown.has('npc')) {
+    // only NPC Shops (+ NPC, 📍 Change model) and Mounts (each model's .ani loops) need them; other tasks skip the ~19,000 names
+    if (S.ws && ((S.ws.available.npc && S.ws.available.npc.ok && S.ws.shown.has('npc')) || (S.ws.available.mounts && S.ws.available.mounts.ok && S.ws.shown.has('mounts')))) {
       try {
         modelDir = await FRE.layout.child(dir, 'Model');
         if (modelDir) {

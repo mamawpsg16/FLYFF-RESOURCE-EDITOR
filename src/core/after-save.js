@@ -92,6 +92,9 @@
     'equalizedpresets.inc': { server: RELOAD, client: null, reload: 'eq', cite: 'EqualizedPvP.cpp:~806 LoadPresetFile (after ReadConfig); /eqreload' },
     'guildsiegeprize.lua': { server: STARTUP, client: null, cite: 'eveschool.cpp:3672 LoadPrizes (WorldServer) + databaseserver/Project.cpp:216 LoadScript (DatabaseServer)' },
     // Dungeon task: time limit, cooldown, levels, kill-all (WorldServer only, read once at start; no reload command)
+    // Mounts: the seat, speed, loops and flying of every mount; both read it once at start (no reload; /mountset changes only the
+    // running copy until a restart)
+    'mount.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:1102 LoadMountAnimationList (#ifdef __MOUNT)' },
     'partydungeon.lua': { server: STARTUP, client: null, cite: 'Project.cpp:908 CInstanceDungeonParty::LoadScript -> InstanceDungeonBase.cpp:384' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };

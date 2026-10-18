@@ -2,6 +2,14 @@
 
 _Last updated 2026-10-12 (PvP Events built, waiting for the test. Before: G part 1 pushed `372cbfb`; G part 2, Weapon Effects, built, waiting for the user's Brave test. C, L and M dropped (the user, 2026-10-10). Next after G: the "Next, after the resource editor" features in FLYFF TODOS.md, planned one at a time)._
 
+> **Handoff (2026-10-18) — Mounts task: built and tested in the cloud container, NOT yet tested by the user. Plan: guides `PLANS/Resource Editor/NEXT_TASKS_PLAN.md` §2 (the user picked Mounts before Mini Events).**
+> - **New task card "Mounts"** (`MODULES` id `mounts`): every mount item, its Mount.inc values with /mountset's limits, loops from the model's own .ani files, flying, name height, seat; Paste from /mountset, Copy from another mount, + Add Mount.inc block; "What happens in game" (speed, loops per state, the flying meter, take-off) and a compare table. INVESTIGATION §1.29.
+> - **Found:** the 5 dragons never reach their flying top speed 0.9 (the push settles at 0.539 a frame first: meter 582, turbo 699); a mount's speed replaces the rider's (speed buffs do nothing while riding); a block without `}` hangs the startup.
+> - Python copy `oracle_sim.py mount`: every case agrees; 17 of 17 planted bugs caught (`tests/run-mounts.js` runs this part alone). UI harness stages `mounts`, `mountsgame`, `mountsedit`, `mountsave` pass in headless Chromium.
+> - **Also fixed on the way** (the suite had drifted from today's V19 data): the 69 premium pets keyed by a plain number in propMover.txt now get their MI_ name (they were taken as monsters and crashed "add every unlisted monster" in Battle Pass); the right-click menu list (`OWN_CASE`) knows the Baruna / arena-entry / Mini Event menus 291-297 (a new exchange menu gets 298 after 284-287); the Consumables Python copy reads the 28 charged-item modes from the C++ (`CmnHdr.h` ADDSMMODE, User.cpp's stone switch); the after-save C++ cites moved with V19; counts updated (9,842 items, 1,010 Donation rows, 1,383 weapons, 1,037 sets, 1,183 movers). Today's tree names "Premium Sets", which the compiled order (`WndDonationShop.cpp:280`) still calls "Suits": `DT_PATCH` warns until donation-tree.diff is built.
+>
+> **User's test:** guides `RESOURCE-EDITOR-IN-GAME-TEST.md` item 23 (Brave on `test-data`; run `sh tools/refresh-fixtures.sh test-data` first: it now copies Mount.inc), then in game.
+
 > **Handoff (2026-10-15) — task L, Consumable Stats: built, user-tested (Bull Hams edited to STA +20 in game), committed + pushed. Plan: `docs/plans/L-consumables.md`. The page also edits names / descriptions and lists the charged-item modes (only their time). Found + fixed in V19 on the way: IK2_KEEP stats only applied after a relog (a2b5cb01). Next: Oroth Lair research (FLYFF TODOS).**
 
 

@@ -3798,7 +3798,7 @@ DT_SCRIPTS = [
     [dict(op='into', node='Shields', group='Fashion')],
     [dict(op='into', node='Battle Pass', group='Weapon Skins'), dict(op='into', node='VIP', group='Fashion')],
     [dict(op='into', node='Premium', group='Fashion')],
-    [dict(op='delete', node='Masks', dest='Suits')],
+    [dict(op='delete', node='Masks', dest='Premium Sets')],
     [dict(op='delete', node='Masks', dest=None)],
     [dict(op='delete', node='Premium', dest='Consumables')],
     [dict(op='delete', node='Weapon Skins', dest=None)],
@@ -3846,7 +3846,7 @@ def dt_run(root):
     cat = ds_catalog(ds, D)
     extra = []
     for nm, q, pg in ((None, 'set', 0), (None, 'SHIELD', 0), ('Fashion', 'zzz', 0), ('Weapon Skins', 'a', 1), (None, '', 1),
-                      (None, '', 3), (None, '', 9), (None, '', -1), ('Suits', 'set(f', 0)):
+                      (None, '', 3), (None, '', 9), (None, '', -1), ('Premium Sets', 'set(f', 0)):
         node = None if nm is None else next(n for n in dt_all(roots) if n['name'] == nm)
         v = ds_view(cat, P, roots, node, 0, 0, q, False, pg)
         extra.append(dict(node=nm, search=q, page=pg, grid=v['grid'], page_out=v['page'], count=v['count']))
@@ -4160,17 +4160,17 @@ AS_TREE = 'client/donationshoptree.inc'
 # (path, line, text that must be on that line): the loads this table relies on
 AS_CITES = [
     ('WORLDSERVER/WorldServer.cpp', 397, 'OpenProject( "Masquerade.prj" )'),
-    ('_Common/Project.cpp', 813, 'LoadPropItem( "Spec_Item.txt"'),
-    ('_Common/Project.cpp', 819, '"character"'),
-    ('_Common/Project.cpp', 853, 'LoadEtc( "etc.inc" )'),
-    ('_Common/Project.cpp', 936, 'LoadBattlePass( "BattlePass.inc" )'),
-    ('_Common/Project.cpp', 968, 'LoadDonationShop( "DonationShop.inc" )'),
-    ('_Common/Project.cpp', 1015, 'm_Exchange.Load_Script()'),
-    ('_Common/Project.cpp', 851, 'LoadPropMoverEx( "PropMoverEx.inc" )'),
-    ('_Common/Project.cpp', 3242, '#ifdef __WORLDSERVER'),
-    ('_Common/Project.cpp', 865, 'LoadGiftbox( "propGiftbox.inc" )'),
-    ('_Common/Project.cpp', 859, '#ifdef __WORLDSERVER'),
-    ('_Common/Project.cpp', 878, 'LoadPackItem( "propPackItem.inc" )'),
+    ('_Common/Project.cpp', 901, 'LoadPropItem( "Spec_Item.txt"'),
+    ('_Common/Project.cpp', 907, '"character"'),
+    ('_Common/Project.cpp', 941, 'LoadEtc( "etc.inc" )'),
+    ('_Common/Project.cpp', 1027, 'LoadBattlePass( "BattlePass.inc" )'),
+    ('_Common/Project.cpp', 1059, 'LoadDonationShop( "DonationShop.inc" )'),
+    ('_Common/Project.cpp', 1106, 'm_Exchange.Load_Script()'),
+    ('_Common/Project.cpp', 939, 'LoadPropMoverEx( "PropMoverEx.inc" )'),
+    ('_Common/Project.cpp', 3333, '#ifdef __WORLDSERVER'),
+    ('_Common/Project.cpp', 953, 'LoadGiftbox( "propGiftbox.inc" )'),
+    ('_Common/Project.cpp', 947, '#ifdef __WORLDSERVER'),
+    ('_Common/Project.cpp', 966, 'LoadPackItem( "propPackItem.inc" )'),
     ('_Common/ProjectCmn.cpp', 1256, '"character.txt.txt"'),
     ('_Common/ProjectCmn.cpp', 1259, '"etc.txt.txt"'),
     ('_Common/ProjectCmn.cpp', 1274, '"textClient.txt.txt"'),
@@ -4179,7 +4179,7 @@ AS_CITES = [
     ('_Common/ProjectCmn.cpp', 1383, '"defineText.h"'),
     ('_Common/ProjectCmn.cpp', 1376, '"defineItem.h"'),
     ('_Common/ProjectCmn.cpp', 1261, '"propItem.txt.txt"'),
-    ('_Common/Project.cpp', 791, 'm_modelMng.LoadScript( scanner.token )'),
+    ('_Common/Project.cpp', 879, 'm_modelMng.LoadScript( scanner.token )'),
     ('_Common/WorldFile.cpp', 269, '#ifdef __WORLDSERVER'),
     ('_Common/WorldFile.cpp', 305, '.dyo'),
     ('_Common/WorldFile.cpp', 382, '#endif'),
@@ -4187,35 +4187,37 @@ AS_CITES = [
     ('Neuz/Neuz.cpp', 1573, 'prj.OpenProject( "Masquerade.prj" )'),
     ('Neuz/Neuz.cpp', 1593, 'prj.LoadPreFiles()'),
     ('_Common/file.cpp', 273, 'CResFile::Open'),
-    ('_Common/Project.cpp', 1019, 'prj.m_EventLua.LoadScript()'),
-    ('_Common/Project.cpp', 1018, 'defined(__WORLDSERVER)'),
-    ('_Common/Project.cpp', 914, 'GuildBuffManage::loadGuildBuffFile()'),
-    ('_Common/Project.cpp', 916, 'ServerBuffManage::loadServerBuffFile()'),
-    ('_Common/Project.cpp', 915, '#ifdef __WORLDSERVER'),
-    ('_Common/Project.cpp', 964, 'LoadRebirthProp()'),
-    ('_Common/Project.cpp', 884, 'LoadPiercingAvail( "propItemEtc.inc" )'),
+    ('_Common/Project.cpp', 1110, 'prj.m_EventLua.LoadScript()'),
+    ('_Common/Project.cpp', 1109, 'defined(__WORLDSERVER)'),
+    ('_Common/Project.cpp', 1002, 'GuildBuffManage::loadGuildBuffFile()'),
+    ('_Common/Project.cpp', 1004, 'ServerBuffManage::loadServerBuffFile()'),
+    ('_Common/Project.cpp', 1003, '#ifdef __WORLDSERVER'),
+    ('_Common/Project.cpp', 1055, 'LoadRebirthProp()'),
+    ('_Common/Project.cpp', 972, 'LoadPiercingAvail( "propItemEtc.inc" )'),
     ('_Common/ProjectCmn.cpp', 1262, '"propItemEtc.txt.txt"'),
-    ('_Common/Project.cpp', 764, 'LoadExpTable( scanner.token )'),
+    ('_Common/Project.cpp', 852, 'LoadExpTable( scanner.token )'),
     # upgrade-fees: the 8 fee lines (in V19 since 6af3976a)
-    ('WORLDSERVER/ItemUpgrade.cpp', 232, 'int nCost = '),
-    ('WORLDSERVER/ItemUpgrade.cpp', 450, 'int nPayPenya = '),
-    ('WORLDSERVER/ItemUpgrade.cpp', 804, 'int nCost = '),
-    ('WORLDSERVER/DPSrvr.cpp', (6975, 6974), 'int nPayPenya = '),
-    ('WORLDSERVER/DPSrvr.cpp', (12715, 12714), 'nCost\t= '),
+    ('WORLDSERVER/ItemUpgrade.cpp', 249, 'int nCost = '),
+    ('WORLDSERVER/ItemUpgrade.cpp', 461, 'int nPayPenya = '),
+    ('WORLDSERVER/ItemUpgrade.cpp', 812, 'int nCost = '),
+    ('WORLDSERVER/DPSrvr.cpp', (7066, 7067), 'int nPayPenya = '),   # (the editor's line, Python's: a 0x85 byte splits a line)
+    ('WORLDSERVER/DPSrvr.cpp', (12953, 12954), 'nCost\t= '),
     ('_Interface/WndPiercing.cpp', 112, 'nCost = '),
-    ('_Interface/WndField.cpp', 28246, 'GetGold() < '),
-    ('_Interface/WndField.cpp', 28296, 'GetGold() < '),
+    ('_Interface/WndField.cpp', 28769, 'GetGold() < '),
+    ('_Interface/WndField.cpp', 28845, 'GetGold() < '),
     # PvP Events
-    ('_Common/Project.cpp', 921, 'CFFAManager::GetInstance()->ReadConfig()'),
-    ('_Common/Project.cpp', 924, 'CTDMManager::GetInstance()->ReadConfig()'),
-    ('_Interface/FuncTextCmd.cpp', 423, 'CFFAManager::GetInstance()->ReadConfig( pUser )'),
-    ('_Interface/FuncTextCmd.cpp', 517, 'CTDMManager::GetInstance()->ReadConfig( pUser )'),
-    ('WORLDSERVER/ThreadMng.cpp', 293, 'g_GuildCombatMng.LoadScript( "GuildCombat.txt" )'),
-    ('_Common/eveschool.cpp', 3672, 'CGuildSiegePrize::GetInstance()->LoadPrizes()'),
+    ('_Common/Project.cpp', 1009, 'CFFAManager::GetInstance()->ReadConfig()'),
+    ('_Common/Project.cpp', 1015, 'CTDMManager::GetInstance()->ReadConfig()'),
+    ('_Interface/FuncTextCmd.cpp', 533, 'CFFAManager::GetInstance()->ReadConfig( pUser )'),
+    ('_Interface/FuncTextCmd.cpp', 673, 'CTDMManager::GetInstance()->ReadConfig( pUser )'),
+    ('WORLDSERVER/ThreadMng.cpp', 305, 'g_GuildCombatMng.LoadScript( "GuildCombat.txt" )'),
+    ('_Common/eveschool.cpp', 3743, 'CGuildSiegePrize::GetInstance()->LoadPrizes()'),
     ('databaseserver/Project.cpp', 216, 'CGuildSiegePrize::GetInstance()->LoadScript()'),
-    ('_Common/Project.cpp', 908, 'CInstanceDungeonParty::GetInstance()->LoadScript("PartyDungeon.lua")'),
-    ('_Interface/WndWorld.cpp', 4606, 'FILE_GUILDCOMBAT_TEXT_6'),
-    ('_Interface/WndWorld.cpp', 4687, 'FILE_GUILDCOMBAT_TEXT_1'),
+    ('_Common/Project.cpp', 996, 'CInstanceDungeonParty::GetInstance()->LoadScript("PartyDungeon.lua")'),
+    ('_Interface/WndWorld.cpp', 4642, 'FILE_GUILDCOMBAT_TEXT_6'),
+    ('_Interface/WndWorld.cpp', 4723, 'FILE_GUILDCOMBAT_TEXT_1'),
+    # Mounts (V19 b43949aa / a5325b65): both load it, outside any __WORLDSERVER #ifdef
+    ('_Common/Project.cpp', 1102, 'LoadMountAnimationList()'),
 ]
 AS_PATCHES = ('npc-board', 'donation-tree', 'upgrade-fees')
 # UpgradeFees.lua: read by _Common/UpgradeFees.h CUpgradeFees (upgrade-fees.diff) in the WorldServer AND Neuz, once per run;
@@ -4253,6 +4255,8 @@ def as_who(key):
     if key == '1rebirth.inc':             # Project.cpp:963, outside any __WORLDSERVER #ifdef: the game parses its own copy
         return True, 'start'
     if key == 'couple.inc':               # CCoupleProperty::Initialize in WORLDSERVER / databaseserver / Neuz couplehelper.cpp
+        return True, 'start'
+    if key == 'mount.inc':                # Project.cpp:1102 LoadMountAnimationList, #ifdef __MOUNT only: the WorldServer and the game
         return True, 'start'
     if key in ('propitemetc.inc', 'propitemetc.txt.txt', 'exptable.inc'):   # Project.cpp:883 / ProjectCmn.cpp:1262 / Project.cpp:763, no #ifdef
         return True, 'start'
@@ -4312,7 +4316,7 @@ def as_run(root):
                         'world/wdvolcane/wdvolcane.dyo', 'propmoverex.inc', 'propgiftbox.inc', 'propskill.txt',
                         'event.lua', 'serverbuff.txt', 'guildbuff.txt', '1rebirth.inc', 'couple.inc', 'propitemetc.inc', 'propitemetc.txt.txt', 'exptable.inc', AS_FEES,
                         'ffamanager.inc', 'tdmmanager.inc', 'guildcombat.txt', 'guildsiegeprize.lua', 'partydungeon.lua',
-                        'client/guildcombattext_5_eng.inc', 'client/guildcombattext_1_usa.inc']
+                        'client/guildcombattext_5_eng.inc', 'client/guildcombattext_1_usa.inc', 'mount.inc']
     states = ['written', 'created', 'datares', 'different', 'none']
     pstates = ['in-source', 'missing', 'unknown', 'built']
     codesets = [[], ['DT_PATCH'], ['DT_ORDER'], ['NN_RULES_PATCH']]
@@ -10465,8 +10469,25 @@ CS_GATED = ('IK3_POTION_BUFF_STR', 'IK3_POTION_BUFF_DEX', 'IK3_POTION_BUFF_INT',
 CS_REMAIN = ('II_SYS_SYS_SCR_PET_FEED_POCKET02', 'II_SYS_SYS_SCR_PET_TONIC_A', 'II_SYS_SYS_SCR_PET_TONIC_B')
 
 
+def cs_charged():
+    """the charged-item modes, read from the C++: every item of the ADDSMMODE table (_Network/CmnHdr.h:520, dwSMItemID[...] = II_...)
+    and the elemental stones of CUser's resist switch (WORLDSERVER/User.cpp:8365, case II_...STONE). Listed read-only (their time only);
+    the _VIR_ penalty items are never used by a player. None when the C++ is not next to the editor."""
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'FLYFF-V19-SOURCE', 'Source', 'Source')
+    try:
+        hdr = open(os.path.join(src, '_Network', 'CmnHdr.h'), 'rb').read().decode('latin-1')
+        usr = open(os.path.join(src, 'WORLDSERVER', 'User.cpp'), 'rb').read().decode('latin-1')
+    except OSError:
+        return None
+    names = set(re.findall(r'dwSMItemID\[\s*SM_\w+\s*\]\s*=\s*(II_\w+)\s*;', hdr))
+    i = usr.find('switch( pItemElem->m_nResistSMItemId )')
+    names |= set(re.findall(r'case\s+(II_\w+STONE)\s*:', usr[i:i + 1500])) if i >= 0 else set()
+    return {n for n in names if '_VIR_' not in n}
+
+
 def cs_spec(root, D):
     """Spec_Item.txt consumables by the header columns: id -> {define, k2, k3, path, time, minlv, maxlv, slots}"""
+    charged = cs_charged() or set()
     lines = open(os.path.join(root, 'Spec_Item.txt'), 'rb').read().decode('latin-1').split('\r\n')
     col = {h.lstrip('/'): i for i, h in enumerate(lines[1].split('\t'))}
     def v(x):
@@ -10491,6 +10512,8 @@ def cs_spec(root, D):
             path = k2path[k2]
         elif k2 == D.get('IK2_SYSTEM') and k3 == D.get('IK3_BALLOON'):
             path = 'balloon'
+        elif define in charged:
+            path = 'hard'
         else:
             continue
         iid = v(c[col['dwID']]) & 0xFFFFFFFF
@@ -11541,7 +11564,12 @@ def dg_worlds(root):
 
 def dg_rgn(path, D, mv):
     if not os.path.exists(path):
-        return None
+        # Windows names are case-insensitive (World/DuDreadfulCave/DudreadfulCave.rgn): find it the same way on Linux
+        d, n = os.path.split(path)
+        hit = [f for f in (os.listdir(d) if os.path.isdir(d) else []) if f.lower() == n.lower()]
+        if not hit:
+            return None
+        path = os.path.join(d, hit[0])
     raw = open(path, 'rb').read()
     return dg_rgn_text(raw.decode('utf-16') if raw[:2] in (b'\xff\xfe', b'\xfe\xff') else raw.decode('latin-1'), D, mv)
 
@@ -12004,6 +12032,462 @@ def eq_run(root):
     return dict(reads=reads, events=evs)
 
 
+
+# ---------------------------------------------------------------- mount: Mounts (Mount.inc)
+# Written from the C++ (V19 3d8a9280; b43949aa speeds + loops, a5325b65 flying), not from the JS copy:
+#   CProject::LoadMountAnimationList (_Common/Project.cpp:618-790): each Add_Mount block starts from the defaults (:633-645),
+#     keys in any order, anything else skipped one token at a time, m_mapMountAnimation[ dwID ] = the block (the last wins),
+#     while( s.Token != "}" ) never ends at the end of the file (the startup hangs).
+#   CMover's mount frame (Mover.cpp:4087-4160): the leg loop and its speed per state; OBJMSG_MOUNT_ON (ActionMoverMsg.cpp:1129).
+#   The ground move: fGroundSpeed replaces GetSpeed (ActionMover.cpp:240), walk / 4, back / 5 (ActionMoverState.cpp:203-230), 60 a second.
+#   ProcessFlyMove (ActionMoverState2.cpp:350-470) + the FMOVE push (:505-516), straight and level; g_nFlySpeed (:463-466).
+#   CDPSrvr::OnMountFly (DPSrvr.cpp:7830-7885).
+# Edits are made a different way from the JS (lines, not token offsets) and must give the same text.
+MT_FIELDS = [('dwID', 'n', 0), ('nType', 'n', 0), ('nBindBone', 'n', 0), ('fOffSetX', 'f', 0.0), ('fOffSetY', 'f', 0.0), ('fOffSetZ', 'f', 0.0),
+             ('fRotX', 'f', 0.0), ('fRotY', 'f', 0.0), ('fRotZ', 'f', 0.0), ('fGroundSpeed', 'f', 0.0), ('szStand', 's', ''), ('szWalk', 's', ''),
+             ('szRun', 's', ''), ('szWalkBack', 's', ''), ('fAnimSpeed', 'f', 1.0), ('fWalkAnimSpeed', 'f', 1.0), ('fNameOffset', 'f', 0.0),
+             ('fFlightSpeed', 'f', 0.0), ('fFlyAnimSpeed', 'f', 1.0), ('fFlyMaxSpeed', 'f', 0.0), ('szFlyStand', 's', ''), ('szFlyWalk', 's', ''),
+             ('szFlyStart', 's', ''), ('szFlyLand', 's', '')]
+MT_KIND = {k: t for k, t, _ in MT_FIELDS}
+MT_DEF = {k: d for k, _, d in MT_FIELDS}
+
+
+def f32(x):
+    return struct.unpack('<f', struct.pack('<f', x))[0]
+
+
+def mt_atof(s):
+    m = re.match(r'\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?', s)
+    return float(m.group(0)) if m else 0.0
+
+
+class MtScan:
+    """CScript over Mount.inc's tokens (shared CScanner split): GetToken / GetNumber / GetFloat."""
+    def __init__(self, text, D):
+        self.t = [x.decode('latin-1') for x in tokens(text.encode('latin-1', 'replace'))]
+        self.k, self.D, self.tok = 0, D, None
+
+    def get(self):
+        self.tok = self.t[self.k] if self.k < len(self.t) else None
+        self.k += 1
+        return self.tok
+
+    def word(self):                       # s.token after GetToken: a "quoted" token without its quotes
+        x = self.get()
+        if x is None:
+            return ''
+        return x[1:-1] if len(x) >= 2 and x[0] == '"' and x[-1] == '"' else x
+
+    def number(self):                     # CScanner::GetNumber (a define name is resolved)
+        x = self.get()
+        if x is None:
+            return 0
+        if x in self.D:
+            return self.D[x]
+        if x == '=':
+            return -1
+        if x in ('-', '+'):
+            y = self.get() or ''
+            v = self.D.get(y, atoi(y))
+            return -v if x == '-' else v
+        return atoi(x)
+
+    def float(self):                      # CScanner::GetFloat (scanner.cpp:948)
+        x = self.get()
+        if not x:
+            return 0.0
+        if x[0] == '=':
+            return -1.0
+        if x[0] == '-':
+            return f32(-mt_atof(self.get() or ''))
+        if x[0] == '+':
+            return f32(mt_atof(self.get() or ''))
+        return f32(mt_atof(x))
+
+
+def mt_load(text, D):
+    s = MtScan(text, D)
+    blocks, hang = [], False
+    s.get()
+    while s.tok is not None:
+        if s.tok == 'Add_Mount':
+            v = dict(MT_DEF)
+            present = []
+            s.get()                       # {
+            while s.tok != '}':
+                if s.tok is None:
+                    hang = True
+                    break
+                k = s.tok
+                if k in MT_KIND:
+                    s.get()               # =
+                    t = MT_KIND[k]
+                    if t == 's':
+                        v[k] = s.word()
+                    elif t == 'n':
+                        n = s.number()
+                        v[k] = (n & 0xFFFFFFFF) if k == 'dwID' else s32(n)
+                    else:
+                        v[k] = s.float()
+                    s.get()               # ;
+                    present.append(k)
+                s.get()
+            if hang:
+                break
+            blocks.append({'id': v['dwID'], 'v': v, 'keys': present})
+        s.get()
+    win = {}
+    for b in blocks:
+        win[b['id']] = b
+    return {'blocks': blocks, 'hang': hang, 'win': win}
+
+
+# Mover.cpp:4096-4158, one frame. i: {fly, moving, move, walk, end}
+MT_PICK = {0: 'szStand', 2: 'szRun', 3: 'szWalkBack', 4: 'szFlyStand', 5: 'szFlyWalk', 6: 'szFlyStart', 7: 'szFlyLand'}
+
+
+def mt_frame(a, model, prev, i):
+    n = 0
+    if not i.get('fly') and i.get('moving'):
+        if i.get('move') == 'B':
+            n = 3
+        elif i.get('walk'):
+            n = 1
+        else:
+            n = 2
+    key = i.get('move') in ('F', 'B', 'L', 'R', 'LM', 'RM')
+    fly = bool(i.get('fly'))
+    if fly:
+        n = 5 if i.get('moving') else 4
+    end = bool(i.get('end'))
+    if fly and 0 <= prev <= 3 and a['szFlyStart'] != '' and n == 4:
+        n = 6
+    elif fly and prev == 6 and not end and n == 4:
+        n = 6
+    elif not fly and 4 <= prev <= 6 and a['szFlyLand'] != '' and not key:
+        n = 7
+    elif not fly and prev == 7 and not end and not key:
+        n = 7
+    sp = 1.0
+    if n == 2:
+        sp = a['fAnimSpeed']
+    elif n in (1, 3):
+        sp = a['fWalkAnimSpeed']
+    elif n >= 4:
+        sp = a['fFlyAnimSpeed']
+    f = None
+    if n != prev:
+        f = a[MT_PICK[n]] if n in MT_PICK else ''
+        if f == '' and n in (1, 2, 3, 5):
+            f = a['szWalk']
+        if f == '' and n != 0:
+            f = a['szStand']
+        if f == '' and model:
+            f = 'item_%s_%s.ani' % (model, 'stand' if n == 0 or n >= 4 else 'walk')
+    return n, sp, f
+
+
+def mt_loops(a, model, seq):
+    first = a['szStand'] if a['szStand'] != '' else ('item_%s_stand.ani' % model if model else '')
+    prev, playing, out = -1, first, []
+    for i in seq:
+        n, sp, f = mt_frame(a, model, prev, i)
+        if f:
+            playing = f
+        out.append([n, sp, playing, f if n != prev else None])
+        prev = n
+    return {'on': first, 'steps': out}
+
+
+def mt_ground(a):
+    s = f32(a['fGroundSpeed'])
+    tick = [s, f32(s / 4.0), f32(s / 5.0), f32(s / 4.0)]
+    return {'tick': tick, 'sec': [f32(x * 60) for x in tick]}
+
+
+def mt_meter(d):
+    g = int(f32(f32(f32(f32(math.sqrt(f32(d * d))) * 60.0) * 60.0) * 60.0))
+    return int(f32(g / 200.0))
+
+
+def mt_fly(a, item_push, turbo, ticks):
+    acc = f32(f32(item_push) * f32(0.75))
+    if a['fFlightSpeed'] > 0:
+        acc = f32(f32(a['fFlightSpeed']) * f32(0.75))
+    if turbo:
+        acc = f32(acc * f32(1.2))
+    top = f32(0.3)
+    if a['fFlyMaxSpeed'] > 0:
+        top = f32(a['fFlyMaxSpeed'])
+    if turbo:
+        top = f32(top * f32(1.1))
+    k = f32(1.0 - f32(0.011))
+
+    def step(d):
+        if acc > 0 and f32(d * d) < f32(top * top):
+            d = f32(d + acc)
+            ln = f32(math.sqrt(f32(d * d)))
+            if ln > top:
+                d = f32(d * f32(top / ln))
+        return f32(d * k)
+    d, best, at, per = 0.0, 0, None, []
+    for t in range(1, ticks + 1):
+        d = step(d)
+        m = mt_meter(d)
+        if m > best:
+            best, at = m, t
+        if t % 60 == 0:
+            per.append(m)
+    e = 0.0
+    for _ in range(20000):
+        e2 = step(e)
+        if e2 == e:
+            break
+        e = e2
+    g, thr = 0, f32(f32(0.0002) * f32(0.0002))
+    while d != 0 and g < 6000:
+        g += 1
+        d = f32(d * k)
+        if f32(d * d) < thr:
+            d = 0.0
+    return {'push': acc, 'max': top, 'top': best, 'reach': at, 'per': per, 'steady': e, 'steadyShown': mt_meter(e), 'glide': g}
+
+
+def mt_takeoff(a, limit, c):
+    if c.get('tooSoon'):
+        return [False, None]
+    if a is None or a['nType'] != 1:
+        return [False, 'This mount cannot fly.']
+    if not c.get('land') and not c.get('flying'):
+        if not c.get('worldFly') or c.get('noFly'):
+            return [False, 'You cannot fly here.']
+        if c.get('flyLv', 0) < limit:
+            return [False, 'Your flight level is too low to fly this mount.']
+        return [True, None]
+    if c.get('land') and c.get('flying'):
+        return [True, None]
+    return [False, None]
+
+
+# ---- edits, line by line
+def mt_num(x):
+    """the shortest text that reads back as the same float (fixed notation)"""
+    f = f32(x)
+    for p in range(1, 10):
+        t = float('%.*g' % (p, x))
+        if f32(t) == f:
+            break
+    else:
+        t = f
+    if t == int(t) and abs(t) < 1e15:
+        return str(int(t))
+    r = repr(t)
+    if 'e' in r:
+        r = ('%.20f' % t).rstrip('0').rstrip('.')
+    return r
+
+
+def mt_val(k, v):
+    return '"%s"' % v if MT_KIND[k] == 's' else (str(int(v)) if MT_KIND[k] == 'n' else mt_num(v))
+
+
+def mt_lines(text):
+    return text.splitlines(True)
+
+
+def mt_block_lines(lines, bid, D):
+    """(first line, '}' line) of the LAST Add_Mount block whose dwID is bid"""
+    found, i = None, 0
+    while i < len(lines):
+        if lines[i].strip() == 'Add_Mount':
+            j = i + 1
+            while lines[j].strip() != '}':
+                j += 1
+            ids = [l for l in lines[i:j] if re.match(r'\s*dwID\s*=', l)]
+            if ids:
+                raw = re.match(r'\s*dwID\s*=\s*([^;]*);', ids[-1]).group(1).strip()
+                if (D.get(raw) if raw in D else atoi(raw)) == bid:
+                    found = (i, j)
+            i = j
+        i += 1
+    return found
+
+
+def mt_edit(text, bid, changes, D):
+    """changes: [(key, value | None)]"""
+    L = mt_lines(text)
+    a, z = mt_block_lines(L, bid, D)
+    eol = '\r\n' if L[a].endswith('\r\n') else '\n'
+    new = []
+    order = [k for k, _, _ in MT_FIELDS]
+    for k, v in changes:
+        at = [i for i in range(a, z) if re.match(r'\s*%s\s*=' % k, L[i])]
+        if v is None:
+            for i in at:
+                L[i] = ''
+            continue
+        if at:
+            for i in at[:-1]:
+                L[i] = ''
+            i = at[-1]
+            m = re.match(r'(\s*%s\s*=\s*)("[^"]*"|[^;]*)(;.*)' % k, L[i], re.S)
+            body = m.group(2)
+            if MT_KIND[k] == 's' and not body.startswith('"'):
+                L[i] = m.group(1) + v + m.group(3)
+            else:
+                L[i] = m.group(1) + mt_val(k, v) + m.group(3)
+        elif v != MT_DEF[k]:
+            new.append(k + '=' + mt_val(k, v) + ';')
+    if new:
+        new.sort(key=lambda s: order.index(s.split('=')[0]))
+        last = max([i for i in range(a + 1, z) if re.match(r'\s*\w+\s*=', L[i]) and L[i] != ''] or [a + 1])
+        ind = re.match(r'[ \t]*', L[last]).group(0) if last > a + 1 or re.match(r'\s*\w+\s*=', L[last]) else '\t'
+        L[last] = L[last] + ''.join(ind + x + eol for x in new)
+    return ''.join(L)
+
+
+def mt_add_block(text, bid, tmpl_id, loops, D):
+    L = mt_lines(text)
+    a, z = mt_block_lines(L, tmpl_id, D)
+    eol = '\r\n'
+    body = ['dwID=%d;' % bid]
+    skip = ('dwID', 'szStand', 'szWalk', 'szRun', 'szWalkBack', 'szFlyStand', 'szFlyWalk', 'szFlyStart', 'szFlyLand')
+    for l in L[a + 2:z]:
+        m = re.match(r'\s*(\w+)\s*=', l)
+        if m and m.group(1) in MT_KIND and m.group(1) not in skip:
+            body.append(l.strip())
+    for k in ('szRun', 'szWalk', 'szWalkBack'):
+        if loops.get(k):
+            body.append('%s="%s";' % (k, loops[k]))
+    # after the last block's "}" line
+    last = max(i for i, l in enumerate(L) if l.strip() == '}')
+    add = eol + 'Add_Mount' + eol + '{' + eol + ''.join('\t' + b + eol for b in body) + '}' + eol
+    return ''.join(L[:last + 1]) + add + ''.join(L[last + 1:])
+
+
+def mt_own_loops(model, names):
+    low = {n.lower(): n for n in names}
+    f = lambda m: low.get(('item_%s_%s.ani' % (model, m)).lower())
+    out = {}
+    if f('run') or f('walk'):
+        out['szRun'] = f('run') or f('walk')
+    if f('walk'):
+        out['szWalk'] = f('walk')
+    if f('walkback'):
+        out['szWalkBack'] = f('walkback')
+    return out
+
+
+MT_SMALL = [
+    # the same dwID twice: the last block wins
+    'Add_Mount\r\n{\r\n\tdwID=225049;\r\n\tfGroundSpeed=0.4;\r\n}\r\n\r\nAdd_Mount\r\n{\r\n\tdwID=225049;\r\n\tfGroundSpeed=0.7;\r\n\tnType=1;\r\n}\r\n',
+    # only dwID: every default
+    'Add_Mount\r\n{\r\n\tdwID=225001;\r\n}\r\n',
+    # unknown words are skipped; a key without "=" eats the next tokens
+    'Add_Mount\r\n{\r\n\tdwID=225002;\r\n\tfoo=12;\r\n\tbar;\r\n\tfGroundSpeed 0.5;\r\n\tfAnimSpeed=2;\r\n}\r\n',
+    # no "}" at the end: the startup hangs (the first block still loads)
+    'Add_Mount\r\n{\r\n\tdwID=225003;\r\n\tfGroundSpeed=0.3;\r\n}\r\nAdd_Mount\r\n{\r\n\tdwID=225004;\r\n\tfGroundSpeed=0.3;\r\n',
+    # nType 2, signs, "=" (-1), a define as dwID
+    'Add_Mount\r\n{\r\n\tdwID=II_SYS_MOUNT_DRAGONNIGHTMARE;\r\n\tnType=2;\r\n\tfOffSetY=-0.6;\r\n\tfOffSetZ=+0.25;\r\n\tfAnimSpeed= = ;\r\n\tfRotY=-85;\r\n}\r\n',
+    # loop fallbacks: stand only / walk only / nothing / fly loops without take-off
+    'Add_Mount\r\n{\r\n\tdwID=225010;\r\n\tszStand="a_stand.ani";\r\n\tfGroundSpeed=0.4;\r\n}\r\nAdd_Mount\r\n{\r\n\tdwID=225011;\r\n\tszWalk="b_walk.ani";\r\n}\r\n'
+    'Add_Mount\r\n{\r\n\tdwID=225012;\r\n}\r\nAdd_Mount\r\n{\r\n\tdwID=225013;\r\n\tnType=1;\r\n\tszFlyStand="c_hover.ani";\r\n\tszFlyLand="c_land.ani";\r\n\tfFlyAnimSpeed=0.5;\r\n}\r\n',
+    # the same key twice in one block: the last statement wins; no quotes on a loop
+    'Add_Mount\r\n{\r\n\tdwID=225020;\r\n\tfGroundSpeed=0.3;\r\n\tszRun=d_run.ani;\r\n\tfGroundSpeed=0.6;\r\n}\r\n',
+    # empty / comments only / a block with nothing in it but }
+    '', '// nothing here\r\n/* Add_Mount { dwID=1; } */\r\n', 'Add_Mount\r\n{\r\n}\r\n',
+]
+
+MT_SEQS = [
+    [{}, {'moving': 1, 'move': 'F'}, {'moving': 1, 'move': 'F', 'walk': 1}, {'moving': 1, 'move': 'B'}, {'move': 'F'}, {}],
+    [{'moving': 1, 'move': 'L'}, {'moving': 1, 'move': 'RM'}, {'moving': 1, 'move': 'B', 'walk': 1}, {}],
+    [{}, {'fly': 1}, {'fly': 1}, {'fly': 1, 'end': 1}, {'fly': 1, 'moving': 1, 'move': 'F'}, {'fly': 1, 'moving': 1}, {'fly': 1}, {}, {}, {'end': 1}, {}],
+    [{'fly': 1}, {'fly': 1, 'moving': 1, 'move': 'F'}, {'moving': 1, 'move': 'F'}, {'fly': 1}, {'move': 'F', 'moving': 1}],
+    [{}, {'fly': 1}, {'fly': 1, 'moving': 1}, {'fly': 1}, {}, {'move': 'B', 'moving': 1}, {'fly': 1}, {'fly': 1, 'end': 1}, {}],
+]
+
+
+def mt_run(root):
+    D = defines(root)
+    rd = lambda p: open(p, 'rb').read().decode('utf-16')
+    real = rd(os.path.join(root, 'Mount.inc'))
+    names = []
+    ml = os.path.join(root, '..', 'Client', 'Model.list')
+    if os.path.exists(ml):
+        names = [l.strip() for l in open(ml, encoding='latin-1') if l.strip()]
+    # each mount item's model: its mdlDyna.inc line ("<model>" II_... in the item section)
+    models = {}
+    raw = open(os.path.join(root, 'mdlDyna.inc'), 'rb').read()
+    mdl = raw.decode('utf-16') if raw[:2] == b'\xff\xfe' else raw.decode('latin-1')      # mdlDyna.inc is UTF-16LE + BOM
+    for m in re.finditer(r'"([^"]+)"\s+(II_\w+)\s+MODELTYPE_', mdl):
+        iid = D.get(m.group(2))
+        if iid is not None and iid not in models:
+            models[iid] = m.group(1)
+    files = []
+    for t in [real] + MT_SMALL:
+        r = mt_load(t, D)
+        files.append({'text': None if t is real else t, 'hang': r['hang'],
+                      'blocks': [[b['id'], b['v'], b['keys']] for b in r['blocks']],
+                      'win': sorted(r['win'].keys())})
+    loops, ground, flies, take = [], [], [], []
+    rnd = random.Random(1102)
+    for fi, t in enumerate([real] + MT_SMALL):
+        r = mt_load(t, D)
+        for bid, b in sorted(r['win'].items()):
+            model = models.get(bid)
+            for si, seq in enumerate(MT_SEQS):
+                loops.append({'file': fi, 'id': bid, 'model': model, 'seq': si, 'out': mt_loops(b['v'], model, seq)})
+            ground.append({'file': fi, 'id': bid, 'out': mt_ground(b['v'])})
+    # flights: the real flying mounts + made-up values
+    reals = mt_load(real, D)['win']
+    combos = []
+    for bid, b in sorted(reals.items()):
+        if b['v']['nType'] == 1:
+            combos.append((b['v']['fFlightSpeed'], b['v']['fFlyMaxSpeed'], 0.0023))
+    for push in (0.0, 0.0001, 0.0023, 0.008, 0.02):
+        for top in (0.0, 0.05, 0.9, 2.0):
+            for ip in (0.0, 0.0023, 0.004):
+                combos.append((push, top, ip))
+    for push, top, ip in combos:
+        a = dict(MT_DEF, fFlightSpeed=f32(push), fFlyMaxSpeed=f32(top), nType=1)
+        for turbo in (False, True):
+            for ticks in (30, 600):
+                flies.append({'push': a['fFlightSpeed'], 'top': a['fFlyMaxSpeed'], 'item': f32(ip), 'turbo': turbo, 'ticks': ticks,
+                              'out': mt_fly(a, f32(ip), turbo, ticks)})
+    for nt in (None, 0, 1, 2):
+        for limit in (0, 1, 20):
+            for _ in range(12):
+                c = {'flyLv': rnd.choice([0, 1, 19, 20, 60]), 'worldFly': rnd.random() < 0.8, 'noFly': rnd.random() < 0.2,
+                     'tooSoon': rnd.random() < 0.15, 'flying': rnd.random() < 0.3, 'land': rnd.random() < 0.3}
+                a = None if nt is None else dict(MT_DEF, nType=nt)
+                take.append({'nType': nt, 'limit': limit, 'ctx': c, 'out': mt_takeoff(a, limit, c)})
+    # edit scripts on the real file -> the text after each step
+    edits = []
+    scripts = [
+        [('set', 225049, [('fGroundSpeed', 0.5)])],
+        [('set', 225049, [('fNameOffset', 0.3)])],
+        [('set', 225049, [('fGroundSpeed', 0.45), ('fAnimSpeed', 1.65), ('fWalkAnimSpeed', 1.25), ('fNameOffset', 0.0)])],
+        [('set', 225000, [('szStand', 'item_JustMount006_stand.ani'), ('fNameOffset', -0.25)]), ('set', 225000, [('szStand', None)])],
+        [('set', 225001, [('nType', 1), ('fFlightSpeed', 0.0023), ('fFlyMaxSpeed', 0.6), ('szFlyStand', 'item_Mount002_stand.ani')])],
+        [('set', 225049, [('fFlightSpeed', None), ('fFlyMaxSpeed', None), ('nType', 0)])],
+        [('set', 225102, [('szRun', 'Item_STR06201_walk.ani'), ('fRotX', -88.5), ('nBindBone', 40)])],
+        [('set', 225050, [('fOffSetY', 0.1), ('fOffSetZ', -0.05), ('fRotZ', 12.0)])],
+        [('add', 225999, 225049, mt_own_loops('Mount058', names))],
+        [('add', 225998, 225102, mt_own_loops('nosuchmodel', names)), ('set', 225998, [('fGroundSpeed', 0.42)])],
+    ]
+    for sc in scripts:
+        t, steps = real, []
+        for op in sc:
+            if op[0] == 'set':
+                t = mt_edit(t, op[1], op[2], D)
+            else:
+                t = mt_add_block(t, op[1], op[2], op[3], D)
+            steps.append(t)
+        edits.append({'ops': [[o[0], o[1], o[2] if o[0] == 'set' else o[2], o[3] if o[0] == 'add' else None] for o in sc], 'texts': steps})
+    return {'files': files, 'seqs': MT_SEQS, 'loops': loops, 'ground': ground, 'fly': flies, 'takeoff': take, 'edits': edits,
+            'models': {str(k): v for k, v in models.items() if 225000 <= k <= 226000},
+            'ownLoops': {'Mount058': mt_own_loops('Mount058', names), 'STR06201': mt_own_loops('STR06201', names)}}
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -12057,6 +12541,8 @@ if __name__ == '__main__':
         print(json.dumps(we_run_all(root)))
     elif what == 'consumables':                 # consumable stats: use, use again, same-kind blocks, expiry, edits
         print(json.dumps(cs_run_all(root)))
+    elif what == 'mount':                       # Mounts: Mount.inc (LoadMountAnimationList), loops, ground, flight, take-off, edits
+        print(json.dumps(mt_run(root)))
     elif what == 'dungeon':                     # Dungeons: PartyDungeon.lua (LoadScript), entering, the clock, the map monsters, edits
         print(json.dumps(dg_run(root)))
     elif what == 'equalized':                   # Equalized PvP: EqualizedPvP.inc, EqualizedPresets.inc, what a player gets on entry

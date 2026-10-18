@@ -17,7 +17,9 @@ const find = () => [process.env.BRAVE, path.join(process.env.LOCALAPPDATA || '',
 const exe = find();
 if (!exe) { console.error('no brave.exe / chrome.exe found (set BRAVE=...)'); process.exit(1); }
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'fre-ui-'));
-const proc = spawn(exe, ['--headless=new', '--disable-gpu', '--no-first-run', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--window-size=1600,1000', 'about:blank'],
+// Chromium refuses to start as root without --no-sandbox (a Linux container: BRAVE=/opt/pw-browsers/chromium-*/chrome-linux/chrome)
+const noSandbox = process.platform === 'linux' && process.getuid && process.getuid() === 0 ? ['--no-sandbox'] : [];
+const proc = spawn(exe, ['--headless=new', '--disable-gpu', '--no-first-run', ...noSandbox, '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--window-size=1600,1000', 'about:blank'],
   { stdio: ['ignore', 'ignore', 'pipe'] });
 const wsUrl = await new Promise((res, rej) => {
   let buf = '';
