@@ -10,6 +10,7 @@ import { FRE, ROOT, readBytes, listDir, loadFolder, openSource, exists, loadWorl
 const ORACLE_SIM = GLib.getenv('ORACLE_SIM') || ROOT + '/tools/oracle_sim.py';
 import { bpServer } from './bp-server.js';
 import { checkMounts } from './mount-check.js';
+import { checkMiniEvent } from './minievent-check.js';
 
 const FIXTURES = ROOT + '/test-data/fixtures/Resource';
 const REAL = ROOT + '/../FLYFF-V19-SOURCE/Server/Resource';
@@ -4168,6 +4169,41 @@ section('Dungeons: PartyDungeon.lua, entering, the clock, map monsters, edits (J
   // the made-up file's checks
   const bad = Dg.validateDungeons(Dg.loadDungeons({ text: 'SetLevel( 1, 2 )\nAddDungeon( "WI_NOPE" )\n\tSetLevel( 9, 3 )\n\tSetClass( )\n\tSetMonster( ID_BOSS, "MI_NOPE", true, 1, 2, 3 )\nAddDungeon( "WI_INSTANCE_KALGAS" )\nAddDungeon( "WI_INSTANCE_KALGAS" )\n\tSetDungeonTime( SEC(30) )\n\tSetCoolTime( FOO )\n' }, { defines: Dm }), { defines: Dm, movers: W.movers.movers });
   eq([...new Set(bad.map(d => d.code))].sort().join(), 'DG_CLASS,DG_DUP,DG_LEVEL,DG_MONSTER,DG_NAME,DG_NO_DUNGEON,DG_SHORT,DG_WORLD', 'a broken file: every check fires');
+}
+
+// ---------------------------------------------------------------- Mini Events (MiniEvent.inc)
+section('Mini Events: MiniEvent.inc, round points, places, prizes, edits (JS and Python copies agree)');
+{
+  const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e));
+  const W = new FRE.Workspace(fs, { only: 'minievent' }).load();
+  const m = W.models.minievent, O = FRE.miniEventOps, D = W.defines.defines, J = JSON.stringify;
+  eq(m.errors.length, 0, 'the real MiniEvent.inc: no error (Mini Events stay on)');
+  eq(m.events.slice(1).map(e => e.loaded).join(), 'true,true,true,true,true,true', 'all six events have an EVENT line');
+  eq(J([m.events[2].asks.length, m.events[3].asks.length, m.events[5].recipes.length, m.events[6].spots.length]), J([547, 364, 68, 38]), 'Quick Hands 547, O/X 364 questions, 68 recipes, 38 spots');
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} minievent ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py minievent) gave no readable result', e.message); }
+  if (py) checkMiniEvent({ FRE, py, ws: W, ok });
+  // edits: one value / a prize of one event only / a new POINTS line; undo = the same bytes
+  const f = W.files.get('minievent.inc'), before = f.serialize();
+  W.apply('minievent.inc', O.setKey(f.text, W.models.minievent, 3, 'ROUNDS', 12), 'x');
+  ok(/EVENT\tOXQUIZ\t[^\n]*ROUNDS 12\t/.test(f.text) && W.models.minievent.events[3].values.ROUNDS === 12, 'O/X rounds 10 -> 12: one number changes');
+  W.apply('minievent.inc', O.setPrize(f.text, W.models.minievent, 3, 1, { define: 'II_SYS_SYS_EVENT_TOKEN', amount: 40 }, D), 'x');
+  ok(W.models.minievent.events[3].ranks[0].amount.value === 40 && W.models.minievent.events[1].ranks[0].amount.value === 30, 'the O/X 1st prize 30 -> 40; Color Game keeps 30 (prizes per event)');
+  W.apply('minievent.inc', O.setKey(f.text, W.models.minievent, 1, 'ASK_DAYS', 3), 'x');
+  ok(/EVENT\tCOLORGAME\t[^\n]*SCORE_TIME 5\tASK_DAYS 3\n/.test(f.text), 'a key not on the EVENT line is added at its end, tab-separated');
+  W.apply('minievent.inc', O.setPoints(f.text, W.models.minievent, 3, [15, 12, 10, 8, 7, 6, 5, 4, 3, 1, 1]), 'x');
+  ok(W.diags.some(d => d.code === 'ME_CONFIG' && d.severity === 'BLOCK' && /OXQUIZ POINTS/.test(d.message)) && W.newBlocking().length > 0, '10th = the rest: a new BLOCK (the server would switch every Mini Event off)');
+  W.undo();
+  W.apply('minievent.inc', O.setPrize(f.text, W.models.minievent, 4, 0, null), 'x');
+  ok(W.models.minievent.events[4].rest === null, 'Lucky Draw "everyone else": no prize (the REST line removed)');
+  while (W.undo());
+  ok(B.bytesEqual(f.serialize(), before), 'undo: MiniEvent.inc is byte-identical');
+  throws(() => O.setKey(f.text, m, 6, 'ROUND_TIME', 601), 'a Hide and Seek round over 600 s is refused');
+  throws(() => O.setKey(f.text, m, 3, 'ROUND_TIME', 121), 'an O/X round over 120 s is refused');
+  throws(() => O.setPrize(f.text, m, 3, 2, { define: 'II_SYS_SYS_EVENT_TOKEN', amount: 10000 }, D), 'a prize amount over 9999 is refused');
+  for (const k of ['ME_CONFIG', 'ME_DUP_PRIZE', 'ME_NO_RANDOM']) ok(FRE.diagHelp[k], `help text for ${k}`);
+  eq(FRE.afterSave.compute({ changes: [{ label: 'x', files: ['minievent.inc'] }] }).steps.map(s => s.id).join(), 'reload:event', 'MiniEvent.inc: /eventreload in game (no restart needed)');
 }
 
 // ---------------------------------------------------------------- Mounts (Mount.inc)

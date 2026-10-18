@@ -634,6 +634,13 @@ Python copy: `tools/oracle_sim.py rates` (7 Event.lua files, 9 buff files, 392 t
 - `/mountset` (FuncTextCmd.cpp:166-260): the editor's ranges are its limits (speed / run / walk above 0 to 10, name -5 to 10, fly 0 to 0.02, flymax 0 to 2, flyanim above 0 to 10); its reply (`Mount N: fGroundSpeed=…;` + the `szRun="…"` line) is what "Paste from /mountset" reads.
 - Not modelled: the seat, turning / climbing / the drift boost, turbo fuel, packets, terrain.
 
+### 1.30 Mini Events (added 2026-10-18, step 1 of 5: settings, prizes, points; `loaders/minievent.js`, `loaders/minievent-sim.js`, `edit/minievent-ops.js`, `validate/minievent.js`, `ui/minievent.js`)
+
+- Data: `MiniEvent.inc`, read by CMiniEventMng::ReadConfig (WORLDSERVER/MiniEventMng.cpp:134-460) on the WorldServer's first tick (Process :643) and by GM `/eventreload` (refused while an event runs). WorldServer only, channel 1 only. V19 25e4f227 (Batch A), e9ee7010 (Batch B), 3b12a4bb (Batch C).
+- One CScript token stream: EVENT keys run until a word that is not a key (that word starts the next line). Defaults = ME_EVENT() (MiniEventMng.h:90): level 120, players 5-100, MAX_PER_IP 1, REGISTER 5, ROUNDS 10, ROUND_TIME 15, SCORE_TIME 5, ASK_DAYS 7, END_AT 10, IN_RANDOM 1, POINTS 15 12 10 8 7 6 5 4 3 2 / 1. A duplicate RANK / REST line: the last wins.
+- **Any error switches every Mini Event off** (m_bValidConfig FALSE, error_*.txt). Limits: RANK 1-10, amount 0-9999 + a known item, MIN_LEVEL 1-200, MIN_PLAYERS >= 1, MAX_PLAYERS MIN-500, REGISTER 1-60, ROUNDS 1-30, ROUND_TIME 5-120 (600 for Turn-in / Hide and Seek), SCORE_TIME 2-60, END_AT 1-500, POINTS 0-999 never going up and 10th > rest, enough ASK / RECIPE / SPOT lines for the rounds, HIDE_NPC for Hide and Seek, BEGIN 0-7 / 0-23 / 0-59 and only for a loaded event.
+- Scoring (EndRound :852): Color Game 3 dice, 2 per die, +1 first pick (lowest ms, then id); Typer / Turn-in / Hide and Seek by place; O/X right answers by lock-in ms; Lucky Draw a shuffle (xRandom( i + 1 ), by player id). No pick adds the whole round time to the tie-break. Ranking: points, then less time, then the lower id. Finish: places 1-10 get RANK only with more than 0 points, everyone else REST; GiveItem splits into dwPackMax stacks, a full bag / offline = mail.
+
 ## Open questions (your call before Phase 3)
 1. **Folder and mirrors.** The Resource folder is `Server/Resource`. Should saves also update the `Client/` mirrors (`character.inc`, `propItem.txt.txt`, `Spec_Item.txt`, `propMover.txt`; the last two are LF there)? If yes, the user should pick the repo root (or two folders) in the browser.
 2. **Build 3** targets `Spec_Item.txt` (+ `propItem.txt.txt`, `defineItem.h`) instead of the unused `propItem.txt`. OK?

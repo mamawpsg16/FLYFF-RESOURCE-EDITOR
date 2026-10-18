@@ -201,6 +201,17 @@
       validate(ws, model) { return FRE.consumableChecks(model, { ws }); },
     },
     {
+      // Mini Events (loaders/minievent.js): MiniEvent.inc, CMiniEventMng::ReadConfig (WORLDSERVER/MiniEventMng.cpp:134; read on the
+      // WorldServer's first tick and by /eventreload while no event runs). WorldServer only. propMover.txt + the NPC files: the
+      // HIDE_NPC mover and character key; FFAManager.inc / TDMManager.inc: the schedule's clashes (CheckClashes :464).
+      id: 'minievent', label: 'Mini Events',
+      required: ['MiniEvent.inc'], optional: ['propMover.txt', 'propMover.txt.txt', 'character.inc', 'character-etc.inc', 'character-school.inc',
+        'character.txt.txt', 'character-etc.txt.txt', 'character-school.txt.txt', 'FFAManager.inc', 'TDMManager.inc'],
+      editable: ['MiniEvent.inc'], client: [], deps: [],
+      parse(ws) { return FRE.miniEvent.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.miniEventChecks(model); },
+    },
+    {
       // Mounts (loaders/mounts.js): Mount.inc, how each mount item sits, moves, plays its leg loops and flies (LoadMountAnimationList
       // Project.cpp:618, called at :1102 by the WorldServer AND the game; V19 b43949aa, a5325b65). UTF-16LE, CRLF; identical Client
       // copy. mdlDyna.inc gives each mount item's model (its .ani files are the loop choices).

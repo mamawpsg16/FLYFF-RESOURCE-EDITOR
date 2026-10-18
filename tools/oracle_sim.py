@@ -4256,6 +4256,8 @@ def as_who(key):
         return True, 'start'
     if key == 'couple.inc':               # CCoupleProperty::Initialize in WORLDSERVER / databaseserver / Neuz couplehelper.cpp
         return True, 'start'
+    if key == 'minievent.inc':            # MiniEventMng.cpp:643 first tick + /eventreload (WorldServer only)
+        return 'reload:event', None
     if key == 'mount.inc':                # Project.cpp:1102 LoadMountAnimationList, #ifdef __MOUNT only: the WorldServer and the game
         return True, 'start'
     if key in ('propitemetc.inc', 'propitemetc.txt.txt', 'exptable.inc'):   # Project.cpp:883 / ProjectCmn.cpp:1262 / Project.cpp:763, no #ifdef
@@ -4305,7 +4307,7 @@ def as_compute(changes, client, patches, codes):
     else:
         steps += [[x, None] for x in ('reopen:donation', 'click:board') if x in every]
     if 'servers' not in every:
-        steps += [[x, None] for x in ('reload:ffa', 'reload:tdm') if x in every]
+        steps += [[x, None] for x in ('reload:ffa', 'reload:tdm', 'reload:event') if x in every]
     return {'steps': steps, 'changes': per, 'notes': notes, 'built': [p for p in AS_PATCHES if p in ticked]}
 
 
@@ -4316,7 +4318,7 @@ def as_run(root):
                         'world/wdvolcane/wdvolcane.dyo', 'propmoverex.inc', 'propgiftbox.inc', 'propskill.txt',
                         'event.lua', 'serverbuff.txt', 'guildbuff.txt', '1rebirth.inc', 'couple.inc', 'propitemetc.inc', 'propitemetc.txt.txt', 'exptable.inc', AS_FEES,
                         'ffamanager.inc', 'tdmmanager.inc', 'guildcombat.txt', 'guildsiegeprize.lua', 'partydungeon.lua',
-                        'client/guildcombattext_5_eng.inc', 'client/guildcombattext_1_usa.inc', 'mount.inc']
+                        'client/guildcombattext_5_eng.inc', 'client/guildcombattext_1_usa.inc', 'mount.inc', 'minievent.inc']
     states = ['written', 'created', 'datares', 'different', 'none']
     pstates = ['in-source', 'missing', 'unknown', 'built']
     codesets = [[], ['DT_PATCH'], ['DT_ORDER'], ['NN_RULES_PATCH']]
@@ -12488,6 +12490,376 @@ def mt_run(root):
             'models': {str(k): v for k, v in models.items() if 225000 <= k <= 226000},
             'ownLoops': {'Mount058': mt_own_loops('Mount058', names), 'STR06201': mt_own_loops('STR06201', names)}}
 
+
+# ---------------------------------------------------------------- minievent: Mini Events (MiniEvent.inc)
+# Written from the C++ (V19 3d8a9280: WORLDSERVER/MiniEventMng.cpp ReadConfig :134-460, EndRound :852-1007, MERankLess :1010,
+# Finish :1073, GiveItem :1190; MiniEventMng.h ME_EVENT() defaults; CustomCommon.h:259-272), not from the JS copy.
+# After an error the server stops reading (every Mini Event off); this copy, like the editor, records it and goes on from the
+# next word, so every mistake in a file is listed.
+ME_KEYS = ['COLORGAME', 'TYPER', 'OXQUIZ', 'LUCKYDRAW', 'TURNIN', 'HIDESEEK']
+ME_SET = ['MIN_LEVEL', 'MIN_PLAYERS', 'MAX_PLAYERS', 'MAX_PER_IP', 'REGISTER', 'ROUNDS', 'ROUND_TIME', 'SCORE_TIME', 'ASK_DAYS', 'END_AT', 'IN_RANDOM']
+ME_DEF = {'MIN_LEVEL': 120, 'MIN_PLAYERS': 5, 'MAX_PLAYERS': 100, 'MAX_PER_IP': 1, 'REGISTER': 5, 'ROUNDS': 10, 'ROUND_TIME': 15,
+          'SCORE_TIME': 5, 'ASK_DAYS': 7, 'END_AT': 10, 'IN_RANDOM': 1}
+
+
+def me_type(w):
+    w = (w or '').upper()
+    if w in ME_KEYS:
+        return ME_KEYS.index(w) + 1
+    return 2 if w == 'QUICKHANDS' else 6 if w == 'HIDEANDSEEK' else 0
+
+
+def me_load(text, D, items, movers, chars):
+    s = MtScan(text, D)
+    ev = {i: {'loaded': False, 'v': dict(ME_DEF), 'ranks': [None] * 10, 'rest': None, 'pts': [15, 12, 10, 8, 7, 6, 5, 4, 3, 2], 'restp': 1,
+              'asks': 0, 'recipes': 0, 'spots': 0} for i in range(1, 7)}
+    begins, hints, errors, hide = [], 0, [], None
+    ok_item = lambda v: (v & 0xFFFFFFFF) in items
+    s.get()
+    while s.tok is not None:
+        kw = s.tok
+        if kw == 'EVENT':
+            t = me_type(s.word())
+            if not t:
+                errors.append('EVENT: unknown event "%s"' % (s.tok[1:-1] if s.tok and s.tok[:1] == '"' else (s.tok or '')))
+                s.get()
+                continue
+            e = ev[t]
+            e['loaded'] = True
+            s.get()
+            while s.tok is not None and s.tok in ME_SET:
+                k = s.tok
+                n = s.number()
+                e['v'][k] = (1 if n != 0 else 0) if k == 'IN_RANDOM' else n
+                s.get()
+            continue
+        if kw in ('RANK', 'REST'):
+            w = s.word()
+            t = me_type(w)
+            if not t:
+                errors.append('%s: unknown event "%s"' % (kw, w))
+                s.get()
+                continue
+            rank = None
+            if kw == 'RANK':
+                rank = s.number()
+                if rank < 1 or rank > 10:
+                    errors.append('RANK %s %d: rank must be 1 - 10' % (ME_KEYS[t - 1], rank))
+                    s.get()
+                    continue
+            item, num = s.number(), s.number()
+            if not ok_item(item) or num < 0 or num > 9999:
+                errors.append('%s %s: unknown item or amount not 0 - 9999' % (kw, ME_KEYS[t - 1]))
+            if kw == 'REST':
+                ev[t]['rest'] = [item & 0xFFFFFFFF, num]
+            else:
+                ev[t]['ranks'][rank - 1] = [item & 0xFFFFFFFF, num]
+        elif kw == 'POINTS':
+            w = s.word()
+            t = me_type(w)
+            if not t:
+                errors.append('POINTS: unknown event "%s"' % w)
+                s.get()
+                continue
+            vals = [s.number() for _ in range(11)]
+            ev[t]['pts'], ev[t]['restp'] = vals[:10], vals[10]
+        elif kw == 'ASK':
+            w = s.word()
+            t = me_type(w)
+            if t not in (2, 3):
+                errors.append('ASK: "%s" has no questions (TYPER or OXQUIZ)' % w)
+                s.get()
+                continue
+            bad, q = False, None
+            if t == 3:
+                a = s.word()
+                if a not in ('O', 'X'):
+                    errors.append('ASK OXQUIZ: answer must be O or X, not "%s"' % a)
+                    bad = True
+                else:
+                    q = s.word()
+            else:
+                q = s.word()
+                info = s.word()
+                if len(info) > 120:
+                    errors.append('ASK TYPER "%s": the info text must be up to 120 letters' % q)
+                    bad = True
+                elif not q or len(q) > 100:
+                    errors.append('ASK TYPER "%s": the text must be 1 - 100 letters' % q)
+                    bad = True
+            if not bad and (not q or len(q) > 200):
+                errors.append('ASK %s: the question must be 1 - 200 letters, in quotes' % ME_KEYS[t - 1])
+                bad = True
+            if not bad:
+                ev[t]['asks'] += 1
+        elif kw == 'RECIPE':
+            title = s.word()
+            n = s.number()
+            if not title or len(title) > 60 or n < 1 or n > 4:
+                errors.append('RECIPE "%s": title 1 - 60 letters in quotes, then 1 - 4 items' % title)
+            else:
+                got, bad = [], False
+                for k in range(n):
+                    if bad:
+                        break
+                    it, am = s.number(), s.number()
+                    if not ok_item(it) or am < 1 or am > 9999:
+                        errors.append('RECIPE "%s": item %d unknown or amount not 1 - 9999' % (title, k + 1))
+                        bad = True
+                    elif (it & 0xFFFFFFFF) in got:
+                        errors.append('RECIPE "%s": the same item twice' % title)
+                        bad = True
+                    got.append(it & 0xFFFFFFFF)
+                if not bad:
+                    ev[5]['recipes'] += 1
+        elif kw == 'SPOT':
+            x, z = s.float(), s.float()
+            reg, hint, land = s.word(), s.word(), s.word()
+            if not reg or len(reg) > 60 or len(hint) > 120 or len(land) > 60 or not x > 0 or not z > 0:
+                errors.append('SPOT %d %d: x / z above 0, "region" 1 - 60 letters, "hint" up to 120, "landmark" up to 60' % (me_round(x), me_round(z)))
+            else:
+                ev[6]['spots'] += 1
+        elif kw == 'ITEM_HINT':
+            it = s.number()
+            txt = s.word()
+            if not ok_item(it) or len(txt) > 100:
+                errors.append('ITEM_HINT "%s": unknown item or text over 100 letters' % txt)
+            else:
+                hints += 1
+        elif kw == 'HIDE_NPC':
+            mv = s.number()
+            key = s.word()
+            hide = [mv, key]
+            if mv not in movers or key.lower() not in chars:
+                errors.append('HIDE_NPC: unknown mover or character key "%s"' % key)
+        elif kw == 'BEGIN':
+            w = s.word()
+            rnd = w.upper() == 'RANDOM'
+            t = 0 if rnd else me_type(w)
+            if not rnd and not t:
+                errors.append('BEGIN: unknown event "%s" (or RANDOM)' % w)
+                s.get()
+                continue
+            d, hh, mm = s.number(), s.number(), s.number()
+            if d < 0 or d > 7 or hh < 0 or hh > 23 or mm < 0 or mm > 59:
+                errors.append('bad BEGIN %d %d %d (day 0-7, hour 0-23, minute 0-59)' % (d, hh, mm))
+            else:
+                begins.append([t, d, hh, mm])
+        else:
+            # CScript::GetToken puts a #define's value in place of its name (Script.cpp: LookupDefine -> "%d")
+            w = kw[1:-1] if len(kw) >= 2 and kw[0] == '"' and kw[-1] == '"' else str(D[kw]) if kw in D else kw
+            errors.append('unknown word "%s"' % w)
+        s.get()
+    anyev = False
+    for i in range(1, 7):
+        e = ev[i]
+        if not e['loaded']:
+            continue
+        anyev = True
+        v, K = e['v'], ME_KEYS[i - 1]
+        rmax = 600 if i in (5, 6) else 120
+        if v['MIN_LEVEL'] < 1 or v['MIN_LEVEL'] > 200: errors.append('%s MIN_LEVEL must be 1 - 200' % K)
+        elif v['MIN_PLAYERS'] < 1: errors.append('%s MIN_PLAYERS < 1' % K)
+        elif v['MAX_PLAYERS'] < v['MIN_PLAYERS'] or v['MAX_PLAYERS'] > 500: errors.append('%s MAX_PLAYERS must be MIN_PLAYERS - 500' % K)
+        elif v['MAX_PER_IP'] < 0: errors.append('%s MAX_PER_IP < 0' % K)
+        elif v['REGISTER'] < 1 or v['REGISTER'] > 60: errors.append('%s REGISTER must be 1 - 60 minutes' % K)
+        elif v['ROUNDS'] < 1 or v['ROUNDS'] > 30: errors.append('%s ROUNDS must be 1 - 30' % K)
+        elif v['ROUND_TIME'] < 5 or v['ROUND_TIME'] > rmax: errors.append('%s ROUND_TIME must be 5 - %d seconds' % (K, rmax))
+        elif v['SCORE_TIME'] < 2 or v['SCORE_TIME'] > 60: errors.append('%s SCORE_TIME must be 2 - 60 seconds' % K)
+        elif v['END_AT'] < 1 or v['END_AT'] > 500: errors.append('%s END_AT must be 1 - 500' % K)
+        elif i in (2, 3) and e['asks'] < v['ROUNDS']: errors.append('%s needs at least %d ASK lines (one per round), has %d' % (K, v['ROUNDS'], e['asks']))
+        elif i == 5 and e['recipes'] < v['ROUNDS']: errors.append('TURNIN needs at least %d RECIPE lines (one per round), has %d' % (v['ROUNDS'], e['recipes']))
+        elif i == 6 and e['spots'] < v['ROUNDS']: errors.append('HIDESEEK needs at least %d SPOT lines (one per round), has %d' % (v['ROUNDS'], e['spots']))
+        elif i == 6 and hide is None: errors.append('HIDESEEK needs a HIDE_NPC line')
+        else:
+            p = e['pts']
+            for k in range(10):
+                nxt = p[k + 1] if k + 1 < 10 else e['restp']
+                if p[k] > 999 or nxt < 0 or (p[k] < nxt if k + 1 < 10 else p[k] <= nxt):
+                    errors.append('%s POINTS: 0 - 999, places 1-10 never going up, place 10 more than the rest' % K)
+                    break
+    if not anyev:
+        errors.append('no EVENT line')
+    for b in begins:
+        if b[0] and not ev[b[0]]['loaded']:
+            errors.append('BEGIN %s: that event has no EVENT line' % ME_KEYS[b[0] - 1])
+    return {'events': ev, 'begins': begins, 'hints': hints, 'hide': hide, 'errors': errors}
+
+
+def me_round(x):
+    return int(math.floor(x + 0.5)) if x >= 0 else -int(math.floor(-x + 0.5))
+
+
+def me_rank(pl):
+    return sorted(pl, key=lambda p: (-p['points'], p['total'], p['id']))
+
+
+def me_end_round(t, e, pl, picks, truth, rng):
+    P, R, rt = e['pts'], e['restp'], e['v']['ROUND_TIME']
+    for p in pl:
+        q = picks.get(str(p['id']))
+        p['pick'], p['ms'] = (q['pick'], q['ms'] & 0xFFFFFFFF) if q else (-1, 0)
+    dice = None
+    if t == 4:
+        draw = list(pl)
+        for i in range(len(draw) - 1, 0, -1):
+            j = rng(i + 1)
+            draw[i], draw[j] = draw[j], draw[i]
+        for i, p in enumerate(draw):
+            p['pick'] = min(i, 254)
+            p['rp'] = P[i] if i < 10 else R
+            p['points'] += p['rp']
+            p['total'] = (p['total'] + i + 1) & 0xFFFFFFFF
+    else:
+        fid, fms = [0] * 6, [0xFFFFFFFF] * 6
+        if t == 1:
+            dice = [rng(6), rng(6), rng(6)]
+            for p in pl:
+                if 0 <= p['pick'] < 6 and p['ms'] < fms[p['pick']]:
+                    fms[p['pick']], fid[p['pick']] = p['ms'], p['id']
+        for p in pl:
+            n = 0
+            if p['pick'] >= 0:
+                if t == 1:
+                    n = 2 * sum(1 for d in dice if d == p['pick'])
+                    if n and fid[p['pick']] == p['id']:
+                        n += 1
+                elif t in (2, 5, 6):
+                    n = P[p['pick']] if p['pick'] < 10 else R
+                p['total'] = (p['total'] + p['ms']) & 0xFFFFFFFF
+            else:
+                p['total'] = (p['total'] + rt * 1000) & 0xFFFFFFFF
+            p['rp'] = n
+            p['points'] += n
+        if t == 3 and truth is not None:
+            right = sorted([p for p in pl if p['pick'] == (0 if truth else 1)], key=lambda p: (p['ms'], p['id']))
+            for i, p in enumerate(right):
+                p['rp'] = P[i] if i < 10 else R
+                p['points'] += p['rp']
+    rk = me_rank(pl)
+    for i, p in enumerate(rk):
+        p['move'] = p['place'] - (i + 1) if p['place'] > 0 else 0
+        p['place'] = i + 1
+    return dice, [[p['id'], p['rp'], p['points'], p['place'], p['move']] for p in rk]
+
+
+def me_finish(t, e, pl, packmax):
+    out = []
+    for i, p in enumerate(me_rank(pl)):
+        top = i < 10 and p['points'] > 0
+        row = e['ranks'][i] if top else e['rest']
+        st, prize = [], None
+        if row is not None and row[0] in packmax:
+            prize = row[0]
+            pm = packmax[row[0]]
+            size = pm if 0 < pm < 0x7fff else 0x7fff
+            n = row[1]
+            while n > 0:
+                st.append(min(n, size))
+                n -= min(n, size)
+        out.append([p['id'], i + 1, p['points'], p['total'] if t == 4 else p['total'] // 1000, prize, st, top])
+    return out
+
+
+ME_SMALL = [
+    'EVENT\tCOLORGAME\tMIN_LEVEL 120\n',                                                     # defaults, no prizes
+    'EVENT\tTYPER\tROUNDS 2\nASK\tTYPER\t"Slash"\t"x"\nASK\tTYPER\t"Heal"\t"y"\nPOINTS\tTYPER\t5 5 4 3 3 2 2 1 1 1\t1\n',  # 10th = rest
+    'EVENT\tOXQUIZ\tROUNDS 1\tROUND_TIME 130\nASK\tOXQUIZ\tO\t"a"\nASK\tOXQUIZ\tY\t"b"\n',  # round time too long, a bad answer
+    'EVENT\tLUCKYDRAW\tMIN_PLAYERS 0\nRANK\tLUCKYDRAW\t11\tII_SYS_SYS_EVENT_TOKEN\t1\nRANK\tLUCKYDRAW\t2\tII_NOPE\t3\nREST\tLUCKYDRAW\tII_SYS_SYS_EVENT_TOKEN\t10000\n',
+    'EVENT\tTURNIN\tROUNDS 2\tEND_AT 0\nRECIPE\t"A"\t2\tII_SYS_SYS_EVENT_TOKEN\t1\tII_SYS_SYS_EVENT_TOKEN\t2\nRECIPE\t""\t1\tII_SYS_SYS_EVENT_TOKEN\t1\n',
+    'EVENT\tHIDESEEK\tROUNDS 1\nSPOT\t0\t100\t"Flaris"\t""\t""\nSPOT\t6900.5\t3300\t"Flaris"\t"near"\t"Lake"\n',  # no HIDE_NPC
+    'EVENT\tBOGUS\nRANK\tNOPE\t1\tII_SYS_SYS_EVENT_TOKEN\t1\nFOO\nBEGIN\tTYPER\t1\t10\t0\nBEGIN\tRANDOM\t8\t1\t1\nBEGIN\tWHAT\t1\t1\t1\n',
+    'EVENT\tQUICKHANDS\tMAX_PLAYERS 3\tMIN_PLAYERS 4\tIN_RANDOM 5\n',
+    '// nothing\n',
+    'EVENT\tTYPER\tROUNDS 1\nASK\tTYPER\t"%s"\t"exactly 100"\nASK\tTYPER\t"%s"\t"101"\n' % ('a' * 100, 'b' * 101),   # the length edges
+    'EVENT\tcolorgame\tREGISTER 61\nHIDE_NPC\tMI_MAFL_LOSHA\tNoSuchKey\nITEM_HINT\tII_SYS_SYS_EVENT_TOKEN\t"%s"\n' % ('x' * 101),
+]
+
+
+def me_run(root):
+    D = defines(root)
+    props = spec_props(root, D)
+    items = set(props)
+    packmax = {k: v[0] for k, v in props.items()}
+    movers = set()
+    for l in open(os.path.join(root, 'propMover.txt'), 'rb').read().decode('latin-1').splitlines():
+        c = l.strip().split('\t')[0].strip() if l.strip() and not l.lstrip().startswith('//') else ''
+        if c:
+            movers.add(D[c] if c in D else atoi(c))
+    chars = set()
+    for n in ('character.inc', 'character-etc.inc', 'character-school.inc'):
+        f = os.path.join(root, n)
+        if not os.path.exists(f):
+            continue
+        b = open(f, 'rb').read()
+        tx = b.decode('utf-16') if b[:2] == b'\xff\xfe' else b.decode('latin-1')
+        # LoadCharacter: a key, then the next word is taken as its "{" (checked by nobody: a missing { takes "setting"),
+        # then the block runs until its braces balance
+        tk = [x.decode('latin-1') for x in tokens(tx.encode('latin-1', 'replace'))]
+        i = 0
+        while i < len(tk):
+            chars.add(tk[i].lower())
+            i += 2
+            depth = 1
+            while i < len(tk) and depth > 0:
+                depth += 1 if tk[i] == '{' else -1 if tk[i] == '}' else 0
+                i += 1
+    real = open(os.path.join(root, 'MiniEvent.inc'), 'rb').read().decode('latin-1')
+    files = []
+    for t in [real] + ME_SMALL:
+        r = me_load(t, D, items, movers, chars)
+        evs = {str(i): {'loaded': e['loaded'], 'v': e['v'], 'ranks': e['ranks'], 'rest': e['rest'], 'pts': e['pts'] + [e['restp']],
+                         'asks': e['asks'], 'recipes': e['recipes'], 'spots': e['spots']} for i, e in r['events'].items()}
+        files.append({'text': None if t is real else t, 'events': evs, 'begins': r['begins'], 'hints': r['hints'], 'hide': r['hide'], 'errors': r['errors']})
+    # whole events: every type x player counts x seeds, picks made here
+    runs = []
+    rnd = random.Random(1812)
+    ev = me_load(real, D, items, movers, chars)['events']
+    alt = {'pts': [9, 9, 9, 5, 5, 0, 0, 0, 0, 0], 'restp': 0}
+    for t in range(1, 7):
+        for n in (0, 1, 3, 10, 11, 25):
+            for variant in range(3):
+                e = dict(ev[t])
+                if variant == 1:
+                    e = dict(e, pts=alt['pts'], restp=alt['restp'])
+                if variant == 2:
+                    e = dict(e, ranks=[None, [packmax and next(iter(packmax)), 5]] + [None] * 8, rest=None)
+                ids = rnd.sample(range(1, 900), n)
+                players = [{'id': i, 'name': 'P%d' % i} for i in ids]
+                rounds = []
+                for r in range(rnd.choice([1, 3, 10])):
+                    picks = {}
+                    order = list(ids)
+                    rnd.shuffle(order)
+                    for k, pid in enumerate(order):
+                        if rnd.random() < 0.15:
+                            continue
+                        ms = rnd.choice([0, 1, 500, 500, 14999, rnd.randint(0, 15000)])
+                        pk = {1: rnd.randint(0, 5), 3: rnd.randint(0, 1), 2: k, 5: k, 6: 0 if k == 0 else -1, 4: -1}[t]
+                        if pk >= 0:
+                            picks[str(pid)] = {'pick': pk, 'ms': ms}
+                    rounds.append({'picks': picks, 'truth': rnd.random() < 0.5 if rnd.random() < 0.9 else None})
+                seed = rnd.randint(1, 2 ** 31)
+                pl = [{'id': p['id'], 'points': 0, 'rp': 0, 'pick': -1, 'ms': 0, 'total': 0, 'place': 0, 'move': 0} for p in sorted(players, key=lambda p: p['id'])]
+                rng = Rand(seed)
+                outr = []
+                for rr in rounds:
+                    dice, rows = me_end_round(t, e, pl, rr['picks'], rr['truth'], rng)
+                    outr.append({'dice': dice, 'rows': rows})
+                runs.append({'type': t, 'variant': variant, 'rt': e['v']['ROUND_TIME'], 'players': players, 'rounds': rounds, 'seed': seed, 'ranks': e['ranks'], 'rest': e['rest'],
+                             'pts': e['pts'], 'restp': e['restp'], 'out': outr, 'final': me_finish(t, e, pl, packmax)})
+    # GiveItem's stacks at the dwPackMax edges (0 / 0x7fff and above = 0x7fff a stack)
+    stacks = []
+    for pm in (0, 1, 7, 9999, 32766, 32767, 32768, 65535):
+        for n in (0, 1, 7, 9999, 32767, 40000, 70000):
+            size = pm if 0 < pm < 0x7fff else 0x7fff
+            st, k = [], n
+            while k > 0:
+                st.append(min(k, size))
+                k -= min(k, size)
+            stacks.append([pm, n, st])
+    return {'files': files, 'runs': runs, 'stacks': stacks}
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -12541,6 +12913,8 @@ if __name__ == '__main__':
         print(json.dumps(we_run_all(root)))
     elif what == 'consumables':                 # consumable stats: use, use again, same-kind blocks, expiry, edits
         print(json.dumps(cs_run_all(root)))
+    elif what == 'minievent':                   # Mini Events: MiniEvent.inc (ReadConfig), round points, ranking, prizes
+        print(json.dumps(me_run(root)))
     elif what == 'mount':                       # Mounts: Mount.inc (LoadMountAnimationList), loops, ground, flight, take-off, edits
         print(json.dumps(mt_run(root)))
     elif what == 'dungeon':                     # Dungeons: PartyDungeon.lua (LoadScript), entering, the clock, the map monsters, edits

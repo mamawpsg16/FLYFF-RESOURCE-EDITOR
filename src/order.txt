@@ -78,6 +78,10 @@ loaders/mounts.js
 loaders/mount-sim.js
 edit/mounts-ops.js
 validate/mounts.js
+loaders/minievent.js
+loaders/minievent-sim.js
+edit/minievent-ops.js
+validate/minievent.js
 loaders/pvp.js
 loaders/pvp-sim.js
 loaders/pvp-rules.js
@@ -124,6 +128,7 @@ ui/sets.js
 ui/weapons.js
 ui/consumables.js
 ui/mounts.js
+ui/minievent.js
 ui/pvp-equalized.js
 ui/pvp.js
 ui/dungeon.js

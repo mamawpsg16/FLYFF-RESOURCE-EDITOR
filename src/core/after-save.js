@@ -92,6 +92,8 @@
     'equalizedpresets.inc': { server: RELOAD, client: null, reload: 'eq', cite: 'EqualizedPvP.cpp:~806 LoadPresetFile (after ReadConfig); /eqreload' },
     'guildsiegeprize.lua': { server: STARTUP, client: null, cite: 'eveschool.cpp:3672 LoadPrizes (WorldServer) + databaseserver/Project.cpp:216 LoadScript (DatabaseServer)' },
     // Dungeon task: time limit, cooldown, levels, kill-all (WorldServer only, read once at start; no reload command)
+    // Mini Events: read on the WorldServer's first tick and by the GM command /eventreload (refused while an event runs)
+    'minievent.inc': { server: RELOAD, client: null, reload: 'event', cite: 'MiniEventMng.cpp:643 Process -> ReadConfig :134; /eventreload FuncTextCmd.cpp:1826' },
     // Mounts: the seat, speed, loops and flying of every mount; both read it once at start (no reload; /mountset changes only the
     // running copy until a restart)
     'mount.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:1102 LoadMountAnimationList (#ifdef __MOUNT)' },
@@ -192,6 +194,7 @@
       const L = k.toUpperCase();
       steps.push({ id: 'reload:' + k, short: `type /${k}reload in game`, text: `In the game, as GM, type /${k}reload while no ${L} runs (it is refused during a run; the chat line says how many start times and the fee it read). Or run Stop Server.bat, then Start Server.bat.` });
     }
+    if (!all.has('servers') && all.has('reload:event')) steps.push({ id: 'reload:event', short: 'type /eventreload in game', text: 'In the game, as GM, type /eventreload while no Mini Event runs (it is refused during an event; the chat line says how many start times it read, or the error that switched Mini Events off). Or run Stop Server.bat, then Start Server.bat.' });
     if (!all.has('servers') && all.has('reload:eq')) steps.push({ id: 'reload:eq', short: 'type /eqreload in game', text: 'In the game, as GM, type /eqreload (the chat line says how many presets and problems it read; a battle already running keeps the players it has). Or run Stop Server.bat, then Start Server.bat.' });
     return { steps, changes: outChanges, notes, built: Object.keys(PATCHES).filter(id => built.has(id)) };
   }

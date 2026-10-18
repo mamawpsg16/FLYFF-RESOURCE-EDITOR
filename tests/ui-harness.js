@@ -180,6 +180,41 @@
     }
   }
 
+  // the Mini Events task (?stop=minievent: the O/X Quiz page; ?stop=mineventedit: settings, a prize, points, Save)
+  async function miniEventStage() {
+    const S = FRE.app.state;
+    await openTask('minievent');
+    const ed = () => $('editor'), items = () => [...document.querySelectorAll('#list .npc')], txt = () => S.ws.files.get('minievent.inc').text;
+    const lastToast = () => ([...$('toasts').children].pop() || { textContent: '' }).textContent;
+    ok(S.mode === 'minievent' && items().length === 7 && /Color Game/.test(items()[0].textContent) && /Start times/.test(items()[6].textContent), 'Mini Events: one page per event (6) + the start times');
+    ok(!S.ws.diags.some(d => d.module === 'minievent'), 'the real MiniEvent.inc has no problem');
+    click(items().find(x => x.dataset.page === '3'));
+    ok(/O\/X Quiz/.test(ed().querySelector('h2').textContent) && /Prizes/.test(ed().textContent) && /Round points/.test(ed().textContent) && ed().querySelector('input[data-key="me|3|ROUNDS"]').value === '10'
+      && /364 questions/.test(ed().textContent) && /Try it/.test(ed().textContent), 'O/X Quiz page: its settings, its prizes, its points, 364 questions, Try it');
+    if (STOP === 'minievent') { $('toasts').textContent = ''; return; }
+    const rounds = ed().querySelector('input[data-key="me|3|ROUNDS"]');
+    rounds.value = '12'; rounds.dispatchEvent(new Event('change'));
+    ok(/EVENT\tOXQUIZ\t[^\n]*ROUNDS 12\t/.test(txt()) && /rounds 12 \(was 10\)/.test(lastToast()), 'O/X rounds 10 -> 12: one value on the EVENT line');
+    const amt = ed().querySelector('input[data-key="mepn|3|1"]');
+    amt.value = '40'; amt.dispatchEvent(new Event('change'));
+    ok(/RANK\tOXQUIZ\t1\tII_SYS_SYS_EVENT_TOKEN\t40\n/.test(txt()) && /RANK\tCOLORGAME\t1\tII_SYS_SYS_EVENT_TOKEN\t30\n/.test(txt()), 'O/X 1st prize 30 -> 40; the Color Game 1st prize stays 30');
+    const p10 = ed().querySelector('input[data-key="mept|3|9"]');
+    p10.value = '1'; p10.dispatchEvent(new Event('change'));
+    ok(S.ws.diags.some(d => d.code === 'ME_CONFIG' && d.severity === 'BLOCK' && /OXQUIZ POINTS/.test(d.message)), '10th = the rest (1): a BLOCK (the server would switch Mini Events off)');
+    click($('btn-undo'));
+    if (STOP === 'mineventedit') { $('toasts').textContent = ''; return; }
+    click($('btn-save'));
+    await waitFor(() => btnByText(document, 'Choose folder') || btnByText(document, 'Back up and write'), 'backup prompt or review (minievent)');
+    if (btnByText(document, 'Choose folder')) click(btnByText(document, 'Choose folder'));
+    await waitFor(() => btnByText(document, 'Back up and write'), 'review dialog (minievent)');
+    ok(/MiniEvent\.inc/.test(document.querySelector('.modal').textContent) && /eventreload/.test(document.querySelector('.modal').textContent), 'review lists MiniEvent.inc; After saving: /eventreload');
+    click(btnByText(document, 'Back up and write'));
+    await waitFor(() => [...document.querySelectorAll('.modal header')].some(x => /^Saved|failed/.test(x.textContent)), 'save finished (minievent)');
+    ok(/ROUNDS 12/.test(new TextDecoder().decode(res.children.get('MiniEvent.inc').bytes)), 'MiniEvent.inc saved');
+    document.querySelectorAll('.modal-back').forEach(m => m.remove());
+    res.children.get('MiniEvent.inc').bytes = original.get('MiniEvent.inc');
+  }
+
   // the Mounts task (?stop=mounts: the list and Nightmare Dragon; ?stop=mountsedit: edits, paste, a new block, Save)
   async function mountsStage() {
     const S = FRE.app.state;
@@ -266,10 +301,11 @@
     // the cards are drawn after the patch check (io/patch-state.js reads one C++ file per patch)
     await waitFor(() => document.querySelector('.task-card:not(:disabled)'), 'task cards enabled');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
-    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 14 && document.querySelector('.task-card[data-task="mounts"]') && document.querySelector('.task-card[data-task="consumables"]') && document.querySelector('.task-card[data-task="dungeon"]') && document.querySelector('.task-card[data-task="pvp"]') && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 14 tasks to pick (Mounts; Consumable Stats; Dungeons; PvP Events; Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 15 && document.querySelector('.task-card[data-task="minievent"]') && document.querySelector('.task-card[data-task="mounts"]') && document.querySelector('.task-card[data-task="consumables"]') && document.querySelector('.task-card[data-task="dungeon"]') && document.querySelector('.task-card[data-task="pvp"]') && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 15 tasks to pick (Mini Events; Mounts; Consumable Stats; Dungeons; PvP Events; Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     if (STOP === 'dungeon') { await dungeonStage(); return; }
+    if (STOP === 'minievent' || STOP === 'mineventedit' || STOP === 'mineventsave') { await miniEventStage(); return; }
     if (STOP === 'mounts' || STOP === 'mountsmore' || STOP === 'mountsimple' || STOP === 'mountsgame' || STOP === 'mountsedit' || STOP === 'mountsave') { await mountsStage(); return; }
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
     click(document.querySelector('.task-card[data-task="npc"]'));
