@@ -10,7 +10,7 @@ import { FRE, ROOT, readBytes, listDir, loadFolder, openSource, exists, loadWorl
 const ORACLE_SIM = GLib.getenv('ORACLE_SIM') || ROOT + '/tools/oracle_sim.py';
 import { bpServer } from './bp-server.js';
 import { checkMounts } from './mount-check.js';
-import { checkMiniEvent, checkTurnIn, checkWeek } from './minievent-check.js';
+import { checkMiniEvent, checkTurnIn, checkWeek, checkRace } from './minievent-check.js';
 import { checkAntiBot } from './antibot-check.js';
 
 const FIXTURES = ROOT + '/test-data/fixtures/Resource';
@@ -123,7 +123,7 @@ const W = freshWorkspace();
   eq(W.items.items.size, 9842, 'Spec_Item items loaded');
   eq(W.items.stopped, null, 'Spec_Item parse did not stop');
   eq(W.items.skippedVer, 0, 'no rows above __VER 19');
-  eq(W.chars.npcs.length, 595, 'NPC blocks across 3 files');
+  eq(W.chars.npcs.length, 596, 'NPC blocks across 3 files');
   eq(W.diags.filter(d => d.code === 'C_NO_OPEN_BRACE').length, 6, '6 NPCs without "{"');
   eq(W.diags.filter(d => d.severity === 'BLOCK').length, 0, 'no blocking problems in the current data');
   const cnt = {};
@@ -1503,14 +1503,14 @@ section('add new NPC: bytes, rules, simulator (JS and Python copies agree)');
 
   // handoff §6.5.1: the live data loads; 46 maps end at the 0xFFFFFFFF marker, the 2 junk maps do not
   const ends = [...w.mapFiles.keys()].map(m => [m, FRE.npcOps.insertPoint(w.mapFile(m).serialize())]);
-  eq(ends.filter(([, a]) => a !== null).length, 47, '47 maps take a new NPC record (WdFFA added, 0600d7e9)');
+  eq(ends.filter(([, a]) => a !== null).length, 48, '48 maps take a new NPC record (WdFFA added 0600d7e9, WdRace ce1659f6)');
   eq(ends.filter(([, a]) => a === null).map(([m]) => m).sort().join(','), 'WdGuildWar1To1,WdVolcaneYellow', 'only the 2 junk maps cannot');
   const mad = FRE.world.readDyo(before.dyo);
   eq(mad.movers.length, 364, 'WdMadrigal.dyo: 364 NPC records');
   const jur = mad.placements.find(p => p.key === 'MaFl_Juria');
   ok(jur && jur.model === 212 && Math.abs(jur.angle - 182.38) < 0.01 && Math.abs(jur.x - 1739.61 * 4) < 0.1 && jur.y === 100 && Math.abs(jur.z - 802.95 * 4) < 0.1,
     "Juria's record: model 212, angle 182.38, file x 1739.61 = 6958.4 in game (x4, Obj.cpp:525)");
-  eq(FRE.npcOps.lastStringId(w), 1189, 'highest IDS_CHARACTER_INC_ is 001189 (Lost Fwanki, Mini Events)');
+  eq(FRE.npcOps.lastStringId(w), 1190, 'highest IDS_CHARACTER_INC_ is 001190 (Finish Line, Vagrant Race)');
 
   // the §5 example: golden output (handoff §6.5.4) and re-read through the loaders (§6.5.5)
   const form = { key: 'MaFl_Lumi', name: 'Lumi', model: 'MI_MAFL_JURIA', image: 'IDS_CHARACTER_INC_000056', structure: 'SRT_GENERAL',
@@ -1524,9 +1524,9 @@ section('add new NPC: bytes, rules, simulator (JS and Python copies agree)');
   const tail = (a, b) => B.bytesEqual(b.subarray(0, a.length), a) ? FRE.bytes.utf16leToString(b.subarray(a.length), 0) : null;
   eq(tail(before.inc, inc), '\r\nMaFl_Lumi\r\n{\r\n\tsetting\r\n\t{\r\n\t\tAddMenu( MMI_TRADE );\r\n\t\tAddMenu( MMI_BANKING );\r\n\t\tAddShopItem( 0, II_SYS_SYS_SCR_BLESSEDNESS );\r\n' +
     '\t\tAddVendorItem( 1, IK3_SCROLL, -1, 1, 150, 100 );\r\n\t\tm_nStructure= SRT_GENERAL;\r\n\t\tSetImage\r\n\t\t(\r\n\t\tIDS_CHARACTER_INC_000056\r\n\t\t);\r\n\t}\r\n' +
-    '\tSetName\r\n\t(\r\n\tIDS_CHARACTER_INC_001190\r\n\t);\r\n\tAddVendorSlot( 0, IDS_CHARACTER_INC_001191 );\r\n\tAddVendorSlot( 1, IDS_CHARACTER_INC_001192 );\r\n}\r\n',
+    '\tSetName\r\n\t(\r\n\tIDS_CHARACTER_INC_001191\r\n\t);\r\n\tAddVendorSlot( 0, IDS_CHARACTER_INC_001192 );\r\n\tAddVendorSlot( 1, IDS_CHARACTER_INC_001193 );\r\n}\r\n',
     'character.inc: only the §5.2 block is appended (UTF-16LE, CRLF, BOM kept)');
-  eq(tail(before.txt, txt), 'IDS_CHARACTER_INC_001190\tLumi\r\nIDS_CHARACTER_INC_001191\tGeneral Goods\r\nIDS_CHARACTER_INC_001192\tScrolls\r\n', 'character.txt.txt: 3 lines appended');
+  eq(tail(before.txt, txt), 'IDS_CHARACTER_INC_001191\tLumi\r\nIDS_CHARACTER_INC_001192\tGeneral Goods\r\nIDS_CHARACTER_INC_001193\tScrolls\r\n', 'character.txt.txt: 3 lines appended');
   eq(dyo.length, before.dyo.length + 200, '.dyo is 200 bytes longer');
   ok(B.bytesEqual(dyo.subarray(0, plan.insertAt), before.dyo.subarray(0, plan.insertAt)) && B.bytesEqual(dyo.subarray(plan.insertAt + 200), before.dyo.subarray(plan.insertAt)),
     '.dyo: bytes before and after the new record are unchanged');
@@ -1612,7 +1612,7 @@ section('add new NPC: bytes, rules, simulator (JS and Python copies agree)');
   // the independent Python copy: same rules, same bytes, same game state for every case
   const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} newnpc ${FIXTURES}`);
   const py = JSON.parse(new TextDecoder().decode(out));
-  eq(py.lastId, 1189, 'Python: highest IDS_CHARACTER_INC_ 1189');
+  eq(py.lastId, 1190, 'Python: highest IDS_CHARACTER_INC_ 1190');
   let agree = 0, built = 0, games = 0;
   const hex = b => Array.from(b, x => x.toString(16).padStart(2, '0')).join('');
   for (const c of py.cases) {
@@ -1670,7 +1670,7 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
   ok(names.every(n => w.isEditable(n)) && ['defineText.h', 'textClient.inc', 'textClient.txt.txt', 'Exchange_Script.txt'].every(n => w.clientFileNames().includes(n)),
     'NPC task may write (and client-sync) defineText.h, textClient.inc, textClient.txt.txt, Exchange_Script.txt');
   ok(w.models.exchange && w.models.exchange.menus.length > 70, 'NPC task reads the exchange menus');
-  eq(FRE.menuOps.freeMenuIds(w).slice(0, 6).join(), '284,285,286,287,298,299', 'free menu ids: 284-287, then 298 (282 statue buff, 283 FFA Arena, 288-290 TDM Arena / FFA / TDM Rules, 291-293 Baruna, 294-297 Mini Events + arena entry)');
+  eq(FRE.menuOps.freeMenuIds(w).slice(0, 6).join(), '284,285,286,287,299,300', 'free menu ids: 284-287, then 299 (282 statue buff, 283 FFA Arena, 288-290 TDM Arena / FFA / TDM Rules, 291-293 Baruna, 294-298 Mini Events + arena entry)');
   eq(FRE.menuOps.nextTid(w), 8044, 'next free TID: 8044 (after TID_TOOLTIP_SKILLDMG 8043)');
   eq(FRE.menuOps.nextTextId(w), 3929, 'next textClient key: IDS_TEXTCLIENT_INC_003929');
 
@@ -1678,7 +1678,7 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
   const jeff = JSON.parse(readText(ROOT + '/tools/jeff-menus.json'));
   eq(FRE.validateNewMenus(w, jeff).length, 0, "Jeff's 6 menus: no problem");
   const plan = FRE.menuOps.newMenusPlan(w, jeff);
-  eq(plan.ids.join(), '284,285,286,287,298,299', 'Jeff: menu ids 284-287, 298, 299 (Ankou = 298)');
+  eq(plan.ids.join(), '284,285,286,287,299,300', 'Jeff: menu ids 284-287, 299, 300 (Ankou = 299)');
   {
     // Try it before Create (menuOps.tryTable): a scratch load, the workspace untouched, the new texts shown
     const snap = names.map(n => w.files.get(n).text), hist = w.history.length, defs = w.defines.defines.size;
@@ -1687,14 +1687,14 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
       'Try before Create: no file, undo step or define changes');
     eq(plan.ids.map(id => T0.table.find(id) ? T0.table.find(id).sets.length : 0).join(), '10,10,10,10,11,10', "Try before Create: the scratch load has Jeff's 6 menus with all their exchanges");
     eq(T0.env.text(plan.results[0]), 'You received your weapon.', 'Try before Create: the new success message is shown (not yet in textClient)');
-    const r0 = XS0 => XS0.resultExchange(T0.env, T0.table, XS0.stockedPlayer(T0.env, T0.table.find(298).sets[0], { free: 1 }), 298, 0, XS0.rng(1));
+    const r0 = XS0 => XS0.resultExchange(T0.env, T0.table, XS0.stockedPlayer(T0.env, T0.table.find(299).sets[0], { free: 1 }), 299, 0, XS0.rng(1));
     const rr = r0(FRE.exchangeSim);
     ok(rr.result === 'SUCCESS' && rr.given[0].id === w.defines.defines.get('II_WEA_SWO_BEHESWORD'), 'Try before Create: Ankou #1 gives Curtana on the scratch load');
-    eq(FRE.exchangeSim.clientReply(T0.env, T0.table, 298, 0, rr).box, 'You received your weapon.', 'Try before Create: the player reads the new success message');
+    eq(FRE.exchangeSim.clientReply(T0.env, T0.table, 299, 0, rr).box, 'You received your weapon.', 'Try before Create: the player reads the new success message');
   }
   w.applyGroup(plan.parts, 'Jeff');
   const txt = n => w.files.get(n).text;
-  ok(txt('defineneuz.h').includes('#define MMI_HIDE_FOUND\t\t\t297\t// Lost Fwanki (Hide and Seek mini event): "Found it!" (__MINI_EVENT)\r\n#define MMI_WPNPIECE_ENTANESS\t284\t// MaFl_Jeff exchange menu\r\n'), 'defineNeuz.h: MMI_WPNPIECE_ENTANESS 284 after the last menu define (MMI_HIDE_FOUND 297)');
+  ok(txt('defineneuz.h').includes('#define MMI_RACE_FINISH\t\t\t298\t// the Robe girl at the top of WdRace (Vagrant Race mini event): "Finish!" (__MINI_EVENT)\r\n#define MMI_WPNPIECE_ENTANESS\t284\t// MaFl_Jeff exchange menu\r\n'), 'defineNeuz.h: MMI_WPNPIECE_ENTANESS 284 after the last menu define (MMI_RACE_FINISH 298)');
   ok(/TID_MMI_MUSICFESTIVALGUITAR\t\t\t7279[^\n]*\n#define\tTID_MMI_WPNPIECE_ENTANESS\t\t\t7284\r\n/.test(txt('definetext.h')) && txt('definetext.h').endsWith('#define\tTID_GAME_WPNPIECE_FAIL\t\t\t\t\t8045\r\n'),
     'defineText.h: TID_MMI_ labels 7284.. after TID_MMI_MUSICFESTIVALGUITAR 7279; result TIDs 8044/8045 at the end');
   ok(txt('textclient.txt.txt').endsWith('IDS_TEXTCLIENT_INC_003934\tCrystal Lusaka Weapons\r\nIDS_TEXTCLIENT_INC_003935\tYou received your weapon.\r\nIDS_TEXTCLIENT_INC_003936\tYou need the weapon pieces, the boss item and a free inventory slot.\r\n'),
@@ -1706,9 +1706,9 @@ section('new exchange menus: lines, rules, right-click, exchanges (JS and Python
     "in game: Jeff's right-click = Dialog + the 6 labels, each opening the exchange window with its weapons");
   eq(w.diags.filter(d => d.module === 'exchange' && d.severity === 'BLOCK').length, 0, 'the exchange loader reads the new menus without a problem');
   const XS = FRE.exchangeSim, env = XS.envFromWorkspace(w), table = XS.serverTable(w.models.exchange);
-  const ank = table.find(298);
+  const ank = table.find(299);
   const p1 = XS.stockedPlayer(env, ank.sets[0], { free: 1 });
-  const r1 = XS.resultExchange(env, table, p1, 298, 0, XS.rng(1));
+  const r1 = XS.resultExchange(env, table, p1, 299, 0, XS.rng(1));
   ok(r1.result === 'SUCCESS' && r1.given.length === 1 && r1.given[0].id === w.defines.defines.get('II_WEA_SWO_BEHESWORD') && r1.taken.length === 2, 'Ankou #1: 200 pieces + 1 Ankou\'s Scale -> Curtana');
   w.undo();
   ok(names.every((n, i) => B.bytesEqual(w.files.get(n).serialize(), before[i])) && !w.defines.defines.has('MMI_WPNPIECE_ENTANESS'), 'one Undo restores all 6 files and the defines');
@@ -4190,7 +4190,7 @@ section('Mini Events: MiniEvent.inc, round points, places, prizes, edits (JS and
   const W = new FRE.Workspace(fs, { only: 'minievent' }).load();
   const m = W.models.minievent, O = FRE.miniEventOps, D = W.defines.defines, J = JSON.stringify;
   eq(m.errors.length, 0, 'the real MiniEvent.inc: no error (Mini Events stay on)');
-  eq(m.events.slice(1).map(e => e.loaded).join(), 'true,true,true,true,true,true', 'all six events have an EVENT line');
+  eq(m.events.slice(1).map(e => e.loaded).join(), 'true,true,true,true,true,true,true', 'all seven events have an EVENT line');
   eq(J([m.events[2].asks.length, m.events[3].asks.length, m.events[5].recipes.length, m.events[6].spots.length]), J([547, 364, 68, 38]), 'Quick Hands 547, O/X 364 questions, 68 recipes, 38 spots');
   const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} minievent ${FIXTURES}`);
   let py = null;
@@ -4207,6 +4207,10 @@ section('Mini Events: MiniEvent.inc, round points, places, prizes, edits (JS and
     let p3 = null;
     try { p3 = JSON.parse(new TextDecoder().decode(o3)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py week) gave no readable result', e.message); }
     if (p3) checkWeek({ FRE, py: p3, ws: tw, ok });
+    const [, o4] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} race ${FIXTURES}`);
+    let p4 = null;
+    try { p4 = JSON.parse(new TextDecoder().decode(o4)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py race) gave no readable result', e.message); }
+    if (p4) checkRace({ FRE, py: p4, ws: tw, ok });
   }
   // edits: one value / a prize of one event only / a new POINTS line; undo = the same bytes
   const f = W.files.get('minievent.inc'), before = f.serialize();

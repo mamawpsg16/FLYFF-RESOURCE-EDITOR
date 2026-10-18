@@ -55,7 +55,7 @@ else cp -p "$SRC"/Client/Icon/* "$DST/Client/Icon/"; fi
 for d in $SRC/Server/Resource/World/*/; do
   n=$(basename "$d")
   # NPC placement (.dyo), area names (.rgn + the map's .txt.txt), continents (WdMadrigal.wld.cnt)
-  for f in "$d"*.dyo "$d"*.rgn "$d"*.txt.txt "$d"*.wld.cnt; do [ -f "$f" ] && mkdir -p "$DST/Resource/World/$n" && cp -p "$f" "$DST/Resource/World/$n/"; done
+  for f in "$d"*.dyo "$d"*.rgn "$d"*.txt.txt "$d"*.wld "$d"*.wld.cnt; do [ -f "$f" ] && mkdir -p "$DST/Resource/World/$n" && cp -p "$f" "$DST/Resource/World/$n/"; done
 done
 for d in $SRC/Client/World/*/; do
   n=$(basename "$d")

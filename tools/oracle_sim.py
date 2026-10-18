@@ -4201,8 +4201,8 @@ AS_CITES = [
     ('WORLDSERVER/ItemUpgrade.cpp', 249, 'int nCost = '),
     ('WORLDSERVER/ItemUpgrade.cpp', 461, 'int nPayPenya = '),
     ('WORLDSERVER/ItemUpgrade.cpp', 812, 'int nCost = '),
-    ('WORLDSERVER/DPSrvr.cpp', (7066, 7067), 'int nPayPenya = '),   # (the editor's line, Python's: a 0x85 byte splits a line)
-    ('WORLDSERVER/DPSrvr.cpp', (12953, 12954), 'nCost\t= '),
+    ('WORLDSERVER/DPSrvr.cpp', (7077, 7078), 'int nPayPenya = '),   # (the editor's line, Python's: a 0x85 byte splits a line)
+    ('WORLDSERVER/DPSrvr.cpp', (12964, 12965), 'nCost\t= '),
     ('_Interface/WndPiercing.cpp', 112, 'nCost = '),
     ('_Interface/WndField.cpp', 28769, 'GetGold() < '),
     ('_Interface/WndField.cpp', 28845, 'GetGold() < '),
@@ -4215,8 +4215,8 @@ AS_CITES = [
     ('_Common/eveschool.cpp', 3743, 'CGuildSiegePrize::GetInstance()->LoadPrizes()'),
     ('databaseserver/Project.cpp', 216, 'CGuildSiegePrize::GetInstance()->LoadScript()'),
     ('_Common/Project.cpp', 996, 'CInstanceDungeonParty::GetInstance()->LoadScript("PartyDungeon.lua")'),
-    ('_Interface/WndWorld.cpp', 4642, 'FILE_GUILDCOMBAT_TEXT_6'),
-    ('_Interface/WndWorld.cpp', 4723, 'FILE_GUILDCOMBAT_TEXT_1'),
+    ('_Interface/WndWorld.cpp', 4647, 'FILE_GUILDCOMBAT_TEXT_6'),
+    ('_Interface/WndWorld.cpp', 4728, 'FILE_GUILDCOMBAT_TEXT_1'),
     # Mounts (V19 b43949aa / a5325b65): both load it, outside any __WORLDSERVER #ifdef
     ('_Common/Project.cpp', 1102, 'LoadMountAnimationList()'),
 ]
@@ -4244,6 +4244,8 @@ def as_who(key):
     if re.fullmatch(r'client/npcboard_\d+\.inc', key):
         return False, 'click'
     if re.fullmatch(r'world/.+\.dyo', key):
+        return True, None
+    if re.fullmatch(r'world/.+\.rgn', key):     # the respawn lines: WorldFile.cpp:554 ReadRespawn, monsters #ifdef __WORLDSERVER
         return True, None
     if key == 'propmoverex.inc':          # drops are kept only in the WorldServer (Project.cpp:3231)
         return True, None
@@ -12499,7 +12501,7 @@ def mt_run(root):
 # Finish :1073, GiveItem :1190; MiniEventMng.h ME_EVENT() defaults; CustomCommon.h:259-272), not from the JS copy.
 # After an error the server stops reading (every Mini Event off); this copy, like the editor, records it and goes on from the
 # next word, so every mistake in a file is listed.
-ME_KEYS = ['COLORGAME', 'TYPER', 'OXQUIZ', 'LUCKYDRAW', 'TURNIN', 'HIDESEEK']
+ME_KEYS = ['COLORGAME', 'TYPER', 'OXQUIZ', 'LUCKYDRAW', 'TURNIN', 'HIDESEEK', 'RACE']     # RACE = 7, V19 ce1659f6 (not yet built)
 ME_SET = ['MIN_LEVEL', 'MIN_PLAYERS', 'MAX_PLAYERS', 'MAX_PER_IP', 'REGISTER', 'ROUNDS', 'ROUND_TIME', 'SCORE_TIME', 'ASK_DAYS', 'END_AT', 'IN_RANDOM']
 ME_DEF = {'MIN_LEVEL': 120, 'MIN_PLAYERS': 5, 'MAX_PLAYERS': 100, 'MAX_PER_IP': 1, 'REGISTER': 5, 'ROUNDS': 10, 'ROUND_TIME': 15,
           'SCORE_TIME': 5, 'ASK_DAYS': 7, 'END_AT': 10, 'IN_RANDOM': 1}
@@ -12509,13 +12511,27 @@ def me_type(w):
     w = (w or '').upper()
     if w in ME_KEYS:
         return ME_KEYS.index(w) + 1
-    return 2 if w == 'QUICKHANDS' else 6 if w == 'HIDEANDSEEK' else 0
+    return 2 if w == 'QUICKHANDS' else 6 if w == 'HIDEANDSEEK' else 7 if w == 'VAGRANTRACE' else 0
 
 
-def me_load(text, D, items, movers, chars):
+ME_RACE_X, ME_RACE_Z = f32(505.2), f32(593.9)      # MINIEVENT_RACE_X / _Z (MiniEventMng.cpp)
+
+
+def me_in_world(w, x, z):
+    """CWorld::VecInWorld (World.h:756): not NaN, >= 0, (v * (1.0f / MPU)) < MAP_SIZE * size - 1, in float32. w = (w, h, mpu)."""
+    inv = f32(1.0 / w[2])
+    for v, n in ((x, w[0]), (z, w[1])):
+        if v != v or v < 0.0 or f32(v * inv) >= 128 * n - 1:
+            return False
+    return True
+
+
+def me_load(text, D, items, movers, chars, race=None):
+    """race: (w, h, mpu) of WdRace's .wld, False = no WdRace world, None = not checked."""
     s = MtScan(text, D)
+    rstart, rpoints = None, []
     ev = {i: {'loaded': False, 'v': dict(ME_DEF), 'ranks': [None] * 10, 'rest': None, 'pts': [15, 12, 10, 8, 7, 6, 5, 4, 3, 2], 'restp': 1,
-              'asks': 0, 'recipes': 0, 'spots': 0, 'al': []} for i in range(1, 7)}
+              'asks': 0, 'recipes': 0, 'spots': 0, 'al': []} for i in range(1, 8)}
     begins, hints, errors, hide = [], 0, [], None
     ok_item = lambda v: (v & 0xFFFFFFFF) in items
     s.get()
@@ -12636,6 +12652,14 @@ def me_load(text, D, items, movers, chars):
             hide = [mv, key]
             if mv not in movers or key.lower() not in chars:
                 errors.append('HIDE_NPC: unknown mover or character key "%s"' % key)
+        elif kw == 'RACE_START':
+            rstart = [s.float(), s.float()]
+        elif kw == 'RACE_POINT':
+            x, z = s.float(), s.float()
+            if not x > 0 or not z > 0:
+                errors.append('RACE_POINT %d %d: x / z above 0' % (me_round(x), me_round(z)))
+            else:
+                rpoints.append([x, z])
         elif kw == 'BEGIN':
             w = s.word()
             rnd = w.upper() == 'RANDOM'
@@ -12655,13 +12679,13 @@ def me_load(text, D, items, movers, chars):
             errors.append('unknown word "%s"' % w)
         s.get()
     anyev = False
-    for i in range(1, 7):
+    for i in range(1, 8):
         e = ev[i]
         if not e['loaded']:
             continue
         anyev = True
         v, K = e['v'], ME_KEYS[i - 1]
-        rmax = 600 if i in (5, 6) else 120
+        rmax = 600 if i in (5, 6, 7) else 120
         if v['MIN_LEVEL'] < 1 or v['MIN_LEVEL'] > 200: errors.append('%s MIN_LEVEL must be 1 - 200' % K)
         elif v['MIN_PLAYERS'] < 1: errors.append('%s MIN_PLAYERS < 1' % K)
         elif v['MAX_PLAYERS'] < v['MIN_PLAYERS'] or v['MAX_PLAYERS'] > 500: errors.append('%s MAX_PLAYERS must be MIN_PLAYERS - 500' % K)
@@ -12675,6 +12699,9 @@ def me_load(text, D, items, movers, chars):
         elif i == 5 and e['recipes'] < v['ROUNDS']: errors.append('TURNIN needs at least %d RECIPE lines (one per round), has %d' % (v['ROUNDS'], e['recipes']))
         elif i == 6 and e['spots'] < v['ROUNDS']: errors.append('HIDESEEK needs at least %d SPOT lines (one per round), has %d' % (v['ROUNDS'], e['spots']))
         elif i == 6 and hide is None: errors.append('HIDESEEK needs a HIDE_NPC line')
+        elif i == 7 and race is False: errors.append('RACE needs the WdRace world (World.inc WI_WORLD_RACE, World\\WdRace)')
+        elif i == 7 and race and not me_in_world(race, *(rstart or [ME_RACE_X, ME_RACE_Z])):
+            errors.append('RACE_START %d %d is outside WdRace' % tuple(me_round(v) for v in (rstart or [ME_RACE_X, ME_RACE_Z])))
         else:
             p = e['pts']
             for k in range(10):
@@ -12687,7 +12714,7 @@ def me_load(text, D, items, movers, chars):
     for b in begins:
         if b[0] and not ev[b[0]]['loaded']:
             errors.append('BEGIN %s: that event has no EVENT line' % ME_KEYS[b[0] - 1])
-    return {'events': ev, 'begins': begins, 'hints': hints, 'hide': hide, 'errors': errors}
+    return {'events': ev, 'begins': begins, 'hints': hints, 'hide': hide, 'errors': errors, 'race': rstart or [ME_RACE_X, ME_RACE_Z], 'rstart': rstart is not None, 'rpoints': rpoints}
 
 
 # ---- the question order (StartEvent :771-797, StartRound :819-823, LoadAsked :549, AskKey :507)
@@ -13419,7 +13446,7 @@ def wk_busy(ffa, tdm, gc, tl, fp, frm, until):
 
 def wk_week(ev, begins, busy, frm, until, seed):
     rng = Rand(seed)
-    pool = [t for t in range(1, 7) if ev[t]['loaded'] and ev[t]['v']['IN_RANDOM']]
+    pool = [t for t in range(1, 8) if ev[t]['loaded'] and ev[t]['v']['IN_RANDOM']]
     def busy_at(t):
         for name in ('FFA', 'TDM', 'Guild Siege', 'Free PK Time'):
             if any(w[0] == name and w[1] <= t < w[2] for w in busy):
@@ -13759,11 +13786,17 @@ def me_rank(pl):
     return sorted(pl, key=lambda p: (-p['points'], p['total'], p['id']))
 
 
-def me_end_round(t, e, pl, picks, truth, rng):
+def me_end_round(t, e, pl, picks, truth, rng, far=None):
     P, R, rt = e['pts'], e['restp'], e['v']['ROUND_TIME']
     for p in pl:
         q = picks.get(str(p['id']))
         p['pick'], p['ms'] = (q['pick'], q['ms'] & 0xFFFFFFFF) if q else (-1, 0)
+    if t == 7 and far is not None and not any(p['pick'] >= 0 for p in pl):
+        # nobody finished (321d3c1b): pair( pair( -progress, ms ), id ) sorted; progress 0 is left out
+        got = sorted([((-far[str(p['id'])][0], far[str(p['id'])][1] & 0xFFFFFFFF), p['id'], p) for p in pl
+                      if str(p['id']) in far and far[str(p['id'])][0] > 0], key=lambda x: (x[0], x[1]))
+        for i, (k, pid, p) in enumerate(got):
+            p['pick'], p['ms'] = min(i, 254), k[1]
     dice = None
     if t == 4:
         draw = list(pl)
@@ -13789,11 +13822,13 @@ def me_end_round(t, e, pl, picks, truth, rng):
                     n = 2 * sum(1 for d in dice if d == p['pick'])
                     if n and fid[p['pick']] == p['id']:
                         n += 1
-                elif t in (2, 5, 6):
+                elif t in (2, 5, 6, 7):
                     n = P[p['pick']] if p['pick'] < 10 else R
                 p['total'] = (p['total'] + p['ms']) & 0xFFFFFFFF
             else:
                 p['total'] = (p['total'] + rt * 1000) & 0xFFFFFFFF
+                if t == 7:
+                    n = R           # the Vagrant Race: did not finish = the rest value
             p['rp'] = n
             p['points'] += n
         if t == 3 and truth is not None:
@@ -13891,7 +13926,7 @@ def me_run_rest(root, D, items, movers, chars, props, packmax, real):
     rnd = random.Random(1812)
     ev = me_load(real, D, items, movers, chars)['events']
     alt = {'pts': [9, 9, 9, 5, 5, 0, 0, 0, 0, 0], 'restp': 0}
-    for t in range(1, 7):
+    for t in range(1, 8):
         for n in (0, 1, 3, 10, 11, 25):
             for variant in range(3):
                 e = dict(ev[t])
@@ -13910,7 +13945,7 @@ def me_run_rest(root, D, items, movers, chars, props, packmax, real):
                         if rnd.random() < 0.15:
                             continue
                         ms = rnd.choice([0, 1, 500, 500, 14999, rnd.randint(0, 15000)])
-                        pk = {1: rnd.randint(0, 5), 3: rnd.randint(0, 1), 2: k, 5: k, 6: 0 if k == 0 else -1, 4: -1}[t]
+                        pk = {1: rnd.randint(0, 5), 3: rnd.randint(0, 1), 2: k, 5: k, 6: 0 if k == 0 else -1, 4: -1, 7: k}[t]
                         if pk >= 0:
                             picks[str(pid)] = {'pick': pk, 'ms': ms}
                     rounds.append({'picks': picks, 'truth': rnd.random() < 0.5 if rnd.random() < 0.9 else None})
@@ -13934,6 +13969,265 @@ def me_run_rest(root, D, items, movers, chars, props, packmax, real):
                 k -= min(k, size)
             stacks.append([pm, n, st])
     return {'files': files, 'runs': runs, 'stacks': stacks, 'order': me_order_cases(real, D, items, movers, chars), 'edits': me_edit_cases(real)}
+
+# ---- Mini Events, the Vagrant Race (V19 ce1659f6, not yet built): RACE_START + the WdRace check (ReadConfig), VecInWorld,
+# the round points (EndRound: finishers by place, no finish = the rest value), RACE_START edits (a line-based copy)
+RA_WORLDS = [None, False, (4, 4, 4), (1, 1, 4), (4, 4, 2), (16, 16, 4), (4, 1, 4)]
+RA_SMALL = [
+    'EVENT\tRACE\tMIN_LEVEL 1\tROUNDS 2\tROUND_TIME 600\nPOINTS\tRACE\t15 12 10 8 7 6 5 4 3 2\t1\nRACE_START\t505\t594\n',
+    'EVENT\tRACE\tROUND_TIME 601\n',
+    'EVENT\tVAGRANTRACE\tROUNDS 1\nRACE_START\t3000\t500\n',
+    'EVENT\tRACE\nRACE_START\t-5\t100\n',
+    'EVENT\tRACE\nRACE_START\t100\t100\nRACE_START\t2043.9\t2043\n',
+    'EVENT\tRACE\nRACE_START\t100\t100\nRACE_START\t2044\t10\n',
+    'EVENT\tRACE\nRACE_START\t1022\t507.99\n',
+    'EVENT\tRACE\nRACE_START\t1021.99\t507.9\n',
+    'RACE_START\t9999\t9999\nEVENT\tCOLORGAME\n',
+    'EVENT\tRACE\n',
+    'EVENT\tRACE\nRACE_START\t=\t10\n',
+    'EVENT\tRACE\nRACE_START\t0\t0\nPOINTS\tRACE\t5 5 5 5 5 5 5 5 5 6\t1\n',
+    'EVENT\tRACE\nRACE_START\t+12.5\t7\nBEGIN\tRACE\t0\t12\t30\nBEGIN\tVAGRANTRACE\t1\t1\t1\n',
+    'EVENT\tRACE\nRACE_POINT\t600\t700\nRACE_POINT\t0\t5\nRACE_POINT\t-3\t9\nRACE_POINT\t1034.4\t959.6\nRACE_POINT\t=\t1\n',
+]
+
+
+def ra_coord(v):
+    return '%g' % (math.floor(v * 10 + 0.5) / 10)
+
+
+def ra_edit(text, x, z, race):
+    """setRaceStart: the RACE_START line's two numbers, else a new line after the race's last EVENT / POINTS line. ERROR when not
+    above 0 / over 99999, or outside WdRace (VecInWorld of the written value) when its size is known."""
+    for v in (x, z):
+        if not (0 < v <= 99999):
+            return 'ERROR'
+    X, Z = ra_coord(x), ra_coord(z)
+    if race and not me_in_world(race, f32(float(X)), f32(float(Z))):
+        return 'ERROR'
+    lines = text.split('\n')
+    rs = [i for i, ln in enumerate(lines) if ln.split('\t')[0] == 'RACE_START']
+    if rs:
+        f = lines[rs[-1]].split('\t')
+        f[1], f[2] = X, Z
+        lines[rs[-1]] = '\t'.join(f)
+        return '\n'.join(lines)
+    at = [i for i, ln in enumerate(lines) if len(ln.split('\t')) > 1 and ln.split('\t')[0] in ('EVENT', 'POINTS') and me_type(ln.split('\t')[1]) == 7]
+    if not at:
+        return 'ERROR'
+    lines.insert(at[-1] + 1, 'RACE_START\t%s\t%s' % (X, Z))
+    return '\n'.join(lines)
+
+
+def ra_points(text, script, race):
+    """RACE_POINT edits, a line-based copy: add = after the last RACE_POINT line (else the last RACE_START, else the race's last
+    EVENT / POINTS line); edit n = its two numbers; remove n = the whole line. ERROR as ra_edit."""
+    for op in script:
+        lines = text.split('\n')
+        rp = [i for i, ln in enumerate(lines) if ln.split('\t')[0] == 'RACE_POINT']
+        if op[0] in ('add', 'edit'):
+            x, z = op[-2], op[-1]
+            if not (0 < x <= 99999 and 0 < z <= 99999):
+                return 'ERROR'
+            X, Z = ra_coord(x), ra_coord(z)
+            if race and not me_in_world(race, f32(float(X)), f32(float(Z))):
+                return 'ERROR'
+        if op[0] == 'add':
+            rs = [i for i, ln in enumerate(lines) if ln.split('\t')[0] == 'RACE_START']
+            ev = [i for i, ln in enumerate(lines) if len(ln.split('\t')) > 1 and ln.split('\t')[0] in ('EVENT', 'POINTS') and me_type(ln.split('\t')[1]) == 7]
+            at = rp[-1] if rp else rs[-1] if rs else ev[-1] if ev else None
+            if at is None:
+                return 'ERROR'
+            lines.insert(at + 1, 'RACE_POINT\t%s\t%s' % (X, Z))
+        elif op[0] == 'edit':
+            f = lines[rp[op[1]]].split('\t')
+            f[1], f[2] = X, Z
+            lines[rp[op[1]]] = '\t'.join(f)
+        else:
+            del lines[rp[op[1]]]
+        text = '\n'.join(lines)
+    return text
+
+
+# ---- the race map's monsters: World/WdRace/WdRace.rgn respawn7 lines (ReadRespawn, WorldFile.cpp:554-640), a line-based copy
+RM_HALF = ['MI_AIBATT1', 'MI_AIBATT2', 'MI_AIBATT3', 'MI_MUSHPANG1', 'MI_MUSHPANG2', 'MI_MUSHPANG3', 'MI_BURUDENG1', 'MI_BURUDENG2', 'MI_BURUDENG3']
+
+
+def rm_lines(text):
+    """[(line index in text.split('\n'), fields)] of the respawn7 lines with at least 14 fields"""
+    out = []
+    for i, ln in enumerate(text.split('\n')):
+        f = ln.rstrip('\r').split()
+        if len(f) >= 14 and f[0] == 'respawn7':
+            out.append((i, f))
+    return out
+
+
+def rm_spawns(text, movers, D):
+    half = {D[k] for k in RM_HALF if k in D}
+    out = []
+    for _, f in rm_lines(text):
+        typ, mid, cnt, tm, att = int(f[1]), int(f[2]), int(f[6]), int(f[7]), int(f[8])
+        mv = movers.get(mid) if typ == 5 else None
+        skipped, sec = None, tm
+        if typ == 5 and mv:
+            if mv['rank'] == 8:
+                skipped = 'guard'
+            elif mv['rank'] == 6:
+                skipped = 'material'
+            if mv['rank'] != 4:
+                sec = int((tm & 0xFFFF) * (0.5 if mid in half else 0.7)) & 0xFFFF
+        elif typ == 5:
+            skipped = 'unknown'
+        out.append([mid, mv['rank'] if mv else 0, cnt, att, sec, skipped])
+    return out
+
+
+def rm_edit(text, op, movers):
+    lines = text.split('\n')
+    rl = rm_lines(text)
+    if op[0] == 'count':
+        _, i, cnt, att = op
+        if not (1 <= cnt <= 50) or not (0 <= att <= cnt):
+            return 'ERROR'
+        li, f = rl[i]
+        ln = lines[li]
+        # the 7th and 9th fields, in place (the spaces and the CR stay)
+        sp = [m.span() for m in re.finditer(r'\S+', ln)]
+        for k, v in sorted([(6, cnt), (8, att)], reverse=True):
+            ln = ln[:sp[k][0]] + str(v) + ln[sp[k][1]:]
+        lines[li] = ln
+        return '\n'.join(lines)
+    if op[0] == 'remove':
+        del lines[rl[op[1]][0]]
+        return '\n'.join(lines)
+    _, mid, x, y, z, cnt, att, tm, rad = op
+    if mid not in movers or not (0 < x <= 99999) or not (0 < z <= 99999) or not (1 <= cnt <= 50) or not (0 <= att <= cnt) \
+            or not (1 <= tm <= 32767) or not (1 <= rad <= 200) or not rl:
+        return 'ERROR'
+    li, f = rl[-1]
+    tail = ' '.join(f[13:])
+    rr = lambda v: int(math.floor(v + 0.5))            # JS Math.round
+    new = 'respawn7 5 %d %.6f %.6f %.6f %d %d %d %d %d %d %d %s ' % (mid, x, y, z, cnt, tm, att, rr(x - rad), rr(z - rad), rr(x + rad), rr(z + rad), tail)
+    cr = '\r' if lines[li].endswith('\r') else ''
+    lines.insert(li + 1, new + cr)
+    return '\n'.join(lines)
+
+
+RM_EDITS = [
+    [('count', 0, 5, 5)],
+    [('count', 3, 2, 0)],
+    [('count', 0, 51, 1)],
+    [('count', 1, 3, 4)],
+    [('remove', 0)],
+    [('remove', 33)],
+    [('remove', 5), ('remove', 5), ('count', 5, 7, 3)],
+    [('add', 874, 700.5, 88.25, 800.125, 3, 70, 3, 20)],
+    [('add', 715, 1000, 150, 950, 1, 30, 0, 5), ('count', 34, 2, 1)],
+    [('add', 999999, 1, 1, 1, 1, 1, 1, 1)],
+    [('add', 874, 10, 0, 10, 1, 1, 1, 200)],
+    [('add', 874, 10, -3.5, 10, 50, 32767, 50, 1)],
+    [('add', 874, 10, 0, 10, 1, 0, 1, 1)],
+    [('add', 874, 2.4, 0, 2.6, 1, 5, 1, 2)],
+]
+
+
+RA_PEDITS = [
+    (2, [('add', 600, 700)]),
+    (0, [('add', 600, 700), ('add', 800.26, 900)]),
+    (1, [('add', 10, 10), ('add', 20, 20), ('edit', 0, 15, 16), ('remove', 1)]),
+    (5, [('add', 1, 2)]),
+    (6, [('remove', 0), ('add', 3, 4)]),
+    (6, [('edit', 1, 2043.95, 7)]),
+    (6, [('add', 0, 7)]),
+    (4, [('add', 1, 1)]),
+    (3, [('add', 50, 60), ('remove', 0)]),
+]
+
+
+def ra_run(root):
+    D, items, movers, chars, props = me_ctx(root)
+    real = open(os.path.join(root, 'MiniEvent.inc'), 'rb').read().decode('latin-1')
+    files = []
+    for k, text in enumerate([real] + RA_SMALL):
+        for w in RA_WORLDS:
+            r = me_load(text, D, items, movers, chars, race=w)
+            e = r['events'][7]
+            files.append({'text': None if k == 0 else text, 'world': list(w) if w else w, 'loaded': e['loaded'], 'v': e['v'], 'pts': e['pts'] + [e['restp']],
+                          'race': r['race'], 'rstart': r['rstart'], 'rpoints': r['rpoints'], 'begins': r['begins'], 'errors': r['errors']})
+    # VecInWorld at the edges: x / MPU against MAP_SIZE * size - 1, in float32
+    edges = []
+    for w in ((4, 4, 4), (1, 1, 4), (4, 4, 2), (3, 5, 4), (4, 4, 1)):
+        lim = (128 * w[0] - 1) * w[2]
+        for x in (0.0, -0.0, -0.001, 1.0, lim - 0.01, lim - 0.001, lim - 0.0001, lim, lim + 0.001, float('nan')):
+            for z in (5.0, (128 * w[1] - 1) * w[2] - 0.0001, (128 * w[1] - 1) * w[2]):
+                edges.append([list(w), f32(x) if x == x else 'nan', f32(z), me_in_world(w, f32(x), f32(z))])
+    # whole races: finishers by place (gaps where a player never finished), the rest value for everyone else
+    ev = me_load(real, D, items, movers, chars)['events']
+    packmax = {kk: v[0] for kk, v in props.items()}
+    rnd, runs = random.Random(707), []
+    for n in (1, 2, 5, 10, 11, 12, 40, 60):
+        for variant in range(4):
+            e = dict(ev[7])
+            if variant == 1:
+                e = dict(e, pts=[20, 15, 10, 5, 5, 5, 1, 1, 1, 1], restp=0)
+            if variant == 2:
+                e = dict(e, v=dict(e['v'], ROUND_TIME=5))
+            ids = rnd.sample(range(1, 5000), n)
+            players = [{'id': i, 'name': 'P%d' % i} for i in ids]
+            rounds = []
+            for r in range(rnd.choice([1, 2, 3, 4])):
+                fin = [] if rnd.random() < 0.45 else [i for i in ids if rnd.random() < rnd.choice([0.3, 0.8, 1.0])]
+                rnd.shuffle(fin)
+                t0, picks = 0, {}
+                for k, pid in enumerate(fin):
+                    t0 += rnd.choice([0, 1, 250, 4000])
+                    picks[str(pid)] = {'pick': min(k, 254), 'ms': t0}
+                far = {str(i): [rnd.choice([0, 0, 1, 2, 2, 3, 7, 15, 431]), rnd.choice([0, 5, 5, 120000, 4294967295])] for i in ids if rnd.random() < 0.9}
+                rounds.append({'picks': picks, 'truth': None, 'far': far})
+            pl = [{'id': p['id'], 'points': 0, 'rp': 0, 'pick': -1, 'ms': 0, 'total': 0, 'place': 0, 'move': 0} for p in sorted(players, key=lambda p: p['id'])]
+            outr = []
+            for rr in rounds:
+                dice, rows = me_end_round(7, e, pl, rr['picks'], None, None, rr['far'])
+                outr.append({'dice': dice, 'rows': rows})
+            runs.append({'variant': variant, 'rt': e['v']['ROUND_TIME'], 'players': players, 'rounds': rounds, 'ranks': e['ranks'], 'rest': e['rest'],
+                         'pts': e['pts'], 'restp': e['restp'], 'out': outr, 'final': me_finish(7, e, pl, packmax)})
+    # RACE_START edits
+    edits = []
+    bases = [None, 'EVENT\tRACE\tROUNDS 2\nPOINTS\tRACE\t15 12 10 8 7 6 5 4 3 2\t1\nRANK\tRACE\t1\tII_SYS_SYS_EVENT_TOKEN\t5\n',
+             'EVENT\tRACE\n// end\n', 'EVENT\tVAGRANTRACE\tROUNDS 1\n\nBEGIN\tRACE\t0\t1\t1\n', 'EVENT\tTYPER\n']
+    for bi, b in enumerate(bases):
+        for (x, z) in ((600, 650), (505.25, 593.85), (505, 594), (2043.9, 10), (2044, 10), (0, 5), (100000, 5), (1, 1), (12.04, 7.96)):
+            for w in (None, (4, 4, 4), (1, 1, 4)):
+                text = real if b is None else b
+                edits.append({'base': bi, 'x': x, 'z': z, 'world': list(w) if w else None, 'text': ra_edit(text, x, z, w)})
+    bases.append('EVENT\tRACE\nRACE_START\t505\t594\t// /racestart by GM, 2026-10-18\n')
+    bases.append('EVENT\tRACE\nRACE_POINT\t100\t200\t// /racepoint by GM\nRACE_POINT\t300\t400\nBEGIN\tRACE\t0\t1\t1\n')
+    pedits = []
+    for bi, script in RA_PEDITS:
+        for w in (None, (4, 4, 4)):
+            pedits.append({'base': bi, 'script': [list(s) for s in script], 'world': list(w) if w else None, 'text': ra_points(real if bi == 0 else bases[bi], script, w)})
+    # the race map's monsters
+    rgn_path = os.path.join(root, 'World', 'WdRace', 'WdRace.rgn')
+    rgn = open(rgn_path, 'rb').read()[2:].decode('utf-16-le') if os.path.exists(rgn_path) else ''
+    DD = dr_defines(root)
+    mvs = dr_movers(root, DD)
+    rmap = {'spawns': rm_spawns(rgn, mvs, DD), 'edits': []}
+    small = 'region3 6 13 1 2 3\r\nrespawn7 5 1 1.0 2.0 3.0 4 100 4 0 0 9 9 1 30 1 24 1 1 2 0.000000 -1 0 0 \r\nrespawn7 5 %d 1.0 2.0 3.0 4 1 0 0 0 9 9 x\r\nrespawn7 1 5 1 1 1 1 1 1 1 1 1 1 1\r\n' % (DD.get('MI_AIBATT1', 20))
+    for rk in (4, 6, 7, 8):                     # a boss, a material, a super and a guard monster (the lowest id of each rank)
+        ids = sorted(i for i, m in mvs.items() if m['rank'] == rk)
+        if ids:
+            small += 'respawn7 5 %d 1.0 2.0 3.0 2 99 1 0 0 9 9 1 30 1 24 1 1 2 0.000000 -1 0 0 \r\n' % ids[0]
+    rmap['small'] = small
+    rmap['smallSpawns'] = rm_spawns(small, mvs, DD)
+    for script in RM_EDITS:
+        txt = rgn
+        for op in script:
+            txt = rm_edit(txt, op, mvs)
+            if txt == 'ERROR':
+                break
+        rmap['edits'].append({'script': [list(o) for o in script], 'text': txt})
+    return {'files': files, 'edges': edges, 'runs': runs, 'edits': edits, 'pedits': pedits, 'bases': bases[1:], 'rmap': rmap}
+
 
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
@@ -13992,6 +14286,8 @@ if __name__ == '__main__':
         print(json.dumps(ab_run(root)))
     elif what == 'week':                        # Mini Events, the week: BEGIN starts, skips (FFA / TDM / Guild Siege / Free PK Time)
         print(json.dumps(wk_run(root)))
+    elif what == 'race':                        # Mini Events, Vagrant Race: RACE_START, the WdRace check, round points, start edits
+        print(json.dumps(ra_run(root)))
     elif what == 'turnin':                      # Mini Events, Turn-in Race: hints, random recipes, turn-ins, recipe / hint edits
         print(json.dumps(ti_run(root)))
     elif what == 'minievent':                   # Mini Events: MiniEvent.inc (ReadConfig), round points, ranking, prizes

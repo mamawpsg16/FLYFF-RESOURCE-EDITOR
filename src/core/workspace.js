@@ -212,6 +212,8 @@
       // monster drops, the Donation Shop, exchanges and boxes (read-only), and WdMadrigal.rgn (monster spots, area names)
       uses: ['npc', 'drops', 'donation', 'exchange', 'boxes'],
       maps: true,
+      // Vagrant Race: World/WdRace/WdRace.rgn, the race map's monsters (respawn7 lines), editable here (Server + Client copies)
+      raceMap: true,
       parse(ws) { return FRE.miniEvent.fromWorkspace(ws); },
       validate(ws, model) { return FRE.miniEventChecks(model); },
     },
@@ -509,6 +511,12 @@
         this.mapFiles.set(name, lower);
         if (maps) this.editable.add(lower);
       }
+      // the Vagrant Race map's monsters (FRE.raceMap): the same SourceFile as worldFiles holds, so a re-read sees the edits
+      const race = worldFiles.get(FRE.raceMap.KEY);
+      if (race && MODULES.some(m => m.raceMap && this.shown.has(m.id) && this.available[m.id].ok)) {
+        this.files.set(FRE.raceMap.KEY, race);
+        this.editable.add(FRE.raceMap.KEY);
+      }
       this.refreshMaps();
     }
     refreshMaps() {
@@ -642,6 +650,7 @@
       const own = MODULES.filter(m => this.available[m.id].ok && this.shown.has(m.id));
       const spec = !this.only || own.some(m => m.editsSpec) ? CORE_CLIENT : [];
       const maps = own.some(m => m.editsMaps) ? [...this.mapFiles.values()].map(l => this.files.get(l).name) : [];
+      if (own.some(m => m.raceMap) && this.files.has(FRE.raceMap.KEY)) maps.push(this.files.get(FRE.raceMap.KEY).name);
       return [...new Set([...spec, ...own.flatMap(m => m.client), ...maps])];
     }
 

@@ -50,12 +50,12 @@ export function loadWorldFiles(resDir, ws) {
     seen.add(x.name);
     const d = ci(`${resDir}/${world}`, x.name);
     if (!d) continue;
-    for (const ext of ['.dyo', '.rgn', '.txt.txt', '.wld.cnt']) {
+    for (const ext of ['.dyo', '.rgn', '.txt.txt', '.wld', '.wld.cnt']) {
       const n = ci(`${resDir}/${world}/${d}`, x.name + ext);
       if (!n) continue;
       const bytes = readBytes(`${resDir}/${world}/${d}/${n}`);
       if (ext === '.dyo') { dyo.set(x.name, bytes); dyoFiles.set(x.name, new FRE.SourceFile(n, bytes, { binary: true, dir: `World/${d}` })); }
-      else worldFiles.set(`world/${x.name}/${x.name}${ext}`.toLowerCase(), new FRE.SourceFile(n, bytes));
+      else worldFiles.set(`world/${x.name}/${x.name}${ext}`.toLowerCase(), new FRE.SourceFile(n, bytes, { dir: `World/${d}` }));
     }
   }
   return { dyo, worldFiles, dyoFiles };

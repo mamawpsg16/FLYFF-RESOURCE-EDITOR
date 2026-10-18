@@ -101,6 +101,8 @@
     'partydungeon.lua': { server: STARTUP, client: null, cite: 'Project.cpp:908 CInstanceDungeonParty::LoadScript -> InstanceDungeonBase.cpp:384' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };
+  // a map's monsters (the Vagrant Race map): the WorldServer spawns them from the respawn lines it reads when it loads the world
+  const RGN = { server: STARTUP, client: null, cite: 'WorldFile.cpp:554 ReadRespawn (monsters: #ifdef __WORLDSERVER :601)' };
   const BOARD = { server: null, client: CLICK, cite: 'npc-board.diff: WndWorld.cpp OnCommand default:' };
   // the Guild Siege boards: the game's own code reads them on each click (no patch needed)
   const GS_BOARD = { server: null, client: CLICK, noPatch: true, cite: 'WndWorld.cpp:4600 / :4681 FILE_GUILDCOMBAT_TEXT_n' };
@@ -111,6 +113,7 @@
     key = key.toLowerCase();
     if (READERS[key]) return READERS[key];
     if (/^world\/.+\.dyo$/.test(key)) return DYO;
+    if (/^world\/.+\.rgn$/.test(key)) return RGN;
     if (/^client\/npcboard_\d+\.inc$/.test(key)) return BOARD;
     if (/^client\/guildcombattext_\d_(eng|usa)\.inc$/.test(key)) return GS_BOARD;
     return UNKNOWN;

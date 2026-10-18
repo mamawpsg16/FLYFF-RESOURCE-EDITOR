@@ -504,7 +504,7 @@ details.mt-more > summary { cursor: pointer; color: var(--muted); padding: 6px 0
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when": "Sun 18 Oct 2026, 07:08", "rev": "0f070e0", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "70+", "when": "Sun 18 Oct 2026, 09:39", "rev": "8a9437e", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -9810,7 +9810,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
     'MMI_COLOSSEUM_COLOENTER01', 'MMI_COSTUMEMIX01', 'MMI_DIALOG', 'MMI_DUEL', 'MMI_DUEL_PARTY', 'MMI_FINDWORD', 'MMI_FIVESYSTEM',
     'MMI_FFA_ARENA', 'MMI_FFA_RULES', 'MMI_TDM_ARENA', 'MMI_TDM_RULES', 'MMI_GW_STATUE_BUFF',   // FFA / TDM (0600d7e9 .. 8362fbc6), GS statues (d7706de4)
     'MMI_BARUNA_ELEMENT_SMELT', 'MMI_BARUNA_GUIDE', 'MMI_BARUNA_ULTIMATE', 'MMI_BARUNA_RUNE_REMOVE',   // Baruna rework (ad93a9af)
-    'MMI_FFA_ENTER', 'MMI_TDM_ENTER', 'MMI_MINI_EVENT', 'MMI_HIDE_FOUND',   // arena entry (1d83a56b), Mini Events (25e4f227, 3b12a4bb)
+    'MMI_FFA_ENTER', 'MMI_TDM_ENTER', 'MMI_MINI_EVENT', 'MMI_HIDE_FOUND', 'MMI_RACE_FINISH',   // arena entry (1d83a56b), Mini Events (25e4f227, 3b12a4bb, ce1659f6)
     'MMI_GUILDBANKING', 'MMI_GUILDCOMBAT_1TO1_CANCEL', 'MMI_GUILDCOMBAT_1TO1_ENTRANCE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_ENTRY',
     'MMI_GUILDCOMBAT_1TO1_GUIDE_PRIZE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_RULE', 'MMI_GUILDCOMBAT_1TO1_GUIDE_TEX',
     'MMI_GUILDCOMBAT_1TO1_GUIDE_WIN', 'MMI_GUILDCOMBAT_1TO1_OFFER', 'MMI_GUILDCOMBAT_1TO1_OFFERSTATE', 'MMI_GUILDCOMBAT_1TO1_REPAYMENT',
@@ -14491,13 +14491,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
 //   POINTS <name> <1st> ... <10th> <rest> ASK TYPER "<text>" "<info>"   ASK OXQUIZ O|X "<statement>"
 //   RECIPE "<title>" <n> <item> <amount> ...   SPOT <x> <z> "<region>" "<hint>" "<landmark>"
 //   ITEM_HINT <item> "<text>"   HIDE_NPC <mover> <character key>   BEGIN <name|RANDOM> <day> <hour> <minute>
+//   RACE_START <x> <z>   (Vagrant Race, V19 ce1659f6, not yet built: the start in WdRace; every line overwrites the last)
+//   RACE_POINT <x> <z>   (V19 321d3c1b: a checkpoint on the way up, in route order; x / z above 0)
 // ONE error anywhere switches EVERY Mini Event off (m_bValidConfig = FALSE, logged in error_*.txt): the server reports the
 // first; the editor lists them all (each is a BLOCK).
 (function (FRE) {
   'use strict';
   const { Script } = FRE.lexer;
   const NULL_ID = 0xFFFFFFFF;
-  // MINIEVENT_TYPE_* (_Common/CustomCommon.h:259-266), GetTypeName / GetTypeKey (MiniEventMng.cpp:91-117)
+  // MINIEVENT_TYPE_* (_Common/CustomCommon.h:259-267), GetTypeName / GetTypeKey (MiniEventMng.cpp:91-120)
   const TYPES = [
     null,
     { id: 1, key: 'COLORGAME', name: 'Color Game', about: 'Players pick 1 of 6 colours; 3 dice are rolled. 2 points per die with your colour, +1 for the first player who picked a colour that hit.' },
@@ -14506,6 +14508,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
     { id: 4, key: 'LUCKYDRAW', name: 'Lucky Draw', about: 'Nothing to do: every round a random top 10 gets points by place, everyone else the rest points.' },
     { id: 5, key: 'TURNIN', name: 'Turn-in Race', about: 'A recipe of 1-4 items is shown; bring them to Event Master. The first 10 score by place; the round ends after the END_AT-th turn-in.' },
     { id: 6, key: 'HIDESEEK', name: 'Hide and Seek', about: 'Lost Fwanki hides at a spot in Madrigal; region at the start, a hint at 40 %, a landmark at 80 %. The first to find it wins the round.' },
+    { id: 7, key: 'RACE', name: 'Vagrant Race', about: 'Every round each registered player who is online becomes a level 1 Vagrant with no gear and is put at the start of WdRace (a copy of Volcane). They race to the Robe girl at the top and click "Finish!": finishers score by finish order, everyone else gets the rest points. A death puts them back at the start. At the end they get their own character back, where they were.' },
   ];
   const RANKS = 10, RECIPE_ITEMS = 4, ANSWER_LEN = 100;
   // the EVENT keys, their ME_EVENT() defaults (MiniEventMng.h:90) and the ReadConfig limits (:404-425)
@@ -14523,7 +14526,25 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
     { key: 'IN_RANDOM', def: 1, label: 'Picked by a RANDOM start time', min: 0, max: 1, bool: true, help: 'Off = only started by a fixed start time or GM /eventstart.' },
   ];
   const KEY = new Map(KEYS.map(k => [k.key, k]));
-  const roundMax = type => (type === 5 || type === 6 ? 600 : 120);
+  const roundMax = type => (type === 5 || type === 6 || type === 7 ? 600 : 120);
+  // Vagrant Race: the default start (MINIEVENT_RACE_X / _Z, MiniEventMng.cpp; the Volcane landing point, WdRace.rgn RI_REVIVAL)
+  const RACE_START = { x: Math.fround(505.2), z: Math.fround(593.9) };
+  // CWorld::VecInWorld (World.h:756): x and z from 0, and x / MPU below WORLD_WIDTH - 1 (MAP_SIZE 128 x the .wld "size"), in float32
+  function vecInWorld(w, x, z) {
+    const inv = Math.fround(1 / w.mpu), ok = (v, n) => !Number.isNaN(v) && v >= 0 && Math.fround(v * inv) < 128 * n - 1;
+    return ok(x, w.w) && ok(z, w.h);
+  }
+  // CWorld::LoadWorld (WorldFile.cpp:57): "size <w>, <h>" and "MPU <n>" (default OLD_MPU 4) of a .wld file
+  function readWld(file) {
+    if (!file) return null;
+    const s = new Script(file.text, { file: file.name, defines: new Map(), diags: [] });
+    const out = { w: 0, h: 0, mpu: 4 };
+    for (let t = s.getToken(); t.type !== 'eof'; t = s.getToken()) {
+      if (t.text === 'size') { out.w = s.getNumber().value; s.getToken(); out.h = s.getNumber().value; }
+      else if (t.text === 'MPU') out.mpu = s.getNumber().value;
+    }
+    return out;
+  }
   const DEF_POINTS = [15, 12, 10, 8, 7, 6, 5, 4, 3, 2];
 
   // FindType (MiniEventMng.cpp:119): case-insensitive; QUICKHANDS = TYPER, HIDEANDSEEK = HIDESEEK
@@ -14532,6 +14553,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
     for (let i = 1; i < TYPES.length; i++) if (TYPES[i].key === w) return i;
     if (w === 'QUICKHANDS') return 2;
     if (w === 'HIDEANDSEEK') return 6;
+    if (w === 'VAGRANTRACE') return 7;
     return 0;
   }
 
@@ -14543,13 +14565,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
     return e;
   }
 
-  // file: SourceFile. ctx: { defines, items (Map id -> item), movers (Map id), charKeys (Set lowercase character keys) }
+  // file: SourceFile. ctx: { defines, items (Map id -> item), movers (Map id), charKeys (Set lowercase character keys),
+  //   raceWorld: { w, h, mpu } (WdRace's .wld) | null (no WdRace: World.inc or its folder missing) | undefined (maps not read: not checked) }
   function loadMiniEvent(file, ctx = {}) {
     const text = file.text, D = ctx.defines || new Map();
     const s = new Script(text, { file: file.name, defines: D, diags: [] });
     const events = [null]; for (let i = 1; i < TYPES.length; i++) events.push(newEvent(i));
     const begins = [], hints = [], errors = [];
-    let hideNpc = null;
+    let hideNpc = null, raceStart = null;
+    const racePoints = [];
     const itemOk = id => !!(ctx.items && ctx.items.get(id >>> 0));
     const err = (message, a, b) => errors.push({ message, start: a, end: Math.max(b, a) });
     const num = () => { const n = s.getNumber(); return { value: n.value, start: n.start, end: n.end, define: n.define || null }; };
@@ -14642,6 +14666,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
         hideNpc = { kw, start, end: key.end, mover, key };
         if (!(ctx.movers && ctx.movers.get(mover.value)) || !(ctx.charKeys && ctx.charKeys.has(key.text.toLowerCase())))
           err(`HIDE_NPC: unknown mover or character key "${key.text}"`, start, key.end);
+      } else if (kw === 'RACE_START') {
+        const x = s.getFloat(), z = s.getFloat();
+        raceStart = { kw, start, end: z.end, x: { value: Math.fround(x.value), start: x.start, end: x.end }, z: { value: Math.fround(z.value), start: z.start, end: z.end } };
+      } else if (kw === 'RACE_POINT') {
+        const x = s.getFloat(), z = s.getFloat();
+        const rp = { kw, start, end: z.end, x: { value: Math.fround(x.value), start: x.start, end: x.end }, z: { value: Math.fround(z.value), start: z.start, end: z.end } };
+        if (!(rp.x.value > 0) || !(rp.z.value > 0)) err(`RACE_POINT ${cRound(rp.x.value)} ${cRound(rp.z.value)}: x / z above 0`, start, rp.end);
+        else racePoints.push(rp);
       } else if (kw === 'BEGIN') {
         const nt = tok(), random = nt.text.toUpperCase() === 'RANDOM', type = random ? 0 : findType(nt.text);
         if (!random && !type) { err(`BEGIN: unknown event "${nt.text}" (or RANDOM)`, start, nt.end); t = s.getToken(); continue; }
@@ -14675,6 +14707,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
       else if (i === 5 && e.recipes.length < v.ROUNDS) fail(`TURNIN needs at least ${v.ROUNDS} RECIPE lines (one per round), has ${e.recipes.length}`);
       else if (i === 6 && e.spots.length < v.ROUNDS) fail(`HIDESEEK needs at least ${v.ROUNDS} SPOT lines (one per round), has ${e.spots.length}`);
       else if (i === 6 && !hideNpc) fail('HIDESEEK needs a HIDE_NPC line');
+      else if (i === 7 && ctx.raceWorld === null) fail('RACE needs the WdRace world (World.inc WI_WORLD_RACE, World\\WdRace)');
+      else if (i === 7 && ctx.raceWorld && !vecInWorld(ctx.raceWorld, raceStart ? raceStart.x.value : RACE_START.x, raceStart ? raceStart.z.value : RACE_START.z)) {
+        const rs = raceStart || { x: { value: RACE_START.x }, z: { value: RACE_START.z } };
+        err(`RACE_START ${cRound(rs.x.value)} ${cRound(rs.z.value)} is outside WdRace`, (raceStart || at).start, (raceStart || at).end);
+      }
       else {
         const p = e.pointValues;
         for (let k = 0; k < RANKS; k++) {
@@ -14689,8 +14726,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
     }
     if (!any) err('no EVENT line', 0, 0);
     for (const b of begins) if (b.type && !events[b.type].loaded) err(`BEGIN ${TYPES[b.type].key}: that event has no EVENT line`, b.start, b.end);
-    return { file: file.name, events, begins, hints, hideNpc, errors, diags: s.diags, eol: /\r\n/.test(text) ? '\r\n' : '\n' };
+    const race = raceStart ? { x: raceStart.x.value, z: raceStart.z.value } : { x: RACE_START.x, z: RACE_START.z };
+    return { file: file.name, events, begins, hints, hideNpc, raceStart, race, racePoints, errors, diags: s.diags, eol: /\r\n/.test(text) ? '\r\n' : '\n' };
   }
+
+  const cRound = v => (v < 0 ? -Math.round(-v) : Math.round(v));      // printf %.0f (round half away from zero)
 
   // the effective prize of a place (1-10) or the rest (0): { item id, amount } or null (GiveItem gives nothing)
   function prizeOf(e, place) {
@@ -14705,12 +14745,20 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
     // HIDE_NPC's key must be a character.inc block (prj.GetCharacter): the NPC files as the server loads them
     if (!ws.chars && ws.files.get('character.inc')) ws.chars = FRE.character.loadCharacters(ws.files, { defines: D, strings: ws.strings.map });
     const charKeys = new Set(ws.chars ? ws.chars.npcs.map(n => n.key.toLowerCase()) : []);
-    const m = loadMiniEvent(ws.files.get('minievent.inc'), { defines: D, items: ws.items.items, movers: ws.movers ? ws.movers.movers : null, charKeys });
+    // WdRace: World.inc's WI_WORLD_RACE map and its .wld (the maps are read after the first parse: setMapObjects parses again)
+    let raceWorld;
+    if (ws.worldFiles && ws.worldFiles.size && ws.worldList) {       // an empty map: the maps are not read yet (not checked)
+      const w = ws.worldList().find(x => x.define === 'WI_WORLD_RACE');
+      raceWorld = w ? readWld(ws.worldFiles.get(`world/${w.name}/${w.name}.wld`.toLowerCase())) : null;
+    }
+    const m = loadMiniEvent(ws.files.get('minievent.inc'), { defines: D, items: ws.items.items, movers: ws.movers ? ws.movers.movers : null, charKeys, raceWorld });
+    m.raceWorld = raceWorld;
     m.charKeys = charKeys;
     return m;
   }
 
-  FRE.miniEvent = { loadMiniEvent, fromWorkspace, findType, prizeOf, TYPES, KEYS, KEY, RANKS, RECIPE_ITEMS, ANSWER_LEN, DEF_POINTS, roundMax, NULL_ID, FILE: 'MiniEvent.inc' };
+  FRE.miniEvent = { loadMiniEvent, fromWorkspace, findType, prizeOf, TYPES, KEYS, KEY, RANKS, RECIPE_ITEMS, ANSWER_LEN, DEF_POINTS, roundMax, NULL_ID, FILE: 'MiniEvent.inc',
+    RACE_START, vecInWorld, readWld, cRound };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- loaders/minievent-sim.js ----
@@ -14718,8 +14766,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
 //   endRound()  CMiniEventMng::EndRound (:852-1007): the round points of every event type
 //                 Color Game: 3 dice xRandom( 6 ), MINIEVENT_COLOR_DIE_POINTS 2 per die of your colour, +MINIEVENT_COLOR_FIRST_BONUS 1
 //                   for the first player (lowest lock-in ms, then the lowest player id) who picked a colour that hit;
-//                 Quick Hands / Turn-in Race / Hide and Seek: pick = the place of the correct answer / turn-in / find
-//                   -> POINTS place 1-10, the rest value below; O/X Quiz: right answers sorted by lock-in ms (then id) -> the same;
+//                 Quick Hands / Turn-in Race / Hide and Seek / Vagrant Race: pick = the place of the correct answer / turn-in / find /
+//                   finish -> POINTS place 1-10, the rest value below; O/X Quiz: right answers sorted by lock-in ms (then id) -> the same;
+//                 Vagrant Race (V19 ce1659f6, not yet built): no finish = the POINTS rest value (the user, 2026-10-17); a round
+//                   nobody finished (V19 321d3c1b): far = { id: [progress, ms] } -> places by more progress, then the lower ms, then
+//                   the lower id (std::sort of ( -progress, ms ), id); no progress (0) = the rest value;
 //                 Lucky Draw: the players (by id) shuffled with xRandom( i + 1 ) -> places; tie-break adds the place.
 //                 No pick adds the whole round time to the tie-break (ROUND_TIME x 1000 ms).
 //   ranking()   GetRanking + MERankLess (:1010-1026): more points, then less total lock-in time, then the lower player id.
@@ -14740,9 +14791,13 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
   }
 
   // cfg: { type, pointValues[10], restPoints, roundTime }; picks: Map/obj id -> { pick, ms }; truth (O/X Quiz: true = O); rng (FRE.xRandom.rng)
-  function endRound(cfg, list, picks, truth, rng) {
+  function endRound(cfg, list, picks, truth, rng, far) {
     const P = cfg.pointValues, R = cfg.restPoints;
     for (const p of list) { const q = picks[p.id]; p.pick = q ? q.pick : -1; p.pickMs = q ? u32(q.ms) : 0; }
+    if (cfg.type === 7 && far && !list.some(p => p.pick >= 0)) {
+      const v = list.filter(p => far[p.id] && far[p.id][0] > 0).sort((a, b) => far[b.id][0] - far[a.id][0] || u32(far[a.id][1]) - u32(far[b.id][1]) || a.id - b.id);
+      v.forEach((p, i) => { p.pick = i < 254 ? i : 254; p.pickMs = u32(far[p.id][1]); });
+    }
     let dice = null;
     if (cfg.type === 4) {
       const draw = list.map(p => p);
@@ -14765,9 +14820,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
           if (cfg.type === 1) {
             for (const d of dice) if (d === p.pick) n += DIE_POINTS;
             if (n > 0 && p.id === firstId[p.pick]) n += FIRST_BONUS;
-          } else if (cfg.type === 2 || cfg.type === 5 || cfg.type === 6) n = p.pick < RANKS ? P[p.pick] : R;
+          } else if (cfg.type === 2 || cfg.type === 5 || cfg.type === 6 || cfg.type === 7) n = p.pick < RANKS ? P[p.pick] : R;
           p.totalMs = u32(p.totalMs + p.pickMs);
-        } else p.totalMs = u32(p.totalMs + cfg.roundTime * 1000);
+        } else {
+          p.totalMs = u32(p.totalMs + cfg.roundTime * 1000);
+          if (cfg.type === 7) n = R;                         // did not finish the race
+        }
         p.roundPoints = n;
         p.points += n;
       }
@@ -14813,7 +14871,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
     const cfg = { type: spec.type, pointValues: e.pointValues, restPoints: e.restPoints, roundTime: e.values.ROUND_TIME };
     const list = newPlayers(spec.players), rng = FRE.xRandom.rng(spec.seed || 1);
     const rounds = spec.rounds.map(r => {
-      const x = endRound(cfg, list, r.picks || {}, r.truth, rng);
+      const x = endRound(cfg, list, r.picks || {}, r.truth, rng, r.far);
       return { dice: x.dice, rows: x.rank.map(p => [p.id, p.roundPoints, p.points, p.place, p.move]) };
     });
     return { rounds, final: finish(cfg, e, list, itemOf) };
@@ -14825,7 +14883,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
     for (let i = 0; i < nPlayers; i++) players.push({ id: 1000 + i, name: `Player ${i + 1}` });
     const T = e.values.ROUND_TIME * 1000;
     for (let r = 0; r < e.values.ROUNDS; r++) {
-      const picks = {}, truth = rnd.random(2) === 0;
+      const picks = {}, truth = rnd.random(2) === 0, far = {};
+      const nobody = type === 7 && rnd.random(4) === 0;          // the race: 1 in 4 rounds nobody makes it to the top
       const order = players.map(p => p.id);
       for (let i = order.length - 1; i > 0; i--) { const j = rnd.random(i + 1); [order[i], order[j]] = [order[j], order[i]]; }
       order.forEach((id, k) => {
@@ -14835,8 +14894,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
         else if (type === 3) picks[id] = { pick: rnd.random(2), ms };
         else if (type === 6) { if (k === 0) picks[id] = { pick: 0, ms }; }        // one finder
         else if (type === 2 || type === 5) picks[id] = { pick: k, ms };
+        else if (type === 7 && !nobody && rnd.random(5) < 3) picks[id] = { ms };     // the race: 3 in 5 of them make it to the top
+        if (type === 7) far[id] = [rnd.random(8), ms];                  // how far up (checkpoints) and when
       });
-      rounds.push({ picks, truth });
+      if (type === 7) Object.values(picks).sort((a, b) => a.ms - b.ms).forEach((q, k) => { q.pick = k; });   // the finish order
+      rounds.push({ picks, truth, far });
     }
     return { type, e, players, rounds, seed };
   }
@@ -15426,6 +15488,103 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
   FRE.miniEventWeek = { readFreePk, freePkWindows, nextStart, busyWindows, busyAt, week, clashes };
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/minievent-racemap.js ----
+// Mini Events, Vagrant Race: the monsters of the race map, World/WdRace/WdRace.rgn (V19 ce1659f6: a copy of Volcane made by
+// Tools/minievent/build_race_map.py). UTF-16LE, CRLF; Server + identical Client copy; the WorldServer reads it when it loads the
+// world at start (CWorld::LoadRegion -> ReadRespawn, _Common/WorldFile.cpp:554).
+//   parse     each "respawn7" line: type, mover, x y z, count (m_nMaxcb), time (m_uTime), aggressive (m_nMaxAttackNum),
+//             the spawn box left top right bottom, then day / hour / item min-max, AI state, angle, patrol, cycle, control (0)
+//   spawns    ReadRespawn's monster part (WorldFile.cpp:599-640, #ifdef __WORLDSERVER): a RANK_MATERIAL monster is never spawned,
+//             a RANK_GUARD one only while EVE_PK is on (skipped here: the PK event is off on this server); the respawn time is
+//             cut to (u_short)( time x 0.7 ) (x 0.5 for Aibatt / Mushpang / Burudeng 1-3), not for RANK_BOSS; a flying monster
+//             keeps the line's height
+// Not modelled: where in the box each monster appears (random), the respawn timing itself, the AI.
+(function (FRE) {
+  'use strict';
+  const RANK = { BOSS: 4, MATERIAL: 6, GUARD: 8 };
+  const HALF = ['MI_AIBATT1', 'MI_AIBATT2', 'MI_AIBATT3', 'MI_MUSHPANG1', 'MI_MUSHPANG2', 'MI_MUSHPANG3', 'MI_BURUDENG1', 'MI_BURUDENG2', 'MI_BURUDENG3'];
+  const KEY = 'world/wdrace/wdrace.rgn';
+
+  // -> { lines: [{ start, end, toks: [{ text, start, end }], type, mover, x, y, z, count, time, attack, rect }], eol }
+  function parse(file) {
+    const text = file ? file.text : '', out = [];
+    const re = /[^\r\n]*(\r?\n|$)/g;
+    for (let m; (m = re.exec(text)) && m[0].length;) {
+      const line = m[0].replace(/\r?\n$/, ''), at = m.index;
+      const toks = [];
+      for (const t of line.matchAll(/\S+/g)) toks.push({ text: t[0], start: at + t.index, end: at + t.index + t[0].length });
+      if (!toks.length || toks[0].text !== 'respawn7' || toks.length < 14) continue;
+      const n = i => parseInt(toks[i].text, 10), f = i => Math.fround(parseFloat(toks[i].text));
+      out.push({ start: at, end: at + line.length, toks, type: n(1), mover: n(2), x: f(3), y: f(4), z: f(5), count: n(6), time: n(7), attack: n(8),
+        rect: [n(9), n(10), n(11), n(12)] });
+    }
+    return { lines: out, eol: /\r\n/.test(text) ? '\r\n' : '\n' };
+  }
+
+  // what the WorldServer spawns from each line: { line, mover, name, level, rank, count, attack, seconds, skipped }
+  function spawns(rgn, movers, defines) {
+    const half = new Set(HALF.map(k => defines.get(k)).filter(v => v !== undefined));
+    return rgn.lines.map((l, i) => {
+      const mv = l.type === 5 ? movers.get(l.mover) : null;
+      let skipped = null, seconds = l.time;
+      if (l.type === 5 && mv) {
+        if (mv.rankId === RANK.GUARD) skipped = 'a guard: only while the PK event is on';
+        else if (mv.rankId === RANK.MATERIAL) skipped = 'a material monster: never spawned';
+        if (mv.rankId !== RANK.BOSS) seconds = Math.trunc((l.time & 0xFFFF) * (half.has(l.mover) ? 0.5 : 0.7)) & 0xFFFF;   // u_short x double
+      } else if (l.type === 5) skipped = 'unknown monster';
+      return { line: i, mover: l.mover, name: mv ? mv.name : `#${l.mover}`, level: mv ? mv.level : 0, rank: mv ? mv.rankId : 0, count: l.count, attack: l.attack, seconds, skipped };
+    });
+  }
+
+  // ---- edits (the file is UTF-16LE text: the editor splices characters, SourceFile writes it back byte-exact)
+  function checkCount(count, attack) {
+    if (!Number.isInteger(count) || count < 1 || count > 50) throw new Error('How many: 1 to 50');
+    if (!Number.isInteger(attack) || attack < 0 || attack > count) throw new Error(`Aggressive: 0 to ${count} (how many of them attack on sight)`);
+  }
+  function setCount(rgn, i, count, attack) {
+    checkCount(count, attack);
+    const l = rgn.lines[i], out = [];
+    if (l.toks[6].text !== String(count)) out.push({ start: l.toks[6].start, end: l.toks[6].end, insert: String(count) });
+    if (l.toks[8].text !== String(attack)) out.push({ start: l.toks[8].start, end: l.toks[8].end, insert: String(attack) });
+    return out;
+  }
+  // the whole line and its line break
+  function removeLine(text, rgn, i) {
+    const l = rgn.lines[i];
+    let end = l.end;
+    if (text.startsWith('\r\n', end)) end += 2; else if (text[end] === '\n') end += 1;
+    return [{ start: l.start, end, insert: '' }];
+  }
+  // a new spawn after the last respawn7 line, in its style: the same tail (day / hour / item, AI, angle, patrol, cycle, control)
+  // s = { mover, x, y, z, count, attack, time, radius }
+  function checkNew(s, movers) {
+    if (!movers.get(s.mover)) throw new Error('Pick a monster');
+    for (const k of ['x', 'z']) if (typeof s[k] !== 'number' || !(s[k] > 0) || s[k] > 99999) throw new Error(`${k}: a number above 0`);
+    if (typeof s.y !== 'number' || !Number.isFinite(s.y)) throw new Error('y: a number');
+    checkCount(s.count, s.attack);
+    if (!Number.isInteger(s.time) || s.time < 1 || s.time > 32767) throw new Error('Respawn time: 1 to 32,767 seconds');
+    if (!Number.isInteger(s.radius) || s.radius < 1 || s.radius > 200) throw new Error('Spawn area: 1 to 200 m around the spot');
+  }
+  const f6 = v => v.toFixed(6);
+  function newLine(rgn, s) {
+    const last = rgn.lines[rgn.lines.length - 1];
+    const tail = last ? last.toks.slice(13).map(t => t.text).join(' ') : '1 30 1 24 1 1 2 0.000000 -1 0 0';
+    const r = [Math.round(s.x - s.radius), Math.round(s.z - s.radius), Math.round(s.x + s.radius), Math.round(s.z + s.radius)];
+    return `respawn7 5 ${s.mover} ${f6(s.x)} ${f6(s.y)} ${f6(s.z)} ${s.count} ${s.time} ${s.attack} ${r.join(' ')} ${tail} `;
+  }
+  function addLine(text, rgn, s, movers) {
+    checkNew(s, movers);
+    const last = rgn.lines[rgn.lines.length - 1];
+    if (!last) throw new Error('WdRace.rgn has no respawn7 line to put it after');
+    let at = last.end;
+    if (text.startsWith('\r\n', at)) at += 2; else if (text[at] === '\n') at += 1;
+    else return [{ start: at, end: at, insert: rgn.eol + newLine(rgn, s) }];
+    return [{ start: at, end: at, insert: newLine(rgn, s) + rgn.eol }];
+  }
+
+  FRE.raceMap = { KEY, parse, spawns, checkCount, setCount, removeLine, checkNew, newLine, addLine, RANK };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- loaders/antibot.js ----
 // Bot Check (task "Bot Check"): Server/Resource/AntiBot.inc, read the way CAntiBotMng::LoadScript reads it
 // (WORLDSERVER/AntiBotMng.cpp, V19 78f3239f; the tuning lines V19 d816e99f, NOT YET BUILT OR TESTED: an older WorldServer
@@ -15832,7 +15991,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
   const removeSpot = (text, spot) => T.removeRow(text, spot);
 
   // ---- the week (step 5): BEGIN <EVENT | RANDOM> <day 0-7> <hour 0-23> <minute 0-59> (the file writes minutes as 2 digits)
-  // b = { type: 0 (RANDOM) | 1-6, day, hour, minute }
+  // b = { type: 0 (RANDOM) | 1-7, day, hour, minute }
   function checkBegin(model, b) {
     if (!Number.isInteger(b.day) || b.day < 0 || b.day > 7) throw new Error('Day: every day, or Sunday - Saturday');
     if (!Number.isInteger(b.hour) || b.hour < 0 || b.hour > 23) throw new Error('Hour: 0 - 23');
@@ -15849,7 +16008,49 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
   function editBegin(text, model, begin, b) { checkBegin(model, b); return [{ start: begin.start, end: begin.end, insert: beginRow(b) }]; }
   const removeBegin = (text, begin) => T.removeRow(text, begin);
 
-  FRE.miniEventOps = { checkBegin, beginRow, addBegin, editBegin, removeBegin, checkSpot, spotRow, addSpot, editSpot, removeSpot, askLine, addAsk, editAsk, removeAsk, checkText, setKey, setPrize, setPoints, checkKey, prizeRow,
+  // ---- Vagrant Race: RACE_START <x> <z> (V19 ce1659f6, not yet built). Written with up to 1 decimal; above 0; inside WdRace when
+  // the editor knows its size (VecInWorld). The line is changed in place, else a new one goes after the race's POINTS / EVENT line.
+  const coord = v => String(Math.round(v * 10) / 10);
+  function checkRaceStart(model, x, z) {
+    for (const [k, v] of [['x', x], ['z', z]]) if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0 || v > 99999) throw new Error(`${k}: a number above 0`);
+    const w = model.raceWorld;
+    if (w && !M().vecInWorld(w, Math.fround(Number(coord(x))), Math.fround(Number(coord(z))))) throw new Error(`${coord(x)}, ${coord(z)} is outside WdRace (0 - ${(128 * w.w - 1) * w.mpu} by 0 - ${(128 * w.h - 1) * w.mpu}): the server would switch Mini Events off`);
+  }
+  function setRaceStart(text, model, x, z) {
+    checkRaceStart(model, x, z);
+    const rs = model.raceStart, X = coord(x), Z = coord(z);
+    if (rs) {
+      const out = [];
+      if (text.slice(rs.x.start, rs.x.end) !== X) out.push({ start: rs.x.start, end: rs.x.end, insert: X });
+      if (text.slice(rs.z.start, rs.z.end) !== Z) out.push({ start: rs.z.start, end: rs.z.end, insert: Z });
+      return out;
+    }
+    const e = model.events[7];
+    const anchor = [...e.lines, ...(e.points ? [e.points] : [])].sort((a, b) => b.start - a.start)[0];
+    if (!anchor) throw new Error('Vagrant Race has no EVENT line');
+    return T.insertRowAfter(text, anchor, `RACE_START\t${X}\t${Z}`);
+  }
+
+  // RACE_POINT <x> <z> checkpoints (V19 321d3c1b), in route order: a new one goes after the last one (else after RACE_START, else after
+  // the race's EVENT / POINTS line); a change rewrites its two numbers; a remove takes the line (a comment after it goes too)
+  function checkRacePoint(model, x, z) { checkRaceStart(model, x, z); }
+  function addRacePoint(text, model, x, z) {
+    checkRacePoint(model, x, z);
+    const e = model.events[7], pts = model.racePoints;
+    const anchor = pts.length ? pts[pts.length - 1] : model.raceStart || [...e.lines, ...(e.points ? [e.points] : [])].sort((a, b) => b.start - a.start)[0];
+    if (!anchor) throw new Error('Vagrant Race has no EVENT line');
+    return T.insertRowAfter(text, anchor, `RACE_POINT\t${coord(x)}\t${coord(z)}`);
+  }
+  function editRacePoint(text, model, rp, x, z) {
+    checkRacePoint(model, x, z);
+    const out = [], X = coord(x), Z = coord(z);
+    if (text.slice(rp.x.start, rp.x.end) !== X) out.push({ start: rp.x.start, end: rp.x.end, insert: X });
+    if (text.slice(rp.z.start, rp.z.end) !== Z) out.push({ start: rp.z.start, end: rp.z.end, insert: Z });
+    return out;
+  }
+  const removeRacePoint = (text, rp) => T.removeRow(text, rp);
+
+  FRE.miniEventOps = { checkRaceStart, setRaceStart, checkRacePoint, addRacePoint, editRacePoint, removeRacePoint, checkBegin, beginRow, addBegin, editBegin, removeBegin, checkSpot, spotRow, addSpot, editSpot, removeSpot, askLine, addAsk, editAsk, removeAsk, checkText, setKey, setPrize, setPoints, checkKey, prizeRow,
     checkRecipe, recipeRow, hintRow, addRecipe, editRecipe, removeRecipe, putRecipes, checkHint, hintOf, setHint, removeHint, addHints };
 })(globalThis.FRE = globalThis.FRE || {});
 
@@ -18096,6 +18297,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
       // monster drops, the Donation Shop, exchanges and boxes (read-only), and WdMadrigal.rgn (monster spots, area names)
       uses: ['npc', 'drops', 'donation', 'exchange', 'boxes'],
       maps: true,
+      // Vagrant Race: World/WdRace/WdRace.rgn, the race map's monsters (respawn7 lines), editable here (Server + Client copies)
+      raceMap: true,
       parse(ws) { return FRE.miniEvent.fromWorkspace(ws); },
       validate(ws, model) { return FRE.miniEventChecks(model); },
     },
@@ -18393,6 +18596,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
         this.mapFiles.set(name, lower);
         if (maps) this.editable.add(lower);
       }
+      // the Vagrant Race map's monsters (FRE.raceMap): the same SourceFile as worldFiles holds, so a re-read sees the edits
+      const race = worldFiles.get(FRE.raceMap.KEY);
+      if (race && MODULES.some(m => m.raceMap && this.shown.has(m.id) && this.available[m.id].ok)) {
+        this.files.set(FRE.raceMap.KEY, race);
+        this.editable.add(FRE.raceMap.KEY);
+      }
       this.refreshMaps();
     }
     refreshMaps() {
@@ -18526,6 +18735,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
       const own = MODULES.filter(m => this.available[m.id].ok && this.shown.has(m.id));
       const spec = !this.only || own.some(m => m.editsSpec) ? CORE_CLIENT : [];
       const maps = own.some(m => m.editsMaps) ? [...this.mapFiles.values()].map(l => this.files.get(l).name) : [];
+      if (own.some(m => m.raceMap) && this.files.has(FRE.raceMap.KEY)) maps.push(this.files.get(FRE.raceMap.KEY).name);
       return [...new Set([...spec, ...own.flatMap(m => m.client), ...maps])];
     }
 
@@ -18745,6 +18955,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
     'partydungeon.lua': { server: STARTUP, client: null, cite: 'Project.cpp:908 CInstanceDungeonParty::LoadScript -> InstanceDungeonBase.cpp:384' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };
+  // a map's monsters (the Vagrant Race map): the WorldServer spawns them from the respawn lines it reads when it loads the world
+  const RGN = { server: STARTUP, client: null, cite: 'WorldFile.cpp:554 ReadRespawn (monsters: #ifdef __WORLDSERVER :601)' };
   const BOARD = { server: null, client: CLICK, cite: 'npc-board.diff: WndWorld.cpp OnCommand default:' };
   // the Guild Siege boards: the game's own code reads them on each click (no patch needed)
   const GS_BOARD = { server: null, client: CLICK, noPatch: true, cite: 'WndWorld.cpp:4600 / :4681 FILE_GUILDCOMBAT_TEXT_n' };
@@ -18755,6 +18967,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
     key = key.toLowerCase();
     if (READERS[key]) return READERS[key];
     if (/^world\/.+\.dyo$/.test(key)) return DYO;
+    if (/^world\/.+\.rgn$/.test(key)) return RGN;
     if (/^client\/npcboard_\d+\.inc$/.test(key)) return BOARD;
     if (/^client\/guildcombattext_\d_(eng|usa)\.inc$/.test(key)) return GS_BOARD;
     return UNKNOWN;
@@ -27011,8 +27224,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
   const DAYS = ['every day', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const ORD = n => n + (n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th');
   const two = n => String(n).padStart(2, '0');
-  const eDiags = (ctx, e) => ctx.ws.diags.filter(d => d.module === 'minievent' && (new RegExp(`\\b${e.key}\\b`).test(d.message) ||
-    [...e.lines, ...e.rankLines, ...e.restLines, ...(e.points ? [e.points] : [])].some(l => d.start >= l.start && d.start < l.end)));
+  const eDiags = (ctx, e) => ctx.ws.diags.filter(d => d.module === 'minievent' && (new RegExp(`\\b${e.key}\\b`).test(d.message) || (e.type === 7 && /\bRACE_(START|POINT)\b/.test(d.message)) ||
+    [...e.lines, ...e.rankLines, ...e.restLines, ...(e.points ? [e.points] : []), ...(e.type === 7 && model(ctx).raceStart ? [model(ctx).raceStart] : [])]
+      .some(l => d.start >= l.start && d.start < l.end)));
 
   function itemOptions(ws) {
     if (!ws._meItemOpts) ws._meItemOpts = [...ws.items.items.values()].map(it => ws.itemInfo(it)).sort((a, b) => a.name.localeCompare(b.name))
@@ -27052,7 +27266,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
         else eventView(el, ctx, m.events[st.sel]);
       });
     },
-    addTarget() { return { ok: false, title: 'The six events are fixed in the game code' }; },
+    addTarget() { return { ok: false, title: 'The seven events are fixed in the game code' }; },
     locate(d, ctx) {
       if (d.module !== 'minievent') return false;
       const m = model(ctx);
@@ -27114,6 +27328,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
       el.appendChild(h('p.muted.small', e.type === 3 ? 'Right answers, fastest first: these points by place; every other right answer gets "the rest"; wrong / none 0.'
         : e.type === 4 ? 'Every round a random order: these points by place, everyone else "the rest".'
         : e.type === 6 ? 'Only the 1st place is used: the player who finds Lost Fwanki.'
+        : e.type === 7 ? 'Finishers in the order they click "Finish!": these points by place (11th and later "the rest"); everyone who does not finish in time also gets "the rest".'
         : 'The first 10 get these points by place, later ones "the rest"; none 0.'));
       const cells = vals.map((v, i) => h('td', h('div.muted.small', i < 10 ? ORD(i + 1) : 'the rest'), numInput({ value: v, min: 0, max: 999, disabled: !ed, key: `mept|${e.type}|${i}`,
         onCommit: n => { if (n === null || n === v) return; const nv = vals.slice(); nv[i] = n;
@@ -27127,12 +27342,140 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
     if (e.type === 2 || e.type === 3) questionsView(el, ctx, e);
     else if (e.type === 5) turninView(el, ctx, e);
     else if (e.type === 6) hideView(el, ctx, e);
+    else if (e.type === 7) raceView(el, ctx, e);
     else if (list) el.appendChild(h('p.muted.small', `This event has ${list} (at least one per round is needed: ${e.values.ROUNDS}). Editing the list comes in a later step.`));
 
     tryView(el, ctx, e);
     const ds = eDiags(ctx, e);
     if (ds.length) { el.appendChild(h('h3', 'Problems')); for (const d of ds) el.appendChild(diagRow(d)); }
     el.appendChild(h('p.muted.small', 'After saving: type /eventreload in game as GM while no Mini Event runs (or restart the servers).'));
+  }
+
+  // Vagrant Race: the start line (RACE_START) and where the finish is (MaRa_RaceGoal in WdRace.dyo)
+  function raceView(el, ctx, e) {
+    const m = model(ctx), ed = can(ctx), w = m.raceWorld, S = st.rc || (st.rc = { paste: '' });
+    el.appendChild(h('h3', 'Start line'));
+    el.appendChild(h('p.muted.small', 'Every round, and after every death, racers are put here as level 1 Vagrants (RACE_START in MiniEvent.inc; the race map WdRace is a copy of Volcane). '
+      + `Default ${M().cRound(M().RACE_START.x)}, ${M().cRound(M().RACE_START.z)}: the Volcane landing point; the race map has no monsters within 150 m of it. A GM can stand there with /te 247 <x> <z>.`));
+    if (w === null) el.appendChild(h('p.warn-text', '⛔ No WdRace map: World.inc has no WI_WORLD_RACE, or World/WdRace is missing. The server switches every Mini Event off while the race has an EVENT line.'));
+    else if (w === undefined) el.appendChild(h('p.muted.small', '(The maps are not read yet: the start is not checked against the map size.)'));
+    const cur = m.race, set = (x, z, how) => {
+      try { O().checkRaceStart(m, x, z); } catch (er) { toast(er.message, 'bad'); ctx.renderAll(false); return; }
+      edit(ctx, 7, (tx, mm) => O().setRaceStart(tx, mm, x, z), `Vagrant Race start: ${Math.round(x * 10) / 10}, ${Math.round(z * 10) / 10}${how ? ` (${how})` : ''} (was ${M().cRound(cur.x)}, ${M().cRound(cur.z)})`);
+    };
+    const rows = [h('tr', h('td', h('b', 'x')), h('td', numInput({ value: M().cRound(cur.x), min: 1, max: 99999, disabled: !ed, key: 'merace|x', onCommit: n => { if (n !== null && n !== M().cRound(cur.x)) set(n, cur.z); } }))),
+      h('tr', h('td', h('b', 'z')), h('td', numInput({ value: M().cRound(cur.z), min: 1, max: 99999, disabled: !ed, key: 'merace|z', onCommit: n => { if (n !== null && n !== M().cRound(cur.z)) set(cur.x, n); } })))];
+    el.appendChild(table(['20%', '30%'], rows));
+    el.appendChild(h('p.muted.small', m.raceStart ? 'From the RACE_START line.' : 'Not in the file: the default is used (a change adds a RACE_START line after the race\'s POINTS line).'));
+    if (ed) {
+      const msg = h('span.small');
+      const go = h('button', { disabled: true, on: { click: () => { const p = FRE.npcEditOps.parsePosition(S.paste); if (p) { S.paste = ''; set(p.x, p.z, 'pasted /position'); } } } }, 'Use it');
+      el.appendChild(h('div.dr-line', textBox({ value: S.paste, placeholder: 'Paste /position (stand on the start in WdRace): Position : x = 505.20, y = 87.51, z = 593.85', width: '34em', key: 'merace-paste', onInput: v => {
+        S.paste = v; const p = FRE.npcEditOps.parsePosition(v);
+        go.disabled = !p; msg.className = 'small ' + (p ? 'ok-text' : 'warn-text'); msg.textContent = p ? `x ${p.x}, z ${p.z}` : v ? 'Not a /position line' : '';
+      } }), go, msg));
+    }
+    // checkpoints: when nobody finishes a round, its places go by how many of them each racer passed in order
+    const pts = m.racePoints;
+    el.appendChild(h('h3', `Checkpoints (${pts.length})`));
+    el.appendChild(h('p.muted.small', 'Only used when NOBODY reaches the Robe girl in a round: then the places go by how many checkpoints each racer passed, in this order (within 15 m), then who got there first. '
+      + (pts.length ? '' : 'There are none, so the highest point each racer reached counts instead. ')
+      + 'Easiest in game: walk the route as GM in WdRace and type /racepoint at each spot (start to finish).'));
+    if (pts.length) {
+      const prow = [h('tr', h('th', '#'), h('th', 'x'), h('th', 'z'), h('th', 'From the one before'), h('th', ''))];
+      pts.forEach((rp, i) => {
+        const prev = i ? pts[i - 1] : { x: { value: cur.x }, z: { value: cur.z } };
+        const cp = () => model(ctx).racePoints[i];
+        const change = (x, z) => {
+          try { O().checkRacePoint(model(ctx), x, z); } catch (er) { toast(er.message, 'bad'); ctx.renderAll(false); return; }
+          edit(ctx, 7, (tx, mm) => O().editRacePoint(tx, mm, cp(), x, z), `Vagrant Race checkpoint ${i + 1}: ${x}, ${z} (was ${M().cRound(rp.x.value)}, ${M().cRound(rp.z.value)})`);
+        };
+        prow.push(h('tr', h('td', String(i + 1)),
+          h('td', numInput({ value: M().cRound(rp.x.value), min: 1, max: 99999, disabled: !ed, key: `merp|${i}|x`, onCommit: n => { if (n !== null && n !== M().cRound(rp.x.value)) change(n, rp.z.value); } })),
+          h('td', numInput({ value: M().cRound(rp.z.value), min: 1, max: 99999, disabled: !ed, key: `merp|${i}|z`, onCommit: n => { if (n !== null && n !== M().cRound(rp.z.value)) change(rp.x.value, n); } })),
+          h('td.muted.small', `${Math.round(Math.hypot(rp.x.value - prev.x.value, rp.z.value - prev.z.value))} m`),
+          h('td', ed ? h('button.icon.danger', { title: 'Remove this checkpoint', on: { click: () => edit(ctx, 7, (tx, mm) => O().removeRacePoint(tx, mm.racePoints[i]), `Vagrant Race: remove checkpoint ${i + 1} (${M().cRound(rp.x.value)}, ${M().cRound(rp.z.value)})`) } }, '✕') : null)));
+      });
+      el.appendChild(table(['8%', '20%', '20%', '30%', '8%'], prow));
+    }
+    if (ed) {
+      const P2 = st.rcp || (st.rcp = { paste: '' }), msg2 = h('span.small');
+      const add = h('button', { disabled: true, on: { click: () => {
+        const p = FRE.npcEditOps.parsePosition(P2.paste);
+        if (!p) return;
+        try { O().checkRacePoint(m, p.x, p.z); } catch (er) { toast(er.message, 'bad'); return; }
+        P2.paste = '';
+        edit(ctx, 7, (tx, mm) => O().addRacePoint(tx, mm, p.x, p.z), `Vagrant Race: new checkpoint ${pts.length + 1} at ${Math.round(p.x)}, ${Math.round(p.z)}`);
+      } } }, '+ Add checkpoint');
+      el.appendChild(h('div.dr-line', textBox({ value: P2.paste, placeholder: 'Paste /position of the next checkpoint (or type: x y z)', width: '30em', key: 'merp-paste', onInput: v => {
+        P2.paste = v; const p = FRE.npcEditOps.parsePosition(v);
+        add.disabled = !p; msg2.className = 'small ' + (p ? 'ok-text' : 'warn-text'); msg2.textContent = p ? `x ${p.x}, z ${p.z}` : v ? 'Not a /position line' : '';
+      } }), add, msg2));
+    }
+    raceMonsters(el, ctx, cur);
+    // the finish: the Robe girl as WdRace.dyo places her
+    const f = ctx.ws.mapFile ? ctx.ws.mapFile('WdRace') : null;
+    const goal = f ? FRE.world.readDyo(f.serialize()).placements.find(p => p.key.toLowerCase() === 'mara_racegoal') : null;
+    el.appendChild(h('h3', 'Finish line'));
+    if (goal) el.appendChild(h('p', `The Robe girl ("Finish Line", MaRa_RaceGoal) stands at ${Math.round(goal.x)}, ${Math.round(goal.z)} at the top of WdRace: `
+      + `${Math.round(Math.hypot(goal.x - cur.x, goal.z - cur.z))} m from the start in a straight line. Racers click her and pick "Finish!" (only while a round runs, alive, standing next to her).`));
+    else el.appendChild(h('p.muted.small', f ? '⚠ WdRace.dyo has no MaRa_RaceGoal: nobody can finish.' : 'The finish is the Robe girl ("Finish Line", MaRa_RaceGoal) at the top of WdRace (the maps are not read yet).'));
+    el.appendChild(h('p.muted.small', 'In game: no level needed; each round everyone online who registered is sent in (not from a dungeon, Guild Siege, FFA / TDM, a trade or a private shop, or while dead: then the next round). A death = back at the start after 2 s, full HP, 3 s of no damage; the clock keeps running. The round ends early when every racer inside has finished. At the end everyone gets their own character back where they were, and the prizes go to the real bag. Test alone with /eventstart race 1 1.'));
+  }
+
+  // the race map's monsters: World/WdRace/WdRace.rgn respawn7 lines (FRE.raceMap; the user, 2026-10-18: "add or remove some monsters")
+  function raceMonsters(el, ctx, start) {
+    const ws = ctx.ws, RM = FRE.raceMap, f = ws.files.get(RM.KEY);
+    el.appendChild(h('h3', 'Monsters on the course'));
+    if (!f) { el.appendChild(h('p.muted.small', 'World/WdRace/WdRace.rgn is not read (pick the folder with Server/Resource/World): the monsters can not be changed here.')); return; }
+    const ed = ws.isEditable(RM.KEY), rg = RM.parse(f), list = RM.spawns(rg, ws.movers.movers, ws.defines.defines);
+    const S = st.rm || (st.rm = { mover: null, paste: '', count: 2, attack: 2, time: 70, radius: 20 });
+    const editRgn = (make, label) => ctx.editGroup(() => [{ file: RM.KEY, splices: make(ws.files.get(RM.KEY).text, RM.parse(ws.files.get(RM.KEY))) }], label, ['minievent|7']);
+    const total = list.filter(x => !x.skipped).reduce((a, x) => a + x.count, 0);
+    el.appendChild(h('p.muted.small', `${list.length} spawn spots, ${total} monsters. Each spot keeps this many alive in its area; "aggressive" = how many of them attack on sight. A level 1 Vagrant dies in one hit. `
+      + 'The respawn time the server uses is the file\'s × 0.7 (not for bosses). After saving: Stop Server.bat, then Start Server.bat (the WorldServer reads the map at start). The Client copy is kept the same.'));
+    const rows = [h('tr', h('th', 'Monster'), h('th', 'How many'), h('th', 'Aggressive'), h('th', 'Respawn (s)'), h('th', 'Where (from the start)'), h('th', ''))];
+    list.forEach((s, i) => {
+      const l = rg.lines[i], mid = [(l.rect[0] + l.rect[2]) / 2, (l.rect[1] + l.rect[3]) / 2];
+      const set = (count, attack) => {
+        try { RM.checkCount(count, attack); } catch (er) { toast(er.message, 'bad'); ctx.renderAll(false); return; }
+        editRgn((tx, r) => RM.setCount(r, i, count, attack), `Race map spot ${i + 1} (${s.name}): ${count} monster${count === 1 ? '' : 's'}, ${attack} aggressive (was ${s.count}, ${s.attack})`);
+      };
+      rows.push(h('tr', h('td', h('b', s.name), h('div.muted.small', `level ${s.level}${s.skipped ? ` · ⚠ ${s.skipped}` : ''}`)),
+        h('td', numInput({ value: s.count, min: 1, max: 50, disabled: !ed, key: `merm|${i}|n`, onCommit: n => { if (n !== null && n !== s.count) set(n, Math.min(s.attack, n)); } })),
+        h('td', numInput({ value: s.attack, min: 0, max: 50, disabled: !ed, key: `merm|${i}|a`, onCommit: n => { if (n !== null && n !== s.attack) set(s.count, n); } })),
+        h('td.muted.small', `${s.seconds}`),
+        h('td.muted.small', `${Math.round(l.x)}, ${Math.round(l.z)} · ${Math.round(Math.hypot(mid[0] - start.x, mid[1] - start.z))} m`),
+        h('td', ed ? h('button.icon.danger', { title: 'Remove this spawn spot', on: { click: () => editRgn((tx, r) => RM.removeLine(tx, r, i), `Race map: remove spot ${i + 1} (${s.count} × ${s.name})`) } }, '✕') : null)));
+    });
+    el.appendChild(table(['28%', '13%', '13%', '12%', '26%', '8%'], rows));
+    if (!ed) return;
+    // + add a spot
+    if (!ws._meMoverOpts) ws._meMoverOpts = [...ws.movers.movers.entries()].filter(([, m]) => m.rankId >= 1 && m.rankId <= 7)
+      .map(([id, m]) => ({ v: id, label: `${m.name} (level ${m.level})`, find: `${m.name} ${ws.defines.byValue('MI_', id) || ''}` })).sort((a, b) => a.label.localeCompare(b.label));
+    const msg = h('span.small');
+    const pos = () => FRE.npcEditOps.parsePosition(S.paste);
+    const spec = () => { const p = pos(); return p ? { mover: S.mover, x: p.x, y: p.y, z: p.z, count: S.count, attack: S.attack, time: S.time, radius: S.radius } : null; };
+    const add = h('button.primary', { on: { click: () => {
+      const s = spec();
+      if (!s) { toast('Paste a /position line first', 'bad'); return; }
+      try { RM.checkNew(s, ws.movers.movers); } catch (er) { toast(er.message, 'bad'); return; }
+      const mv = ws.movers.movers.get(s.mover);
+      editRgn((tx, r) => RM.addLine(tx, r, s, ws.movers.movers), `Race map: new spot, ${s.count} × ${mv.name} at ${Math.round(s.x)}, ${Math.round(s.z)}`);
+      S.paste = '';
+    } } }, '+ Add spawn spot');
+    const check = () => {
+      const s = spec();
+      try { if (!s) throw new Error('Paste a /position line (stand on the spot in WdRace)'); RM.checkNew(s, ws.movers.movers); msg.className = 'small ok-text'; msg.textContent = `✓ ${Math.round(s.x)}, ${Math.round(s.z)}`; add.disabled = false; }
+      catch (er) { msg.className = 'small warn-text'; msg.textContent = '⛔ ' + er.message; add.disabled = true; }
+    };
+    el.appendChild(h('div.dr-line', h('span', 'Monster'), FRE.ui.combo({ options: ws._meMoverOpts, value: S.mover, placeholder: 'Pick a monster', onPick: v => { S.mover = v; check(); } }),
+      h('span', 'How many'), numInput({ value: S.count, min: 1, max: 50, onCommit: n => { if (n) { S.count = n; S.attack = Math.min(S.attack, n); check(); } } }),
+      h('span', 'Aggressive'), numInput({ value: S.attack, min: 0, max: 50, onCommit: n => { if (n !== null) { S.attack = n; check(); } } })));
+    el.appendChild(h('div.dr-line', h('span', 'Respawn (s, file)'), numInput({ value: S.time, min: 1, max: 32767, onCommit: n => { if (n) { S.time = n; check(); } } }),
+      h('span', 'Area ± m'), numInput({ value: S.radius, min: 1, max: 200, onCommit: n => { if (n) { S.radius = n; check(); } } })));
+    el.appendChild(h('div.dr-line', textBox({ value: S.paste, placeholder: 'Paste /position of the spot (in WdRace): Position : x = 700.00, y = 88.00, z = 800.00', width: '34em', key: 'merm-paste', onInput: v => { S.paste = v; check(); } }), add, msg));
+    check();
   }
 
   // a text box that commits on Enter / leaving it (and after a pause while typing)
@@ -29310,7 +29653,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
   }
 
   // For every map in World.inc (read-only): World/<map>/<map>.dyo (which NPCs stand in the game),
-  // <map>.rgn + <map>.txt.txt (area names) and WdMadrigal.wld.cnt (continents): loaders/area.js
+  // <map>.rgn + <map>.txt.txt (area names), WdMadrigal.wld.cnt (continents): loaders/area.js; <map>.wld (size: the Vagrant Race start)
   async function loadMaps(res, P = null) {
     const world = await FRE.layout.child(res, 'World');
     if (!world) return;
@@ -29323,7 +29666,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
       if (P) await P.count(seen.size, maps, w.name);
       const dir = await FRE.layout.child(world, w.name);
       if (!dir) continue;
-      const names = ['.dyo', '.rgn', '.txt.txt', '.wld.cnt'].map(e => w.name + e);
+      const names = ['.dyo', '.rgn', '.txt.txt', '.wld', '.wld.cnt'].map(e => w.name + e);
       const found = await FRE.fsa.findFiles(dir, names);
       for (const n of names) {
         const fh = found.get(n.toLowerCase());
@@ -29331,10 +29674,17 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "67+", "when
         const { bytes, stamp } = await FRE.fsa.readHandle(fh);
         // the .dyo with its handle: the NPC task can add an NPC record to it (Server + Client copies)
         if (n.endsWith('.dyo')) dyo.set(w.name, new FRE.SourceFile(fh.name, bytes, { handle: fh, stamp, binary: true, dir: `World/${dir.name}` }));
+        // the Vagrant Race map's monsters: with its handle (the Mini Events task edits it)
+        else if (`world/${w.name}/${n}`.toLowerCase() === FRE.raceMap.KEY) worldFiles.set(FRE.raceMap.KEY, new FRE.SourceFile(fh.name, bytes, { handle: fh, stamp, dir: `World/${dir.name}` }));
         else worldFiles.set(`world/${w.name}/${n}`.toLowerCase(), new FRE.SourceFile(fh.name, bytes));
       }
-      // the client's copy (Client/World/<map>/<map>.dyo), for the client sync
+      // the client's copy (Client/World/<map>/<map>.dyo, and WdRace.rgn), for the client sync
       const cdir = cworld && dyo.has(w.name) ? await FRE.layout.child(cworld, w.name) : null;
+      const crgn = cdir && worldFiles.has(FRE.raceMap.KEY) && w.name.toLowerCase() === 'wdrace' ? (await FRE.fsa.findFiles(cdir, [w.name + '.rgn'])).get((w.name + '.rgn').toLowerCase()) : null;
+      if (crgn) {
+        const { bytes, stamp } = await FRE.fsa.readHandle(crgn);
+        S.client.files.set(crgn.name.toLowerCase(), new FRE.SourceFile(crgn.name, bytes, { handle: crgn, stamp, dir: `World/${cdir.name}` }));
+      }
       const ch = cdir && (await FRE.fsa.findFiles(cdir, [w.name + '.dyo'])).get((w.name + '.dyo').toLowerCase());
       if (ch) {
         const { bytes, stamp } = await FRE.fsa.readHandle(ch);

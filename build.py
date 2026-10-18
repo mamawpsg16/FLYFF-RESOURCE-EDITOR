@@ -38,9 +38,9 @@ def main():
     if harness:  # test build: fake file system + scripted UI scenario (tests/ui-harness.js)
         fx = ROOT / 'test-data' / 'fixtures' / 'Resource'
         data = {f.name: base64.b64encode(f.read_bytes()).decode() for f in sorted(fx.iterdir()) if f.is_file()}
-        # map files keep their folder: "World/WdMadrigal/WdMadrigal.dyo" (+ .rgn, .txt.txt, .wld.cnt: area names)
+        # map files keep their folder: "World/WdMadrigal/WdMadrigal.dyo" (+ .rgn, .txt.txt, .wld.cnt: area names; .wld: the map size)
         data.update({f.relative_to(fx).as_posix(): base64.b64encode(f.read_bytes()).decode()
-                     for pat in ('*.dyo', '*.rgn', '*.txt.txt', '*.wld.cnt') for f in sorted(fx.glob('World/*/' + pat))})
+                     for pat in ('*.dyo', '*.rgn', '*.txt.txt', '*.wld', '*.wld.cnt') for f in sorted(fx.glob('World/*/' + pat))})
         parts.append('FRE.HARNESS_FILES = ' + json.dumps(data) + ';')
         # the rules boards of PvP Events (Client/Client, client-only): FFA / TDM Rules and the Guild Siege boards
         cc = ROOT / 'test-data' / 'fixtures' / 'Client' / 'Client'

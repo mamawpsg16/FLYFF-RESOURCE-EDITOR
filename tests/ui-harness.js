@@ -81,6 +81,8 @@
       const dyo = [...d.children.values()].find(f => f.kind === 'file' && /\.dyo$/i.test(f.name));
       if (!dyo) continue;
       const cd = new FakeDir(n); cd.children.set(dyo.name, new FakeFile(dyo.name, dyo.bytes.slice())); cw.children.set(n, cd);
+      const rgn = n === 'WdRace' && [...d.children.values()].find(f => f.kind === 'file' && /\.rgn$/i.test(f.name));
+      if (rgn) cd.children.set(rgn.name, new FakeFile(rgn.name, rgn.bytes.slice()));     // the race map's monsters (Server + Client)
     }
     clientDir.children.set('World', cw);
   }
@@ -233,7 +235,7 @@
     await openTask('minievent');
     const ed = () => $('editor'), items = () => [...document.querySelectorAll('#list .npc')], txt = () => S.ws.files.get('minievent.inc').text;
     const lastToast = () => ([...$('toasts').children].pop() || { textContent: '' }).textContent;
-    ok(S.mode === 'minievent' && items().length === 7 && /Color Game/.test(items()[0].textContent) && /Start times/.test(items()[6].textContent), 'Mini Events: one page per event (6) + the start times');
+    ok(S.mode === 'minievent' && items().length === 8 && /Color Game/.test(items()[0].textContent) && /Vagrant Race/.test(items()[6].textContent) && /Start times/.test(items()[7].textContent), 'Mini Events: one page per event (7) + the start times');
     ok(!S.ws.diags.some(d => d.module === 'minievent'), 'the real MiniEvent.inc has no problem');
     click(items().find(x => x.dataset.page === '3'));
     ok(/O\/X Quiz/.test(ed().querySelector('h2').textContent) && /Prizes/.test(ed().textContent) && /Round points/.test(ed().textContent) && ed().querySelector('input[data-key="me|3|ROUNDS"]').value === '10'
@@ -304,6 +306,43 @@
       ok(begins() === b0 - 1 && /Removed start time 6/.test(lastToast()), 'remove start time 6');
       click($('btn-undo'));
       ok(begins() === b0, 'undo: 6 again');
+      $('toasts').textContent = ''; return;
+    }
+    // Vagrant Race (?stop=mineventrace): the start, checkpoints, the race map's monsters (WdRace.rgn), Try it
+    if (STOP === 'mineventrace') {
+      const set = (el, v, ev) => { el.value = v; el.dispatchEvent(new Event(ev)); };
+      const rgn = () => S.ws.files.get('world/wdrace/wdrace.rgn').text, spawns = () => (rgn().match(/^respawn7 /gm) || []).length;
+      click(items().find(x => x.dataset.page === '7'));
+      ok(/Vagrant Race/.test(ed().querySelector('h2').textContent) && /Start line/.test(ed().textContent) && /Checkpoints \(0\)/.test(ed().textContent) && /Monsters on the course/.test(ed().textContent)
+        && /34 spawn spots/.test(ed().textContent) && /stands at 1035, 959/.test(ed().textContent) && /Try it/.test(ed().textContent), 'Vagrant Race page: start, checkpoints (0), 34 spawn spots, the finish at 1035, 959, Try it');
+      ok(ed().querySelector('input[data-key="merace|x"]').value === '505' && ed().querySelector('input[data-key="merace|z"]').value === '594', 'the start: 505, 594 (RACE_START)');
+      set(ed().querySelector('input[data-key="merace-paste"]'), 'Position : x = 620.40, y = 88.00, z = 700.25', 'input');
+      click(btnByText(ed(), 'Use it'));
+      ok(/^RACE_START\t620\.4\t700\.3\r?$/m.test(txt()) && /Vagrant Race start: 620\.4, 700\.3 \(pasted \/position\)/.test(lastToast()), 'paste /position: RACE_START 620.4 700.3 in place');
+      click($('btn-undo'));
+      set(ed().querySelector('input[data-key="merp-paste"]'), 'Position : x = 893.00, y = 85.00, z = 897.00', 'input');
+      click(btnByText(ed(), '+ Add checkpoint'));
+      ok(/^RACE_START\t505\t594\r?\nRACE_POINT\t893\t897\r?$/m.test(txt()) && /Checkpoints \(1\)/.test(ed().textContent), 'a checkpoint: a RACE_POINT line after RACE_START');
+      click([...ed().querySelectorAll('table.items tr')].find(r => r.querySelector('input[data-key="merp|0|x"]')).querySelector('button.danger'));
+      ok(!/RACE_POINT/.test(txt()), 'remove it');
+      click($('btn-undo')); click($('btn-undo'));
+      ok(!/RACE_POINT/.test(txt()), 'undo x2: no checkpoint');
+      const s0 = spawns(), r0 = rgn();
+      set(ed().querySelector('input[data-key="merm|0|n"]'), '5', 'change');
+      ok(/^respawn7 5 715 893\.435364 84\.728043 897\.685059 5 70 3 /m.test(rgn()) && /Race map spot 1 \(.+\): 5 monsters, 3 aggressive \(was 3, 3\)/.test(lastToast()), 'spot 1: 3 -> 5 monsters (aggressive stays 3)');
+      click($('btn-undo'));
+      click([...ed().querySelectorAll('table.items tr')].find(r => r.querySelector('input[data-key="merm|0|n"]')).querySelector('button.danger'));
+      ok(spawns() === s0 - 1 && /remove spot 1/.test(lastToast()), 'remove spot 1');
+      click($('btn-undo'));
+      ok(rgn() === r0, 'undo: WdRace.rgn back, character for character');
+      const S2 = FRE.ui.modules.find(m => m.id === 'minievent').st;
+      S2.rm.mover = S.ws.defines.defines.get('MI_CYCLOPSX'); S2.rm.paste = 'Position : x = 700.00, y = 88.50, z = 800.00'; renderAllForTest();
+      click(btnByText(ed(), '+ Add spawn spot'));
+      ok(spawns() === s0 + 1 && /respawn7 5 874 700\.000000 88\.500000 800\.000000 2 70 2 680 780 720 820 1 30 1 24 1 1 2 0\.000000 -1 0 0 \r?$/m.test(rgn()) && /Race map: new spot, 2 × /.test(lastToast()), 'a new spawn spot after the last one (2 Cyclops X, 20 m around)');
+      ok(S.ws.dirtyFiles().some(f => f.name === 'WdRace.rgn') && S.ws.clientFileNames().includes('WdRace.rgn'), 'WdRace.rgn is to be saved (Server + Client copy)');
+      click($('btn-undo'));
+      const hm = [...ed().querySelectorAll('h3')].find(x => /^Monsters on the course/.test(x.textContent));
+      if (hm) hm.scrollIntoView();
       $('toasts').textContent = ''; return;
     }
     // Hide and Seek (?stop=mineventhide): the map, paste /position + ✨, add / change / remove, one round
@@ -491,7 +530,7 @@
     if (STOP === 'start') return;
     if (STOP === 'dungeon') { await dungeonStage(); return; }
     if (STOP === 'antibot' || STOP === 'antibotedit') { await antiBotStage(); return; }
-    if (STOP === 'minievent' || STOP === 'mineventprizes' || STOP === 'mineventhide' || STOP === 'mineventweek' || STOP === 'mineventqs' || STOP === 'mineventturnin' || STOP === 'mineventedit' || STOP === 'mineventsave') { await miniEventStage(); return; }
+    if (STOP === 'minievent' || STOP === 'mineventprizes' || STOP === 'mineventhide' || STOP === 'mineventrace' || STOP === 'mineventweek' || STOP === 'mineventqs' || STOP === 'mineventturnin' || STOP === 'mineventedit' || STOP === 'mineventsave') { await miniEventStage(); return; }
     if (STOP === 'mounts' || STOP === 'mountsmore' || STOP === 'mountsimple' || STOP === 'mountsgame' || STOP === 'mountsedit' || STOP === 'mountsave') { await mountsStage(); return; }
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
     click(document.querySelector('.task-card[data-task="npc"]'));

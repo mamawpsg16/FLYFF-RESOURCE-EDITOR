@@ -16,8 +16,9 @@
   const DAYS = ['every day', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const ORD = n => n + (n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th');
   const two = n => String(n).padStart(2, '0');
-  const eDiags = (ctx, e) => ctx.ws.diags.filter(d => d.module === 'minievent' && (new RegExp(`\\b${e.key}\\b`).test(d.message) ||
-    [...e.lines, ...e.rankLines, ...e.restLines, ...(e.points ? [e.points] : [])].some(l => d.start >= l.start && d.start < l.end)));
+  const eDiags = (ctx, e) => ctx.ws.diags.filter(d => d.module === 'minievent' && (new RegExp(`\\b${e.key}\\b`).test(d.message) || (e.type === 7 && /\bRACE_(START|POINT)\b/.test(d.message)) ||
+    [...e.lines, ...e.rankLines, ...e.restLines, ...(e.points ? [e.points] : []), ...(e.type === 7 && model(ctx).raceStart ? [model(ctx).raceStart] : [])]
+      .some(l => d.start >= l.start && d.start < l.end)));
 
   function itemOptions(ws) {
     if (!ws._meItemOpts) ws._meItemOpts = [...ws.items.items.values()].map(it => ws.itemInfo(it)).sort((a, b) => a.name.localeCompare(b.name))
@@ -57,7 +58,7 @@
         else eventView(el, ctx, m.events[st.sel]);
       });
     },
-    addTarget() { return { ok: false, title: 'The six events are fixed in the game code' }; },
+    addTarget() { return { ok: false, title: 'The seven events are fixed in the game code' }; },
     locate(d, ctx) {
       if (d.module !== 'minievent') return false;
       const m = model(ctx);
@@ -119,6 +120,7 @@
       el.appendChild(h('p.muted.small', e.type === 3 ? 'Right answers, fastest first: these points by place; every other right answer gets "the rest"; wrong / none 0.'
         : e.type === 4 ? 'Every round a random order: these points by place, everyone else "the rest".'
         : e.type === 6 ? 'Only the 1st place is used: the player who finds Lost Fwanki.'
+        : e.type === 7 ? 'Finishers in the order they click "Finish!": these points by place (11th and later "the rest"); everyone who does not finish in time also gets "the rest".'
         : 'The first 10 get these points by place, later ones "the rest"; none 0.'));
       const cells = vals.map((v, i) => h('td', h('div.muted.small', i < 10 ? ORD(i + 1) : 'the rest'), numInput({ value: v, min: 0, max: 999, disabled: !ed, key: `mept|${e.type}|${i}`,
         onCommit: n => { if (n === null || n === v) return; const nv = vals.slice(); nv[i] = n;
@@ -132,12 +134,140 @@
     if (e.type === 2 || e.type === 3) questionsView(el, ctx, e);
     else if (e.type === 5) turninView(el, ctx, e);
     else if (e.type === 6) hideView(el, ctx, e);
+    else if (e.type === 7) raceView(el, ctx, e);
     else if (list) el.appendChild(h('p.muted.small', `This event has ${list} (at least one per round is needed: ${e.values.ROUNDS}). Editing the list comes in a later step.`));
 
     tryView(el, ctx, e);
     const ds = eDiags(ctx, e);
     if (ds.length) { el.appendChild(h('h3', 'Problems')); for (const d of ds) el.appendChild(diagRow(d)); }
     el.appendChild(h('p.muted.small', 'After saving: type /eventreload in game as GM while no Mini Event runs (or restart the servers).'));
+  }
+
+  // Vagrant Race: the start line (RACE_START) and where the finish is (MaRa_RaceGoal in WdRace.dyo)
+  function raceView(el, ctx, e) {
+    const m = model(ctx), ed = can(ctx), w = m.raceWorld, S = st.rc || (st.rc = { paste: '' });
+    el.appendChild(h('h3', 'Start line'));
+    el.appendChild(h('p.muted.small', 'Every round, and after every death, racers are put here as level 1 Vagrants (RACE_START in MiniEvent.inc; the race map WdRace is a copy of Volcane). '
+      + `Default ${M().cRound(M().RACE_START.x)}, ${M().cRound(M().RACE_START.z)}: the Volcane landing point; the race map has no monsters within 150 m of it. A GM can stand there with /te 247 <x> <z>.`));
+    if (w === null) el.appendChild(h('p.warn-text', '⛔ No WdRace map: World.inc has no WI_WORLD_RACE, or World/WdRace is missing. The server switches every Mini Event off while the race has an EVENT line.'));
+    else if (w === undefined) el.appendChild(h('p.muted.small', '(The maps are not read yet: the start is not checked against the map size.)'));
+    const cur = m.race, set = (x, z, how) => {
+      try { O().checkRaceStart(m, x, z); } catch (er) { toast(er.message, 'bad'); ctx.renderAll(false); return; }
+      edit(ctx, 7, (tx, mm) => O().setRaceStart(tx, mm, x, z), `Vagrant Race start: ${Math.round(x * 10) / 10}, ${Math.round(z * 10) / 10}${how ? ` (${how})` : ''} (was ${M().cRound(cur.x)}, ${M().cRound(cur.z)})`);
+    };
+    const rows = [h('tr', h('td', h('b', 'x')), h('td', numInput({ value: M().cRound(cur.x), min: 1, max: 99999, disabled: !ed, key: 'merace|x', onCommit: n => { if (n !== null && n !== M().cRound(cur.x)) set(n, cur.z); } }))),
+      h('tr', h('td', h('b', 'z')), h('td', numInput({ value: M().cRound(cur.z), min: 1, max: 99999, disabled: !ed, key: 'merace|z', onCommit: n => { if (n !== null && n !== M().cRound(cur.z)) set(cur.x, n); } })))];
+    el.appendChild(table(['20%', '30%'], rows));
+    el.appendChild(h('p.muted.small', m.raceStart ? 'From the RACE_START line.' : 'Not in the file: the default is used (a change adds a RACE_START line after the race\'s POINTS line).'));
+    if (ed) {
+      const msg = h('span.small');
+      const go = h('button', { disabled: true, on: { click: () => { const p = FRE.npcEditOps.parsePosition(S.paste); if (p) { S.paste = ''; set(p.x, p.z, 'pasted /position'); } } } }, 'Use it');
+      el.appendChild(h('div.dr-line', textBox({ value: S.paste, placeholder: 'Paste /position (stand on the start in WdRace): Position : x = 505.20, y = 87.51, z = 593.85', width: '34em', key: 'merace-paste', onInput: v => {
+        S.paste = v; const p = FRE.npcEditOps.parsePosition(v);
+        go.disabled = !p; msg.className = 'small ' + (p ? 'ok-text' : 'warn-text'); msg.textContent = p ? `x ${p.x}, z ${p.z}` : v ? 'Not a /position line' : '';
+      } }), go, msg));
+    }
+    // checkpoints: when nobody finishes a round, its places go by how many of them each racer passed in order
+    const pts = m.racePoints;
+    el.appendChild(h('h3', `Checkpoints (${pts.length})`));
+    el.appendChild(h('p.muted.small', 'Only used when NOBODY reaches the Robe girl in a round: then the places go by how many checkpoints each racer passed, in this order (within 15 m), then who got there first. '
+      + (pts.length ? '' : 'There are none, so the highest point each racer reached counts instead. ')
+      + 'Easiest in game: walk the route as GM in WdRace and type /racepoint at each spot (start to finish).'));
+    if (pts.length) {
+      const prow = [h('tr', h('th', '#'), h('th', 'x'), h('th', 'z'), h('th', 'From the one before'), h('th', ''))];
+      pts.forEach((rp, i) => {
+        const prev = i ? pts[i - 1] : { x: { value: cur.x }, z: { value: cur.z } };
+        const cp = () => model(ctx).racePoints[i];
+        const change = (x, z) => {
+          try { O().checkRacePoint(model(ctx), x, z); } catch (er) { toast(er.message, 'bad'); ctx.renderAll(false); return; }
+          edit(ctx, 7, (tx, mm) => O().editRacePoint(tx, mm, cp(), x, z), `Vagrant Race checkpoint ${i + 1}: ${x}, ${z} (was ${M().cRound(rp.x.value)}, ${M().cRound(rp.z.value)})`);
+        };
+        prow.push(h('tr', h('td', String(i + 1)),
+          h('td', numInput({ value: M().cRound(rp.x.value), min: 1, max: 99999, disabled: !ed, key: `merp|${i}|x`, onCommit: n => { if (n !== null && n !== M().cRound(rp.x.value)) change(n, rp.z.value); } })),
+          h('td', numInput({ value: M().cRound(rp.z.value), min: 1, max: 99999, disabled: !ed, key: `merp|${i}|z`, onCommit: n => { if (n !== null && n !== M().cRound(rp.z.value)) change(rp.x.value, n); } })),
+          h('td.muted.small', `${Math.round(Math.hypot(rp.x.value - prev.x.value, rp.z.value - prev.z.value))} m`),
+          h('td', ed ? h('button.icon.danger', { title: 'Remove this checkpoint', on: { click: () => edit(ctx, 7, (tx, mm) => O().removeRacePoint(tx, mm.racePoints[i]), `Vagrant Race: remove checkpoint ${i + 1} (${M().cRound(rp.x.value)}, ${M().cRound(rp.z.value)})`) } }, '✕') : null)));
+      });
+      el.appendChild(table(['8%', '20%', '20%', '30%', '8%'], prow));
+    }
+    if (ed) {
+      const P2 = st.rcp || (st.rcp = { paste: '' }), msg2 = h('span.small');
+      const add = h('button', { disabled: true, on: { click: () => {
+        const p = FRE.npcEditOps.parsePosition(P2.paste);
+        if (!p) return;
+        try { O().checkRacePoint(m, p.x, p.z); } catch (er) { toast(er.message, 'bad'); return; }
+        P2.paste = '';
+        edit(ctx, 7, (tx, mm) => O().addRacePoint(tx, mm, p.x, p.z), `Vagrant Race: new checkpoint ${pts.length + 1} at ${Math.round(p.x)}, ${Math.round(p.z)}`);
+      } } }, '+ Add checkpoint');
+      el.appendChild(h('div.dr-line', textBox({ value: P2.paste, placeholder: 'Paste /position of the next checkpoint (or type: x y z)', width: '30em', key: 'merp-paste', onInput: v => {
+        P2.paste = v; const p = FRE.npcEditOps.parsePosition(v);
+        add.disabled = !p; msg2.className = 'small ' + (p ? 'ok-text' : 'warn-text'); msg2.textContent = p ? `x ${p.x}, z ${p.z}` : v ? 'Not a /position line' : '';
+      } }), add, msg2));
+    }
+    raceMonsters(el, ctx, cur);
+    // the finish: the Robe girl as WdRace.dyo places her
+    const f = ctx.ws.mapFile ? ctx.ws.mapFile('WdRace') : null;
+    const goal = f ? FRE.world.readDyo(f.serialize()).placements.find(p => p.key.toLowerCase() === 'mara_racegoal') : null;
+    el.appendChild(h('h3', 'Finish line'));
+    if (goal) el.appendChild(h('p', `The Robe girl ("Finish Line", MaRa_RaceGoal) stands at ${Math.round(goal.x)}, ${Math.round(goal.z)} at the top of WdRace: `
+      + `${Math.round(Math.hypot(goal.x - cur.x, goal.z - cur.z))} m from the start in a straight line. Racers click her and pick "Finish!" (only while a round runs, alive, standing next to her).`));
+    else el.appendChild(h('p.muted.small', f ? '⚠ WdRace.dyo has no MaRa_RaceGoal: nobody can finish.' : 'The finish is the Robe girl ("Finish Line", MaRa_RaceGoal) at the top of WdRace (the maps are not read yet).'));
+    el.appendChild(h('p.muted.small', 'In game: no level needed; each round everyone online who registered is sent in (not from a dungeon, Guild Siege, FFA / TDM, a trade or a private shop, or while dead: then the next round). A death = back at the start after 2 s, full HP, 3 s of no damage; the clock keeps running. The round ends early when every racer inside has finished. At the end everyone gets their own character back where they were, and the prizes go to the real bag. Test alone with /eventstart race 1 1.'));
+  }
+
+  // the race map's monsters: World/WdRace/WdRace.rgn respawn7 lines (FRE.raceMap; the user, 2026-10-18: "add or remove some monsters")
+  function raceMonsters(el, ctx, start) {
+    const ws = ctx.ws, RM = FRE.raceMap, f = ws.files.get(RM.KEY);
+    el.appendChild(h('h3', 'Monsters on the course'));
+    if (!f) { el.appendChild(h('p.muted.small', 'World/WdRace/WdRace.rgn is not read (pick the folder with Server/Resource/World): the monsters can not be changed here.')); return; }
+    const ed = ws.isEditable(RM.KEY), rg = RM.parse(f), list = RM.spawns(rg, ws.movers.movers, ws.defines.defines);
+    const S = st.rm || (st.rm = { mover: null, paste: '', count: 2, attack: 2, time: 70, radius: 20 });
+    const editRgn = (make, label) => ctx.editGroup(() => [{ file: RM.KEY, splices: make(ws.files.get(RM.KEY).text, RM.parse(ws.files.get(RM.KEY))) }], label, ['minievent|7']);
+    const total = list.filter(x => !x.skipped).reduce((a, x) => a + x.count, 0);
+    el.appendChild(h('p.muted.small', `${list.length} spawn spots, ${total} monsters. Each spot keeps this many alive in its area; "aggressive" = how many of them attack on sight. A level 1 Vagrant dies in one hit. `
+      + 'The respawn time the server uses is the file\'s × 0.7 (not for bosses). After saving: Stop Server.bat, then Start Server.bat (the WorldServer reads the map at start). The Client copy is kept the same.'));
+    const rows = [h('tr', h('th', 'Monster'), h('th', 'How many'), h('th', 'Aggressive'), h('th', 'Respawn (s)'), h('th', 'Where (from the start)'), h('th', ''))];
+    list.forEach((s, i) => {
+      const l = rg.lines[i], mid = [(l.rect[0] + l.rect[2]) / 2, (l.rect[1] + l.rect[3]) / 2];
+      const set = (count, attack) => {
+        try { RM.checkCount(count, attack); } catch (er) { toast(er.message, 'bad'); ctx.renderAll(false); return; }
+        editRgn((tx, r) => RM.setCount(r, i, count, attack), `Race map spot ${i + 1} (${s.name}): ${count} monster${count === 1 ? '' : 's'}, ${attack} aggressive (was ${s.count}, ${s.attack})`);
+      };
+      rows.push(h('tr', h('td', h('b', s.name), h('div.muted.small', `level ${s.level}${s.skipped ? ` · ⚠ ${s.skipped}` : ''}`)),
+        h('td', numInput({ value: s.count, min: 1, max: 50, disabled: !ed, key: `merm|${i}|n`, onCommit: n => { if (n !== null && n !== s.count) set(n, Math.min(s.attack, n)); } })),
+        h('td', numInput({ value: s.attack, min: 0, max: 50, disabled: !ed, key: `merm|${i}|a`, onCommit: n => { if (n !== null && n !== s.attack) set(s.count, n); } })),
+        h('td.muted.small', `${s.seconds}`),
+        h('td.muted.small', `${Math.round(l.x)}, ${Math.round(l.z)} · ${Math.round(Math.hypot(mid[0] - start.x, mid[1] - start.z))} m`),
+        h('td', ed ? h('button.icon.danger', { title: 'Remove this spawn spot', on: { click: () => editRgn((tx, r) => RM.removeLine(tx, r, i), `Race map: remove spot ${i + 1} (${s.count} × ${s.name})`) } }, '✕') : null)));
+    });
+    el.appendChild(table(['28%', '13%', '13%', '12%', '26%', '8%'], rows));
+    if (!ed) return;
+    // + add a spot
+    if (!ws._meMoverOpts) ws._meMoverOpts = [...ws.movers.movers.entries()].filter(([, m]) => m.rankId >= 1 && m.rankId <= 7)
+      .map(([id, m]) => ({ v: id, label: `${m.name} (level ${m.level})`, find: `${m.name} ${ws.defines.byValue('MI_', id) || ''}` })).sort((a, b) => a.label.localeCompare(b.label));
+    const msg = h('span.small');
+    const pos = () => FRE.npcEditOps.parsePosition(S.paste);
+    const spec = () => { const p = pos(); return p ? { mover: S.mover, x: p.x, y: p.y, z: p.z, count: S.count, attack: S.attack, time: S.time, radius: S.radius } : null; };
+    const add = h('button.primary', { on: { click: () => {
+      const s = spec();
+      if (!s) { toast('Paste a /position line first', 'bad'); return; }
+      try { RM.checkNew(s, ws.movers.movers); } catch (er) { toast(er.message, 'bad'); return; }
+      const mv = ws.movers.movers.get(s.mover);
+      editRgn((tx, r) => RM.addLine(tx, r, s, ws.movers.movers), `Race map: new spot, ${s.count} × ${mv.name} at ${Math.round(s.x)}, ${Math.round(s.z)}`);
+      S.paste = '';
+    } } }, '+ Add spawn spot');
+    const check = () => {
+      const s = spec();
+      try { if (!s) throw new Error('Paste a /position line (stand on the spot in WdRace)'); RM.checkNew(s, ws.movers.movers); msg.className = 'small ok-text'; msg.textContent = `✓ ${Math.round(s.x)}, ${Math.round(s.z)}`; add.disabled = false; }
+      catch (er) { msg.className = 'small warn-text'; msg.textContent = '⛔ ' + er.message; add.disabled = true; }
+    };
+    el.appendChild(h('div.dr-line', h('span', 'Monster'), FRE.ui.combo({ options: ws._meMoverOpts, value: S.mover, placeholder: 'Pick a monster', onPick: v => { S.mover = v; check(); } }),
+      h('span', 'How many'), numInput({ value: S.count, min: 1, max: 50, onCommit: n => { if (n) { S.count = n; S.attack = Math.min(S.attack, n); check(); } } }),
+      h('span', 'Aggressive'), numInput({ value: S.attack, min: 0, max: 50, onCommit: n => { if (n !== null) { S.attack = n; check(); } } })));
+    el.appendChild(h('div.dr-line', h('span', 'Respawn (s, file)'), numInput({ value: S.time, min: 1, max: 32767, onCommit: n => { if (n) { S.time = n; check(); } } }),
+      h('span', 'Area ± m'), numInput({ value: S.radius, min: 1, max: 200, onCommit: n => { if (n) { S.radius = n; check(); } } })));
+    el.appendChild(h('div.dr-line', textBox({ value: S.paste, placeholder: 'Paste /position of the spot (in WdRace): Position : x = 700.00, y = 88.00, z = 800.00', width: '34em', key: 'merm-paste', onInput: v => { S.paste = v; check(); } }), add, msg));
+    check();
   }
 
   // a text box that commits on Enter / leaving it (and after a pause while typing)

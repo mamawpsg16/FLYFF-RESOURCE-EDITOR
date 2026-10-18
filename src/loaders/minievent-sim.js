@@ -2,8 +2,11 @@
 //   endRound()  CMiniEventMng::EndRound (:852-1007): the round points of every event type
 //                 Color Game: 3 dice xRandom( 6 ), MINIEVENT_COLOR_DIE_POINTS 2 per die of your colour, +MINIEVENT_COLOR_FIRST_BONUS 1
 //                   for the first player (lowest lock-in ms, then the lowest player id) who picked a colour that hit;
-//                 Quick Hands / Turn-in Race / Hide and Seek: pick = the place of the correct answer / turn-in / find
-//                   -> POINTS place 1-10, the rest value below; O/X Quiz: right answers sorted by lock-in ms (then id) -> the same;
+//                 Quick Hands / Turn-in Race / Hide and Seek / Vagrant Race: pick = the place of the correct answer / turn-in / find /
+//                   finish -> POINTS place 1-10, the rest value below; O/X Quiz: right answers sorted by lock-in ms (then id) -> the same;
+//                 Vagrant Race (V19 ce1659f6, not yet built): no finish = the POINTS rest value (the user, 2026-10-17); a round
+//                   nobody finished (V19 321d3c1b): far = { id: [progress, ms] } -> places by more progress, then the lower ms, then
+//                   the lower id (std::sort of ( -progress, ms ), id); no progress (0) = the rest value;
 //                 Lucky Draw: the players (by id) shuffled with xRandom( i + 1 ) -> places; tie-break adds the place.
 //                 No pick adds the whole round time to the tie-break (ROUND_TIME x 1000 ms).
 //   ranking()   GetRanking + MERankLess (:1010-1026): more points, then less total lock-in time, then the lower player id.
@@ -24,9 +27,13 @@
   }
 
   // cfg: { type, pointValues[10], restPoints, roundTime }; picks: Map/obj id -> { pick, ms }; truth (O/X Quiz: true = O); rng (FRE.xRandom.rng)
-  function endRound(cfg, list, picks, truth, rng) {
+  function endRound(cfg, list, picks, truth, rng, far) {
     const P = cfg.pointValues, R = cfg.restPoints;
     for (const p of list) { const q = picks[p.id]; p.pick = q ? q.pick : -1; p.pickMs = q ? u32(q.ms) : 0; }
+    if (cfg.type === 7 && far && !list.some(p => p.pick >= 0)) {
+      const v = list.filter(p => far[p.id] && far[p.id][0] > 0).sort((a, b) => far[b.id][0] - far[a.id][0] || u32(far[a.id][1]) - u32(far[b.id][1]) || a.id - b.id);
+      v.forEach((p, i) => { p.pick = i < 254 ? i : 254; p.pickMs = u32(far[p.id][1]); });
+    }
     let dice = null;
     if (cfg.type === 4) {
       const draw = list.map(p => p);
@@ -49,9 +56,12 @@
           if (cfg.type === 1) {
             for (const d of dice) if (d === p.pick) n += DIE_POINTS;
             if (n > 0 && p.id === firstId[p.pick]) n += FIRST_BONUS;
-          } else if (cfg.type === 2 || cfg.type === 5 || cfg.type === 6) n = p.pick < RANKS ? P[p.pick] : R;
+          } else if (cfg.type === 2 || cfg.type === 5 || cfg.type === 6 || cfg.type === 7) n = p.pick < RANKS ? P[p.pick] : R;
           p.totalMs = u32(p.totalMs + p.pickMs);
-        } else p.totalMs = u32(p.totalMs + cfg.roundTime * 1000);
+        } else {
+          p.totalMs = u32(p.totalMs + cfg.roundTime * 1000);
+          if (cfg.type === 7) n = R;                         // did not finish the race
+        }
         p.roundPoints = n;
         p.points += n;
       }
@@ -97,7 +107,7 @@
     const cfg = { type: spec.type, pointValues: e.pointValues, restPoints: e.restPoints, roundTime: e.values.ROUND_TIME };
     const list = newPlayers(spec.players), rng = FRE.xRandom.rng(spec.seed || 1);
     const rounds = spec.rounds.map(r => {
-      const x = endRound(cfg, list, r.picks || {}, r.truth, rng);
+      const x = endRound(cfg, list, r.picks || {}, r.truth, rng, r.far);
       return { dice: x.dice, rows: x.rank.map(p => [p.id, p.roundPoints, p.points, p.place, p.move]) };
     });
     return { rounds, final: finish(cfg, e, list, itemOf) };
@@ -109,7 +119,8 @@
     for (let i = 0; i < nPlayers; i++) players.push({ id: 1000 + i, name: `Player ${i + 1}` });
     const T = e.values.ROUND_TIME * 1000;
     for (let r = 0; r < e.values.ROUNDS; r++) {
-      const picks = {}, truth = rnd.random(2) === 0;
+      const picks = {}, truth = rnd.random(2) === 0, far = {};
+      const nobody = type === 7 && rnd.random(4) === 0;          // the race: 1 in 4 rounds nobody makes it to the top
       const order = players.map(p => p.id);
       for (let i = order.length - 1; i > 0; i--) { const j = rnd.random(i + 1); [order[i], order[j]] = [order[j], order[i]]; }
       order.forEach((id, k) => {
@@ -119,8 +130,11 @@
         else if (type === 3) picks[id] = { pick: rnd.random(2), ms };
         else if (type === 6) { if (k === 0) picks[id] = { pick: 0, ms }; }        // one finder
         else if (type === 2 || type === 5) picks[id] = { pick: k, ms };
+        else if (type === 7 && !nobody && rnd.random(5) < 3) picks[id] = { ms };     // the race: 3 in 5 of them make it to the top
+        if (type === 7) far[id] = [rnd.random(8), ms];                  // how far up (checkpoints) and when
       });
-      rounds.push({ picks, truth });
+      if (type === 7) Object.values(picks).sort((a, b) => a.ms - b.ms).forEach((q, k) => { q.pick = k; });   // the finish order
+      rounds.push({ picks, truth, far });
     }
     return { type, e, players, rounds, seed };
   }

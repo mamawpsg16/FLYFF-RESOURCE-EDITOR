@@ -199,7 +199,7 @@
   const removeSpot = (text, spot) => T.removeRow(text, spot);
 
   // ---- the week (step 5): BEGIN <EVENT | RANDOM> <day 0-7> <hour 0-23> <minute 0-59> (the file writes minutes as 2 digits)
-  // b = { type: 0 (RANDOM) | 1-6, day, hour, minute }
+  // b = { type: 0 (RANDOM) | 1-7, day, hour, minute }
   function checkBegin(model, b) {
     if (!Number.isInteger(b.day) || b.day < 0 || b.day > 7) throw new Error('Day: every day, or Sunday - Saturday');
     if (!Number.isInteger(b.hour) || b.hour < 0 || b.hour > 23) throw new Error('Hour: 0 - 23');
@@ -216,6 +216,48 @@
   function editBegin(text, model, begin, b) { checkBegin(model, b); return [{ start: begin.start, end: begin.end, insert: beginRow(b) }]; }
   const removeBegin = (text, begin) => T.removeRow(text, begin);
 
-  FRE.miniEventOps = { checkBegin, beginRow, addBegin, editBegin, removeBegin, checkSpot, spotRow, addSpot, editSpot, removeSpot, askLine, addAsk, editAsk, removeAsk, checkText, setKey, setPrize, setPoints, checkKey, prizeRow,
+  // ---- Vagrant Race: RACE_START <x> <z> (V19 ce1659f6, not yet built). Written with up to 1 decimal; above 0; inside WdRace when
+  // the editor knows its size (VecInWorld). The line is changed in place, else a new one goes after the race's POINTS / EVENT line.
+  const coord = v => String(Math.round(v * 10) / 10);
+  function checkRaceStart(model, x, z) {
+    for (const [k, v] of [['x', x], ['z', z]]) if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0 || v > 99999) throw new Error(`${k}: a number above 0`);
+    const w = model.raceWorld;
+    if (w && !M().vecInWorld(w, Math.fround(Number(coord(x))), Math.fround(Number(coord(z))))) throw new Error(`${coord(x)}, ${coord(z)} is outside WdRace (0 - ${(128 * w.w - 1) * w.mpu} by 0 - ${(128 * w.h - 1) * w.mpu}): the server would switch Mini Events off`);
+  }
+  function setRaceStart(text, model, x, z) {
+    checkRaceStart(model, x, z);
+    const rs = model.raceStart, X = coord(x), Z = coord(z);
+    if (rs) {
+      const out = [];
+      if (text.slice(rs.x.start, rs.x.end) !== X) out.push({ start: rs.x.start, end: rs.x.end, insert: X });
+      if (text.slice(rs.z.start, rs.z.end) !== Z) out.push({ start: rs.z.start, end: rs.z.end, insert: Z });
+      return out;
+    }
+    const e = model.events[7];
+    const anchor = [...e.lines, ...(e.points ? [e.points] : [])].sort((a, b) => b.start - a.start)[0];
+    if (!anchor) throw new Error('Vagrant Race has no EVENT line');
+    return T.insertRowAfter(text, anchor, `RACE_START\t${X}\t${Z}`);
+  }
+
+  // RACE_POINT <x> <z> checkpoints (V19 321d3c1b), in route order: a new one goes after the last one (else after RACE_START, else after
+  // the race's EVENT / POINTS line); a change rewrites its two numbers; a remove takes the line (a comment after it goes too)
+  function checkRacePoint(model, x, z) { checkRaceStart(model, x, z); }
+  function addRacePoint(text, model, x, z) {
+    checkRacePoint(model, x, z);
+    const e = model.events[7], pts = model.racePoints;
+    const anchor = pts.length ? pts[pts.length - 1] : model.raceStart || [...e.lines, ...(e.points ? [e.points] : [])].sort((a, b) => b.start - a.start)[0];
+    if (!anchor) throw new Error('Vagrant Race has no EVENT line');
+    return T.insertRowAfter(text, anchor, `RACE_POINT\t${coord(x)}\t${coord(z)}`);
+  }
+  function editRacePoint(text, model, rp, x, z) {
+    checkRacePoint(model, x, z);
+    const out = [], X = coord(x), Z = coord(z);
+    if (text.slice(rp.x.start, rp.x.end) !== X) out.push({ start: rp.x.start, end: rp.x.end, insert: X });
+    if (text.slice(rp.z.start, rp.z.end) !== Z) out.push({ start: rp.z.start, end: rp.z.end, insert: Z });
+    return out;
+  }
+  const removeRacePoint = (text, rp) => T.removeRow(text, rp);
+
+  FRE.miniEventOps = { checkRaceStart, setRaceStart, checkRacePoint, addRacePoint, editRacePoint, removeRacePoint, checkBegin, beginRow, addBegin, editBegin, removeBegin, checkSpot, spotRow, addSpot, editSpot, removeSpot, askLine, addAsk, editAsk, removeAsk, checkText, setKey, setPrize, setPoints, checkKey, prizeRow,
     checkRecipe, recipeRow, hintRow, addRecipe, editRecipe, removeRecipe, putRecipes, checkHint, hintOf, setHint, removeHint, addHints };
 })(globalThis.FRE = globalThis.FRE || {});

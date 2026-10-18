@@ -83,6 +83,7 @@ loaders/minievent-sim.js
 loaders/minievent-turnin.js
 loaders/minievent-hide.js
 loaders/minievent-week.js
+loaders/minievent-racemap.js
 loaders/antibot.js
 loaders/antibot-sim.js
 edit/minievent-ops.js

@@ -6,13 +6,15 @@
 //   POINTS <name> <1st> ... <10th> <rest> ASK TYPER "<text>" "<info>"   ASK OXQUIZ O|X "<statement>"
 //   RECIPE "<title>" <n> <item> <amount> ...   SPOT <x> <z> "<region>" "<hint>" "<landmark>"
 //   ITEM_HINT <item> "<text>"   HIDE_NPC <mover> <character key>   BEGIN <name|RANDOM> <day> <hour> <minute>
+//   RACE_START <x> <z>   (Vagrant Race, V19 ce1659f6, not yet built: the start in WdRace; every line overwrites the last)
+//   RACE_POINT <x> <z>   (V19 321d3c1b: a checkpoint on the way up, in route order; x / z above 0)
 // ONE error anywhere switches EVERY Mini Event off (m_bValidConfig = FALSE, logged in error_*.txt): the server reports the
 // first; the editor lists them all (each is a BLOCK).
 (function (FRE) {
   'use strict';
   const { Script } = FRE.lexer;
   const NULL_ID = 0xFFFFFFFF;
-  // MINIEVENT_TYPE_* (_Common/CustomCommon.h:259-266), GetTypeName / GetTypeKey (MiniEventMng.cpp:91-117)
+  // MINIEVENT_TYPE_* (_Common/CustomCommon.h:259-267), GetTypeName / GetTypeKey (MiniEventMng.cpp:91-120)
   const TYPES = [
     null,
     { id: 1, key: 'COLORGAME', name: 'Color Game', about: 'Players pick 1 of 6 colours; 3 dice are rolled. 2 points per die with your colour, +1 for the first player who picked a colour that hit.' },
@@ -21,6 +23,7 @@
     { id: 4, key: 'LUCKYDRAW', name: 'Lucky Draw', about: 'Nothing to do: every round a random top 10 gets points by place, everyone else the rest points.' },
     { id: 5, key: 'TURNIN', name: 'Turn-in Race', about: 'A recipe of 1-4 items is shown; bring them to Event Master. The first 10 score by place; the round ends after the END_AT-th turn-in.' },
     { id: 6, key: 'HIDESEEK', name: 'Hide and Seek', about: 'Lost Fwanki hides at a spot in Madrigal; region at the start, a hint at 40 %, a landmark at 80 %. The first to find it wins the round.' },
+    { id: 7, key: 'RACE', name: 'Vagrant Race', about: 'Every round each registered player who is online becomes a level 1 Vagrant with no gear and is put at the start of WdRace (a copy of Volcane). They race to the Robe girl at the top and click "Finish!": finishers score by finish order, everyone else gets the rest points. A death puts them back at the start. At the end they get their own character back, where they were.' },
   ];
   const RANKS = 10, RECIPE_ITEMS = 4, ANSWER_LEN = 100;
   // the EVENT keys, their ME_EVENT() defaults (MiniEventMng.h:90) and the ReadConfig limits (:404-425)
@@ -38,7 +41,25 @@
     { key: 'IN_RANDOM', def: 1, label: 'Picked by a RANDOM start time', min: 0, max: 1, bool: true, help: 'Off = only started by a fixed start time or GM /eventstart.' },
   ];
   const KEY = new Map(KEYS.map(k => [k.key, k]));
-  const roundMax = type => (type === 5 || type === 6 ? 600 : 120);
+  const roundMax = type => (type === 5 || type === 6 || type === 7 ? 600 : 120);
+  // Vagrant Race: the default start (MINIEVENT_RACE_X / _Z, MiniEventMng.cpp; the Volcane landing point, WdRace.rgn RI_REVIVAL)
+  const RACE_START = { x: Math.fround(505.2), z: Math.fround(593.9) };
+  // CWorld::VecInWorld (World.h:756): x and z from 0, and x / MPU below WORLD_WIDTH - 1 (MAP_SIZE 128 x the .wld "size"), in float32
+  function vecInWorld(w, x, z) {
+    const inv = Math.fround(1 / w.mpu), ok = (v, n) => !Number.isNaN(v) && v >= 0 && Math.fround(v * inv) < 128 * n - 1;
+    return ok(x, w.w) && ok(z, w.h);
+  }
+  // CWorld::LoadWorld (WorldFile.cpp:57): "size <w>, <h>" and "MPU <n>" (default OLD_MPU 4) of a .wld file
+  function readWld(file) {
+    if (!file) return null;
+    const s = new Script(file.text, { file: file.name, defines: new Map(), diags: [] });
+    const out = { w: 0, h: 0, mpu: 4 };
+    for (let t = s.getToken(); t.type !== 'eof'; t = s.getToken()) {
+      if (t.text === 'size') { out.w = s.getNumber().value; s.getToken(); out.h = s.getNumber().value; }
+      else if (t.text === 'MPU') out.mpu = s.getNumber().value;
+    }
+    return out;
+  }
   const DEF_POINTS = [15, 12, 10, 8, 7, 6, 5, 4, 3, 2];
 
   // FindType (MiniEventMng.cpp:119): case-insensitive; QUICKHANDS = TYPER, HIDEANDSEEK = HIDESEEK
@@ -47,6 +68,7 @@
     for (let i = 1; i < TYPES.length; i++) if (TYPES[i].key === w) return i;
     if (w === 'QUICKHANDS') return 2;
     if (w === 'HIDEANDSEEK') return 6;
+    if (w === 'VAGRANTRACE') return 7;
     return 0;
   }
 
@@ -58,13 +80,15 @@
     return e;
   }
 
-  // file: SourceFile. ctx: { defines, items (Map id -> item), movers (Map id), charKeys (Set lowercase character keys) }
+  // file: SourceFile. ctx: { defines, items (Map id -> item), movers (Map id), charKeys (Set lowercase character keys),
+  //   raceWorld: { w, h, mpu } (WdRace's .wld) | null (no WdRace: World.inc or its folder missing) | undefined (maps not read: not checked) }
   function loadMiniEvent(file, ctx = {}) {
     const text = file.text, D = ctx.defines || new Map();
     const s = new Script(text, { file: file.name, defines: D, diags: [] });
     const events = [null]; for (let i = 1; i < TYPES.length; i++) events.push(newEvent(i));
     const begins = [], hints = [], errors = [];
-    let hideNpc = null;
+    let hideNpc = null, raceStart = null;
+    const racePoints = [];
     const itemOk = id => !!(ctx.items && ctx.items.get(id >>> 0));
     const err = (message, a, b) => errors.push({ message, start: a, end: Math.max(b, a) });
     const num = () => { const n = s.getNumber(); return { value: n.value, start: n.start, end: n.end, define: n.define || null }; };
@@ -157,6 +181,14 @@
         hideNpc = { kw, start, end: key.end, mover, key };
         if (!(ctx.movers && ctx.movers.get(mover.value)) || !(ctx.charKeys && ctx.charKeys.has(key.text.toLowerCase())))
           err(`HIDE_NPC: unknown mover or character key "${key.text}"`, start, key.end);
+      } else if (kw === 'RACE_START') {
+        const x = s.getFloat(), z = s.getFloat();
+        raceStart = { kw, start, end: z.end, x: { value: Math.fround(x.value), start: x.start, end: x.end }, z: { value: Math.fround(z.value), start: z.start, end: z.end } };
+      } else if (kw === 'RACE_POINT') {
+        const x = s.getFloat(), z = s.getFloat();
+        const rp = { kw, start, end: z.end, x: { value: Math.fround(x.value), start: x.start, end: x.end }, z: { value: Math.fround(z.value), start: z.start, end: z.end } };
+        if (!(rp.x.value > 0) || !(rp.z.value > 0)) err(`RACE_POINT ${cRound(rp.x.value)} ${cRound(rp.z.value)}: x / z above 0`, start, rp.end);
+        else racePoints.push(rp);
       } else if (kw === 'BEGIN') {
         const nt = tok(), random = nt.text.toUpperCase() === 'RANDOM', type = random ? 0 : findType(nt.text);
         if (!random && !type) { err(`BEGIN: unknown event "${nt.text}" (or RANDOM)`, start, nt.end); t = s.getToken(); continue; }
@@ -190,6 +222,11 @@
       else if (i === 5 && e.recipes.length < v.ROUNDS) fail(`TURNIN needs at least ${v.ROUNDS} RECIPE lines (one per round), has ${e.recipes.length}`);
       else if (i === 6 && e.spots.length < v.ROUNDS) fail(`HIDESEEK needs at least ${v.ROUNDS} SPOT lines (one per round), has ${e.spots.length}`);
       else if (i === 6 && !hideNpc) fail('HIDESEEK needs a HIDE_NPC line');
+      else if (i === 7 && ctx.raceWorld === null) fail('RACE needs the WdRace world (World.inc WI_WORLD_RACE, World\\WdRace)');
+      else if (i === 7 && ctx.raceWorld && !vecInWorld(ctx.raceWorld, raceStart ? raceStart.x.value : RACE_START.x, raceStart ? raceStart.z.value : RACE_START.z)) {
+        const rs = raceStart || { x: { value: RACE_START.x }, z: { value: RACE_START.z } };
+        err(`RACE_START ${cRound(rs.x.value)} ${cRound(rs.z.value)} is outside WdRace`, (raceStart || at).start, (raceStart || at).end);
+      }
       else {
         const p = e.pointValues;
         for (let k = 0; k < RANKS; k++) {
@@ -204,8 +241,11 @@
     }
     if (!any) err('no EVENT line', 0, 0);
     for (const b of begins) if (b.type && !events[b.type].loaded) err(`BEGIN ${TYPES[b.type].key}: that event has no EVENT line`, b.start, b.end);
-    return { file: file.name, events, begins, hints, hideNpc, errors, diags: s.diags, eol: /\r\n/.test(text) ? '\r\n' : '\n' };
+    const race = raceStart ? { x: raceStart.x.value, z: raceStart.z.value } : { x: RACE_START.x, z: RACE_START.z };
+    return { file: file.name, events, begins, hints, hideNpc, raceStart, race, racePoints, errors, diags: s.diags, eol: /\r\n/.test(text) ? '\r\n' : '\n' };
   }
+
+  const cRound = v => (v < 0 ? -Math.round(-v) : Math.round(v));      // printf %.0f (round half away from zero)
 
   // the effective prize of a place (1-10) or the rest (0): { item id, amount } or null (GiveItem gives nothing)
   function prizeOf(e, place) {
@@ -220,10 +260,18 @@
     // HIDE_NPC's key must be a character.inc block (prj.GetCharacter): the NPC files as the server loads them
     if (!ws.chars && ws.files.get('character.inc')) ws.chars = FRE.character.loadCharacters(ws.files, { defines: D, strings: ws.strings.map });
     const charKeys = new Set(ws.chars ? ws.chars.npcs.map(n => n.key.toLowerCase()) : []);
-    const m = loadMiniEvent(ws.files.get('minievent.inc'), { defines: D, items: ws.items.items, movers: ws.movers ? ws.movers.movers : null, charKeys });
+    // WdRace: World.inc's WI_WORLD_RACE map and its .wld (the maps are read after the first parse: setMapObjects parses again)
+    let raceWorld;
+    if (ws.worldFiles && ws.worldFiles.size && ws.worldList) {       // an empty map: the maps are not read yet (not checked)
+      const w = ws.worldList().find(x => x.define === 'WI_WORLD_RACE');
+      raceWorld = w ? readWld(ws.worldFiles.get(`world/${w.name}/${w.name}.wld`.toLowerCase())) : null;
+    }
+    const m = loadMiniEvent(ws.files.get('minievent.inc'), { defines: D, items: ws.items.items, movers: ws.movers ? ws.movers.movers : null, charKeys, raceWorld });
+    m.raceWorld = raceWorld;
     m.charKeys = charKeys;
     return m;
   }
 
-  FRE.miniEvent = { loadMiniEvent, fromWorkspace, findType, prizeOf, TYPES, KEYS, KEY, RANKS, RECIPE_ITEMS, ANSWER_LEN, DEF_POINTS, roundMax, NULL_ID, FILE: 'MiniEvent.inc' };
+  FRE.miniEvent = { loadMiniEvent, fromWorkspace, findType, prizeOf, TYPES, KEYS, KEY, RANKS, RECIPE_ITEMS, ANSWER_LEN, DEF_POINTS, roundMax, NULL_ID, FILE: 'MiniEvent.inc',
+    RACE_START, vecInWorld, readWld, cRound };
 })(globalThis.FRE = globalThis.FRE || {});

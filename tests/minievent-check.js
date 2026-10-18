@@ -10,7 +10,7 @@ export function checkMiniEvent({ FRE, py, ws, ok }) {
   py.files.forEach((f, i) => {
     const m = ME.loadMiniEvent({ name: 'MiniEvent.inc', text: f.text === null ? real.text : f.text }, ctx);
     const evs = {};
-    for (let t = 1; t <= 6; t++) {
+    for (let t = 1; t <= 7; t++) {
       const e = m.events[t];
       evs[t] = { loaded: e.loaded, v: e.values, ranks: e.ranks.map(r => (r ? [r.id, r.amount.value] : null)), rest: e.rest ? [e.rest.id, e.rest.amount.value] : null,
         pts: [...e.pointValues, e.restPoints], asks: e.asks.length, recipes: e.recipes.length, spots: e.spots.length };
@@ -169,4 +169,85 @@ export function checkWeek({ FRE, py, ws, ok }) {
     }
   }
   ok(!bad, `the week: ${py.cases.length} cases (7 start-time sets x 6 Free PK files x 2 seeds, 3 weeks, ${n} starts: runs, skips for FFA / TDM / Guild Siege / Free PK Time, lost inside a run, random picks) agree`, first);
+}
+
+// Vagrant Race (V19 ce1659f6 / 321d3c1b, not yet built): RACE_START / RACE_POINT + the WdRace check (ReadConfig, VecInWorld), the
+// round points (finishers by place, the rest value for the others; nobody finished = places by how far up), RACE_START edits.
+// The JS copy against tools/oracle_sim.py race.
+export function checkRace({ FRE, py, ws, ok }) {
+  const J = JSON.stringify, D = ws.defines.defines, ME = FRE.miniEvent, Sim = FRE.miniEventSim, O = FRE.miniEventOps;
+  const real = ws.files.get('minievent.inc');
+  if (!ws.chars) ws.chars = FRE.character.loadCharacters(ws.files, { defines: D, strings: ws.strings.map });
+  if (!ws.movers) ws.movers = FRE.propMover.loadPropMover(ws.files.get('propmover.txt'), { defines: D, strings: ws.strings.map });
+  const base = { defines: D, items: ws.items.items, movers: ws.movers.movers, charKeys: new Set(ws.chars.npcs.map(n => n.key.toLowerCase())) };
+  const world = w => (w === null ? undefined : w === false ? null : { w: w[0], h: w[1], mpu: w[2] });
+  let bad = 0, first = '';
+  for (const f of py.files) {
+    const m = ME.loadMiniEvent({ name: 'MiniEvent.inc', text: f.text === null ? real.text : f.text }, Object.assign({ raceWorld: world(f.world) }, base));
+    const e = m.events[7];
+    const js = { loaded: e.loaded, v: e.values, pts: [...e.pointValues, e.restPoints], race: [m.race.x, m.race.z], rstart: !!m.raceStart,
+      rpoints: m.racePoints.map(p => [p.x.value, p.z.value]), begins: m.begins.map(b => [b.type, b.day.value, b.hour.value, b.minute.value]), errors: m.errors.map(x => x.message) };
+    const p = { loaded: f.loaded, v: f.v, pts: f.pts, race: f.race, rstart: f.rstart, rpoints: f.rpoints, begins: f.begins, errors: f.errors };
+    if (J(js) !== J(p)) { bad++; if (!first) first = `world ${J(f.world)} ${J((f.text || 'real').slice(0, 60))}: ${J(js).slice(0, 300)} vs ${J(p).slice(0, 300)}`; }
+  }
+  ok(!bad, `Vagrant Race lines: ${py.files.length} cases (the real file + ${py.files.length / 7 - 1} made-up files x 7 map sizes / no map / not read) read the same way`, first);
+  const eb = py.edges.filter(([w, x, z, want]) => ME.vecInWorld({ w: w[0], h: w[1], mpu: w[2] }, x === 'nan' ? NaN : x, z) !== want);
+  ok(!eb.length, `VecInWorld: ${py.edges.length} points at the map edges (float32) agree`, J(eb.slice(0, 3)));
+  const itemOf = id => { const it = ws.items.items.get(id >>> 0); return it ? { packMax: FRE.specItem.get(it, 'dwPackMax') } : null; };
+  bad = 0; first = '';
+  for (const r of py.runs) {
+    const e = { values: { ROUND_TIME: r.rt }, pointValues: r.pts, restPoints: r.restp,
+      ranks: r.ranks.map(x => (x ? { id: x[0], amount: { value: x[1] } } : null)), rest: r.rest ? { id: r.rest[0], amount: { value: r.rest[1] } } : null };
+    const out = Sim.run({ type: 7, e, players: r.players, rounds: r.rounds, seed: 1 }, itemOf);
+    const js = { out: out.rounds.map(x => ({ dice: x.dice, rows: x.rows })), final: out.final.map(x => [x.id, x.place, x.points, x.time, x.prize, x.stacks, x.top]) };
+    if (J(js) !== J({ out: r.out, final: r.final })) { bad++; if (!first) first = `variant ${r.variant} players ${r.players.length}: ${J(js).slice(0, 300)} vs ${J({ out: r.out, final: r.final }).slice(0, 300)}`; }
+  }
+  ok(!bad, `whole races: ${py.runs.length} runs (1-40 racers, finishers with gaps, rounds nobody finished ranked by how far up, ties) give the same points, places and prizes`, first);
+  bad = 0; first = '';
+  for (const c of py.edits) {
+    let text = c.base === 0 ? real.text : py.bases[c.base - 1];
+    try {
+      const m = ME.loadMiniEvent({ name: 'MiniEvent.inc', text }, base);
+      m.raceWorld = world(c.world);
+      const sp = O.setRaceStart(text, m, c.x, c.z);
+      for (const x of [...sp].sort((a, b) => b.start - a.start)) text = text.slice(0, x.start) + x.insert + text.slice(x.end);
+    } catch (er) { text = 'ERROR'; }
+    if (text !== c.text) { bad++; if (!first) first = `base ${c.base} ${c.x}, ${c.z} world ${J(c.world)}: ${J(text.slice(-160))} vs ${J(String(c.text).slice(-160))}`; }
+  }
+  ok(!bad, `race start edits: ${py.edits.length} scripts (in place, a new line after the race's EVENT / POINTS line, decimals, outside the map, 0) give the same file`, first);
+  bad = 0; first = '';
+  for (const c of py.pedits || []) {
+    let text = c.base === 0 ? real.text : py.bases[c.base - 1];
+    try {
+      for (const op of c.script) {
+        const m = ME.loadMiniEvent({ name: 'MiniEvent.inc', text }, base);
+        m.raceWorld = world(c.world);
+        const sp = op[0] === 'add' ? O.addRacePoint(text, m, op[1], op[2]) : op[0] === 'edit' ? O.editRacePoint(text, m, m.racePoints[op[1]], op[2], op[3]) : O.removeRacePoint(text, m.racePoints[op[1]]);
+        for (const x of [...sp].sort((a, b) => b.start - a.start)) text = text.slice(0, x.start) + x.insert + text.slice(x.end);
+      }
+    } catch (er) { text = 'ERROR'; }
+    if (text !== c.text) { bad++; if (!first) first = `base ${c.base} ${J(c.script)} world ${J(c.world)}: ${J(text.slice(-160))} vs ${J(String(c.text).slice(-160))}`; }
+  }
+  ok(py.pedits && !bad, `checkpoint edits: ${(py.pedits || []).length} scripts (add after the last one / the start / the EVENT line, change, remove with its comment, outside the map, 0) give the same file`, first);
+  // the race map's monsters (WdRace.rgn, FRE.raceMap): what spawns, and the edits
+  const RM = FRE.raceMap, rf = ws.worldFiles && ws.worldFiles.get(RM.KEY);
+  if (!py.rmap || !rf) { ok(false, 'the race map (WdRace.rgn) and its Python cases are there'); return; }
+  const kind = s => (s ? (s.includes('guard') ? 'guard' : s.includes('material') ? 'material' : 'unknown') : null);
+  const sp = f => RM.spawns(RM.parse(f), ws.movers.movers, D).map(x => [x.mover, x.rank, x.count, x.attack, x.seconds, kind(x.skipped)]);
+  ok(J(sp(rf)) === J(py.rmap.spawns), `race map: the ${py.rmap.spawns.length} spawn spots of WdRace.rgn give the same monsters, counts, aggressive counts and respawn times`, J(sp(rf)).slice(0, 200));
+  ok(J(sp({ text: py.rmap.small })) === J(py.rmap.smallSpawns), 'race map: a small made-up file (an unknown monster, Aibatt x 0.5, another type) reads the same way', J(sp({ text: py.rmap.small })));
+  bad = 0; first = '';
+  for (const c of py.rmap.edits) {
+    let text = rf.text;
+    try {
+      for (const op of c.script) {
+        const rg = RM.parse({ text });
+        const s2 = op[0] === 'count' ? RM.setCount(rg, op[1], op[2], op[3]) : op[0] === 'remove' ? RM.removeLine(text, rg, op[1])
+          : RM.addLine(text, rg, { mover: op[1], x: op[2], y: op[3], z: op[4], count: op[5], attack: op[6], time: op[7], radius: op[8] }, ws.movers.movers);
+        for (const x of [...s2].sort((a, b) => b.start - a.start)) text = text.slice(0, x.start) + x.insert + text.slice(x.end);
+      }
+    } catch (er) { text = 'ERROR'; }
+    if (text !== c.text) { bad++; if (!first) { let k = 0; while (text[k] === c.text[k]) k++; first = `${J(c.script)} at ${k}: ${J(text.slice(k - 40, k + 80))} vs ${J(String(c.text).slice(k - 40, k + 80))}`; } }
+  }
+  ok(!bad, `race map edits: ${py.rmap.edits.length} scripts (how many / aggressive, remove, add a spawn after the last one, every limit) give the same file`, first);
 }

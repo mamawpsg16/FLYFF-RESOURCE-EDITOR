@@ -230,7 +230,7 @@
   }
 
   // For every map in World.inc (read-only): World/<map>/<map>.dyo (which NPCs stand in the game),
-  // <map>.rgn + <map>.txt.txt (area names) and WdMadrigal.wld.cnt (continents): loaders/area.js
+  // <map>.rgn + <map>.txt.txt (area names), WdMadrigal.wld.cnt (continents): loaders/area.js; <map>.wld (size: the Vagrant Race start)
   async function loadMaps(res, P = null) {
     const world = await FRE.layout.child(res, 'World');
     if (!world) return;
@@ -243,7 +243,7 @@
       if (P) await P.count(seen.size, maps, w.name);
       const dir = await FRE.layout.child(world, w.name);
       if (!dir) continue;
-      const names = ['.dyo', '.rgn', '.txt.txt', '.wld.cnt'].map(e => w.name + e);
+      const names = ['.dyo', '.rgn', '.txt.txt', '.wld', '.wld.cnt'].map(e => w.name + e);
       const found = await FRE.fsa.findFiles(dir, names);
       for (const n of names) {
         const fh = found.get(n.toLowerCase());
@@ -251,10 +251,17 @@
         const { bytes, stamp } = await FRE.fsa.readHandle(fh);
         // the .dyo with its handle: the NPC task can add an NPC record to it (Server + Client copies)
         if (n.endsWith('.dyo')) dyo.set(w.name, new FRE.SourceFile(fh.name, bytes, { handle: fh, stamp, binary: true, dir: `World/${dir.name}` }));
+        // the Vagrant Race map's monsters: with its handle (the Mini Events task edits it)
+        else if (`world/${w.name}/${n}`.toLowerCase() === FRE.raceMap.KEY) worldFiles.set(FRE.raceMap.KEY, new FRE.SourceFile(fh.name, bytes, { handle: fh, stamp, dir: `World/${dir.name}` }));
         else worldFiles.set(`world/${w.name}/${n}`.toLowerCase(), new FRE.SourceFile(fh.name, bytes));
       }
-      // the client's copy (Client/World/<map>/<map>.dyo), for the client sync
+      // the client's copy (Client/World/<map>/<map>.dyo, and WdRace.rgn), for the client sync
       const cdir = cworld && dyo.has(w.name) ? await FRE.layout.child(cworld, w.name) : null;
+      const crgn = cdir && worldFiles.has(FRE.raceMap.KEY) && w.name.toLowerCase() === 'wdrace' ? (await FRE.fsa.findFiles(cdir, [w.name + '.rgn'])).get((w.name + '.rgn').toLowerCase()) : null;
+      if (crgn) {
+        const { bytes, stamp } = await FRE.fsa.readHandle(crgn);
+        S.client.files.set(crgn.name.toLowerCase(), new FRE.SourceFile(crgn.name, bytes, { handle: crgn, stamp, dir: `World/${cdir.name}` }));
+      }
       const ch = cdir && (await FRE.fsa.findFiles(cdir, [w.name + '.dyo'])).get((w.name + '.dyo').toLowerCase());
       if (ch) {
         const { bytes, stamp } = await FRE.fsa.readHandle(ch);
