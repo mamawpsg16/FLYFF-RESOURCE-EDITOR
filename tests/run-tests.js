@@ -119,8 +119,8 @@ const W = freshWorkspace();
 {
   eq(W.missing.length, 0, 'all required files present');
   eq(FRE.specItem.VALUES_PER_RECORD, 175, 'Spec_Item record = 175 values');
-  eq(W.items.rows.length, 9842, 'Spec_Item rows');
-  eq(W.items.items.size, 9842, 'Spec_Item items loaded');
+  eq(W.items.rows.length, 9854, 'Spec_Item rows');   // + 12 Legend jewelry (V19 951474e5)
+  eq(W.items.items.size, 9854, 'Spec_Item items loaded');
   eq(W.items.stopped, null, 'Spec_Item parse did not stop');
   eq(W.items.skippedVer, 0, 'no rows above __VER 19');
   eq(W.chars.npcs.length, 596, 'NPC blocks across 3 files');
@@ -408,7 +408,7 @@ section('item tooltip');
   ok(T('II_GEN_REF_REF_FIRST').game.includes('Restore MP: 25'), 'refresher: Restore MP');
   eq(FRE.itemTooltip.cfmt('%s%s%%', 'Attack Speed', '+7'), 'Attack Speed+7%', 'rate format');
   let n = 0; for (const it of W.items.items.values()) { FRE.itemTooltip.build(W, it); n++; }
-  eq(n, 9842, 'every item builds a tooltip');
+  eq(n, 9854, 'every item builds a tooltip');
 }
 
 // ---------------------------------------------------------------- Donation Shop (DonationShop.inc, commit 7d7df4f9)

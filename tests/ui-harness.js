@@ -546,7 +546,7 @@
     ok([...phases].some(t => /Reading the game client/.test(t)) || phases.size >= 2, `the window went through the phases (${[...phases].join(' | ')})`);
     ok(!document.body.classList.contains('start') && /Task:\s*NPC Shops/.test($('mode-tabs').textContent), 'NPC Shops task open');
     ok(S.client && S.client.dir === clientDir, 'Client copies attached automatically');
-    ok(S.ws.items.rows.length === 9842, 'items loaded (9842: + the cosmetic weapon skins, premium pets, balloons, Mini Event tokens)');
+    ok(S.ws.items.rows.length === 9854, 'items loaded (9854: + the cosmetic weapon skins, premium pets, balloons, Mini Event tokens, Legend jewelry)');
     ok(document.querySelectorAll('#list .npc').length === 9 && /Shops with hand-picked items \(9\)/.test(document.querySelector('select.npc-filter').textContent), 'NPC list defaults to the 9 shops with fixed items (+ Donaris and Amos, PVP Token shops; + the Event Master token shop, 0e9cd3e1)');
     ok(S.ws.diags.filter(d => d.code === 'C_NO_OPEN_BRACE').length === 6, '6 missing-brace warnings');
 
