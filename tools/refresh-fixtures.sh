@@ -29,6 +29,16 @@ cp -p $SRC/Server/Resource/1Rebirth.inc $SRC/Server/Resource/couple.inc $SRC/Ser
 # Rates & Buffs: the Server Buff and the Guild Buff (+ the game's copy of GuildBuff.txt below; Event.lua above)
 cp -p $SRC/Server/Resource/ServerBuff.txt $SRC/Server/Resource/GuildBuff.txt "$DST/Resource/"
 cp -p $SRC/Client/GuildBuff.txt $SRC/Client/1Rebirth.inc "$DST/Client/"
+# Secret Room Winner / Guild Siege Winner (OwnerBuff.txt, server only) + their icons: on V19 branch feat/secret-room (885aa231) until it is
+# merged, so taken from the working tree when it is there, else read from that branch with git show (V19 itself is not touched)
+mkdir -p "$DST/Client/Icon"
+if [ -f $SRC/Server/Resource/OwnerBuff.txt ]; then
+  cp -p $SRC/Server/Resource/OwnerBuff.txt "$DST/Resource/"
+  for i in SecretRoomBuff.png GuildSiegeBuff.png; do [ -f $SRC/Client/Icon/$i ] && cp -p $SRC/Client/Icon/$i "$DST/Client/Icon/"; done
+elif git -C $SRC cat-file -e feat/secret-room:Server/Resource/OwnerBuff.txt 2>/dev/null; then
+  git -C $SRC show feat/secret-room:Server/Resource/OwnerBuff.txt > "$DST/Resource/OwnerBuff.txt"
+  for i in SecretRoomBuff.png GuildSiegeBuff.png; do git -C $SRC show feat/secret-room:Client/Icon/$i > "$DST/Client/Icon/$i" 2>/dev/null || rm -f "$DST/Client/Icon/$i"; done
+fi
 # Upgrade Rates: the chance tables (+ the game's copies of s.txt and WeaponRarity.inc)
 cp -p $SRC/Server/Resource/ItemUpgrade.lua $SRC/Server/Resource/Baruna.lua $SRC/Server/Resource/s.txt $SRC/Server/Resource/Ultimate_UltimateWeapon.txt \
   $SRC/Server/Resource/WeaponRarity.inc "$DST/Resource/"

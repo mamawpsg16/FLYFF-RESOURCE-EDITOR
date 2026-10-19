@@ -4253,6 +4253,8 @@ def as_who(key):
         return True, None
     if key in ('event.lua', 'serverbuff.txt'):    # Project.cpp:1017 (__WORLDSERVER) / :892-893 (#ifdef __WORLDSERVER)
         return True, None
+    if key == 'ownerbuff.txt':            # OwnerBuffMng::Load inside #ifdef __WORLDSERVER (Project.cpp, V19 feat/secret-room 885aa231)
+        return True, None
     if key == 'guildbuff.txt':            # Project.cpp:913, outside the #ifdef: the game loads it too
         return True, 'start'
     if key == '1rebirth.inc':             # Project.cpp:963, outside any __WORLDSERVER #ifdef: the game parses its own copy
@@ -4321,7 +4323,7 @@ def as_run(root):
     rnd = random.Random(1019)
     keys = AS_SHARED + [AS_TREE, 'client/npcboard_282.inc', 'client/npcboard_300.inc', 'world/wdmadrigal/wdmadrigal.dyo',
                         'world/wdvolcane/wdvolcane.dyo', 'propmoverex.inc', 'propgiftbox.inc', 'propskill.txt',
-                        'event.lua', 'serverbuff.txt', 'guildbuff.txt', '1rebirth.inc', 'couple.inc', 'propitemetc.inc', 'propitemetc.txt.txt', 'exptable.inc', AS_FEES,
+                        'event.lua', 'serverbuff.txt', 'ownerbuff.txt', 'guildbuff.txt', '1rebirth.inc', 'couple.inc', 'propitemetc.inc', 'propitemetc.txt.txt', 'exptable.inc', AS_FEES,
                         'ffamanager.inc', 'tdmmanager.inc', 'guildcombat.txt', 'guildsiegeprize.lua', 'partydungeon.lua',
                         'client/guildcombattext_5_eng.inc', 'client/guildcombattext_1_usa.inc', 'mount.inc', 'minievent.inc', 'antibot.inc']
     states = ['written', 'created', 'datares', 'different', 'none']
@@ -14233,6 +14235,288 @@ def ra_run(root):
     return {'files': files, 'edges': edges, 'runs': runs, 'edits': edits, 'pedits': pedits, 'bases': bases[1:], 'rmap': rmap}
 
 
+
+# ---------------------------------------------------------------------------------------------------------------------------
+# ownerbuff: Secret Room Winner / Guild Siege Winner (OwnerBuff.txt), V19 branch feat/secret-room 885aa231 (NOT YET TESTED IN GAME).
+# Written from _Common/OwnerBuff.cpp:
+#   Load (:16-56): s_defs[0..1] reset to off / 0 / "" first; GetToken; while not FINISHED: Token "OwnerBuffs" -> GetToken ({), nType =
+#     GetNumber; while *token != '}': bOn = GetNumber != 0; 4 x (dst = (unsigned short)GetNumber, adj = GetNumber); GetToken name / desc /
+#     icon (Token as is); if 0 <= nType < 2: s_defs[nType] = d; nType = GetNumber. Else break. Then GetToken (a second block is read).
+#   IsHolder (:60-96), Refresh (:99-129), RefreshAll (:131-135, every 30 s from ThreadMng.cpp), OnLogout (:137-140, guild members only:
+#     DPCoreClient.cpp OnGuildMemberLogOut). Callers: DPDatabaseClient.cpp OnJoin (with a guild), DPCoreClient.cpp OnAddGuildMember
+#     (online), OnRemoveGuildMember (m_idGuild = 0, then Refresh).
+OB_NULL = 0xffffffff
+OB_TYPES = 2
+OB_SLOTS = 4
+
+
+def ob_load(t):
+    tk = rt_scan(t)
+    k = [0]
+    def tok():
+        x = tk[k[0]] if k[0] < len(tk) else ('e', '', len(t), len(t))
+        k[0] += 1
+        return x
+    cur = [None]
+    def number():
+        x = tok(); cur[0] = x
+        ok = x[0] == 'n' or x[1] == '='
+        v = atoi(x[1]) if x[0] in ('n', 'w') else (-1 if x[1] == '=' else 0)
+        a, b = x[2], x[3]
+        if x[1] in ('-', '+'):
+            y = tok(); cur[0] = y
+            ok = y[0] == 'n'
+            v = (-atoi(y[1]) if x[1] == '-' else atoi(y[1])) if y[0] == 'n' else 0
+            b = y[3]
+        return {'v': v, 'ok': ok, 'word': x[0] == 'w', 'start': a, 'end': b}
+    def string():
+        x = tok(); cur[0] = x
+        return {'v': x[1], 'ok': x[0] == 's', 'start': x[2], 'end': x[3]}
+    res = {'rows': [], 'defs': [None, None], 'codes': [], 'blocks': 0}
+    x = tok(); cur[0] = x
+    while x[0] != 'e':
+        if x[1] != 'OwnerBuffs':
+            break
+        res['blocks'] += 1
+        o = tok()
+        if o[1] != '{':
+            res['codes'].append('FIELDS')
+        typ = number()
+        endless = False
+        while cur[0][1][:1] != '}':
+            if cur[0][0] == 'e':
+                res['codes'].append('NO_CLOSE'); endless = True; break
+            r = {'type': typ, 'on': number(), 'bonus': [(number(), number()) for _ in range(OB_SLOTS)]}
+            r['name'] = string(); r['desc'] = string(); r['icon'] = string()
+            r['start'], r['end'] = typ['start'], r['icon']['end']
+            res['rows'].append(r)
+            if 0 <= typ['v'] < OB_TYPES:
+                res['defs'][typ['v']] = r
+            typ = number()
+        if endless:
+            break
+        x = tok(); cur[0] = x
+    if not res['blocks']:
+        res['codes'].append('FIELDS')
+    for r in res['rows']:
+        nums = [r['type'], r['on']] + [z for p in r['bonus'] for z in p]
+        if any(not z['ok'] and not z['word'] for z in nums) or not all(r[z]['ok'] for z in ('name', 'desc', 'icon')):
+            res['codes'].append('FIELDS')
+        if not 0 <= r['type']['v'] < OB_TYPES:
+            res['codes'].append('TYPE')
+        elif res['defs'][r['type']['v']] is not r:
+            res['codes'].append('DUP')
+        if any(d['word'] for d, _ in r['bonus']):
+            res['codes'].append('DST_NAME')
+    if 'FIELDS' not in res['codes'] and 'NO_CLOSE' not in res['codes']:
+        for i in range(OB_TYPES):
+            if res['defs'][i] is None:
+                res['codes'].append('MISSING')
+    res['codes'] = sorted(set(res['codes']))
+    return res
+
+
+def ob_def(L, typ):
+    r = L['defs'][typ]
+    if r is None:
+        return {'on': False, 'bonus': [[0, 0]] * OB_SLOTS, 'name': '', 'desc': '', 'icon': ''}
+    return {'on': r['on']['v'] != 0, 'bonus': [[d['v'] & 0xffff, a['v']] for d, a in r['bonus']],
+            'name': r['name']['v'], 'desc': r['desc']['v'], 'icon': r['icon']['v']}
+
+
+def ob_run(defs, story, east=True, west=False):
+    W = {'sr': True, 'sropen': False, 'cont': {'east': east, 'west': west},
+         'tax': {'east': [OB_NULL, OB_NULL], 'west': [OB_NULL, OB_NULL]}, 'gc': False, 'win': 0}
+    P = {}           # id -> [guild, online, stats dict]
+    applied = {}
+    def holder(typ, p):
+        g = p[0]
+        if not g:                       # GetGuild() == NULL
+            return False
+        if typ == 0:
+            if not W['sr'] or W['sropen']:
+                return False
+            for c in ('east', 'west'):
+                if not W['cont'][c]:
+                    continue
+                cur_id, nxt = W['tax'][c]
+                owner = nxt if nxt != OB_NULL else cur_id
+                if owner != OB_NULL and owner == g:
+                    return True
+            return False
+        return (not W['gc']) and W['win'] != 0 and W['win'] == g
+    def refresh(i, sent):
+        p = P.get(i)
+        if p is None or not p[1]:
+            return
+        have = applied.get(i, 0)
+        for typ in range(OB_TYPES):
+            d = defs[typ]
+            bit = 1 << typ
+            want = d['on'] and holder(typ, p)
+            has = bool(have & bit)
+            if want == has:
+                continue
+            for dst, adj in d['bonus']:
+                if dst:
+                    p[2][dst] = p[2].get(dst, 0) + (adj if want else -adj)
+            have = (have | bit) if want else (have & ~bit)
+            sent.append({'player': i, 'type': typ, 'on': want, 'name': d['name'], 'desc': d['desc'], 'icon': d['icon']})
+        applied[i] = have
+    def pl(i):
+        if i not in P:
+            P[i] = [0, False, {}]
+        return P[i]
+    out = []
+    for st in story:
+        op, sent = st[0], []
+        if op == 'login':
+            p = pl(st[1]); p[1] = True; p[2] = {}
+            if len(st) > 2:
+                p[0] = st[2]
+            if p[0]:
+                refresh(st[1], sent)
+        elif op == 'logout':
+            p = pl(st[1])
+            if p[0]:
+                applied.pop(st[1], None)
+            p[1] = False; p[2] = {}
+        elif op == 'join':
+            pl(st[1])[0] = st[2]; refresh(st[1], sent)
+        elif op == 'leave':
+            pl(st[1])[0] = 0; refresh(st[1], sent)
+        elif op == 'srWin':
+            W['tax'][st[1]][1] = st[2]
+        elif op == 'taxChange':
+            W['tax'][st[1]] = [W['tax'][st[1]][1], OB_NULL]
+        elif op == 'srStart':
+            W['sropen'] = True
+        elif op == 'srEnd':
+            W['sropen'] = False
+        elif op == 'siegeStart':
+            W['gc'] = True
+        elif op == 'siegeEnd':
+            W['gc'] = False; W['win'] = st[1]
+        elif op == 'siegeClear':
+            W['win'] = 0
+        elif op == 'cont':
+            W['cont'][st[1]] = bool(st[2])
+        elif op == 'srEvent':
+            W['sr'] = bool(st[1])
+        elif op == 'tick':
+            for i in sorted(P):
+                refresh(i, sent)
+        players = {}
+        for i in sorted(P):
+            p = P[i]
+            players[str(i)] = {'guild': p[0], 'online': p[1], 'bits': applied.get(i, 0),
+                               'stats': {str(k): v for k, v in sorted(p[2].items()) if v != 0}}
+        out.append({'sent': sent, 'players': players})
+    return out
+
+
+def ob_edit(t, L, op):
+    """an edit as the file is written by hand: one value replaced, or a new row after the last one (indent + line end of that line)"""
+    kind = op[0]
+    if kind == 'on':
+        r = L['defs'][op[1]]
+        return rt_put(t, r['on']['start'], r['on']['end'], '1' if op[2] else '0')
+    if kind in ('dst', 'adj'):
+        r = L['defs'][op[1]]
+        d, a = r['bonus'][op[2]]
+        if kind == 'dst':          # picking a stat: the amount becomes 1 when it was 0, "(none)" sets 0 0
+            t2 = rt_put(t, a['start'], a['end'], str((a['v'] or 1) if op[3] else 0))
+            return rt_put(t2, d['start'], d['end'], str(op[3]))
+        return rt_put(t, a['start'], a['end'], str(op[3]))
+    if kind in ('name', 'desc', 'icon'):
+        r = L['defs'][op[1]]
+        return rt_put(t, r[kind]['start'], r[kind]['end'], '"%s"' % op[2])
+    if kind == 'addrow':
+        typ, on, bonus, name, desc, icon = op[1:]
+        row = '%d  %d   %s   "%s"   "%s"   "%s"' % (typ, 1 if on else 0, '   '.join('%d %d' % (x, y) for x, y in bonus), name, desc, icon)
+        last = L['rows'][-1]
+        end, eol = rt_line_end(t, last['end'])
+        return t[:end] + rt_indent(t, last['start']) + row + eol + t[end:]
+    raise ValueError(kind)
+
+
+def ob_run_all(root):
+    import random
+    real = open(os.path.join(root, 'OwnerBuff.txt'), encoding='latin-1', newline='').read()
+    head = 'OwnerBuffs\r\n{\r\n'
+    files = {
+        'real': real,
+        'shifted': head + '\t0  1   79 15   11 20   0 0   0 0   "A"   "B.png"\r\n\t1  1   66 10   52 10   0 0   0 0   "C"   "D"   "E.png"\r\n}\r\n',
+        'noclose': head + '\t0  1   79 15   11 20   0 0   0 0   "A"   "B"   "C.png"\r\n',
+        'type5': head + '\t5  1   79 15   0 0   0 0   0 0   "X"   "Y"   "Z.png"\r\n\t1  0   66 10   0 0   0 0   0 0   "C"   "D"   "E.png"\r\n}\r\n',
+        'dup': head + '\t0  1   79 15   0 0   0 0   0 0   "First"   "1"   "a.png"\r\n\t0  1   11 33   0 0   0 0   0 0   "Second"   "2"   "b.png"\r\n\t1  1   66 5   0 0   0 0   0 0   "S"   "s"   "c.png"\r\n}\r\n',
+        'off': head + '\t0  0   79 15   11 20   0 0   0 0   "A"   "B"   "C.png"\r\n\t1  0   66 10   52 10   0 0   0 0   "C"   "D"   "E.png"\r\n}\r\n',
+        'odd': head + '\t0  7   -79 -5   DST_STR 3   65615 4   0 0   "Neg"   "n"   "n.png"\r\n\t1  1   11 20   11 5   0 0   0 0   "Twice"   "t"   "t.png"\r\n}\r\n',
+        'nokw': 'Buffs\r\n{\r\n}\r\n',
+        'onlysr': 'OwnerBuffs\n{\n    0  1   79 15   11 20   0 0   0 0   "A"   "B"   "C.png"\n}\n',
+        'twoblocks': head + '\t0  1   79 15   0 0   0 0   0 0   "A"   "a"   "a.png"\r\n}\r\nOwnerBuffs\r\n{\r\n\t1  1   66 10   0 0   0 0   0 0   "B"   "b"   "b.png"\r\n}\r\n',
+        'empty': head + '}\r\n',
+    }
+    loads = []
+    for name, t in files.items():
+        L = ob_load(t)
+        loads.append({'name': name, 'codes': L['codes'], 'defs': [ob_def(L, i) if L['defs'][i] is not None else None for i in range(OB_TYPES)]})
+    stories = [
+        [['login', 1, 10], ['login', 2, 10], ['login', 3, 20], ['srStart'], ['srEnd'], ['srWin', 'east', 10], ['tick'], ['leave', 2], ['join', 2, 10],
+         ['logout', 1], ['login', 1], ['taxChange', 'east'], ['tick'], ['srStart'], ['tick']],
+        [['login', 1, 10], ['srWin', 'west', 10], ['tick'], ['cont', 'west', True], ['tick']],
+        [['login', 1, 10], ['login', 2, 10], ['login', 3, 20], ['siegeStart'], ['siegeEnd', 10], ['tick'], ['leave', 2], ['tick'], ['siegeStart'], ['tick'], ['siegeEnd', 20], ['tick']],
+        [['login', 1, 10], ['siegeEnd', 10], ['tick'], ['siegeClear'], ['tick']],
+        [['login', 1], ['join', 1, 10], ['srWin', 'east', 10], ['siegeEnd', 10], ['tick'], ['logout', 1], ['login', 1], ['srEvent', False], ['tick'], ['srEvent', True], ['tick']],
+        [['login', 4, 30], ['srWin', 'east', 30], ['taxChange', 'east'], ['tick'], ['srWin', 'east', 10], ['tick'], ['login', 1, 10], ['tick'], ['taxChange', 'east'], ['tick']],
+    ]
+    rnd = random.Random(1019)
+    ops = ['login', 'logout', 'join', 'leave', 'srWin', 'taxChange', 'srStart', 'srEnd', 'siegeStart', 'siegeEnd', 'siegeClear', 'cont', 'srEvent', 'tick']
+    for _ in range(44):
+        st = []
+        for _ in range(rnd.randint(5, 30)):
+            op = rnd.choice(ops)
+            p, g, c = rnd.randint(1, 5), rnd.choice([10, 20, 30]), rnd.choice(['east', 'west'])
+            if op == 'login':
+                st.append(['login', p, g] if rnd.random() < 0.5 else ['login', p])
+            elif op in ('logout', 'leave'):
+                st.append([op, p])
+            elif op == 'join':
+                st.append(['join', p, g])
+            elif op == 'srWin':
+                st.append(['srWin', c, g])
+            elif op == 'taxChange':
+                st.append(['taxChange', c])
+            elif op == 'siegeEnd':
+                st.append(['siegeEnd', rnd.choice([0, 10, 20, 30])])
+            elif op == 'cont':
+                st.append(['cont', c, rnd.random() < 0.5])
+            elif op == 'srEvent':
+                st.append(['srEvent', rnd.random() < 0.8])
+            else:
+                st.append([op])
+        stories.append(st)
+    runs = []
+    for fname in ('real', 'dup', 'off', 'odd', 'onlysr', 'twoblocks'):
+        L = ob_load(files[fname])
+        defs = [ob_def(L, i) for i in range(OB_TYPES)]
+        for si, st in enumerate(stories):
+            runs.append({'file': fname, 'story': si, 'steps': ob_run(defs, st)})
+    scripts = [
+        ('real', [['on', 0, False]]), ('real', [['on', 1, False], ['on', 1, True]]),
+        ('real', [['adj', 0, 1, 25]]), ('real', [['dst', 0, 2, 66]]), ('real', [['dst', 1, 0, 0]]), ('real', [['adj', 1, 3, -7]]),
+        ('real', [['name', 0, 'Secret Room Winner'], ['desc', 0, 'PvE +15%'], ['icon', 1, 'X.png']]),
+        ('onlysr', [['addrow', 1, True, [[66, 10], [0, 0], [0, 0], [0, 0]], 'Guild Siege Winner', '', 'GuildSiegeBuff.png']]),
+        ('dup', [['adj', 0, 0, 9]]),
+    ]
+    edits = []
+    for base, sc in scripts:
+        t = files[base]
+        for op in sc:
+            t = ob_edit(t, ob_load(t), op)
+        edits.append({'base': base, 'ops': sc, 'text': t})
+    return {'files': files, 'loads': loads, 'stories': stories, 'runs': runs, 'edits': edits}
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -14272,6 +14556,8 @@ if __name__ == '__main__':
         print(json.dumps(gf_run(root)))
     elif what == 'rates':
         print(json.dumps(rt_run(root)))
+    elif what == 'ownerbuff':                   # Secret Room Winner / Guild Siege Winner: OwnerBuff.txt, who has the buff when, edits
+        print(json.dumps(ob_run_all(root)))
     elif what == 'couple':
         print(json.dumps(cp_run_all(root)))
     elif what == 'upgrade':

@@ -7,7 +7,7 @@
   'use strict';
   const { h, fmt, modal, numInput, toast, keepFocus, liveCommit } = FRE.dom;
   const { diagTags, fieldLabel, formFooter, diagRow, pencil } = FRE.ui;
-  const EV = 'event.lua', SB = 'serverbuff.txt', GB = 'guildbuff.txt', RB = '1rebirth.inc', CP = 'couple.inc', SPEC = 'spec_item.txt', PT = 'propitem.txt.txt';
+  const EV = 'event.lua', SB = 'serverbuff.txt', GB = 'guildbuff.txt', OB = 'ownerbuff.txt', RB = '1rebirth.inc', CP = 'couple.inc', SPEC = 'spec_item.txt', PT = 'propitem.txt.txt';
   const st = { sel: 'rates', calc: null, ctab: 'time' };
   const R = () => FRE.rates, O = () => FRE.ratesOps, Sim = () => FRE.ratesSim;
   const model = ctx => ctx.ws.models.rates;
@@ -22,18 +22,35 @@
     { id: 'rates', label: 'Server rates', sub: ctx => { const a = model(ctx).events.active; return `EXP ×${num(a.exp)} · Penya ×${num(a.gold)} · items ×${num(a.piece)}`; } },
     { id: 'server', label: 'Server Buff', sub: ctx => model(ctx).server ? `${model(ctx).server.tiers.length} tiers (players online → EXP)` : 'ServerBuff.txt not found' },
     { id: 'guild', label: 'Guild Buff', sub: ctx => model(ctx).guild ? `${model(ctx).guild.tiers.length} tiers (guild level + members online → stats)` : 'GuildBuff.txt not found' },
+    { id: 'srwin', label: 'Secret Room Winner', sub: ctx => ownerSub(ctx, 0) },
+    { id: 'gswin', label: 'Guild Siege Winner', sub: ctx => ownerSub(ctx, 1) },
     { id: 'levelup', label: 'Level-up gifts', sub: ctx => { const n = model(ctx).events.events.filter(e => e.on).reduce((a, e) => a + e.gifts.length, 0); return `${n} gift${n === 1 ? '' : 's'} in running events`; } },
     { id: 'rebirth', label: 'Rebirth', sub: ctx => { const r = model(ctx).rebirth; return r ? `${r.max} tiers: bonus points, EXP ×, ${r.gifts.size} gift${r.gifts.size === 1 ? '' : 's'}` : '1Rebirth.inc not found'; } },
     { id: 'couple', label: '💞 Couple', sub: ctx => { const c = model(ctx).couple; return c ? `levels 1-21: time, buffs, ${c.blocks.reduce((a, b) => a + b.rows.length, 0)} gifts` : 'couple.inc not found'; } },
     { id: 'calc', label: '🧮 Rate calculator', sub: () => 'What one kill gives a player' },
   ];
-  const fileOfSection = { rates: EV, server: SB, guild: GB, levelup: EV, rebirth: RB, couple: CP };
+  const fileOfSection = { rates: EV, server: SB, guild: GB, srwin: OB, gswin: OB, levelup: EV, rebirth: RB, couple: CP };
+  const OWNER_SEC = { srwin: 0, gswin: 1 };
+  // the sub line of a Secret Room Winner / Guild Siege Winner entry: on / off and its stats
+  function ownerSub(ctx, type) {
+    const ob = model(ctx).owner;
+    if (!ob) return 'OwnerBuff.txt not found (V19 branch feat/secret-room)';
+    const d = R().ownerDef(ob, type);
+    if (!d.row) return 'no row in OwnerBuff.txt: off';
+    const { words } = dstOptions(ctx);
+    return `${d.on ? 'on' : 'off'} · ${O().describe(d.bonus, words) || 'no stats'}`;
+  }
   const isGiftCode = d => /^RT_GIFT_/.test(d.code);
   // the problems a section shows: Event.lua's are split between Server rates and Level-up gifts
   const sectionDiags = (ctx, id) => {
     const f = fileOfSection[id];
     if (!f) return [];
-    return rDiags(ctx).filter(d => d.file.toLowerCase() === f && (id === 'levelup' ? isGiftCode(d) : id === 'rates' ? !isGiftCode(d) : true));
+    const ob = model(ctx).owner;
+    const inRow = (d, r) => r && d.start !== undefined && d.start >= r.start && d.start <= r.end;
+    return rDiags(ctx).filter(d => d.file.toLowerCase() === f && (id === 'levelup' ? isGiftCode(d) : id === 'rates' ? !isGiftCode(d)
+      // an owner page: its own row's problems, and the file's problems that sit in no row (the other page's row is left out)
+      : id in OWNER_SEC ? !(ob && ob.rows.some(r => inRow(d, r) && !(r.valid && r.type.value === OWNER_SEC[id] && ob.defs[OWNER_SEC[id]] === r)))
+        && !(d.code === 'RT_OB_MISSING' && !d.key.endsWith(`|${OWNER_SEC[id]}`)) : true));
   };
 
   // a decimal box (rates): commits while typing (after a pause) and on Enter / leaving it
@@ -124,6 +141,7 @@
       keepFocus(el, () => {
         if (st.sel === 'server') serverView(el, ctx);
         else if (st.sel === 'guild') guildView(el, ctx);
+        else if (st.sel in OWNER_SEC) ownerView(el, ctx, OWNER_SEC[st.sel]);
         else if (st.sel === 'calc') calcView(el, ctx);
         else if (st.sel === 'levelup') levelupView(el, ctx);
         else if (st.sel === 'rebirth') rebirthView(el, ctx);
@@ -137,6 +155,8 @@
     locate(d) {
       if (d.module !== 'rates') return false;
       const f = String(d.file).toLowerCase();
+      // OwnerBuff.txt: the page its message names (every row message says which buff; file-level ones open Secret Room Winner)
+      if (f === OB) { st.sel = /Guild Siege Winner/.test(d.message) ? 'gswin' : 'srwin'; return true; }
       st.sel = f === SB ? 'server' : f === GB ? 'guild' : f === RB ? 'rebirth' : f === CP ? 'couple' : isGiftCode(d) ? 'levelup' : 'rates';
       return true;
     },
@@ -308,10 +328,88 @@
     problems(el, ctx, GB);
   }
 
-  function describeDialog(ctx, t, auto, what, key) {
+  function describeDialog(ctx, t, auto, what, key, file = GB) {
     modal({ title: `Edit description: ${what}`, body: h('div', h('p', 'Now:'), h('pre.preview', t.desc.text), h('p', 'From the stats:'), h('pre.preview', auto),
       h('p.muted.small', 'One undo step. Players see it on the buff bar after Stop / Start Server.bat.')),
-    buttons: [{ label: 'Cancel' }, { label: 'Apply changes', cls: 'primary', onClick: () => ctx.edit(GB, () => O().setString(t.desc, auto, 'description', R().DESC_MAX), `${what}: description written from the stats`, key) }] });
+    buttons: [{ label: 'Cancel' }, { label: 'Apply changes', cls: 'primary', onClick: () => ctx.edit(file, () => O().setString(t.desc, auto, 'description', R().DESC_MAX), `${what}: description written from the stats`, key) }] });
+  }
+
+  // ------------------------------------------------------------- Secret Room Winner / Guild Siege Winner (OwnerBuff.txt)
+  // One page per buff (the user, 2026-10-19: "separate Secret Room Winner and Guild Siege Winner"), edited like a Guild Buff tier.
+  // V19 branch feat/secret-room 885aa231 (NOT YET TESTED IN GAME); the game shows what the server sends (SNAPSHOTTYPE_OwnerBuffState).
+  const OWNER_WHO = [
+    ['Every member of the guild that won the Secret Room on an open continent (Flaris; Darkon only when WestOpen = 1 in SecretRoom.lua).',
+      'They get it right after the win (before Monday\'s tax change) and keep it while the guild owns the continent\'s tax.',
+      'Nobody has it while a Secret Room runs: the next winner gets it when that one ends.'],
+    ['Every member of the guild that won the last Guild Siege.',
+      'Nobody has it while a siege runs: the next winner gets it when that siege ends.',
+      'When a siege does not start (too few guilds) and the old winner did not sign up, the game clears the winner: the buff is gone that week.'],
+  ];
+  const ownerStory = { 0: 0, 1: 0 };
+  function ownerView(el, ctx, type) {
+    const ob = model(ctx).owner, edit_ = can(ctx, OB), info = R().OWNER_TYPES[type], sec = info.id, what = info.label;
+    el.appendChild(h('div.npc-title', h('h2', what), h('span.def', 'OwnerBuff.txt'), edit_ ? null : h('span.tag.bad', 'read-only')));
+    if (!ob) {
+      el.appendChild(h('p.empty-state', 'OwnerBuff.txt is not in Server/Resource. It comes with V19 branch feat/secret-room (the Secret Room C++), which is not merged yet: this page fills in once it is.'));
+      return;
+    }
+    const r = ob.defs[type], key = keyOf(sec, 0), f = ctx.ws.files.get(OB);
+    el.appendChild(h('div.rt-card', h('h3', { style: 'margin:0' }, 'Who gets it, when'), h('ul.small', OWNER_WHO[type].map(x => h('li', x))),
+      h('p.muted.small', 'Checked when a player logs in, joins or leaves the guild, and for everyone every 30 seconds. Leaving the guild removes it at once. ',
+        'The stats are added like the Guild Buff (no countdown on the buff bar). Saving: Stop Server.bat, then Start Server.bat.')));
+    if (!r) {
+      el.appendChild(h('p', `OwnerBuff.txt has no ${what} row: the buff is off.`));
+      el.appendChild(h('div.dr-line', h('button.primary', { disabled: !edit_ || !!ob.problems.length, on: { click: () => ctx.edit(OB, txt => O().addOwnerRow(txt, ob,
+        { type, on: true, bonus: Array.from({ length: R().OWNER_SLOTS }, () => ({ dst: 0, adj: 0 })), name: what, desc: '', icon: type ? 'GuildSiegeBuff.png' : 'SecretRoomBuff.png' }),
+        `${what}: added its row (on, no stats yet)`, key) } }, `+ Add the ${what} row`)));
+      problems(el, ctx, OB, sec);
+      return;
+    }
+    const { opts, words } = dstOptions(ctx);
+    const on = r.on.value !== 0;
+    const card = h('div.rt-card', h('div.dr-line', h('h3', { style: 'margin:0' }, what), iconPic(ctx, r.icon.text),
+      h('label', h('input', { type: 'checkbox', checked: on, disabled: !edit_, 'data-key': `rt|ob|${type}|on`,
+        on: { change: e => ctx.edit(OB, () => O().setOn(r, e.target.checked), `${what}: ${e.target.checked ? 'switched on' : 'switched off'}`, key) } }), ' On'),
+      on ? h('span.tag.ok', 'on') : h('span.tag.warn', 'off: nobody gets it'),
+      h('span.line', `OwnerBuff.txt L${f.lineOf(r.start) + 1}`), diagTags(spanDiags(ctx, OB, r.start, r.end))));
+    card.appendChild(statSlots(ctx, OB, r, type, what, key, 'ob', opts, words, edit_));
+    card.appendChild(h('div.dr-line', h('span', 'Name'), textInput({ value: r.name.text, key: `rt|ob|${type}|name`, disabled: !edit_, max: R().NAME_MAX,
+      onCommit: v => typed(ctx, OB, `ob|${type}|name`, () => O().setString(r.name, v, 'name', R().NAME_MAX), `${what}: name "${v}"`, key) }),
+      h('span', 'Icon'), iconField(ctx, { value: r.icon.text, key: `rt|ob|${type}|icon`, disabled: !edit_,
+        onCommit: v => ctx.edit(OB, () => O().setString(r.icon, v, 'icon file name', R().ICON_MAX), `${what}: icon ${v}`, key) })));
+    const auto = O().describe(r.bonus.map(b => ({ dst: b.dst.ok ? b.dst.value : 0, adj: b.adj.value })), words);
+    card.appendChild(h('div.dr-line', h('span', 'Description'), textInput({ value: r.desc.text, key: `rt|ob|${type}|desc`, disabled: !edit_, max: R().DESC_MAX, width: '28em',
+      onCommit: v => typed(ctx, OB, `ob|${type}|desc`, () => O().setString(r.desc, v, 'description', R().DESC_MAX), `${what}: description`, key) }),
+      h('button', { disabled: !edit_ || auto === r.desc.text || !auto, title: auto === r.desc.text ? 'The description already says this' : `Write: ${auto}`,
+        on: { click: () => describeDialog(ctx, r, auto, what, key, OB) } }, pencil(), ' Write description from stats')));
+    // hand-written wording is fine ("+10% attack"): warn only when an amount of the stats is missing from the text
+    const nums = x => (x.match(/-?\d+/g) || []).map(Number);
+    if (auto && nums(auto).some(n => !nums(r.desc.text).includes(n))) card.appendChild(h('p.small.warn-text', `⚠ The description may not match the stats: they give "${auto}".`));
+    el.appendChild(card);
+    ownerTry(el, ctx, ob, type);
+    problems(el, ctx, OB, sec);
+  }
+
+  // 🎲 Try it: a short story through ownerbuff-sim (IsHolder / Refresh / RefreshAll), with the file as it is now
+  function ownerTry(el, ctx, ob, type) {
+    const S = FRE.ownerBuffSim, stories = S.STORIES[type], pick = Math.min(ownerStory[type], stories.length - 1);
+    const defs = R().OWNER_TYPES.map(t => R().ownerDef(ob, t.type));
+    const { words } = dstOptions(ctx);
+    const card = h('div.rt-card', h('div.dr-line', h('h3', { style: 'margin:0' }, '🎲 Try it'),
+      h('select', { 'data-key': `rt|ob|${type}|story`, on: { change: e => { ownerStory[type] = Number(e.target.value); ctx.renderAll(false); } } },
+        stories.map((x, i) => h('option', { value: i, selected: i === pick }, x.name)))),
+      h('p.muted.small', 'Guild 10 is the winner, guild 20 is another guild; players 1-2 are in guild 10, player 3 in guild 20. What each online player has after each step:'));
+    const tb = h('table.items.rt', h('tr', h('th', 'Step'), h('th', 'Sent to players'), h('th', 'Player 1'), h('th', 'Player 2'), h('th', 'Player 3')));
+    const cell = p => !p ? h('td.muted', '-') : !p.online ? h('td.muted', 'offline')
+      : h('td.small', (p.bits >> type) & 1 ? h('span.tag.ok', 'has it') : h('span.muted', 'no'), ' ', O().describe(Object.entries(p.stats).map(([dst, adj]) => ({ dst: Number(dst), adj })), words));
+    for (const s of S.run(defs, stories[pick].steps)) {
+      tb.appendChild(h('tr', h('td.small', S.words(s.step)),
+        h('td.small', s.sent.length ? s.sent.map(x => `player ${x.player} ${x.on ? 'gets' : 'loses'} "${x.name}"`).join('; ') : ''),
+        cell(s.players[1]), cell(s.players[2]), cell(s.players[3])));
+    }
+    card.appendChild(tb);
+    if (!defs[type].on) card.appendChild(h('p.small.warn-text', '⚠ This buff is off: nobody gets it in any story.'));
+    el.appendChild(card);
   }
 
   // ------------------------------------------------------------- + Add tier (both files)

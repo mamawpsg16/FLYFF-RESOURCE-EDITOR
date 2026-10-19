@@ -12,6 +12,7 @@ import { bpServer } from './bp-server.js';
 import { checkMounts } from './mount-check.js';
 import { checkMiniEvent, checkTurnIn, checkWeek, checkRace } from './minievent-check.js';
 import { checkAntiBot } from './antibot-check.js';
+import { checkOwnerBuff } from './ownerbuff-check.js';
 
 const FIXTURES = ROOT + '/test-data/fixtures/Resource';
 const REAL = ROOT + '/../FLYFF-V19-SOURCE/Server/Resource';
@@ -4289,6 +4290,25 @@ section('Mounts: Mount.inc, leg loops, ground, flying, take-off, edits (JS and P
   const p = FRE.mounts.parsePaste('Mount 225049: fGroundSpeed=0.40; fAnimSpeed=1.65; fWalkAnimSpeed=1.25; fNameOffset=0.00;\nszRun="item_Mount058_run.ani"; szWalk="item_Mount058_walk.ani"; szWalkBack="item_Mount058_walkback.ani";');
   eq(J([p.id, Object.keys(p.values).length, p.values.fAnimSpeed, p.values.szWalkBack]), J([225049, 7, 1.65, 'item_Mount058_walkback.ani']), 'a /mountset reply: the mount id and its 7 values');
 }
+
+// ---------------------------------------------------------------- Secret Room Winner / Guild Siege Winner (OwnerBuff.txt)
+section('owner buffs: OwnerBuff.txt, who has the buff when (JS and Python copies agree)');
+if (exists(FIXTURES + '/OwnerBuff.txt')) {
+  const J = JSON.stringify, R = FRE.rates, O = FRE.ratesOps, S = FRE.ownerBuffSim;
+  const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e));
+  const W = new FRE.Workspace(fs, { only: 'rates' }).load();
+  const ob = W.models.rates.owner;
+  eq(J(R.OWNER_TYPES.map(t => R.ownerDef(ob, t.type)).map(d => [d.on, d.bonus.map(b => [b.dst, b.adj]), d.name, d.icon])),
+    J([[true, [[79, 15], [11, 20], [0, 0], [0, 0]], 'Secret Room Owner', 'SecretRoomBuff.png'], [true, [[66, 10], [52, 10], [0, 0], [0, 0]], 'Guild Siege Winner', 'GuildSiegeBuff.png']]),
+    'the branch file: Secret Room +15% PvE damage / +20% speed, Guild Siege +10% attack / +10% max HP (V19 feat/secret-room 885aa231)');
+  eq(W.diags.filter(d => d.file === 'OwnerBuff.txt').length, 0, 'the branch file has no problems');
+  eq(FRE.afterSave.compute({ changes: [{ label: 'x', files: ['ownerbuff.txt'] }] }).steps.map(s => s.id).join(), 'servers', 'OwnerBuff.txt: Stop / Start Server.bat (the WorldServer reads it once at start)');
+  for (const k of ['RT_OB_TYPE', 'RT_OB_DUP', 'RT_OB_MISSING']) ok(FRE.diagHelp[k], `help text for ${k}`);
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} ownerbuff ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py ownerbuff) gave no readable result', e.message); }
+  if (py) checkOwnerBuff({ FRE, py, ok, eq, print });
+} else print('  (no OwnerBuff.txt in the fixtures: run tools/refresh-fixtures.sh)');
 
 print(`\n${pass} passed, ${fail} failed`);
 if (fail) System.exit(1);

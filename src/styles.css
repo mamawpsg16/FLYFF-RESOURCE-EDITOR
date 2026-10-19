@@ -440,3 +440,6 @@ button.dur-perm { padding: 2px 8px; font-size: 12px; }
 .mt-simple-row input.num-input { width: 90px; font-size: 16px; }
 details.mt-more { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 8px; }
 details.mt-more > summary { cursor: pointer; color: var(--muted); padding: 6px 0; }
+/* Rates & Buffs icon field: the picture beside the picker on one line, centred with its label */
+.rt-iconfield { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }
+.rt-iconfield > .combo, .rt-iconfield > input { flex: 0 1 auto; }

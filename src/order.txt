@@ -55,6 +55,7 @@ loaders/gifts-sim.js
 loaders/where.js
 loaders/rates.js
 loaders/rates-sim.js
+loaders/ownerbuff-sim.js
 loaders/couple.js
 loaders/couple-sim.js
 validate/couple.js

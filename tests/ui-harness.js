@@ -1769,6 +1769,30 @@
       click(btnByText(lastModalAny().querySelector('footer'), 'Apply changes'));
       ok(/"All Stat \+12, Atk \+3%, HP \+3%, EXP \+10%"/.test(S.ws.files.get('guildbuff.txt').text), 'Write description from stats: "All Stat +12, …"');
       if (STOP === 'rates') { $('toasts').textContent = ''; return; }
+      // Secret Room Winner / Guild Siege Winner (OwnerBuff.txt, V19 feat/secret-room): one page each, edited like a Guild Buff tier
+      if (S.ws.models.rates.owner) {
+        const list = document.querySelector('#list').textContent;
+        ok(/Secret Room Winner/.test(list) && /Guild Siege Winner/.test(list) && /on · PvE Dmg \+15%/.test(list), 'two entries in the list: Secret Room Winner (on · PvE Dmg +15%, …) and Guild Siege Winner');
+        sec('srwin');
+        ok(/Who gets it, when/.test(ed().textContent) && ed().querySelectorAll('input[data-key^="rt|ob|0|adj"]').length === 4 && !/Guild Siege Winner"/.test(ed().querySelector('input[data-key="rt|ob|0|name"]').value),
+          'Secret Room Winner page: who gets it, 4 stat slots, its own name box');
+        const sp = ed().querySelector('input[data-key="rt|ob|0|adj1"]');
+        sp.value = '25'; sp.dispatchEvent(new Event('change'));
+        ok(/0  1   79 15   11 25/.test(S.ws.files.get('ownerbuff.txt').text) && /does not match|may not match/.test(ed().textContent), 'speed 20 -> 25: written in its row; ⚠ the description no longer matches');
+        click(btnByText(ed(), 'Write description from stats'));
+        await waitFor(() => lastModalAny() && /Edit description/.test(lastModalAny().textContent), 'describe dialog (owner)');
+        click(btnByText(lastModalAny().querySelector('footer'), 'Apply changes'));
+        ok(/"PvE Dmg \+15%, Speed \+25%"|"PvE Dmg \+15%, [^"]*\+25%"/.test(S.ws.files.get('ownerbuff.txt').text), 'Write description from stats: the Secret Room row gets the new text');
+        const onBox = ed().querySelector('input[data-key="rt|ob|0|on"]');
+        onBox.checked = false; onBox.dispatchEvent(new Event('change'));
+        ok(/\t0  0   79 15/.test(S.ws.files.get('ownerbuff.txt').text) && /nobody gets it/.test(ed().textContent), 'switched off: "0  0", "off: nobody gets it", the Try it story warns');
+        ok(ed().querySelectorAll('table.items.rt tr').length > 10 && /30 s check/.test(ed().textContent), '🎲 Try it: the story table');
+        click($('btn-undo')); click($('btn-undo')); click($('btn-undo'));
+        ok(/0  1   79 15   11 20/.test(S.ws.files.get('ownerbuff.txt').text), 'three undos: the Secret Room row is back as it was');
+        sec('gswin');
+        ok(ed().querySelector('input[data-key="rt|ob|1|name"]').value === 'Guild Siege Winner' && /last Guild Siege/.test(ed().textContent), 'Guild Siege Winner page: its own row and text');
+        if (STOP === 'ownerbuff') { $('toasts').textContent = ''; return; }
+      }
       sec('calc');
       ok(/EXP factor/.test(ed().textContent) && /EXP per kill/.test(ed().textContent) && /×40 Event\.lua EXP/.test(ed().textContent) && /Penya per kill/.test(ed().textContent),
         'calculator: the factor steps (×40 from the edit), EXP and Penya per kill');

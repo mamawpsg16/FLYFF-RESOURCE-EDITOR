@@ -60,6 +60,8 @@
     'event.lua': { server: STARTUP, client: null, cite: 'Project.cpp:1018 m_EventLua.LoadScript (+ databaseserver/Project.cpp:192)' },
     'serverbuff.txt': { server: STARTUP, client: null, cite: 'Project.cpp:915 loadServerBuffFile (#ifdef __WORLDSERVER)' },
     'guildbuff.txt': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:913 loadGuildBuffFile' },
+    // Secret Room Winner / Guild Siege Winner buffs: OwnerBuffMng::Load inside #ifdef __WORLDSERVER (V19 feat/secret-room 885aa231)
+    'ownerbuff.txt': { server: STARTUP, client: null, cite: 'Project.cpp OwnerBuffMng::Load (#ifdef __WORLDSERVER, feat/secret-room)' },
     // rebirth tiers: both load it (Project.cpp:963, #ifdef __REBIRTH_SYSTEM only); the game discards the numbers but reads the file
     '1rebirth.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:963 LoadRebirthProp' },
     // Upgrade Rates (task K): ItemUpgrade.lua (CItemUpgrade's constructor -> LoadScript, WORLDSERVER/ItemUpgrade.cpp:31 / :59, WorldServer

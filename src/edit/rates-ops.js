@@ -94,6 +94,19 @@
     return [...setNumber(slot.dst, dst, 0, 65535, 'The stat'), ...setNumber(slot.adj, dst ? adj : 0, -2147483647, 2147483647, 'The amount')];
   }
 
+  // ---------------------------------------------------------------- OwnerBuff.txt (V19 feat/secret-room 885aa231, not yet tested in game)
+  //   `\t0  1   79 15   11 20   0 0   0 0   "Secret Room Owner"   "..."   "SecretRoomBuff.png"` (the file's own row style, tab indent)
+  function setOn(row, on) { return T.replaceSpan(row.on, on ? '1' : '0'); }
+  const ownerRow = r => `${r.type}  ${r.on ? 1 : 0}   ${r.bonus.map(b => `${b.dst} ${b.adj}`).join('   ')}   "${r.name}"   "${r.desc}"   "${r.icon}"`;
+  function addOwnerRow(text, ob, r) {
+    if (!ob || !ob.blocks.length || !ob.blocks[0].open || ob.problems.length) throw new Error('OwnerBuff.txt has no readable OwnerBuffs block');
+    if (r.bonus.length !== R().OWNER_SLOTS) throw new Error(`An owner buff row has ${R().OWNER_SLOTS} stat slots`);
+    for (const b of r.bonus) { int(b.dst, 0, 65535, 'A stat'); int(b.adj, -2147483647, 2147483647, 'A stat amount'); }
+    checkText(r.name, 'name', R().NAME_MAX); checkText(r.desc, 'description', R().DESC_MAX); checkText(r.icon, 'icon file name', R().ICON_MAX);
+    const last = ob.rows[ob.rows.length - 1];
+    return last ? T.insertRowAfter(text, last, ownerRow(r)) : T.insertRowBelowLine(text, ob.blocks[0].open.start, ownerRow(r));
+  }
+
   // "All Stat +10, Atk +3%, HP +3%, EXP +10%" (the style of GuildBuff.txt's own descriptions, ca02d0cb)
   const SHORT = { DST_STAT_ALLUP: 'All Stat', DST_ATKPOWER_RATE: 'Atk', DST_HP_MAX_RATE: 'HP', DST_EXPERIENCE: 'EXP', DST_MONSTER_DMG: 'PvE Dmg',
     DST_STR: 'STR', DST_STA: 'STA', DST_DEX: 'DEX', DST_INT: 'INT', DST_PENYA_RATE: 'Penya' };
@@ -203,6 +216,6 @@
   }
   function removeRebirthGift(text, row) { return T.removeRow(text, row); }
 
-  FRE.ratesOps = { setGift, setGiftAll, addGift, removeGift, giftRow, checkGift, setRebirthExp, setRebirthGp, setRebirthGift, addRebirthGift,
+  FRE.ratesOps = { setOn, addOwnerRow, ownerRow, setGift, setGiftAll, addGift, removeGift, giftRow, checkGift, setRebirthExp, setRebirthGp, setRebirthGift, addRebirthGift,
     removeRebirthGift, rebExp, rebGiftRow, MAX_GIFT_NUM, MAX_MINUTES, setFactor, setTime, setWeatherTitle, setNumber, setString, addTier, removeTier, setBonus, describe, luaNumber, checkDate, checkTier, serverRow, guildRow, MAX_FACTOR };
 })(globalThis.FRE = globalThis.FRE || {});

@@ -143,10 +143,12 @@
       // part 3 (loaders/couple.js): couple.inc (WorldServer, DatabaseServer and the game; no loose Client copy yet: Save offers to
       // create one so the couple window's level bar matches) and the couple buff items (Spec_Item.txt + their propItem.txt.txt texts).
       id: 'rates', label: 'Rates & Buffs', editsSpec: true,
-      required: ['Event.lua'], optional: ['ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc', 'expTable.inc', 'couple.inc', 'propItem.txt.txt'],
-      editable: ['Event.lua', 'ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc', 'couple.inc', 'propItem.txt.txt'],
+      // OwnerBuff.txt (Secret Room Winner / Guild Siege Winner pages): WorldServer only (OwnerBuffMng::Load, Project.cpp; the game gets the
+      // name / description / icon in SNAPSHOTTYPE_OwnerBuffState), so no Client copy. V19 branch feat/secret-room 885aa231, not yet tested in game.
+      required: ['Event.lua'], optional: ['ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc', 'expTable.inc', 'couple.inc', 'propItem.txt.txt', 'OwnerBuff.txt'],
+      editable: ['Event.lua', 'ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc', 'couple.inc', 'propItem.txt.txt', 'OwnerBuff.txt'],
       client: ['GuildBuff.txt', '1Rebirth.inc', 'couple.inc', 'propItem.txt.txt'],
-      deps: ['ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc', 'couple.inc'],
+      deps: ['ServerBuff.txt', 'GuildBuff.txt', '1Rebirth.inc', 'couple.inc', 'OwnerBuff.txt'],
       uses: ['drops'],
       parse(ws) { return FRE.rates.fromWorkspace(ws); },
       validate(ws, model) { return FRE.rates.validate(model, { defines: ws.defines, ws }); },

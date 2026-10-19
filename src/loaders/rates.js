@@ -243,6 +243,59 @@
   const loadServerBuff = file => file ? scanTiers(file, 'ServerBuffTiers', false) : null;
   const loadGuildBuff = file => file ? scanTiers(file, 'GuildBuffTiers', true) : null;
 
+  // ---------------------------------------------------------------- OwnerBuff.txt (V19 branch feat/secret-room 885aa231, not yet tested in game)
+  // OwnerBuffMng::Load (_Common/OwnerBuff.cpp:16-56), bare CScanner:
+  //   OwnerBuffs { type on  4 × (dst adj)  "name" "description" "icon"  ... }
+  // s_defs[] is reset first (every type off, no stats); a row whose type is outside 0-1 is read and dropped; a later row of the same
+  // type replaces the earlier one (s_defs[nType] = d); dst is cast to unsigned short. After the block the next token is read, so a
+  // second "OwnerBuffs {" block is read too; anything else stops the load (:50 break). No "}" = an endless loop at startup.
+  const OWNER_TYPES = [{ type: 0, id: 'srwin', label: 'Secret Room Winner' }, { type: 1, id: 'gswin', label: 'Guild Siege Winner' }];
+  const OWNER_SLOTS = 4;                                       // OWNERBUFF_MAX_BONUS (OwnerBuff.h:16)
+  function loadOwnerBuff(file) {
+    if (!file) return null;
+    const res = { file: file.name, rows: [], blocks: [], problems: [], defs: [null, null] };
+    const s = new FRE.lexer.Script(file.text, { file: file.name, defines: new Map(), diags: [] });
+    const num = what => {
+      const n = s.getNumber(), t = n.tokens[0];
+      const ok = t.type === 'number' || t.type === 'hex' || t.text === '=' || ((t.text === '-' || t.text === '+') && n.tokens[1] && n.tokens[1].type === 'number');
+      return { value: n.value, start: n.start, end: n.end, ok, text: file.text.slice(n.start, n.end), what, word: t.type === 'ident' };
+    };
+    const str = what => { const t = s.getToken(); return { text: t.text, start: t.start, end: t.end, ok: t.type === 'string', what }; };
+    s.getToken();
+    while (!s.eof) {
+      if (s.token.text !== 'OwnerBuffs') break;
+      const blk = { kw: { start: s.token.start, end: s.token.end }, open: null, close: null };
+      const o = s.getToken();
+      blk.open = { start: o.start, end: o.end };
+      if (o.text !== '{') res.problems.push({ code: 'FIELDS', start: o.start, end: o.end, message: `OwnerBuffs is not followed by {: the server reads "${o.text}" as the { and every number after it shifts` });
+      let type = num('type');
+      let endless = false;
+      while (s.token.text[0] !== '}') {
+        if (s.eof) { res.problems.push({ code: 'NO_CLOSE', start: type.start, end: type.start, message: `${file.name} ends before the closing }: the server loops forever at startup` }); endless = true; break; }
+        const r = { type, on: num('on (1 / 0)'), bonus: [] };
+        for (let i = 0; i < OWNER_SLOTS; i++) r.bonus.push({ dst: num('stat'), adj: num('amount') });
+        r.name = str('name'); r.desc = str('description'); r.icon = str('icon');
+        r.start = type.start; r.end = r.icon.end;
+        r.valid = type.value >= 0 && type.value < OWNER_TYPES.length;
+        res.rows.push(r);
+        if (r.valid) res.defs[type.value] = r;           // a later row of the same type replaces it
+        type = num('type');
+      }
+      if (!endless) blk.close = { start: s.token.start, end: s.token.end };
+      res.blocks.push(blk);
+      if (endless) break;
+      s.getToken();
+    }
+    if (!res.blocks.length) res.problems.push({ code: 'FIELDS', start: 0, end: 0, message: `${file.name} does not start with OwnerBuffs: the server loads no owner buff (both stay off)` });
+    return res;
+  }
+  // what one type gives in game: off when there is no row (s_defs reset); dst as unsigned short (OwnerBuff.cpp:37)
+  function ownerDef(ob, type) {
+    const r = ob && ob.defs[type];
+    if (!r) return { on: false, bonus: Array.from({ length: OWNER_SLOTS }, () => ({ dst: 0, adj: 0 })), name: '', desc: '', icon: '', row: null };
+    return { on: r.on.value !== 0, bonus: r.bonus.map(b => ({ dst: b.dst.value & 0xffff, adj: b.adj.value })), name: r.name.text, desc: r.desc.text, icon: r.icon.text, row: r };
+  }
+
   // findHighestEligibleTier: the highest tier number whose needs are met (first one on a tie)
   function pickServerTier(sb, online) {
     let best = null;
@@ -305,10 +358,41 @@
             message: `${where}: the ${what} has ${x.text.length} characters; the game keeps only ${max}` });
       });
     }
+    ownerChecks(model, opts, out);
     giftChecks(model, opts, out);
     rebirthChecks(model, opts, out);
     if (FRE.coupleChecks) FRE.coupleChecks(model, opts, out);
     return out;
+  }
+
+  // OwnerBuff.txt (OwnerBuffMng::Load, V19 feat/secret-room 885aa231): field shifts, no }, rows the server drops or replaces
+  function ownerChecks(model, opts, out) {
+    const ob = model.owner, defs = opts.defines;
+    if (!ob) return;
+    const F = ob.file, push = (code, severity, span, message, k) => out.push({ module: 'rates', file: F, code, severity, start: span ? span.start : 0, end: span ? span.end : 0, key: `${code}|${k}`, message });
+    for (const p of ob.problems) push(p.code === 'NO_CLOSE' ? 'RT_NO_CLOSE' : 'RT_FIELDS', 'BLOCK', p, p.message, `${F}|${p.code}|${p.start}`);
+    const label = t => (OWNER_TYPES[t] ? OWNER_TYPES[t].label : `type ${t}`);
+    ob.rows.forEach((r, i) => {
+      const where = `${F} ${r.type.ok ? label(r.type.value) : 'row ' + (i + 1)}`;
+      const bad = [r.type, r.on].concat(...r.bonus.map(b => [b.dst, b.adj])).find(n => !n.ok && !n.word) || [r.name, r.desc, r.icon].find(x => !x.ok);
+      if (bad) push('RT_FIELDS', 'BLOCK', bad, `${where}: "${bad.text || '(end of file)'}" stands where the ${bad.what} should be. The server has no field check: this row and every row after it are read shifted.`, `${F}|${i}`);
+      if (!r.valid) push('RT_OB_TYPE', 'WARN', r.type, `${F}: type ${r.type.value} is not 0 (Secret Room Winner) or 1 (Guild Siege Winner): the server reads the row and drops it.`, `${i}`);
+      else if (ob.defs[r.type.value] !== r) push('RT_OB_DUP', 'WARN', r.type, `${where} is in the file twice: only the last row counts (s_defs[type] = row), this one does nothing.`, `${i}`);
+      r.bonus.forEach((x, j) => {
+        if (x.dst.word) push('RT_GB_DST_NAME', 'WARN', x.dst, `${where}, stat ${j + 1}: "${x.dst.text}" is a name. OwnerBuff.txt is read with atoi, so it becomes 0 (no stat). Write the number.`, `${F}|${i}|${j}`);
+        else if (x.dst.value && defs && !dstName(defs, x.dst.value & 0xffff)) push('RT_GB_DST_UNKNOWN', 'WARN', x.dst, `${where}, stat ${j + 1}: ${x.dst.value} is not a DST_ number in defineAttribute.h`, `${F}|${i}|${j}`);
+      });
+      const used = new Map();
+      r.bonus.forEach((x, j) => {
+        if (!x.dst.value || x.dst.word) return;
+        if (used.has(x.dst.value)) push('RT_STAT_DUP', 'WARN', { start: x.dst.start, end: x.adj.end }, `${where}: stat ${j + 1} is the same stat as stat ${used.get(x.dst.value) + 1}. Both are applied (SetDestParam adds), so players get the two amounts together.`, `${F}|${i}|${j}`);
+        else used.set(x.dst.value, j);
+      });
+      for (const [x, max, what] of [[r.name, NAME_MAX, 'name'], [r.desc, DESC_MAX, 'description'], [r.icon, ICON_MAX, 'icon file name']])
+        if (x.ok && x.text.length > max) push('RT_TEXT_LONG', 'WARN', x, `${where}: the ${what} has ${x.text.length} characters; the game keeps only ${max}`, `${F}|${i}|${what}`);
+    });
+    if (!ob.problems.length) for (const t of OWNER_TYPES) if (!ob.defs[t.type])
+      push('RT_OB_MISSING', 'INFO', ob.blocks[0] ? ob.blocks[0].open : null, `${F} has no ${t.label} row: that buff stays off.`, `${t.type}`);
   }
 
   // level-up gifts (part 2): CEventLua::SetLevelUpGift (EventLua.cpp:513-575) skips an item that is not in Spec_Item ("ItemProp is
@@ -377,6 +461,7 @@
       rebirth: FRE.gifts && f('1rebirth.inc') ? FRE.gifts.rebirth(f('1rebirth.inc'), ws.defines.defines, ws.items.items) : null,
       exp: loadExpLimits(f('exptable.inc')),
       couple: FRE.couple && f('couple.inc') ? FRE.couple.load(f('couple.inc'), ws.defines.defines) : null,
+      owner: loadOwnerBuff(f('ownerbuff.txt')),
     };
   }
 
@@ -399,6 +484,6 @@
     return rows;
   }
 
-  FRE.rates = { SLOTS, detectSlots, KINDS, loadEvents, setState, loadServerBuff, loadGuildBuff, pickServerTier, pickGuildTier, dstName, validate, fromWorkspace,
+  FRE.rates = { SLOTS, detectSlots, KINDS, loadEvents, setState, loadServerBuff, loadGuildBuff, loadOwnerBuff, ownerDef, OWNER_TYPES, OWNER_SLOTS, ownerChecks, pickServerTier, pickGuildTier, dstName, validate, fromWorkspace,
     loadExpLimits, timeNumber, argSpans, blankLua, NAME_MAX, DESC_MAX, ICON_MAX, GATE_FULL };
 })(globalThis.FRE = globalThis.FRE || {});
