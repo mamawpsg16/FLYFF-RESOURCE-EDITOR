@@ -5,6 +5,8 @@ A single-file, offline editor for the resource files of `FLYFF-V19-SOURCE`. It r
 **Tasks:** NPC Shops (`character*.inc`), Donation Shop (`DonationShop.inc`) — both with chip prices in `Spec_Item.txt` —, Battle Pass (`BattlePass.inc`) and Exchanges (`Exchange_Script.txt`). One task is open at a time.
 
 ## Use it
+Refresh and build commands, in short: [REFRESH-AND-BUILD.md](REFRESH-AND-BUILD.md).
+
 1. Open `dist/flyff-resource-editor.html` in **Chrome or Edge** (double-click it).
 2. **Choose the source folder** → pick `FLYFF-V19-SOURCE` (tagged REAL SERVER FILES). The editor finds `Server/Resource` and `Client` inside it. While trying it out, pick `FLYFF-RESOURCE-EDITOR/test-data` instead (tagged TEST COPY; see *Testing on a copy*). The folder is remembered: next time it is one "Allow" click.
    Then pick **one task**. Only that task's files are opened, shown and saved. **Change task** (toolbar) goes back; it asks first if there are unsaved changes.
