@@ -1634,6 +1634,8 @@
         await waitFor(() => [...root.querySelectorAll('.combo-opt')].some(x => re.test(x.textContent)), 'combo option ' + text);
         [...root.querySelectorAll('.combo-opt')].find(x => re.test(x.textContent)).dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
       };
+      // the next free ids, worked out now (they move whenever V19 gets new items: the Legend jewelry took 33398-33409)
+      const nbId = FRE.itemOps.nextItemId(S.ws), nbKey = FRE.itemOps.nameKey(FRE.itemOps.lastNameId(S.ws) + 1);
       click(btnByText(document, '+ New box'));
       await waitFor(() => lastModalAny() && /New box/.test(lastModalAny().querySelector('header').textContent), 'new box form');
       const nf = lastModalAny();
@@ -1645,9 +1647,9 @@
       const lookCombo = () => [...nf.querySelectorAll('.combo')].find(c => /box look/.test(c.querySelector('input').placeholder));
       await pickIn(nf, lookCombo(), 'Itm_SysSysScrBxLuck', /look — used by/);
       await waitFor(() => !create().disabled, 'Create enabled');
-      ok(/\/createitem 33398 1/.test(nf.textContent) && /GiftBox\tII_SYS_SYS_SCR_HARNESS_BOX/.test(nf.textContent) && /#define\tII_SYS_SYS_SCR_HARNESS_BOX\t\t\t33398/.test(nf.textContent),
-        'preview: item 33398, the #define, the GiftBox block');
-      ok(/SysSysScrBxCom/.test(nf.textContent) && /IDS_PROPITEM_TXT_018932\tHarness Box/.test(nf.textContent), 'preview: the ground model line and the name line');
+      ok(nf.textContent.includes(`/createitem ${nbId} 1`) && /GiftBox\tII_SYS_SYS_SCR_HARNESS_BOX/.test(nf.textContent) && nf.textContent.includes(`#define\tII_SYS_SYS_SCR_HARNESS_BOX\t\t\t${nbId}`),
+        `preview: item ${nbId}, the #define, the GiftBox block`);
+      ok(/SysSysScrBxCom/.test(nf.textContent) && nf.textContent.includes(`${nbKey}\tHarness Box`), 'preview: the ground model line and the name line');
       await waitFor(() => [...nf.querySelectorAll('.bx-tt')].some(t => /Harness Box/.test(t.textContent)), 'the tooltip of the planned box');
       ok([...nf.querySelectorAll('.bx-tt')].some(t => /Moonstone/.test(t.textContent) && /Penya price/.test(t.textContent)), 'the picked item\'s tooltip shows in the form');
       click(btnByText(nf.querySelector('footer'), 'Try it'));
@@ -1669,9 +1671,9 @@
       await waitFor(() => !sf.querySelector('#bxs-apply').disabled && /cannot trade it/.test(sf.textContent), 'settings ready');
       if (STOP === 'boxsettings') { $('toasts').textContent = ''; return; }
       click(sf.querySelector('#bxs-apply'));
-      ok(/cannot be traded/.test(ed().textContent) && !FRE.itemOps.isTradeable(S.ws, S.ws.itemById(33398)).tradeable, 'settings applied: the box cannot be traded');
+      ok(/cannot be traded/.test(ed().textContent) && !FRE.itemOps.isTradeable(S.ws, S.ws.itemById(nbId)).tradeable, 'settings applied: the box cannot be traded');
       while (S.ws.history.length) click($('btn-undo'));
-      ok(!S.ws.dirtyFiles().length && !S.ws.itemById(33398), 'Undo removes the new box from every file');
+      ok(!S.ws.dirtyFiles().length && !S.ws.itemById(nbId), 'Undo removes the new box from every file');
       listSearch.value = ''; listSearch.dispatchEvent(new Event('input'));
     }
 
