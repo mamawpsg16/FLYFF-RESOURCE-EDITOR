@@ -34,6 +34,8 @@
     if (k2 === 'ARMOR' || k2 === 'ARMORETC') return c('Armor', A[k3] || pretty(k3));
     if (k2 === 'CLOTH' || k2 === 'CLOTHETC') return c('Fashion', F[k3] || pretty(k3));
     if (k2 === 'JEWELRY') return c('Jewelry', J[k3] || pretty(k3));
+    if (k3 === 'SFXWING') return c('Fashion', 'Wing effects');      // V19 __AURA_SHAPES wing scrolls (IK3 241)
+    if (k3 === 'PETGLOW') return c('Pets', 'Pet glow scrolls');     // V19 __AURA_SHAPES pet glow scrolls (IK3 242)
     if (k3 === 'EGG') return c('Pets', 'Raised pets');
     if (k3 === 'PET') return c('Pets', info.referStat1 === vis ? 'Buff pets' : 'Pickup pets');
     if (k3 === 'VIS') return c('Pets', 'Buff pet beads (Vis)');

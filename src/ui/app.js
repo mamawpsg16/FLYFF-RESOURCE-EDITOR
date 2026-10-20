@@ -541,13 +541,16 @@
   }
 
   // Re-rendering the same view (after an edit) keeps the scroll position; a new view starts at the top.
-  // A module's `pick` (an item being picked for a row) is not a new view.
+  // A module's `pick` (an item being picked for a row) is not a new view, nor are the Try it / calculator inputs
+  // (Play again / 🎲 Again change the seed, typing a player count or an answer...): they stay where they are on the page.
+  const SAME_VIEW = new Set(['pick', 'seed', 'players', 'typed', 'tryAsk', 'tryState', 'calc', 'tryLevel', 'tryCls',   // Try it / calculators
+    'worn', 'rarity', 'hand', 'unit', 'minutes', 'step', 'same', 'newW']);   // sets slider, weapon try, time unit, bot-check try, small options
   let lastView = null;
   function renderEditor() {
     const el = $('editor');
     if (!S.ws) return;
     FRE.ui.tooltip.hide();                       // its element is about to be replaced
-    const m = active(), view = S.mode + '|' + JSON.stringify(m.st || {}, (k, v) => k === 'pick' ? undefined : v);
+    const m = active(), view = S.mode + '|' + JSON.stringify(m.st || {}, (k, v) => SAME_VIEW.has(k) ? undefined : v);
     const top = view === lastView ? el.scrollTop : 0;
     lastView = view;
     if (!S.ws.available[S.mode].ok) { el.className = ''; el.textContent = ''; el.appendChild(h('p.empty-state', `Not available: missing ${S.ws.available[S.mode].missing.join(', ')}`)); return; }

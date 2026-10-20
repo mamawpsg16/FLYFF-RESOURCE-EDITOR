@@ -507,7 +507,7 @@ details.mt-more > summary { cursor: pointer; color: var(--muted); padding: 6px 0
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "101", "when": "Mon 19 Oct 2026, 18:51", "rev": "5c386f9", "dirty": false};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "when": "Tue 20 Oct 2026, 16:10", "rev": "4e5ec37", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -1646,6 +1646,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "101", "when
     if (k2 === 'ARMOR' || k2 === 'ARMORETC') return c('Armor', A[k3] || pretty(k3));
     if (k2 === 'CLOTH' || k2 === 'CLOTHETC') return c('Fashion', F[k3] || pretty(k3));
     if (k2 === 'JEWELRY') return c('Jewelry', J[k3] || pretty(k3));
+    if (k3 === 'SFXWING') return c('Fashion', 'Wing effects');      // V19 __AURA_SHAPES wing scrolls (IK3 241)
+    if (k3 === 'PETGLOW') return c('Pets', 'Pet glow scrolls');     // V19 __AURA_SHAPES pet glow scrolls (IK3 242)
     if (k3 === 'EGG') return c('Pets', 'Raised pets');
     if (k3 === 'PET') return c('Pets', info.referStat1 === vis ? 'Buff pets' : 'Pickup pets');
     if (k3 === 'VIS') return c('Pets', 'Buff pet beads (Vis)');
@@ -30302,13 +30304,16 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "101", "when
   }
 
   // Re-rendering the same view (after an edit) keeps the scroll position; a new view starts at the top.
-  // A module's `pick` (an item being picked for a row) is not a new view.
+  // A module's `pick` (an item being picked for a row) is not a new view, nor are the Try it / calculator inputs
+  // (Play again / 🎲 Again change the seed, typing a player count or an answer...): they stay where they are on the page.
+  const SAME_VIEW = new Set(['pick', 'seed', 'players', 'typed', 'tryAsk', 'tryState', 'calc', 'tryLevel', 'tryCls',   // Try it / calculators
+    'worn', 'rarity', 'hand', 'unit', 'minutes', 'step', 'same', 'newW']);   // sets slider, weapon try, time unit, bot-check try, small options
   let lastView = null;
   function renderEditor() {
     const el = $('editor');
     if (!S.ws) return;
     FRE.ui.tooltip.hide();                       // its element is about to be replaced
-    const m = active(), view = S.mode + '|' + JSON.stringify(m.st || {}, (k, v) => k === 'pick' ? undefined : v);
+    const m = active(), view = S.mode + '|' + JSON.stringify(m.st || {}, (k, v) => SAME_VIEW.has(k) ? undefined : v);
     const top = view === lastView ? el.scrollTop : 0;
     lastView = view;
     if (!S.ws.available[S.mode].ok) { el.className = ''; el.textContent = ''; el.appendChild(h('p.empty-state', `Not available: missing ${S.ws.available[S.mode].missing.join(', ')}`)); return; }

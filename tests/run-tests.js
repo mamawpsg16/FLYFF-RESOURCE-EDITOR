@@ -2273,6 +2273,15 @@ section('item list categories (loaders/item-category.js)');
   eq(cat('II_SYS_SYS_SCR_AWAKE'), 'Scrolls|Awakening & blessing', 'Scroll of Awakening');
   ok(items.filter(i => i.cat.group !== 'Weapons' && i.cat.group !== 'Armor' && i.cat.group !== 'System').every(i => i.rarity === 'normal' || i.rarity === 'other'),
     'outside Weapons and Armor every item is Normal: the rarity chips only show for them');
+  {
+    // V19 branch feat/aura-shapes: wing / pet glow scroll kinds (stub defines: the fixtures are from main)
+    const vals = { IK1_EFFECT: 1, IK2_BUFF2: 2, IK3_SFXWING: 241, IK3_PETGLOW: 242, IK3_ARMOREFFECTCHANGE: 238 };
+    const D = { defines: new Map(), byValue: (p, v) => Object.keys(vals).find(k => k.startsWith(p) && vals[k] === v) || null };
+    const of = ik3 => { const r = FRE.itemCategory.of({ ik1: 1, ik2: 2, ik3, name: 'x' }, D); return `${r.group}|${r.sub}`; };
+    eq(of(241), 'Fashion|Wing effects', 'IK3_SFXWING scroll: Fashion > Wing effects');
+    eq(of(242), 'Pets|Pet glow scrolls', 'IK3_PETGLOW scroll: Pets > Pet glow scrolls');
+    eq(of(238), 'Buffs|Auras', 'aura shape scroll (IK3_ARMOREFFECTCHANGE, IK2_BUFF2): Buffs > Auras');
+  }
   ok(items.filter(i => i.cat.group === 'Other').length < 150, `few items left in Other (${items.filter(i => i.cat.group === 'Other').length})`);
 }
 
