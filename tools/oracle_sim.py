@@ -11921,7 +11921,7 @@ def eq_presets(text, D):
                 stopped = bad = True
                 break
             have = False
-            cur = dict(id=-1, up=0, el=0, lv=0, n=1, aw=[], cards=[])
+            cur = dict(id=-1, up=0, el=0, lv=0, n=1, aw=[], cards=[], ult=0, runes=[], jewels=[])
             t = s.get()
             while t is not None:
                 u = t.upper()
@@ -11930,7 +11930,7 @@ def eq_presets(text, D):
                         blk.append((sec, cur))
                     if t == '}':
                         break
-                    cur = dict(id=eq_num(s.get(), D), up=0, el=0, lv=0, n=1, aw=[], cards=[])
+                    cur = dict(id=eq_num(s.get(), D), up=0, el=0, lv=0, n=1, aw=[], cards=[], ult=0, runes=[], jewels=[])
                     have = True
                 elif u == 'UPGRADE':
                     cur['up'] = eq_num(s.get(), D)
@@ -11952,12 +11952,21 @@ def eq_presets(text, D):
                         problems += 1
                 elif u == 'CARD':
                     cur['cards'].append(eq_num(s.get(), D))
+                elif u == 'ULTIMATE':                     # feat/eq-baruna-runes: spec.bUltimate
+                    cur['ult'] = 1
+                elif u in ('RUNE', 'JEWEL'):              # up to MAX_PIERCING_BARUNA_RUNE 3 / MAX_PIERCING_ULTIMATE 5, then Error + skipped
+                    v = eq_num(s.get(), D)
+                    lst = cur['runes'] if u == 'RUNE' else cur['jewels']
+                    if len(lst) < (3 if u == 'RUNE' else 5):
+                        lst.append(v)
+                    else:
+                        problems += 1
                 elif u == 'RAISEDPET':                    # its own entry; the pending ITEM first, then a fresh spec
                     if have:
                         blk.append((sec, cur))
                     have = False
-                    blk.append((sec, dict(id=-2, pet=eq_num(s.get(), D), up=0, el=0, lv=0, n=1, aw=[], cards=[])))
-                    cur = dict(id=-1, up=0, el=0, lv=0, n=1, aw=[], cards=[])
+                    blk.append((sec, dict(id=-2, pet=eq_num(s.get(), D), up=0, el=0, lv=0, n=1, aw=[], cards=[], ult=0, runes=[], jewels=[])))
+                    cur = dict(id=-1, up=0, el=0, lv=0, n=1, aw=[], cards=[], ult=0, runes=[], jewels=[])
                 else:
                     problems += 1
                 t = s.get()
@@ -11969,13 +11978,13 @@ def eq_presets(text, D):
     return out, stopped, problems
 
 
-def eq_enter(blk, D, items, cls=-1):
-    """EqPlaceItem over a block, then the Attack set keeps the HP item where it has none"""
+def eq_enter(blk, D, items, cls=-1, slots=None):
+    """EqPlaceItem over a block, then the Attack set keeps the HP item where it has none; slots: {item index: the slot it went to}"""
     r1, e1 = D['PARTS_RING1'], D['PARTS_EARRING1']
     sets = {'HP': {}, 'ATTACK': {}}
     bag, why = [], []
     pets = {'HP': [0, 0], 'ATTACK': [0, 0]}         # buff pet, raised pet taken
-    for sec, it in blk:
+    for i, (sec, it) in enumerate(blk):
         if 'pet' in it:
             if not 0 <= it['pet'] < 7:
                 why.append('badPet'); continue
@@ -12007,11 +12016,205 @@ def eq_enter(blk, D, items, cls=-1):
             why.append('slotTaken'); continue
         st[part] = it['id']
         why.append('set')
+        if slots is not None:
+            slots[i] = part
     att = dict(sets['ATTACK'])
     for k, v in sets['HP'].items():
         att.setdefault(k, v)
     return dict(worn={str(k): v for k, v in sorted(sets['HP'].items())}, attack={str(k): v for k, v in sorted(att.items())}, bag=bag, why=why,
-                items=[[sec, it['id'], it['up'], it['el'], it['lv'], it['n'], it['aw'], it['cards']] for sec, it in blk])
+                items=[[sec, it['id'], it['up'], it['el'], it['lv'], it['n'], it['aw'], it['cards'], it['ult'], it['runes'], it['jewels']] for sec, it in blk])
+
+
+# ---- copying slots between presets (the editor's "Copy from" windows and the fashion set list; editor rules, written apart from the JS)
+# A class wears its own line: Vagrant, the 1st job, then the four jobs HeroJobOfClass / ClassOfJob name (EqualizedPvP.cpp:264-280).
+EQ_FIRST = ['JOB_MERCENARY', 'JOB_MERCENARY', 'JOB_ACROBAT', 'JOB_ACROBAT', 'JOB_MAGICIAN', 'JOB_MAGICIAN', 'JOB_ASSIST', 'JOB_ASSIST']
+EQ_LINE = [['JOB_BLADE', 'JOB_BLADE_MASTER', 'JOB_BLADE_HERO', 'JOB_STORMBLADE_HERO'], ['JOB_KNIGHT', 'JOB_KNIGHT_MASTER', 'JOB_KNIGHT_HERO', 'JOB_LORDTEMPLER_HERO'],
+           ['JOB_JESTER', 'JOB_JESTER_MASTER', 'JOB_JESTER_HERO', 'JOB_WINDLURKER_HERO'], ['JOB_RANGER', 'JOB_RANGER_MASTER', 'JOB_RANGER_HERO', 'JOB_CRACKSHOOTER_HERO'],
+           ['JOB_PSYCHIKEEPER', 'JOB_PSYCHIKEEPER_MASTER', 'JOB_PSYCHIKEEPER_HERO', 'JOB_MENTALIST_HERO'], ['JOB_ELEMENTOR', 'JOB_ELEMENTOR_MASTER', 'JOB_ELEMENTOR_HERO', 'JOB_ELEMENTORLORD_HERO'],
+           ['JOB_BILLPOSTER', 'JOB_BILLPOSTER_MASTER', 'JOB_BILLPOSTER_HERO', 'JOB_FORCEMASTER_HERO'], ['JOB_RINGMASTER', 'JOB_RINGMASTER_MASTER', 'JOB_RINGMASTER_HERO', 'JOB_FLORIST_HERO']]
+EQ_GROUPS = [['PARTS_RWEAPON', 'PARTS_SHIELD', 'PARTS_LWEAPON'], ['PARTS_CAP', 'PARTS_UPPER_BODY', 'PARTS_HAND', 'PARTS_FOOT'],
+             ['PARTS_NECKLACE1', 'PARTS_RING1', 'PARTS_RING2', 'PARTS_EARRING1', 'PARTS_EARRING2'],
+             ['PARTS_HAT', 'PARTS_CLOTH', 'PARTS_GLOVE', 'PARTS_BOOTS', 'PARTS_CLOAK', 'PARTS_MASK'], ['buffPet', 'raisedPet']]
+EQ_FASHION_END = re.compile(r'(HAT|HELMET|CAP|SUIT|CLOTHES|CLOTH|COAT|GLOVES|GLOVE|GAUNTLET|SHOES|SHOE|BOOTS|CLOAK|MASK)\d*$')
+
+
+def eq_item_rows(root, D):
+    """Spec_Item rows by id: define, slot, job, sex, level (= -> -1)"""
+    lines = open(os.path.join(root, 'Spec_Item.txt'), 'rb').read().decode('latin-1').split('\r\n')
+    col = {h.lstrip('/'): i for i, h in enumerate(lines[1].split('\t'))}
+    def v(x):
+        x = x.strip().strip('"')
+        return -1 if x == '=' else s32(D[x]) if x in D else atoi(x)
+    out = {}
+    for l in lines:
+        if not l.strip() or l.lstrip().startswith('//'):
+            continue
+        c = l.split('\t')
+        if len(c) <= max(col['dwParts'], col['dwLimitLevel1'], col['dwItemJob'], col['dwItemSex']) or v(c[0]) > 19:
+            continue
+        name = c[col['dwID']].strip()
+        out[v(c[col['dwID']]) & 0xFFFFFFFF] = dict(name=name, part=s32(v(c[col['dwParts']])), job=s32(v(c[col['dwItemJob']])),
+                                                    sex=s32(v(c[col['dwItemSex']])), lv=s32(v(c[col['dwLimitLevel1']])),
+                                                    k1=s32(v(c[col['dwItemKind1']])), k3=s32(v(c[col['dwItemKind3']])), dp1=s32(v(c[col['dwDestParam1']])),
+                                                    r1=s32(v(c[col['dwReferStat1']])), r2=s32(v(c[col['dwReferStat2']])))
+    return out
+
+
+def eq_twin(name, to_sex, known):
+    a, b = ('_M', '_F') if to_sex == 1 else ('_F', '_M')
+    for c in (name.replace(a + '_', b + '_'), name[:-2] + b if name.endswith(a) else name):
+        if c != name and c in known:
+            return c
+    return name
+
+
+def eq_twin_index(mine, items, i, to_sex, known, rows):
+    """Where the editor sends a change of one gender's item on the other gender (the editor's own rule, the user 2026-10-21: by
+    list position it overwrote a bow / necklace / gauntlets / helmet with a 2nd suit). mine / items: this and the other gender's
+    (section, spec) of that section; i: the changed item's position in mine. -> its twin there (eq_twin; weapons, jewelry, pets are
+    the same item), the n-th copy for the n-th copy (none when there are fewer); no twin: the only item in the same slot (dwParts);
+    else -1."""
+    def row(it):
+        return rows.get(it['id'] & 0xFFFFFFFF) if it['id'] >= 0 else None
+    pet = lambda it: it['id'] == -2
+    old = mine[i][1]
+    if pet(old):
+        key = lambda it: pet(it) and it['pet'] == old['pet']
+        rank = sum(1 for _, it in mine[:i] if key(it))
+        same = [k for k, (_, it) in enumerate(items) if key(it)]
+    else:
+        r0 = row(old)
+        if not r0:
+            return -1
+        rank = sum(1 for _, it in mine[:i] if not pet(it) and row(it) and row(it)['name'] == r0['name'])
+        tw = eq_twin(r0['name'], to_sex, known)
+        same = [k for k, (_, it) in enumerate(items) if not pet(it) and row(it) and row(it)['name'] == tw]
+    if same:
+        return same[rank] if rank < len(same) else -1
+    if pet(old):
+        return -1
+    slot = [k for k, (_, it) in enumerate(items) if not pet(it) and row(it) and row(it)['part'] == row(old)['part']]
+    return slot[0] if len(slot) == 1 else -1
+
+
+def eq_wear(row, cls, sex, D):
+    """why a class + gender can't wear it: job / sex / level codes"""
+    out = []
+    line = [D.get('JOB_VAGRANT'), D.get(EQ_FIRST[cls])] + [D.get(j) for j in EQ_LINE[cls]]
+    if row['job'] not in (-1, 0xFFFFFFFF) and row['job'] not in line:
+        out.append('job')
+    if row['sex'] in (0, 1) and row['sex'] != sex:
+        out.append('sex')
+    if row['lv'] not in (-1,) and row['lv'] > 150:
+        out.append('level')
+    return out
+
+
+def eq_copy(blk, cls, name, parts, to_cls, to_sex, D, items, rows, known):
+    slots = {}
+    r = eq_enter(blk, D, items, cls, slots)
+    out = []
+    for part in parts:
+        if isinstance(part, str):
+            k = next((i for i, (sec, it) in enumerate(blk) if sec == name and r['why'][i] == part), None)
+        else:
+            k = next((i for i, (sec, it) in enumerate(blk) if sec == name and slots.get(i) == part), None)
+        if k is None:
+            continue
+        it = blk[k][1]
+        if 'pet' in it:
+            out.append([part, 'PET', it['pet'], 0, 0, 0, [], [], []])
+            continue
+        nm = eq_twin(rows[it['id'] & 0xFFFFFFFF]['name'], to_sex, known)
+        row = rows.get(D[nm] & 0xFFFFFFFF) if nm in D else None
+        out.append([part, nm, max(it['up'], 0), it['el'], max(it['lv'], 0), it['aw'], it['cards'], eq_wear(row, to_cls, to_sex, D) if row else ['unknown']])
+    return out
+
+
+def eq_gems(root, D):
+    """Load_GemAbility (UltimateWeapon.cpp:46): [(dst, [(gem, ability item, [v1..v5])])]; LEVEL_GEM skipped"""
+    path = os.path.join(root, 'Ultimate_GemAbility.txt')
+    if not os.path.exists(path):
+        return None
+    t = [x.decode('latin-1') for x in tokens(open(path, 'rb').read())]
+    num = lambda x: s32(D[x]) if x in D else atoi(x)
+    out, k = [], 0
+    while k < len(t):
+        if t[k] == 'ABILITY':
+            dst = num(t[k + 1]); k += 3                # ABILITY dst {
+            gems = []
+            while k < len(t) and not t[k].startswith('}'):
+                gems.append((num(t[k]) & 0xFFFFFFFF, num(t[k + 1]) & 0xFFFFFFFF, [num(x) for x in t[k + 2:k + 7]]))
+                k += 7
+            out.append((dst, gems))
+        elif t[k] == 'LEVEL_GEM':
+            while k < len(t) and not t[k].startswith('}'):
+                k += 1
+        k += 1
+    return out
+
+
+def eq_ult(it, D, rows, gems):
+    """EqPlaceItem's ULTIMATE / RUNE / JEWEL part (feat/eq-baruna-runes) + GetDestParamUltimate's jewel stats"""
+    row = rows.get(it['id'] & 0xFFFFFFFF) if it['id'] >= 0 else None
+    if row is None or 'pet' in it:
+        return None
+    up = max(it['up'], 0)
+    bar = D['BARUNA_D'] <= row['r1'] <= D['BARUNA_S'] and row['k1'] == D['IK1_WEAPON']   # weapons only
+    skipped = []
+    if it['ult'] and not bar:
+        skipped.append([it['id'], 'notBaruna'])
+    ult = bool(it['ult'] and bar)
+    runes, opened = [], 0
+    if ult:
+        opened = 1 + (up >= 5) + (up >= 10)
+        for r in it['runes']:
+            rr = rows.get(r & 0xFFFFFFFF)
+            if rr is None or rr['k3'] != D['IK3_BARUNAWEA_PIERCE_RUNE']:
+                skipped.append([r, 'notRune']); continue
+            if any(x == r or rows[x & 0xFFFFFFFF]['dp1'] == rr['dp1'] for x in runes):
+                skipped.append([r, 'sameStat']); continue
+            if len(runes) >= opened:
+                skipped.append([r, 'closed']); continue
+            runes.append(r)
+    else:
+        skipped += [[r, 'needsUltimate'] for r in it['runes']]
+    known = {g[1] for _, gs in (gems or []) for g in gs}
+    jewels = []
+    if it['jewels']:
+        if row['r1'] != D['WEAPON_ULTIMATE'] and not ult:
+            skipped += [[j, 'needsUltimateWeapon'] for j in it['jewels']]
+        else:
+            for j in it['jewels']:
+                if (j & 0xFFFFFFFF) in known: jewels.append(j)
+                else: skipped.append([j, 'notJewel'])
+    active = min(len(jewels), max(0, up - 5)) if bar else len(jewels)
+    cnt = {}
+    for j in jewels[:active]:
+        cnt[j] = cnt.get(j, 0) + 1
+    stats = {}
+    for j, n in cnt.items():
+        dst = rows[j & 0xFFFFFFFF]['r2'] if (j & 0xFFFFFFFF) in rows else None
+        val = 0
+        for d, gs in (gems or []):
+            if d == dst:
+                val = next((g[2][n - 1] for g in gs if g[1] == (j & 0xFFFFFFFF)), 0)
+                break
+        stats[str(dst)] = stats.get(str(dst), 0) + val
+    return [ult, runes, jewels, skipped, sorted([[int(k) if k != 'None' else -1, v] for k, v in stats.items()]), active, opened]
+
+
+def eq_fashion_sets(rows, D):
+    parts = [D['PARTS_HAT'], D['PARTS_CLOTH'], D['PARTS_GLOVE'], D['PARTS_BOOTS']]
+    by = {}
+    for row in sorted(rows.values(), key=lambda x: x['name']):
+        if row['part'] not in parts:
+            continue
+        base = EQ_FASHION_END.sub('', row['name'])
+        if not base or base == row['name']:
+            continue
+        by.setdefault(base, {}).setdefault(str(row['part']), row['name'])
+    return [[b, dict(sorted(by[b].items(), key=lambda x: int(x[0])))] for b in sorted(by) if len(by[b]) >= 2]
 
 
 def eq_run(root):
@@ -12031,6 +12234,10 @@ def eq_run(root):
               W + '\tHP\r\n\t{\r\n\t\tITEM II_WEA_STA_FOSHARPEN\tRAISEDPET PK_DRAGON\tUPGRADE 5\r\n\t\tRAISEDPET PK_LION\r\n\t\tRAISEDPET 9\r\n\t}\r\n\tBAG\r\n\t{\r\n\t\tRAISEDPET PK_FOX\r\n\t}\r\n}\r\n',
               W + '\tHP\r\n\t{\r\n\t\tITEM II_PET_RACCON\r\n\t\tITEM II_PET_RACCON\r\n\t}\r\n\tATTACK\r\n\t{\r\n\t\tITEM II_PET_RACCON\tCARD II_GEN_MAT_ORICHALCUM01\r\n\t}\r\n}\r\n',
               'tdm templar female\r\n{\r\n\thp\r\n\t{\r\n\t\titem II_WEA_STA_FOSHARPEN card II_GEN_MAT_ORICHALCUM01 card 7\r\n\t}\r\n}\r\n',
+              'ARCANIST\tFEMALE\r\n{\r\n\tHP\r\n\t{\r\n\t\tITEM II_ARM_M_DV_FSUIT\tUPGRADE 3\r\n\t}\r\n}\r\n',   # a female suit named _M_: no male twin
+              'HARLEQUIN\tMALE\r\n{\r\n\tHP\r\n\t{\r\n\t\tITEM II_WEA_YOY_BEHEYOYO\tUPGRADE 10\tULTIMATE\tRUNE II_SYS_SYS_SCR_BARUNARUNE01\tRUNE II_SYS_SYS_SCR_BARUNARUNE03\tRUNE II_SYS_SYS_SCR_BARUNARUNE04\tJEWEL II_GEN_MAT_DIAMOND02\tJEWEL II_GEN_MAT_DIAMOND02\tJEWEL II_GEN_MAT_RUBY05\tJEWEL II_GEN_MAT_DIAMOND02\tJEWEL II_GEN_MAT_DIAMOND02\r\n\t}\r\n}\r\n',   # Ultimate Dementia +10: 3 runes, 5 jewels
+              'HARLEQUIN\tMALE\r\n{\r\n\tHP\r\n\t{\r\n\t\tITEM II_WEA_YOY_BEHEYOYO\tUPGRADE 7\tULTIMATE\tRUNE II_SYS_SYS_SCR_BARUNARUNE01\tRUNE II_SYS_SYS_SCR_BARUNARUNE01\tRUNE II_SYS_SYS_SCR_BARUNARUNE03\tRUNE II_SYS_SYS_SCR_BARUNARUNE04\tJEWEL II_GEN_MAT_DIAMOND02\tJEWEL II_GEN_MAT_RUBY05\tJEWEL II_GEN_MAT_DIAMOND02\tJEWEL II_GEN_MAT_TOPAZ\r\n\t}\r\n}\r\n',   # +7: a 2nd Attack rune, a 4th rune, 2 of 3 jewels count, a raw gem
+              'HARLEQUIN\tFEMALE\r\n{\r\n\tATTACK\r\n\t{\r\n\t\tITEM II_WEA_YOY_BEHEYOYO\tRUNE II_SYS_SYS_SCR_BARUNARUNE01\tJEWEL II_GEN_MAT_DIAMOND02\r\n\t\tITEM II_WEA_YOY_BEHEYOYO\tUPGRADE 4\tULTIMATE\tRUNE II_SYS_SYS_SCR_BARUNARUNE01\tRUNE II_SYS_SYS_SCR_BARUNARUNE03\r\n\t\tITEM II_WEA_YOY_BEHEYOYO\tUPGRADE 5\tULTIMATE\tRUNE II_SYS_SYS_SCR_BARUNARUNE01\tRUNE II_SYS_SYS_SCR_BARUNARUNE03\r\n\t\tITEM II_ARM_F_WINDL_HELMET_SET_KAL\tUPGRADE 10\tULTIMATE\tRUNE II_SYS_SYS_SCR_BARUNARUNE01\tJEWEL II_GEN_MAT_DIAMOND02\r\n\t\tITEM II_WEA_YOY_LUZAMUM\tUPGRADE 10\tULTIMATE\tRUNE II_SYS_SYS_SCR_BARUNARUNE01\tJEWEL II_GEN_MAT_DIAMOND02\tJEWEL II_GEN_MAT_DIAMOND02\tJEWEL II_GEN_MAT_DIAMOND02\tJEWEL II_GEN_MAT_DIAMOND02\tJEWEL II_GEN_MAT_DIAMOND02\tJEWEL II_GEN_MAT_DIAMOND02\r\n\t}\r\n\tHP\r\n\t{\r\n\t\tITEM II_WEA_YOY_BEHEYOYO\tULTIMATE\tRUNE II_SYS_SYS_SCR_BARUNARUNE02\tRUNE II_SYS_SYS_SCR_BARUNARUNE05\tRUNE II_SYS_SYS_SCR_BARUNARUNE06\tJEWEL II_GEN_MAT_DIAMOND02\r\n\t}\r\n}\r\n',   # no ULTIMATE, an Ultimate yo-yo, an armor rune, two no-stat runes, 6 jewels
               ]
     reads = []
     for t in probes:
@@ -12038,7 +12245,53 @@ def eq_run(root):
         reads.append(dict(text=t, stopped=stopped, problems=problems, presets={k: eq_enter(v, D, items, int(k.split('|')[0])) for k, v in sorted(ps.items())}))
     ev_probes = [evt, 'FFA 1 99 99 99 99 99 99 99 99\r\nTDM 1 0 -5 3 99 99 99 99 99\r\n', 'FFA 0\r\nXYZ 1\r\n', 'GS 2 1 2 3 4 5 6 7 8\r\nGS 0 9 9 9 9 9 9 9 9\r\n', '']
     evs = [dict(text=t, events=eq_events(t, D)) for t in ev_probes if t is not None]
-    return dict(reads=reads, events=evs)
+    rows = eq_item_rows(root, D)
+    known = {r['name'] for r in rows.values() if r['name'] in D}
+    groups = [[p if p.endswith('Pet') else D[p] for p in g] for g in EQ_GROUPS]
+    copies = []
+    for t in (probes[0], probes[2], probes[8], probes[11]):
+        ps = eq_presets(t, D)[0]
+        for k in sorted(ps):
+            cls = int(k.split('|')[0])
+            for name in ('HP', 'ATTACK'):
+                for gi, g in enumerate(groups):
+                    for to in range(16):
+                        got = eq_copy(ps[k], cls, name, g, to // 2, to % 2, D, items, rows, known)
+                        if got:
+                            copies.append([probes.index(t), k, name, gi, to // 2, to % 2, got])
+    gems = eq_gems(root, D)
+    ults = []
+    for i, t in enumerate(probes):
+        for k, blk in sorted(eq_presets(t, D)[0].items()):
+            for j, (sec, it) in enumerate(blk):
+                u = eq_ult(it, D, rows, gems)
+                if u is not None and (it['ult'] or it['runes'] or it['jewels']):
+                    ults.append([i, k, j, u])
+    # where "copy my changes to the other gender" sends each item's change: the fixture presets + two lists in different orders
+    C = 'CRACKSHOOTER\t%s\r\n{\r\n\tHP\r\n\t{\r\n%s\t}\r\n\tATTACK\r\n\t{\r\n%s\t}\r\n}\r\n'
+    L = lambda *xs: ''.join('\t\t%s\r\n' % x for x in xs)
+    pair = (C % ('MALE', L('ITEM II_WEA_BOW_ANCIENTUM\tUPGRADE 10', 'ITEM II_ARM_ARM_SHI_YSERA', 'ITEM II_ARM_M_CRACKS_HELMET_SET_KAL', 'ITEM II_ARM_M_CRACKS_SUIT_SET_KAL\tULTIMATE',
+                                 'ITEM II_ARM_M_CRACKS_BOOTS_SET_KAL', 'ITEM II_GEN_JEW_RIN_LANDRING', 'ITEM II_GEN_JEW_RIN_LANDRING', 'ITEM II_PET_REDPAANG', 'RAISEDPET PK_LION'),
+                         L('ITEM II_ARM_M_RAG_SUIT_SET_33', 'ITEM II_GEN_JEW_EAR_DEFEARRINGEST', 'ITEM II_GEN_JEW_EAR_DEFEARRINGEST'))
+            + C % ('FEMALE', L('ITEM II_ARM_F_CRACKS_SUIT_SET_KAL', 'ITEM II_ARM_F_CRACKS_HELMET_SET_KAL', 'ITEM II_WEA_BOW_ANCIENTUM', 'ITEM II_ARM_F_CRACKS_BOOTS_SET_KAL',
+                                    'ITEM II_GEN_JEW_RIN_LANDRING', 'ITEM II_GEN_JEW_NEC_HPMPNECKLACE', 'RAISEDPET PK_LION', 'ITEM II_GEN_JEW_RIN_LANDRING'),
+                   L('ITEM II_GEN_JEW_EAR_DEFEARRINGEST', 'ITEM II_ARM_F_RIN_SUIT_SET_33'))
+            + (C % ('MALE', '', L('ITEM II_ARM_M_RAG_SUIT_SET_33'))).replace('CRACKSHOOTER', 'SERAPH')         # 2 suits there, neither its twin: no match
+            + (C % ('FEMALE', '', L('ITEM II_ARM_F_RIN_SUIT_SET_33', 'ITEM II_ARM_F_CRACKS_SUIT_SET_KAL'))).replace('CRACKSHOOTER', 'SERAPH'))
+    twins = []
+    for pi, tx in enumerate((pre, pair)):
+        ps = eq_presets(tx, D)[0]
+        for k in sorted(ps):
+            cls, sex = (int(x) for x in k.split('|'))
+            o = '%d|%d' % (cls, 1 - sex)
+            if o not in ps:
+                continue
+            for name in ('HP', 'ATTACK', 'BAG'):
+                mine = [x for x in ps[k] if x[0] == name]
+                theirs = [x for x in ps[o] if x[0] == name]
+                for i, (_, it) in enumerate(mine):
+                    twins.append([pi, k, name, i, eq_twin_index(mine, theirs, i, 1 - sex, known, rows)])
+    return dict(reads=reads, events=evs, copies=copies, fashion=eq_fashion_sets(rows, D), ults=ults, twinProbe=pair, twins=twins)
 
 
 

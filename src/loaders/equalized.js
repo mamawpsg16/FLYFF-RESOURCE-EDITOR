@@ -78,7 +78,8 @@
   // -> { missing, stopped: { message, at } | null, presets: [block] (every block as written), byKey: Map 'CLASS|SEX' -> the block the server
   //      keeps (the later one), problems: [{ message, at, preset }] }
   // block: { cls, sex, header: span, open, close, eventWord: span|null, sections: { HP: sec, ATTACK: sec, BAG: sec }, order: [names] }
-  // sec: { open, close, items: [item] }; item: { id, define, upgrade, elem, elemLv, count, awakes: [{ dst, adj }], cards: [id], span, problems }
+  // sec: { open, close, items: [item] }; item: { id, define, upgrade, elem, elemLv, count, awakes: [{ dst, adj }], cards: [id], ultimate, runes: [id],
+  //   jewels: [id], span, problems }
   function readPresets(file, ctx = {}) {
     const res = { file: 'EqualizedPresets.inc', missing: !file, stopped: null, presets: [], byKey: new Map(), problems: [] };
     if (!file) return res;
@@ -116,7 +117,7 @@
         block.sections[name] = sec;
         block.order.push(name);
         // the C++ fills one spec from the section start: words before the first ITEM change a spec that is never placed
-        let cur = { dummy: true, awakes: [], cards: [], span: { start: 0, end: 0 } };
+        let cur = { dummy: true, awakes: [], cards: [], runes: [], jewels: [], span: { start: 0, end: 0 } };
         s.getToken();
         while (!s.eof) {
           const t = s.token;
@@ -127,7 +128,7 @@
             const idTok = s.getToken();
             const id = tokenNumber(idTok);
             cur = { id, define: idTok.define || (id < 0 ? idTok.text : null), idSpan: sp(idTok), upgrade: 0, elem: 0, elemLv: 0, count: 1, awakes: [], cards: [],
-              span: { start: t.start, end: idTok.end }, lastEnd: idTok.end, words: [] };
+              ultimate: false, runes: [], jewels: [], span: { start: t.start, end: idTok.end }, lastEnd: idTok.end, words: [] };
           } else if (eqWord(t, 'UPGRADE')) { const n = s.getToken(); cur.upgrade = tokenNumber(n); cur.lastEnd = n.end; }
           else if (eqWord(t, 'COUNT')) { const n = s.getToken(); cur.count = tokenNumber(n); cur.lastEnd = n.end; }
           else if (eqWord(t, 'ELEMENT')) {
@@ -142,12 +143,20 @@
             if (dst > 0 && cur.awakes.length < 3) cur.awakes.push({ dst, adj, define: d.define || null });
             else problem('bad AWAKE (unknown DST or more than 3): skipped', { start: t.start, end: a.end });
           } else if (eqWord(t, 'CARD')) { const n = s.getToken(); cur.cards.push(tokenNumber(n)); cur.lastEnd = n.end; }
+          else if (eqWord(t, 'ULTIMATE')) { cur.ultimate = true; cur.lastEnd = t.end; }
+          else if (eqWord(t, 'RUNE') || eqWord(t, 'JEWEL')) {
+            // V19 feat/eq-baruna-runes: RUNE up to MAX_PIERCING_BARUNA_RUNE (3), JEWEL up to MAX_PIERCING_ULTIMATE (5), the rest skipped
+            const rune = eqWord(t, 'RUNE'), n = s.getToken(), list = rune ? cur.runes : cur.jewels;
+            cur.lastEnd = n.end;
+            if (list.length < (rune ? 3 : 5)) list.push(tokenNumber(n));
+            else problem(`more than ${rune ? '3 RUNEs' : '5 JEWELs'}: the rest skipped`, { start: t.start, end: n.end });
+          }
           else if (eqWord(t, 'RAISEDPET')) {
             // its own entry (EqPlaceRaisedPet): the pending ITEM is placed first, the words after it until the next ITEM change nothing
             if (!cur.dummy) { cur.span.end = cur.lastEnd; sec.items.push(cur); }
             const k = s.getToken();
-            sec.items.push({ raisedPet: tokenNumber(k), id: -2, define: k.define || k.text, idSpan: sp(k), upgrade: 0, elem: 0, elemLv: 0, count: 1, awakes: [], cards: [], span: { start: t.start, end: k.end } });
-            cur = { dummy: true, awakes: [], cards: [], span: { start: 0, end: 0 } };
+            sec.items.push({ raisedPet: tokenNumber(k), id: -2, define: k.define || k.text, idSpan: sp(k), upgrade: 0, elem: 0, elemLv: 0, count: 1, awakes: [], cards: [], ultimate: false, runes: [], jewels: [], span: { start: t.start, end: k.end } });
+            cur = { dummy: true, awakes: [], cards: [], runes: [], jewels: [], span: { start: 0, end: 0 } };
           }
           else problem(`unknown word "${t.text}": skipped`, sp(t));
           s.getToken();
@@ -168,7 +177,9 @@
     const D = ws.defines.defines, f = n => ws.files.get(n) || null;
     const events = readEvents(f('equalizedpvp.inc'), D);
     const presets = readPresets(f('equalizedpresets.inc'), { defines: D, items: ws.items.items });
-    return { events, presets, present: !!(f('equalizedpvp.inc') || f('equalizedpresets.inc')) };
+    // the jewels a JEWEL word may name and what they give (loaders/gem-ability.js)
+    const gems = FRE.gemAbility.load(f('ultimate_gemability.txt'), D);
+    return { events, presets, gems, present: !!(f('equalizedpvp.inc') || f('equalizedpresets.inc')) };
   }
 
   FRE.equalized = { NULL_ID, EVENTS, EVENT_LABEL, CLASSES, SEXES, SECTIONS, ELEMENTS, SLOTS, EQ_LEVEL, readEvents, readPresets, fromWorkspace };

@@ -451,6 +451,14 @@ details.mt-more > summary { cursor: pointer; color: var(--muted); padding: 6px 0
 /* Rates & Buffs icon field: the picture beside the picker on one line, centred with its label */
 .rt-iconfield { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }
 .rt-iconfield > .combo, .rt-iconfield > input { flex: 0 1 auto; }
+/* folding page parts with a header that stays at the top while scrolling (FRE.ui.section); top -16px = #editor's top padding */
+details.fold { margin: 8px 0; }
+.fold-head { position: sticky; top: -16px; z-index: 3; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 10px; cursor: pointer; font-weight: 600; }
+.fold-head .fold-sub { font-weight: normal; margin-left: 8px; }
+details.fold[open] > .fold-head { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+/* the "what you are editing" bar of a page (Equalized presets): stays at the top of the editor */
+.edit-bar { position: sticky; top: -16px; z-index: 4; background: var(--panel); border-bottom: 2px solid var(--accent); margin: 12px -20px 0; padding: 8px 20px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.edit-bar .edit-where { font-weight: 700; font-size: 15px; }
 
 </style>
 </head>
@@ -507,7 +515,7 @@ details.mt-more > summary { cursor: pointer; color: var(--muted); padding: 6px 0
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "when": "Tue 20 Oct 2026, 16:10", "rev": "4e5ec37", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "104+", "when": "Wed 21 Oct 2026, 18:01", "rev": "8d163d2", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -6398,6 +6406,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
     PVP_RULES_DIFF: ['The rules board players read (Donaris FFA Rules, Amos TDM Rules, the Guild Siege boards at Frankie) says another value than the data the servers use.', 'Change the board (or the value); the editor keeps them in step when you edit the value here.'],
     PVP_RULES_NOTFOUND: ['The editor finds each value in a board by the words around it. This sentence was reworded, so a change of the value will not reach the board.', 'Check the board by hand after changing that value.'],
     // Equalized PvP (EqualizedPvP.inc, EqualizedPresets.inc)
+    EQ_ULT_IGNORED: ['ULTIMATE means "made Ultimate at Udi", and only a Baruna weapon can be made Ultimate. Armor (even Baruna armor like the Lv130 sets), jewelry and other weapons have no Ultimate version, so the WorldServer ignores the word and writes a line to Server\\error_*.txt. The item itself is not changed.', 'Open the item (✎ Edit) and click Apply changes: the editor leaves the word out.'],
+    EQ_RUNE: ['Baruna runes: a RUNE needs ULTIMATE, must be a Baruna rune, one per stat, and goes in only when its slot is open (1 at +0, 2 at +5, 3 at +10). The WorldServer skips the rest and writes it to Server\\error_*.txt.', 'Tick Ultimate, raise the upgrade (+10 opens all 3) or pick a rune of another stat.'],
+    EQ_JEWEL: ['A JEWEL goes only on an Ultimate weapon (the …UM ones) or an Ultimate Baruna, and must be a jewel of Ultimate_GemAbility.txt (Diamond / Emerald / Sapphire / Ruby / Topaz of one stat). The WorldServer skips the rest.', 'Pick a jewel from the list on an Ultimate weapon.'],
+    EQ_JEWEL_LEVEL: ['A Baruna weapon\'s jewel slots open with its level: +6 = 1 … +10 = 5. Jewels above that stay in the weapon but give nothing.', 'Raise the upgrade to +10 to use all 5.'],
     EQ_NO_EVENTS: ['Without EqualizedPvP.inc the WorldServer keeps FFA, TDM and the Guild Siege normal: players fight with their own characters.', 'Create the file (one line per event: EVENT ON and 8 class limits), or ignore this if equalized fights are not wanted.'],
     EQ_EVENTS_BAD: ['EqualizedPvP.inc has a word that is not FFA, TDM or GS where an event belongs. /eqreload then changes nothing, and at server start every event stays normal.', 'Fix the line shown.'],
     EQ_CAP_ZERO: ['A class limit of 0 (or less) means nobody may pick that class in this event: its button in the class window is greyed.', 'Use 99 for no limit, or the most players of that class you want.'],
@@ -17390,6 +17402,46 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
   FRE.pvpChecks.shownWrong = shownWrong;
 })(globalThis.FRE = globalThis.FRE || {});
 
+// ---- loaders/gem-ability.js ----
+// Ultimate jewels: Ultimate_GemAbility.txt, read like CUltimateWeapon::Load_GemAbility (UltimateWeapon.cpp:46):
+//   ABILITY <DST_> { <gem> <ability item> v1 v2 v3 v4 v5 ... }   one block per stat; vN = the stat for N of that jewel (GetDST)
+//   LEVEL_GEM { ... }                                             the gem making table (not needed here)
+// A jewel in a weapon is the ability item (SetGem stores GetGemAbilityKindRandom's dwAbilityItemId), e.g. II_GEN_MAT_DIAMOND02.
+// -> { abilities: [{ dst, gems: [{ gem, item, values }] }], byItem: Map(ability item id -> { dst, gem, item, values }) }
+(function (FRE) {
+  'use strict';
+
+  function load(file, defines) {
+    if (!file) return null;
+    const s = new FRE.lexer.Script(file.text, { file: file.name, defines, diags: [] });
+    const num = t => (t.define ? t.defineValue : FRE.lexer.atoi(t.text).value);
+    const res = { abilities: [], byItem: new Map() };
+    s.getToken();
+    while (!s.eof) {
+      if (s.token.text === 'ABILITY') {
+        const ab = { dst: num(s.getToken()), gems: [] };
+        s.getToken();                                   // {
+        s.getToken();
+        while (!s.eof && s.token.text[0] !== '}') {
+          const g = { gem: num(s.token) >>> 0, item: num(s.getToken()) >>> 0, values: [] };
+          for (let i = 0; i < 5; i++) g.values.push(num(s.getToken()));
+          ab.gems.push(g);
+          if (!res.byItem.has(g.item)) res.byItem.set(g.item, Object.assign({ dst: ab.dst }, g));
+          s.getToken();
+        }
+        res.abilities.push(ab);
+      } else if (s.token.text === 'LEVEL_GEM') {
+        s.getToken();
+        while (!s.eof && s.token.text[0] !== '}') s.getToken();
+      }
+      s.getToken();
+    }
+    return res;
+  }
+
+  FRE.gemAbility = { load };
+})(globalThis.FRE = globalThis.FRE || {});
+
 // ---- loaders/equalized.js ----
 // Equalized PvP (task "PvP Events", __FL_EQUALIZED_MODE): the two WorldServer files, read the way CEqualizedPvP reads them, with
 // the offsets the edits need. No DOM. C++: FLYFF-V19-SOURCE/Source/Source/WORLDSERVER/EqualizedPvP.cpp (ec3657c7, verified in game
@@ -17471,7 +17523,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
   // -> { missing, stopped: { message, at } | null, presets: [block] (every block as written), byKey: Map 'CLASS|SEX' -> the block the server
   //      keeps (the later one), problems: [{ message, at, preset }] }
   // block: { cls, sex, header: span, open, close, eventWord: span|null, sections: { HP: sec, ATTACK: sec, BAG: sec }, order: [names] }
-  // sec: { open, close, items: [item] }; item: { id, define, upgrade, elem, elemLv, count, awakes: [{ dst, adj }], cards: [id], span, problems }
+  // sec: { open, close, items: [item] }; item: { id, define, upgrade, elem, elemLv, count, awakes: [{ dst, adj }], cards: [id], ultimate, runes: [id],
+  //   jewels: [id], span, problems }
   function readPresets(file, ctx = {}) {
     const res = { file: 'EqualizedPresets.inc', missing: !file, stopped: null, presets: [], byKey: new Map(), problems: [] };
     if (!file) return res;
@@ -17509,7 +17562,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
         block.sections[name] = sec;
         block.order.push(name);
         // the C++ fills one spec from the section start: words before the first ITEM change a spec that is never placed
-        let cur = { dummy: true, awakes: [], cards: [], span: { start: 0, end: 0 } };
+        let cur = { dummy: true, awakes: [], cards: [], runes: [], jewels: [], span: { start: 0, end: 0 } };
         s.getToken();
         while (!s.eof) {
           const t = s.token;
@@ -17520,7 +17573,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
             const idTok = s.getToken();
             const id = tokenNumber(idTok);
             cur = { id, define: idTok.define || (id < 0 ? idTok.text : null), idSpan: sp(idTok), upgrade: 0, elem: 0, elemLv: 0, count: 1, awakes: [], cards: [],
-              span: { start: t.start, end: idTok.end }, lastEnd: idTok.end, words: [] };
+              ultimate: false, runes: [], jewels: [], span: { start: t.start, end: idTok.end }, lastEnd: idTok.end, words: [] };
           } else if (eqWord(t, 'UPGRADE')) { const n = s.getToken(); cur.upgrade = tokenNumber(n); cur.lastEnd = n.end; }
           else if (eqWord(t, 'COUNT')) { const n = s.getToken(); cur.count = tokenNumber(n); cur.lastEnd = n.end; }
           else if (eqWord(t, 'ELEMENT')) {
@@ -17535,12 +17588,20 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
             if (dst > 0 && cur.awakes.length < 3) cur.awakes.push({ dst, adj, define: d.define || null });
             else problem('bad AWAKE (unknown DST or more than 3): skipped', { start: t.start, end: a.end });
           } else if (eqWord(t, 'CARD')) { const n = s.getToken(); cur.cards.push(tokenNumber(n)); cur.lastEnd = n.end; }
+          else if (eqWord(t, 'ULTIMATE')) { cur.ultimate = true; cur.lastEnd = t.end; }
+          else if (eqWord(t, 'RUNE') || eqWord(t, 'JEWEL')) {
+            // V19 feat/eq-baruna-runes: RUNE up to MAX_PIERCING_BARUNA_RUNE (3), JEWEL up to MAX_PIERCING_ULTIMATE (5), the rest skipped
+            const rune = eqWord(t, 'RUNE'), n = s.getToken(), list = rune ? cur.runes : cur.jewels;
+            cur.lastEnd = n.end;
+            if (list.length < (rune ? 3 : 5)) list.push(tokenNumber(n));
+            else problem(`more than ${rune ? '3 RUNEs' : '5 JEWELs'}: the rest skipped`, { start: t.start, end: n.end });
+          }
           else if (eqWord(t, 'RAISEDPET')) {
             // its own entry (EqPlaceRaisedPet): the pending ITEM is placed first, the words after it until the next ITEM change nothing
             if (!cur.dummy) { cur.span.end = cur.lastEnd; sec.items.push(cur); }
             const k = s.getToken();
-            sec.items.push({ raisedPet: tokenNumber(k), id: -2, define: k.define || k.text, idSpan: sp(k), upgrade: 0, elem: 0, elemLv: 0, count: 1, awakes: [], cards: [], span: { start: t.start, end: k.end } });
-            cur = { dummy: true, awakes: [], cards: [], span: { start: 0, end: 0 } };
+            sec.items.push({ raisedPet: tokenNumber(k), id: -2, define: k.define || k.text, idSpan: sp(k), upgrade: 0, elem: 0, elemLv: 0, count: 1, awakes: [], cards: [], ultimate: false, runes: [], jewels: [], span: { start: t.start, end: k.end } });
+            cur = { dummy: true, awakes: [], cards: [], runes: [], jewels: [], span: { start: 0, end: 0 } };
           }
           else problem(`unknown word "${t.text}": skipped`, sp(t));
           s.getToken();
@@ -17561,7 +17622,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
     const D = ws.defines.defines, f = n => ws.files.get(n) || null;
     const events = readEvents(f('equalizedpvp.inc'), D);
     const presets = readPresets(f('equalizedpresets.inc'), { defines: D, items: ws.items.items });
-    return { events, presets, present: !!(f('equalizedpvp.inc') || f('equalizedpresets.inc')) };
+    // the jewels a JEWEL word may name and what they give (loaders/gem-ability.js)
+    const gems = FRE.gemAbility.load(f('ultimate_gemability.txt'), D);
+    return { events, presets, gems, present: !!(f('equalizedpvp.inc') || f('equalizedpresets.inc')) };
   }
 
   FRE.equalized = { NULL_ID, EVENTS, EVENT_LABEL, CLASSES, SEXES, SECTIONS, ELEMENTS, SLOTS, EQ_LEVEL, readEvents, readPresets, fromWorkspace };
@@ -17663,7 +17726,55 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
   // class caps of one event: how many may still pick each class (0 = greyed in the window)
   function capsLeft(ev, counts) { return ev.caps.map((cap, c) => Math.max(0, cap - (counts ? counts[c] || 0 : 0))); }
 
-  FRE.equalizedSim = { elementOk, isBuffPet: (r, D) => isBuffPet(r, D), enter, wearIssues, sockets, capsLeft, isNull };
+  // a Baruna item: ItemProp::IsBaruna (ProjectCmn.h:581), dwReferStat1 BARUNA_D..BARUNA_S
+  const isBaruna = (rec, D) => { const r = rec ? FRE.specItem.get(rec, 'dwReferStat1') : null; return !isNull(r) && r >= D.get('BARUNA_D') && r <= D.get('BARUNA_S'); };
+  // what ULTIMATE / RUNE / JEWEL make of one item (V19 feat/eq-baruna-runes, EqPlaceItem):
+  //   ULTIMATE on a Baruna weapon (IsBaruna + IK1_WEAPON) = Ultimate Baruna (CItemElem::ultbaruna): attack x1.6 (UltBarunaAtk), own positive stats +8% rounded,
+  //     not attack speed (UltBarunaStat, Item.cpp:435); 3 rune positions in front of the cards.
+  //   RUNE: IK3_BARUNAWEA_PIERCE_RUNE only, one per stat (same id or dwDestParam1), into the slots the level opens (GetOpenRuneSlots:
+  //     1 at +0, 2 at +5, 3 at +10), in file order.
+  //   JEWEL: on WEAPON_ULTIMATE or an Ultimate Baruna, ability items of Ultimate_GemAbility.txt only. Their stats: GetDestParamUltimate
+  //     (UltimateWeapon.cpp:889): the slots up to the first empty one, on a Baruna only the first upgrade - 5; per jewel item its count
+  //     n, its stat = its dwReferStat2, the value = GetDST: that stat's ABILITY block, that item's vN; summed per stat.
+  // gems: FRE.gemAbility.load(…) or null -> { ult, runes: [id], jewels: [id], skipped: [{ id, why }], jewelStats: { dst: value },
+  //   activeJewels, openRunes }; why: notBaruna, needsUltimate, notRune, sameStat, closed, needsUltimateWeapon, notJewel
+  function ultimateParts(item, rec, D, items, gems) {
+    const out = { ult: false, runes: [], jewels: [], skipped: [], jewelStats: {}, activeJewels: 0, openRunes: 0 };
+    if (!rec) return out;
+    // a Baruna weapon (Udi makes only weapons Ultimate; Baruna armor is Baruna grade too)
+    const up = item.upgrade > 0 ? item.upgrade : 0, bar = isBaruna(rec, D) && FRE.specItem.get(rec, 'dwItemKind1') === D.get('IK1_WEAPON');
+    if (item.ultimate && !bar) out.skipped.push({ id: item.id, why: 'notBaruna' });
+    out.ult = !!item.ultimate && bar;
+    const runes = item.runes || [], jewels = item.jewels || [];
+    if (out.ult) {
+      out.openRunes = 1 + (up >= 5 ? 1 : 0) + (up >= 10 ? 1 : 0);
+      for (const id of runes) {
+        const r = items.get(id >>> 0);
+        if (!r || FRE.specItem.get(r, 'dwItemKind3') !== D.get('IK3_BARUNAWEA_PIERCE_RUNE')) { out.skipped.push({ id, why: 'notRune' }); continue; }
+        const dst = FRE.specItem.get(r, 'dwDestParam1');
+        if (out.runes.some(x => x === id || FRE.specItem.get(items.get(x >>> 0), 'dwDestParam1') === dst)) { out.skipped.push({ id, why: 'sameStat' }); continue; }
+        if (out.runes.length >= out.openRunes) { out.skipped.push({ id, why: 'closed' }); continue; }
+        out.runes.push(id);
+      }
+    } else for (const id of runes) out.skipped.push({ id, why: 'needsUltimate' });
+    if (jewels.length) {
+      if (FRE.specItem.get(rec, 'dwReferStat1') !== D.get('WEAPON_ULTIMATE') && !out.ult) for (const id of jewels) out.skipped.push({ id, why: 'needsUltimateWeapon' });
+      else for (const id of jewels) { if (gems && gems.byItem.has(id >>> 0)) out.jewels.push(id); else out.skipped.push({ id, why: 'notJewel' }); }
+    }
+    let active = out.jewels.length;
+    if (bar) active = Math.min(active, Math.max(0, up - 5));
+    out.activeJewels = active;
+    const count = new Map();
+    for (let i = 0; i < active; i++) count.set(out.jewels[i], (count.get(out.jewels[i]) || 0) + 1);
+    for (const [id, n] of count) {
+      const r = items.get(id >>> 0), dst = r ? FRE.specItem.get(r, 'dwReferStat2') : null;
+      const ab = gems ? gems.abilities.find(a => a.dst === dst) : null, g = ab ? ab.gems.find(x => x.item === id >>> 0) : null;
+      out.jewelStats[dst] = (out.jewelStats[dst] || 0) + (g ? g.values[n - 1] : 0);
+    }
+    return out;
+  }
+
+  FRE.equalizedSim = { isBaruna, ultimateParts, elementOk, isBuffPet: (r, D) => isBuffPet(r, D), enter, wearIssues, sockets, capsLeft, isNull };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- edit/equalized-ops.js ----
@@ -17715,6 +17826,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
     if (aw.length > 3) throw new Error('At most 3 awakes');
     for (const a of aw) { T.checkDefine(a.dst); T.checkAmount(a.adj, -2147483647, 2147483647, 'The awake value'); s += `\tAWAKE ${a.dst} ${a.adj}`; }
     for (const c of (spec.cards || []).filter(Boolean)) { T.checkDefine(c); s += `\tCARD ${c}`; }
+    if (spec.ultimate) s += '\tULTIMATE';
+    const runes = (spec.runes || []).filter(Boolean), jewels = (spec.jewels || []).filter(Boolean);
+    if (runes.length > 3) throw new Error('At most 3 runes');
+    if (jewels.length > 5) throw new Error('At most 5 jewels');
+    for (const r of runes) { T.checkDefine(r); s += `\tRUNE ${r}`; }
+    for (const j of jewels) { T.checkDefine(j); s += `\tJEWEL ${j}`; }
     if (spec.count && spec.count > 1) { T.checkAmount(spec.count, 1, 32767, 'The amount'); s += `\tCOUNT ${spec.count}`; }
     return s;
   }
@@ -17722,7 +17839,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
   function specOf(it, nameOf, dstOf) {
     if (it.raisedPet !== undefined) return { raisedPet: it.define, item: '', upgrade: 0, elem: 0, elemLv: 0, awakes: [], cards: [], count: 1 };
     return { item: it.define && it.id >= 0 ? it.define : nameOf(it.id), upgrade: it.upgrade > 0 ? it.upgrade : 0, elem: it.elem || 0, elemLv: it.elemLv > 0 ? it.elemLv : 0,
-      awakes: it.awakes.map(a => ({ dst: a.define || dstOf(a.dst), adj: a.adj })), cards: it.cards.map(nameOf), count: it.count > 1 ? it.count : 1 };
+      awakes: it.awakes.map(a => ({ dst: a.define || dstOf(a.dst), adj: a.adj })), cards: it.cards.map(nameOf), count: it.count > 1 ? it.count : 1,
+      ultimate: !!it.ultimate, runes: (it.runes || []).map(nameOf), jewels: (it.jewels || []).map(nameOf) };
   }
   const lineStartOf = (text, i) => T.lineStart(text, i);
   // insert full lines right before the line holding `pos` (a closing brace), each indented `ind` + extra tabs
@@ -17800,27 +17918,86 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
     for (const c of cands) if (c !== define && has(c)) return c;
     return define;
   }
+  // where an edit of one gender's item goes on the other gender (the user, 2026-10-21: copying by list position turned a bow, a
+  // necklace, gauntlets and a helmet into a 2nd suit, because the male and female lists are in different orders).
+  // mine / items: this gender's and the other gender's items of that section; i: the edited item's position in mine;
+  // defOf(item) = its II_ / PK_ define; partOf(define) = its dwParts (null: none).
+  // -> the position of old's twin there (twinOf; weapons, jewelry and pets are the same item): the 2nd copy (2 rings) goes to the
+  //    2nd copy, and with fewer copies there, nothing; no twin at all: the only item worn in the same slot; else -1 (also for a
+  //    line that is not an item; the caller leaves that gender alone)
+  function twinIndex(mine, items, i, toSex, has, defOf, partOf) {
+    const old = mine && mine[i];
+    if (!old || !items) return -1;
+    const pet = it => it.raisedPet !== undefined, d0 = defOf(old);
+    if (!pet(old) && !has(d0)) return -1;                  // not an item: nothing to match
+    const rank = mine.slice(0, i).filter(it => pet(it) === pet(old) && defOf(it) === d0).length;
+    const tw = pet(old) ? d0 : twinOf(d0, toSex, has);
+    const same = items.map((it, k) => (pet(it) === pet(old) && defOf(it) === tw ? k : -1)).filter(k => k >= 0);
+    if (same.length) return rank < same.length ? same[rank] : -1;
+    if (pet(old)) return -1;
+    const p0 = partOf(d0);
+    if (p0 === null || p0 === undefined) return -1;
+    const slot = items.map((it, k) => (!pet(it) && partOf(defOf(it)) === p0 ? k : -1)).filter(k => k >= 0);
+    return slot.length === 1 ? slot[0] : -1;
+  }
   // the preset of the other gender = this one, every armor piece swapped for its twin. Replaces that preset when it exists.
-  // -> splices; out.swapped / out.kept: how many items got a twin / stayed the same (the caller shows them)
-  function mirrorPreset(pr, text, b, nameOf, dstOf, has, out = {}) {
+  // -> splices; out.swapped / out.kept / out.dropped: how many items got a twin / stayed the same / were left out because the other
+  // gender can't wear them (wears(define) false: a male-only fashion set with no female version) (the caller shows them)
+  function mirrorPreset(pr, text, b, nameOf, dstOf, has, out = {}, wears = null) {
     block(pr, b);
     const toSex = 1 - b.sex, sections = {};
-    out.swapped = 0; out.kept = 0;
+    out.swapped = 0; out.kept = 0; out.dropped = 0;
     for (const name of E().SECTIONS) if (b.sections[name]) sections[name] = b.sections[name].items.map(it => {
       const sp = specOf(it, nameOf, dstOf);
       if (sp.raisedPet) { out.kept++; return itemLine(sp); }
       const tw = twinOf(sp.item, toSex, has);
+      if (wears && !wears(tw)) { out.dropped++; return null; }
       if (tw !== sp.item) out.swapped++; else out.kept++;
       sp.item = tw;
       return itemLine(sp);
-    });
+    }).filter(x => x !== null);
     const eol = T.dominantEol(text), body = blockText(b.cls, toSex, sections, eol);
     const other = pr.byKey.get(`${b.cls}|${toSex}`);
     if (other) { block(pr, other); return [{ start: other.header.start, end: other.close.end, insert: body.slice(0, body.length - eol.length) }]; }
     return [{ start: text.length, end: text.length, insert: leadFor(text, eol) + body }];
   }
 
-  FRE.equalizedOps = { setOn, setCap, itemLine, specOf, setItem, addItem, removeItem, addPreset, removePreset, blockText, twinOf, mirrorPreset };
+  // ---------------------------------------------------------------- copying slots between presets (the "Copy from" and fashion set pickers)
+  // one fashion set = the pieces whose define is the same before HAT / SUIT / GLOVES / SHOES … (II_ARM_M_CHR_SANTAHAT, …SANTASUIT)
+  const FASHION_END = /(HAT|HELMET|CAP|SUIT|CLOTHES|CLOTH|COAT|GLOVES|GLOVE|GAUNTLET|SHOES|SHOE|BOOTS|CLOAK|MASK)\d*$/;
+  function fashionBase(define) { return (define || '').replace(FASHION_END, ''); }
+  // pieces [{ define, part }] -> the sets of 2+ pieces: [{ base, pieces: { <part>: define } }], sorted by base; in one set and
+  // slot the first define in sort order wins
+  function fashionSets(pieces, parts) {
+    const by = new Map();
+    for (const p of [...pieces].sort((a, z) => (a.define < z.define ? -1 : a.define > z.define ? 1 : 0))) {
+      if (!parts.includes(p.part)) continue;
+      const base = fashionBase(p.define);
+      if (!base || base === p.define) continue;
+      if (!by.has(base)) by.set(base, {});
+      const s = by.get(base);
+      if (!(p.part in s)) s[p.part] = p.define;
+    }
+    return [...by].filter(([, s]) => Object.keys(s).length >= 2).sort((a, z) => (a[0] < z[0] ? -1 : 1)).map(([base, s]) => ({ base, pieces: s }));
+  }
+  // what a switch set has in some slots (EqPlaceItem's pieces, not the HP pieces an Attack set keeps), as specs for another
+  // class + gender: the other gender's twin, and why that preset can't wear it (wearIssues). env: { defines, items, nameOf, dstOf, has }
+  // -> [{ part, spec, issues }] in the order of `parts`; a part can also be 'buffPet' / 'raisedPet' (the set's pets)
+  function copyPieces(src, name, parts, toCls, toSex, env) {
+    const D = env.defines, Sim = FRE.equalizedSim, sim = Sim.enter(src, { defines: D, items: env.items }), out = [];
+    for (const part of parts) {
+      const pl = sim.placed.find(p => p.sec === name && (typeof part === 'string' ? p.why === part : p.why === 'set' && p.part === part));
+      if (!pl) continue;
+      const spec = specOf(pl.item, env.nameOf, env.dstOf);
+      if (spec.raisedPet) { out.push({ part, spec, issues: [] }); continue; }
+      spec.item = twinOf(spec.item, toSex, env.has);
+      const rec = D.has(spec.item) ? env.items.get(D.get(spec.item) >>> 0) : null;
+      out.push({ part, spec, issues: rec ? Sim.wearIssues(rec, toCls, toSex, D) : ['unknown item'] });
+    }
+    return out;
+  }
+
+  FRE.equalizedOps = { setOn, setCap, itemLine, specOf, setItem, addItem, removeItem, addPreset, removePreset, blockText, twinOf, twinIndex, mirrorPreset, fashionBase, fashionSets, copyPieces };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- validate/equalized.js ----
@@ -17887,6 +18064,21 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
             else if (so.kind3 !== null && FRE.specItem.get(cr, 'dwItemKind3') !== so.kind3) push(PR, 'EQ_CARD_KIND', 'WARN', at, `${where}: ${nm} socket ${i + 1}: ${cr.name || cr.define} does not fit this item (it takes ${so.what === 'bead' ? 'buff pet beads' : so.cap === 4 ? 'suit cards' : 'weapon / shield cards'}).`, `${key}|${i}`);
           });
         }
+        // ULTIMATE / RUNE / JEWEL: the Error() lines of EqPlaceItem (V19 feat/eq-baruna-runes)
+        const up = S().ultimateParts(it, rec, D, items, eq.gems);
+        const nameOfId = id => { const r = id >= 0 ? items.get(id >>> 0) : null; return r ? r.name || r.define : String(id); };
+        for (const x of up.skipped) {
+          const rn = nameOfId(x.id);
+          const msg = { notBaruna: `ULTIMATE on ${nm}: only a Baruna weapon can be made Ultimate, so the server ignores the word (the item stays as it is).`,
+            needsUltimate: `RUNE ${rn} needs an ULTIMATE Baruna weapon: ${nm} gets none.`,
+            notRune: `RUNE ${rn} is not a Baruna rune: skipped.`,
+            sameStat: `a 2nd ${rn} (one rune per stat): skipped.`,
+            closed: `${rn} skipped: +${it.upgrade > 0 ? it.upgrade : 0} opens ${up.openRunes} rune slot${up.openRunes === 1 ? '' : 's'} (2 at +5, 3 at +10).`,
+            needsUltimateWeapon: `JEWEL ${rn} needs an Ultimate weapon or an ULTIMATE Baruna: ${nm} gets none.`,
+            notJewel: `JEWEL ${rn} is not in Ultimate_GemAbility.txt: skipped.` }[x.why];
+          push(PR, x.why === 'notBaruna' ? 'EQ_ULT_IGNORED' : x.why === 'needsUltimateWeapon' || x.why === 'notJewel' ? 'EQ_JEWEL' : 'EQ_RUNE', 'WARN', at, `${where} ${pl.sec}: ${msg} (the server writes it to Server\\error_*.txt)`, `${key}|${x.why}|${x.id}`);
+        }
+        if (up.ult && up.jewels.length > up.activeJewels) push(PR, 'EQ_JEWEL_LEVEL', 'INFO', at, `${where} ${pl.sec}: ${nm} +${it.upgrade > 0 ? it.upgrade : 0}: only ${up.activeJewels} of its ${up.jewels.length} jewels count (a Baruna's jewel slots open at +6 = 1 .. +10 = 5).`, key);
       }
     }
     if (anyOn) for (let c = 0; c < E().CLASSES.length; c++) for (let x = 0; x < 2; x++) {
@@ -18570,7 +18762,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
       id: 'pvp', label: 'PvP Events',
       // + Equalized PvP (loaders/equalized.js): EqualizedPvP.inc (which events are equalized, class caps) and EqualizedPresets.inc (the
       // shared gear presets), WorldServer only, /eqreload (ec3657c7).
-      required: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt'], optional: ['GuildSiegePrize.lua', 'EqualizedPvP.inc', 'EqualizedPresets.inc', 'propItemEtc.inc', 'propItemEtc.txt.txt'],   // propItemEtc: the set bonuses shown on the presets page (read only)
+      required: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt'], optional: ['GuildSiegePrize.lua', 'EqualizedPvP.inc', 'EqualizedPresets.inc', 'propItemEtc.inc', 'propItemEtc.txt.txt', 'Ultimate_GemAbility.txt'],   // propItemEtc: the set bonuses shown on the presets page (read only)
       editable: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt', 'GuildSiegePrize.lua', 'EqualizedPvP.inc', 'EqualizedPresets.inc'],
       client: [], deps: ['GuildSiegePrize.lua', 'EqualizedPvP.inc', 'EqualizedPresets.inc', 'client/npcboard_289.inc', 'client/npcboard_290.inc',
         ...[1, 2, 3, 4, 5, 6].flatMap(n => [`client/guildcombattext_${n}_eng.inc`, `client/guildcombattext_${n}_usa.inc`])],
@@ -20106,6 +20298,23 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
     return [requiredNote(), h('h3', 'Checks'), h('p.muted.small', `⛔ must be fixed before ${action} · ⚠ only a warning`), checks, h('h3', previewTitle), preview];
   }
 
+  // A part of a page that folds open / shut; its header stays at the top while you scroll through it (the user, 2026-10-21:
+  // "collapsible … a sticky header … so I know what I'm editing"). key: open / shut is kept across redraws (and for this browser,
+  // when storage works); top: CSS top of the header (under another sticky bar).
+  const folds = new Map();
+  function section({ title, sub, key, open = true, top }, ...kids) {
+    let isOpen = open;
+    if (key && folds.has(key)) isOpen = folds.get(key);
+    else if (key) try { const v = localStorage.getItem('fre.fold.' + key); if (v === '0' || v === '1') isOpen = v === '1'; } catch (e) { /* storage blocked: the default */ }
+    const d = h('details.fold', { open: isOpen }, h('summary.fold-head', { style: top ? `top:${top}` : null }, title, sub ? h('span.muted.small.fold-sub', sub) : null), ...kids);
+    d.addEventListener('toggle', () => {
+      if (!key) return;
+      folds.set(key, d.open);
+      try { localStorage.setItem('fre.fold.' + key, d.open ? '1' : '0'); } catch (e) { /* storage blocked */ }
+    });
+    return d;
+  }
+
   // The edit pencil, coloured (the user, 2026-10-07): every ✎ button uses it. size in px.
   function pencil(size = 14) {
     const s = h('span.pencil', { 'aria-hidden': 'true' });
@@ -20113,7 +20322,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
       '<path fill="#e8710a" d="M20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75z"/><path fill="#5f6368" d="M3 21h3.75L3 17.25z"/></svg>';
     return s;
   }
-  FRE.ui = { modules: [], pencil, pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell, whereLine, whereText, copyText, fieldLabel, requiredNote, formFooter };
+  FRE.ui = { modules: [], pencil, pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell, whereLine, whereText, copyText, fieldLabel, requiredNote, formFooter, section };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/tooltip.js ----
@@ -28572,7 +28781,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
   const EVF = 'equalizedpvp.inc', PRF = 'equalizedpresets.inc';
   const eqOf = ctx => ctx.ws.models.pvp.eq;
   const can = (ctx, f) => ctx.ws.isEditable(f);
-  const st = { cls: 5, sex: 0, same: true };      // same: every preset edit is copied to the other gender (armor swapped _M_ / _F_)
+  const st = { cls: 5, sex: 0, same: true, set: 'HP' };      // same: every preset edit is copied to the other gender (armor swapped _M_ / _F_); set: the switch set shown
   const PV_WORD = { FFA: 'ffa', TDM: 'tdm', GS: 'gs' };
   const SEC_LABEL = { HP: 'HP set · switch key 9', ATTACK: 'Attack set · switch key 0', BAG: 'Inventory extras (every class)' };
   const SEC_SHORT = { HP: 'HP set', ATTACK: 'Attack set', BAG: 'inventory' };
@@ -28596,6 +28805,9 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
       for (const c of it.cards) { const l = itemLabel(ctx.ws, { id: c }); n.set(l, (n.get(l) || 0) + 1); }
       parts.push(`Cards: ${[...n].map(([l, k]) => `${k}x ${l}`).join(', ')}`);
     }
+    if (it.ultimate) parts.push('Ultimate');
+    if (it.runes && it.runes.length) parts.push(`Runes: ${it.runes.map(r => itemLabel(ctx.ws, { id: r })).join(', ')}`);
+    if (it.jewels && it.jewels.length) { const n = new Map(); for (const j of it.jewels) { const l = itemLabel(ctx.ws, { id: j }); n.set(l, (n.get(l) || 0) + 1); } parts.push(`Jewels: ${[...n].map(([l, k]) => `${k}x ${l}`).join(', ')}`); }
     if (it.count > 1) parts.push(`x${fmt(it.count)}`);
     return parts.join(' · ');
   }
@@ -28633,6 +28845,24 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
     const pr = eq.presets;
     el.appendChild(h('p.muted.small', 'One gear set per class and gender, the same in every equalized event (FFA / TDM / Guild Siege switch it on or off on their own pages). Everyone inside is a level 150 Hero / Legend with every skill maxed and spends their own stat points. The WorldServer reads this file at start and on /eqreload.'));
     if (pr.stopped) el.appendChild(h('div.banner.bad', `${pr.stopped.message}. Fix it first: the editor does not change the file while it does not load completely.`));
+    // one click: every tier weapon saved before the list showed only Ultimates (II_WEA_YOY_ANCIENT …) becomes its Ultimate (…UM),
+    // keeping its +, element, awakes and cards
+    const D0 = ws.defines.defines, umOf = d => { const m = TIER_BASE.exec(d || ''); return m && D0.has(d + 'UM') && ws.itemById(D0.get(d + 'UM') >>> 0) ? d + 'UM' : null; };
+    const notUlt = [...pr.byKey.values()].flatMap(b => ['HP', 'ATTACK'].flatMap(n => (b.sections[n] ? b.sections[n].items : []).filter(it => umOf(it.define)).map(it => ({ b, it }))));
+    if (notUlt.length && can(ctx, PRF) && !pr.stopped) el.appendChild(h('p.small', h('span.tag.warn', '⚠'),
+      ` ${notUlt.length} weapon${notUlt.length === 1 ? ' is' : 's are'} the plain (Unique) version, in ${new Set(notUlt.map(x => x.b)).size} preset(s): ${[...new Set(notUlt.map(x => itemLabel(ws, x.it)))].join(', ')}. `,
+      h('button.small', { on: { click: () => apply(ctx, PRF, t => {
+        let text = t;
+        for (;;) {
+          const pr1 = E().readPresets({ name: 'EqualizedPresets.inc', text }, { defines: D0, items: ws.items.items });
+          let hit = null;
+          for (const b1 of pr1.byKey.values()) for (const n of ['HP', 'ATTACK']) (b1.sections[n] ? b1.sections[n].items : []).forEach((it, k) => { if (!hit && umOf(it.define)) hit = { b1, n, k, it }; });
+          if (!hit) break;
+          const sp = Object.assign(O().specOf(hit.it, id => nameOfId(ws, id), v => dstNameOf(ws, v)), { item: umOf(hit.it.define) });
+          text = FRE.SourceFile.spliceText(text, O().setItem(pr1, hit.b1, hit.n, hit.k, sp));
+        }
+        return diffSplice(t, text);
+      }, `Equalized presets: ${notUlt.length} weapon(s) changed to their Ultimate version`, 'pvp|eq|preset') } }, '⬆ Use the Ultimate versions')));
     // one click: every element on a helmet / gauntlets / boots / shield (only suits and weapons take one) goes
     const wrongEl = ws.diags.filter(d => d.code === 'EQ_ELEMENT_PART').length;
     if (wrongEl && can(ctx, PRF) && !pr.stopped) el.appendChild(h('div.banner', `${wrongEl} piece${wrongEl === 1 ? ' has' : 's have'} an element the game can't give (only suits and weapons take one). `,
@@ -28694,30 +28924,42 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
       }
       return;
     }
-    el.appendChild(h('div', { style: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px' }, h('h3', { style: 'margin:0' }, where),
-      h('label.small', { title: 'Each change you make here (add, edit, remove a piece) is also made to the other gender: armor becomes its male / female version. Changes made only on the other gender stay.' },
-        h('input', { type: 'checkbox', checked: st.same, on: { change: e => { st.same = e.target.checked; ctx.renderAll(false); } } }), ' Copy my changes to the other gender'),
+    // what you are editing stays at the top while scrolling (the user, 2026-10-21: "I don't know what I'm working on"): class, gender,
+    // switch set, and the set switch + "copy to the other gender" next to it
+    const setName = st.set === 'HP' ? 'HP set (key 9)' : 'Attack set (key 0)';
+    const bar = h('div.edit-bar', h('span.edit-where', `Editing: ${c.label} · ${E().SEXES[st.sex][0] + E().SEXES[st.sex].slice(1).toLowerCase()} · ${setName}`),
+      h('span', { style: 'display:inline-flex;gap:4px' }, ['HP', 'ATTACK'].map(n => h('button.small' + (n === st.set ? '.primary' : ''), { title: n === st.set ? 'Shown now' : `Show the ${n === 'HP' ? 'HP' : 'Attack'} set`, on: { click: () => { st.set = n; ctx.renderAll(false); } } },
+        n === 'HP' ? 'HP set · key 9' : 'Attack set · key 0'))),
+      h('label.small', { title: 'Each change you make here (add, edit, remove a piece) is also made to the matching piece of the other gender: armor becomes its male / female version. Changes made only on the other gender stay.' },
+        h('input', { type: 'checkbox', checked: st.same, on: { change: e => { st.same = e.target.checked; ctx.renderAll(false); } } }), ` Copy my changes to ${otherSex}`),
       dis ? null : h('button.small', { title: `Make the ${otherSex} preset the same as this one now; each armor piece becomes its ${otherSex} version (_M_ / _F_)`, on: { click: () => mirror(ctx, apply, b) } },
         `⇄ Copy to ${otherSex}${pr.byKey.has(`${st.cls}|${1 - st.sex}`) ? ' (replaces it)' : ''}`),
       dis ? null : h('button.small', { title: 'The HP set becomes the Attack set and the other way round', on: { click: () => presetEdit(ctx, apply, b, { kind: 'swap' }, () => swapSplices(b), `${where}: HP and Attack sets swapped`) } }, '⇄ Swap HP and Attack'),
-      dis ? null : h('button.small', { on: { click: () => apply(ctx, PRF, t => O().removePreset(pr, t, b), `Equalized preset ${where} removed`, 'pvp|eq|preset') } }, '✕ Remove preset')));
+      dis ? null : h('button.small', { on: { click: () => apply(ctx, PRF, t => O().removePreset(pr, t, b), `Equalized preset ${where} removed`, 'pvp|eq|preset') } }, '✕ Remove preset'));
+    el.appendChild(bar);
+    // the group headers stick right under the bar: its height (it wraps on a narrow window) as --eq-bar
+    const barHeight = () => { if (bar.isConnected) el.style.setProperty('--eq-bar', `${bar.offsetHeight}px`); };
+    requestAnimationFrame(barHeight);
+    if (typeof ResizeObserver === 'function') new ResizeObserver(barHeight).observe(bar);
     const sim = S().enter(b, { defines: ws.defines.defines, items: ws.items.items });
-    for (const name of E().SECTIONS) section(el, ctx, b, name, sim, dis, apply);
-    el.appendChild(h('h3', 'Pets'));
-    el.appendChild(h('p.muted.small', 'Each switch set has its own buff pet and raised pet: add them with the buttons of the HP set and the Attack set. Key 9 / 0 swaps the gear and the pets.'));
-    // ---- what the player gets
-    el.appendChild(h('h3', 'What the player gets'));
-    const parts = Object.keys(sim.worn).map(Number).sort((a, z) => a - z);
-    const aparts = Object.keys(sim.attack).map(Number).sort((a, z) => a - z);
-    el.appendChild(h('p.small', `A level ${E().EQ_LEVEL} ${c.label} (Hero / Legend), every skill maxed, 15 in each stat and the rest of the points to spend.`));
-    el.appendChild(h('table.items.up', h('tr', h('th', 'Slot'), h('th', 'Key 9: HP set (worn)'), h('th', 'Key 0: Attack set')),
-      [...new Set([...parts, ...aparts])].sort((a, z) => a - z).map(p => h('tr', h('td', partLabel(ctx, p)),
-        h('td', sim.worn[p] ? sim.worn[p].rec.name || sim.worn[p].rec.define : '—'),
-        h('td', sim.attack[p] ? (sim.attack[p] === sim.worn[p] ? h('span.muted', 'same') : sim.attack[p].rec.name || sim.attack[p].rec.define) : '—')))));
-    const petTxt = n => [sim.buffPet[n] ? `${sim.buffPet[n].rec.name || sim.buffPet[n].rec.define} (buff pet)` : null, sim.raisedPet[n] ? itemLabel(ws, sim.raisedPet[n]) : null].filter(Boolean).join(' + ') || 'no pet';
-    el.appendChild(h('p.small', `Pets: key 9 ${petTxt('HP')}; key 0 ${petTxt('ATTACK')}. The key 9 pets come out on entry.`));
-    const bagOnly = sim.bag.filter(x => !x.worn);
-    el.appendChild(h('p.small', `In the inventory: ${bagOnly.length ? bagOnly.map(x => `${x.rec.name || x.rec.define}${x.count > 1 ? ` x${fmt(x.count)}` : ''}`).join(', ') : 'nothing'}.`));
+    // pieces of the other gender (a male-only fashion set on a female preset, from before such pieces were left out): one click takes them out
+    const wrongSex = sim.placed.filter(p => p.sec !== 'BAG' && p.item.id >= 0 && ws.itemById(p.item.id >>> 0) && S().wearIssues(ws.itemById(p.item.id >>> 0), b.cls, b.sex, ws.defines.defines).some(w => /male item/.test(w)));
+    if (wrongSex.length && !dis) el.appendChild(h('p.small', h('span.tag.warn', '⚠'), ` ${wrongSex.length} piece${wrongSex.length === 1 ? '' : 's'} a ${E().SEXES[b.sex].toLowerCase()} can't wear: ${[...new Set(wrongSex.map(p => itemLabel(ws, p.item)))].join(', ')}. `,
+      h('button.small', { on: { click: () => apply(ctx, PRF, t => {
+        let text = t;
+        for (;;) {
+          const pr1 = E().readPresets({ name: 'EqualizedPresets.inc', text }, { defines: ws.defines.defines, items: ws.items.items }), b1 = pr1.byKey.get(`${b.cls}|${b.sex}`);
+          if (!b1) break;
+          const s1 = S().enter(b1, { defines: ws.defines.defines, items: ws.items.items });
+          const x = s1.placed.filter(p => p.sec !== 'BAG' && p.item.id >= 0 && ws.itemById(p.item.id >>> 0) && S().wearIssues(ws.itemById(p.item.id >>> 0), b.cls, b.sex, ws.defines.defines).some(w => /male item/.test(w)));
+          if (!x.length) break;
+          const last = x[x.length - 1];
+          text = FRE.SourceFile.spliceText(text, O().removeItem(pr1, text, b1, last.sec, b1.sections[last.sec].items.indexOf(last.item)));
+        }
+        return diffSplice(t, text);
+      }, `${where}: ${wrongSex.length} piece(s) of the other gender taken out`, 'pvp|eq|preset') } }, `✕ Remove ${wrongSex.length === 1 ? 'it' : `all ${wrongSex.length}`}`)));
+    // one switch set at a time (the page stays short): HP (key 9) or Attack (key 0), picked in the Editing bar; the inventory (folded) below
+    for (const name of E().SECTIONS) if (name === 'BAG' || name === st.set) section(el, ctx, b, name, sim, dis, apply);
   }
   const countItems = b => E().SECTIONS.reduce((n, s) => n + (b.sections[s] ? b.sections[s].items.length : 0), 0);
   function presetDiags(ctx, b) {
@@ -28728,11 +28970,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
     const ws = ctx.ws, pr = eqOf(ctx).presets, D = ws.defines.defines, out = {};
     const has = d => D.has(d) && !!ws.itemById(D.get(d) >>> 0);
     const to = `${E().CLASSES[src.cls].label} ${E().SEXES[1 - src.sex].toLowerCase()}`;
-    apply(ctx, PRF, t => O().mirrorPreset(pr, t, src, id => nameOfId(ws, id), v => dstNameOf(ws, v), has, out),
+    const wears = d => { const r = d && D.has(d) ? ws.itemById(D.get(d) >>> 0) : null; return !!r && !S().wearIssues(r, src.cls, 1 - src.sex, D).some(w => /male item/.test(w)); };
+    apply(ctx, PRF, t => O().mirrorPreset(pr, t, src, id => nameOfId(ws, id), v => dstNameOf(ws, v), has, out, wears),
       `Equalized preset ${to} = ${E().SEXES[src.sex].toLowerCase()} set (${out.swapped || 0} piece(s) swapped)`, 'pvp|eq|preset');
     st.sex = 1 - src.sex;
     ctx.renderAll(false);
-    toast(`${to}: ${out.swapped} piece(s) swapped to the ${E().SEXES[1 - src.sex].toLowerCase()} version, ${out.kept} kept (weapons, jewelry, potions: the same for both).`);
+    toast(`${to}: ${out.swapped} piece(s) swapped to the ${E().SEXES[1 - src.sex].toLowerCase()} version, ${out.kept} kept (weapons, jewelry, potions: the same for both)${out.dropped ? `, ${out.dropped} left out: no ${E().SEXES[1 - src.sex].toLowerCase()} version (those slots stay empty)` : ''}.`);
   }
 
   // the HP and Attack sets trade places: only the two section words change
@@ -28753,36 +28996,60 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
     return diffSplice(t, t2);
   }
 
-  // one preset edit; with "Same set for both genders" on, the SAME change is made to the other gender in the same undo step: the item
-  // at the same place, its armor swapped for the twin (_M_ / _F_). Other differences there stay (edit it to make it its own).
+  // one preset edit; with "Copy my changes to the other gender" on, the SAME change is made to the other gender in the same undo
+  // step: on its matching item (O().twinIndex: the same item or its _M_ / _F_ twin), armor swapped for the twin. Other differences
+  // there stay (edit it to make it its own); no matching item: that gender is left as it is and the toast says so.
   // op: { kind: 'set' | 'add' | 'remove', name, i, spec }. No preset for the other gender yet: it is created as a full copy.
+  // fashion, cloak, mask: each gender picks its own (user, 2026-10-21): an edit of one never goes to the other gender
+  const FASHION_PARTS = ['PARTS_HAT', 'PARTS_CLOTH', 'PARTS_GLOVE', 'PARTS_BOOTS', 'PARTS_CLOAK', 'PARTS_MASK'];
+  const isFashion = (ws, d) => { const D = ws.defines.defines, r = d && D.has(d) ? ws.itemById(D.get(d) >>> 0) : null; return !!r && FASHION_PARTS.map(x => D.get(x)).includes(FRE.specItem.get(r, 'dwParts')); };
   function presetEdit(ctx, apply, b, op, make, label) {
-    if (!st.same) { apply(ctx, PRF, make, label, 'pvp|eq|preset'); return; }
+    const old = op.name && op.i >= 0 && b.sections[op.name] ? b.sections[op.name].items[op.i] : null;
+    const fashion = (op.spec && isFashion(ctx.ws, op.spec.item)) || (old && isFashion(ctx.ws, old.define || nameOfId(ctx.ws, old.id)));
+    if (!st.same || fashion) { apply(ctx, PRF, make, label, 'pvp|eq|preset'); return; }
     const ws = ctx.ws, D = ws.defines.defines, has = d => D.has(d) && !!ws.itemById(D.get(d) >>> 0);
-    const toSex = 1 - b.sex, nameOf = id => nameOfId(ws, id), dstOf = v => dstNameOf(ws, v);
+    const toSex = 1 - b.sex, nameOf = id => nameOfId(ws, id), dstOf = v => dstNameOf(ws, v), other = E().SEXES[toSex].toLowerCase();
+    const defOf = it => it.define || nameOfId(ws, it.id);
+    const partOf = d => { const r = d && D.has(d) ? ws.itemById(D.get(d) >>> 0) : null; return r ? FRE.specItem.get(r, 'dwParts') : null; };
+    // the other gender's matching item, found once in the current text (an edit of this gender doesn't move the other block's items)
+    const o0 = eqOf(ctx).presets.byKey.get(`${b.cls}|${toSex}`), sec0 = o0 && op.name ? o0.sections[op.name] : null;
+    const j = old && sec0 ? O().twinIndex(b.sections[op.name].items, sec0.items, op.i, toSex, has, defOf, partOf) : -1;
+    // a piece added there only when its slot is still free (2 rings, 2 earrings; the inventory has no slots): else a 2nd shield
+    const ringLike = ['PARTS_RING1', 'PARTS_RING2', 'PARTS_EARRING1', 'PARTS_EARRING2'].map(x => D.get(x));
+    const slotFree = () => {
+      const p = op.spec && !op.spec.raisedPet ? partOf(O().twinOf(op.spec.item, toSex, has)) : null;
+      if (!sec0 || p === null || p === undefined || op.name === 'BAG') return true;
+      const same = q => q === p || (ringLike.includes(p) && ringLike.includes(q) && (ringLike.indexOf(q) >> 1) === (ringLike.indexOf(p) >> 1));
+      return sec0.items.filter(it => it.raisedPet === undefined && same(partOf(defOf(it)))).length < (ringLike.includes(p) ? 2 : 1);
+    };
+    const hit = !o0 || !['set', 'remove', 'move', 'add'].includes(op.kind) || j >= 0 || ((op.kind === 'set' || op.kind === 'add') && slotFree());
     apply(ctx, PRF, t => {
       const t1 = FRE.SourceFile.spliceText(t, make(t));
       const pr1 = E().readPresets({ name: 'EqualizedPresets.inc', text: t1 }, { defines: D, items: ws.items.items });
       const b1 = pr1.byKey.get(`${b.cls}|${b.sex}`), o1 = pr1.byKey.get(`${b.cls}|${toSex}`);
       if (!b1 || pr1.stopped) return make(t);
       let s2 = [];
-      if (!o1) s2 = O().mirrorPreset(pr1, t1, b1, nameOf, dstOf, has);
+      // a piece the other gender can't wear (no female / male version): left out there, the slot stays empty
+      const wears = d => { const r = d && D.has(d) ? ws.itemById(D.get(d) >>> 0) : null; return !!r && !S().wearIssues(r, b.cls, toSex, D).some(w => /male item/.test(w)); };
+      if (!o1) s2 = O().mirrorPreset(pr1, t1, b1, nameOf, dstOf, has, {}, wears);
       else {
-        const sec = o1.sections[op.name], tw = op.spec ? Object.assign({}, op.spec, { item: O().twinOf(op.spec.item, toSex, has) }) : null;
+        const tw0 = op.spec && !op.spec.raisedPet ? O().twinOf(op.spec.item, toSex, has) : null;
+        const tw = op.spec ? (op.spec.raisedPet ? op.spec : wears(tw0) ? Object.assign({}, op.spec, { item: tw0 }) : null) : null;
+        // set / remove / move go to the matching item (twinIndex), never "the item at the same place"
         if (op.kind === 'swap') s2 = swapSplices(o1);
-        else if (op.kind === 'move') { if (o1.sections[op.name] && o1.sections[op.name].items[op.i]) s2 = moveSplices(pr1, t1, o1, op.name, op.i, ws); }
-        else if (op.kind === 'addMany') { const t3 = FRE.SourceFile.spliceText(t1, addMany(pr1, t1, o1, op.name, op.specs.map(x => Object.assign({}, x, { item: O().twinOf(x.item, toSex, has) })), ws)); s2 = diffSplice(t1, t3); }
-        else if (op.kind === 'add') s2 = O().addItem(pr1, t1, o1, op.name, tw);
-        else if (op.kind === 'set' && sec && sec.items[op.i]) s2 = O().setItem(pr1, o1, op.name, op.i, tw);
-        else if (op.kind === 'set') s2 = O().addItem(pr1, t1, o1, op.name, tw);
-        else if (op.kind === 'remove' && sec && sec.items[op.i]) s2 = O().removeItem(pr1, t1, o1, op.name, op.i);
+        else if (op.kind === 'move') { if (j >= 0) s2 = moveSplices(pr1, t1, o1, op.name, j, ws); }
+        else if (op.kind === 'addMany') { const t3 = FRE.SourceFile.spliceText(t1, addMany(pr1, t1, o1, op.name, op.specs.map(x => Object.assign({}, x, { item: O().twinOf(x.item, toSex, has) })).filter(x => wears(x.item)), ws)); s2 = diffSplice(t1, t3); }
+        else if (op.kind === 'add') s2 = tw && slotFree() ? O().addItem(pr1, t1, o1, op.name, tw) : [];
+        else if (op.kind === 'set' && j >= 0) s2 = tw ? O().setItem(pr1, o1, op.name, j, tw) : O().removeItem(pr1, t1, o1, op.name, j);
+        else if (op.kind === 'set') s2 = tw && slotFree() ? O().addItem(pr1, t1, o1, op.name, tw) : [];
+        else if (op.kind === 'remove' && j >= 0) s2 = O().removeItem(pr1, t1, o1, op.name, j);
       }
       const t2 = FRE.SourceFile.spliceText(t1, s2);
       let p = 0, q = 0;
       while (p < t.length && p < t2.length && t[p] === t2[p]) p++;
       while (q < t.length - p && q < t2.length - p && t[t.length - 1 - q] === t2[t2.length - 1 - q]) q++;
       return [{ start: p, end: t.length - q, insert: t2.slice(p, t2.length - q) }];
-    }, `${label} (+ ${E().SEXES[toSex].toLowerCase()} too)`, 'pvp|eq|preset');
+    }, hit ? `${label} (+ ${other} too)` : `${label} (${other}: ${op.kind === 'add' ? 'that slot is already filled' : 'no matching item'}, left as it is)`, 'pvp|eq|preset');
   }
 
   // the pieces of an armor set by name: …_SUIT_… -> …_HELMET_…, …_GAUNTLET_…, …_BOOTS_… (346 of the 350 suits in defineItem.h)
@@ -28830,7 +29097,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
   function section(el, ctx, b, name, sim, dis, apply) {
     const pr = eqOf(ctx).presets, sec = b.sections[name], where = `${E().CLASSES[b.cls].label} ${E().SEXES[b.sex].toLowerCase()}`;
     const add = (label, mode) => h('button.small', { on: { click: () => itemDialog(ctx, b, name, -1, apply, mode) } }, label);
-    el.appendChild(h('div', { style: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px' }, h('h3', { style: 'margin:0' }, SEC_LABEL[name]),
+    // the inventory is long and the same for every class: it folds, shut at first (the user, 2026-10-21: "this is being so huge")
+    if (name === 'BAG') {
+      const n = sec ? sec.items.length : 0;
+      const fold = FRE.ui.section({ title: SEC_LABEL[name], sub: `${n} item${n === 1 ? '' : 's'}, the same for every class · click to open`, key: 'eq-bag', open: false });
+      el.appendChild(fold);
+      el = fold;
+    }
+    const title = name === 'BAG' ? null : h('h3', { style: 'margin:0' }, SEC_LABEL[name]);
+    el.appendChild(h('div', { style: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px' }, title,
       dis || name !== 'BAG' ? null : h('button.small', { on: { click: () => inventoryDialog(ctx, b, apply) } }, '+ Add items'),
       dis || name !== 'BAG' || !(sec && sec.items.length) ? null : h('button.small', { title: 'Every other preset gets these items with these counts (items it has that this one lacks stay)', on: { click: () => apply(ctx, PRF, t => {
         const ws = ctx.ws, D = ws.defines.defines, read = x => E().readPresets({ name: 'EqualizedPresets.inc', text: x }, { defines: D, items: ws.items.items });
@@ -28911,23 +29186,31 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
       return null;
     };
     const groupBtn = { 'Armor set': () => itemDialog(ctx, b, name, -1, apply, 'set'), Jewelry: () => jewelryDialog(ctx, b, name, apply), 'Fashion, cloak & mask': () => fashionDialog(ctx, b, name, apply) };
-    const tb = h('table.items.up');
+    if (!dis) el.appendChild(h('p', h('button', { title: 'The jewelry and the pets of another class or set (each class keeps its own fashion)', on: { click: () => copyDialog(ctx, b, name, apply, ['Jewelry', 'Pets']) } }, '⧉ Copy jewelry & pets from…'),
+      h('span.muted.small', ' then pick the weapon, the armor set and this class\'s own fashion')));
     for (const [g, slots] of GROUPS) {
-      tb.appendChild(h('tr', h('th', { colspan: 4, style: 'text-align:left;padding-top:10px' }, g, ' ',
-        !dis && groupBtn[g] ? h('button.small', { on: { click: groupBtn[g] } }, g === 'Armor set' ? '+ whole set' : g === 'Jewelry' ? '+ all jewelry' : '+ whole fashion set') : null)));
+      // each group folds; its header (class · gender · set · group) sticks under the "Editing" bar
+      const filled = slots.filter(([key]) => { const x = inSlot(key); return x && x.it; }).length;
+      const fold = FRE.ui.section({ title: g, sub: `${where} · ${SEC_SHORT[name]} · ${filled} of ${slots.length} filled`, key: `eq-grp-${g}`, top: 'calc(var(--eq-bar, 48px) - 16px)' });
+      const tb = h('table.items.up');
+      if (!dis) tb.appendChild(h('tr', h('td', { colspan: 4 },
+        groupBtn[g] ? h('button.small', { on: { click: groupBtn[g] } }, g === 'Armor set' ? '+ whole set' : g === 'Jewelry' ? '+ all jewelry' : '+ whole fashion set') : null, ' ',
+        h('button.small', { title: `Copy the ${g.toLowerCase()} of another class or set here`, on: { click: () => copyDialog(ctx, b, name, apply, g) } }, '⧉ Copy from…'))));
       for (const [key, label] of slots) {
         const x = inSlot(key), it = x && x.it, i = it ? items.indexOf(it) : -1;
-        const pick = () => (key === 'raisedPet' ? raisedPetDialog(ctx, b, name, apply) : itemDialog(ctx, b, name, -1, apply, key === 'buffPet' ? 'pet' : `part:${key.replace(/PARTS_(RING|EARRING)2/, 'PARTS_$11')}`));
+        const slotMode = key === 'buffPet' ? 'pet' : `part:${key.replace(/PARTS_(RING|EARRING)2/, 'PARTS_$11')}`;      // ✎ Edit and + Pick: the same list
+        const pick = () => (key === 'raisedPet' ? raisedPetDialog(ctx, b, name, apply) : itemDialog(ctx, b, name, -1, apply, slotMode));
         tb.appendChild(h('tr', h('td.small', { style: 'padding-left:16px' }, label),
           h('td', it ? [itemLabel(ws, it), h('div.small', { style: 'color:#ffeaa1' }, statLine(ws, it.id >= 0 ? ws.itemById(it.id >>> 0) : null)), h('div.muted.small', itemSummary(ctx, it))] : x && x.same ? h('span.muted', `same as HP: ${x.same.rec.name || x.same.rec.define}`) : h('span.muted', 'empty')),
-          h('td', dis ? null : it ? [it.raisedPet !== undefined ? null : h('button.small', { on: { click: () => itemDialog(ctx, b, name, i, apply) } }, '✎ Edit'), ' ',
+          h('td', dis ? null : it ? [it.raisedPet !== undefined ? null : h('button.small', { on: { click: () => itemDialog(ctx, b, name, i, apply, slotMode) } }, '✎ Edit'), ' ',
             h('button.small', { title: `Move this piece to the ${name === 'HP' ? 'Attack' : 'HP'} set`, on: { click: () => presetEdit(ctx, apply, b, { kind: 'move', name, i }, t => moveSplices(pr, t, b, name, i, ws), `${where}: ${itemLabel(ws, it)} moved to the ${name === 'HP' ? 'Attack' : 'HP'} set`) } }, name === 'HP' ? '→ Attack' : '→ HP'), ' ',
             h('button.small', { title: 'Empty this slot', on: { click: () => presetEdit(ctx, apply, b, { kind: 'remove', name, i }, t => O().removeItem(pr, t, b, name, i), `${where} ${SEC_SHORT[name]}: ${itemLabel(ws, it)} removed`) } }, '✕')]
             : h('button.small', { on: { click: pick } }, '+ Pick')),
           h('td', it ? diagTags(FRE.ui.diagsInSpan(ws, 'EqualizedPresets.inc', it.span.start, it.span.end)) : null)));
       }
+      fold.appendChild(tb);
+      el.appendChild(fold);
     }
-    el.appendChild(tb);
     const se = setEffects(ws, name === 'HP' ? sim.worn : sim.attack);
     if (se) el.appendChild(h('div.small', { style: 'margin:6px 0 4px;padding:6px 10px;border-left:3px solid #01ab19' }, h('b', `Set effects (key ${name === 'HP' ? 9 : 0})`),
       se.length ? se.map(x => h('div', `${x.name} ${x.n}/${x.of}: `, h('span', { style: 'color:#01ab19' }, x.bonus.length ? x.bonus.join(', ') : 'no bonus yet'))) : h('div.muted', 'no set pieces worn')));
@@ -28961,14 +29244,14 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
     } }] });
   }
 
-  // the pieces of a set in some slots (PARTS_ values) are taken out, then `specs` go in: a window's slots replace what was there
+  // the pieces of a set in some slots (PARTS_ values, or 'buffPet' / 'raisedPet') are taken out, then `specs` go in: a window's slots replace what was there
   function replaceSlots(text, cls, sex, name, parts, specs, ws) {
     const D = ws.defines.defines, read = t => E().readPresets({ name: 'EqualizedPresets.inc', text: t }, { defines: D, items: ws.items.items });
     for (;;) {
       const pr1 = read(text), b1 = pr1.byKey.get(`${cls}|${sex}`);
       if (!b1) return text;
       const sim = S().enter(b1, { defines: D, items: ws.items.items }), sec = b1.sections[name];
-      const hit = sim.placed.filter(p => p.sec === name && p.part !== null && p.part !== undefined && (parts.includes(p.part) || (p.why === 'slotTaken' && parts.includes(p.part)))).map(p => sec.items.indexOf(p.item)).filter(i => i >= 0);
+      const hit = sim.placed.filter(p => p.sec === name && ((p.part !== null && p.part !== undefined && parts.includes(p.part)) || parts.includes(p.why))).map(p => sec.items.indexOf(p.item)).filter(i => i >= 0);
       if (!hit.length) break;
       text = FRE.SourceFile.spliceText(text, O().removeItem(pr1, text, b1, name, Math.max(...hit)));
     }
@@ -29077,45 +29360,180 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
     } }] });
   }
 
-  // ---------------------------------------------------------------- fashion: hat, clothes, gloves, shoes, cloak, mask; for this preset or every preset
+  // ---------------------------------------------------------------- Copy from: one group of slots (jewelry, armor, …) from another preset
+  // the slots of a group as PARTS_ values (Shield / left hand = both)
+  const groupParts = (D, g) => GROUPS.find(x => x[0] === g)[1].flatMap(([k]) => k.split(',')).map(k => (k.startsWith('PARTS_') ? D.get(k) : k));
+  const pieceName = (ws, spec) => { if (spec.raisedPet) { const k = PET_KINDS.find(x => x[0] === spec.raisedPet); return `${k ? k[1] : spec.raisedPet} raised pet`; }
+    const D = ws.defines.defines, r = D.has(spec.item) ? ws.itemById(D.get(spec.item) >>> 0) : null; return r ? r.name || r.define : spec.item; };
+  const slotName = (ctx, p) => (p === 'buffPet' ? 'Buff pet' : p === 'raisedPet' ? 'Raised pet' : partLabel(ctx, p));
+  const specText = sp => [sp.upgrade ? `+${sp.upgrade}` : '', sp.elem && sp.elemLv ? `${E().ELEMENTS[sp.elem - 1]} +${sp.elemLv}` : '',
+    ...sp.awakes.map(a => `${a.dst} ${a.adj >= 0 ? '+' : ''}${a.adj}`), sp.cards.length ? `${sp.cards.length} card${sp.cards.length === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
+  const copyEnv = ws => { const D = ws.defines.defines; return { defines: D, items: ws.items.items, nameOf: id => nameOfId(ws, id), dstOf: v => dstNameOf(ws, v), has: d => D.has(d) && !!ws.itemById(D.get(d) >>> 0) }; };
+  // a short name for some pieces: their shared first words + "set" (Champion's Ring, Champion's Gore Necklace -> "Champion set"), else the names
+  function setName(names) {
+    const ws0 = [...new Set(names.map(n => n.replace(/\s*\((M|F)\)\s*$/, '')))];
+    if (ws0.length < 2) return ws0.join('');
+    const w = ws0.map(n => n.split(/\s+/));
+    let k = 0;
+    while (w.every(x => x.length > k + 1 && x[k] === w[0][k])) k++;
+    return k ? `${w[0].slice(0, k).join(' ').replace(/'s$/, '')} set` : ws0.join(', ');
+  }
+  // every other switch set with something in these slots -> combo options (v = "cls|sex|SECTION"); groups: lists of slots, one summary each
+  function copySources(ctx, b, name, groups) {
+    const ws = ctx.ws, env = copyEnv(ws), out = [];
+    for (const pb of eqOf(ctx).presets.byKey.values()) for (const sec of ['HP', 'ATTACK']) {
+      if (pb === b && sec === name) continue;
+      const parts = groups.flat(), got = O().copyPieces(pb, sec, parts, b.cls, b.sex, env);
+      if (!got.length) continue;
+      const sum = groups.map(g => setName(got.filter(x => g.includes(x.part)).map(x => pieceName(ws, x.spec)))).filter(Boolean);
+      const who = `${E().CLASSES[pb.cls].label} ${E().SEXES[pb.sex].toLowerCase()} ${SEC_SHORT[sec]}`;
+      out.push({ v: `${pb.cls}|${pb.sex}|${sec}`, label: `${who}: ${sum.join(' · ')}`, find: `${who} ${got.map(x => pieceName(ws, x.spec)).join(' ')}` });
+    }
+    return out;
+  }
+  // g: one group name or several ([..] = one window for all of them)
+  function copyDialog(ctx, b, name, apply, g) {
+    const gs = [].concat(g), what = gs.length > 1 ? `${gs.slice(0, -1).join(', ')} & ${gs[gs.length - 1]}`.toLowerCase().replace('fashion, cloak & mask', 'fashion') : gs[0].toLowerCase();
+    const ws = ctx.ws, D = ws.defines.defines, pr = eqOf(ctx).presets, env = copyEnv(ws), parts = gs.flatMap(x => groupParts(D, x));
+    const where = `${E().CLASSES[b.cls].label} ${E().SEXES[b.sex].toLowerCase()} ${SEC_SHORT[name]}`;
+    const srcs = copySources(ctx, b, name, gs.flatMap(x => (x === 'Fashion, cloak & mask' ? [groupParts(D, x).slice(0, 4), [groupParts(D, x)[4]], [groupParts(D, x)[5]]] : x === 'Pets' ? groupParts(D, x).map(p => [p]) : [groupParts(D, x)])));
+    let from = '', all = false;
+    const srcOf = v => { const [c, x, sec] = v.split('|'); return { blk: pr.byKey.get(`${c}|${x}`), sec }; };
+    const body = h('div.form', { style: 'display:flex;flex-wrap:wrap;align-items:flex-start' });
+    const preview = h('div', { style: 'flex-basis:100%' });
+    function paintC() {
+      preview.textContent = '';
+      if (!from) { preview.appendChild(h('p.muted.small', srcs.length ? 'Pick a set to copy from.' : `No other preset has any ${what} yet.`)); return; }
+      const s = srcOf(from), got = O().copyPieces(s.blk, s.sec, parts, b.cls, b.sex, env);
+      const tb = h('table.items.up', h('tr', h('th', 'Slot'), h('th', 'Piece'), h('th', '')));
+      for (const p of parts) {
+        const x = got.find(y => y.part === p);
+        tb.appendChild(h('tr', h('td.small', slotName(ctx, p)), h('td', x ? [pieceName(ws, x.spec), h('div.muted.small', specText(x.spec))] : h('span.muted', 'empty there: this slot is emptied')),
+          h('td.small', x && x.issues.length ? [h('span.tag.warn', '⚠'), ` not copied: ${x.issues.join(', ')}; ${x.issues.some(w => !/male item/.test(w)) ? 'this slot keeps its piece' : 'this slot stays empty'}`] : null)));
+      }
+      preview.appendChild(tb);
+    }
+    body.appendChild(row('Copy from', [h('div', { style: 'flex:1;min-width:420px' }, FRE.ui.combo({ options: srcs, value: from, placeholder: 'Pick a class and set…', onPick: v => { from = v; paintC(); } }))],
+      'Upgrades, elements, awakes and cards come too. Each gender gets its own version (_M_ / _F_).', true));
+    body.appendChild(preview);
+    body.appendChild(row('Who gets it', [h('label', h('input', { type: 'checkbox', checked: all, on: { change: e => { all = e.target.checked; } } }), ' Put it in every preset (all classes, male and female)')],
+      `Off: only ${where}${st.same ? ' and the other gender' : ''}. Fashion, cloak and mask only ever go to ${where}. A piece a class can't wear is skipped there.`, true));
+    paintC();
+    modal({ title: `Copy ${what}: ${where}`, body, wide: true, buttons: [{ label: 'Cancel' }, { label: 'Apply changes', cls: 'primary', onClick: () => {
+      if (!from) { toast('Pick a set to copy from', 'bad'); return false; }
+      const s = srcOf(from), targets = all ? [...pr.byKey.values()] : st.same ? [b, { cls: b.cls, sex: 1 - b.sex }] : [b];
+      let skipped = 0;
+      apply(ctx, PRF, t => {
+        let text = t;
+        for (const tb of targets) {
+          if (tb.cls === s.blk.cls && tb.sex === s.blk.sex && name === s.sec) continue;      // the set copied from stays as it is
+          const fp = FASHION_PARTS.map(x => D.get(x)), parts1 = tb === b ? parts : parts.filter(p => !fp.includes(p));     // fashion: this preset only
+          const got = O().copyPieces(s.blk, s.sec, parts1, tb.cls, tb.sex, env), bad = got.filter(x => x.issues.length);
+          skipped += bad.length;
+          // no version for this gender: that slot is emptied; another class's piece (job, level): that slot keeps what it has
+          const keep = new Set(bad.filter(x => x.issues.some(w => !/male item/.test(w))).map(x => x.part));
+          text = replaceSlots(text, tb.cls, tb.sex, name, parts1.filter(p => !keep.has(p)), got.filter(x => !x.issues.length).map(x => x.spec), ws);
+        }
+        return diffSplice(t, text);
+      }, `${all ? 'Every preset' : where}: ${what} copied from ${srcs.find(o => o.v === from).label.split(':')[0]}`, 'pvp|eq|preset');
+      if (skipped) toast(`${skipped} piece${skipped === 1 ? '' : 's'} not copied: a class or gender can't wear ${skipped === 1 ? 'it' : 'them'} (no gender version: slot emptied; another class: slot kept)`, 'warn');
+      return true;
+    } }] });
+  }
+
+  // ---------------------------------------------------------------- fashion: a fashion set (hat, clothes, gloves, shoes), cloak, mask
+  const DEFAULT_CLOAK = 'II_ARM_S_CLO_CLO_SPIRIT', DEFAULT_MASK = 'II_ARM_S_CLO_MAS_MASKENDRED';     // Cloak of Bravery, Hipster Glasses (Red)
   function fashionDialog(ctx, b, name, apply) {
     const ws = ctx.ws, D = ws.defines.defines, pr = eqOf(ctx).presets, has = d => D.has(d) && !!ws.itemById(D.get(d) >>> 0);
     const where = `${E().CLASSES[b.cls].label} ${E().SEXES[b.sex].toLowerCase()} ${SEC_SHORT[name]}`;
     const kinds = [['PARTS_HAT', 'Hat'], ['PARTS_CLOTH', 'Clothes'], ['PARTS_GLOVE', 'Gloves'], ['PARTS_BOOTS', 'Shoes'], ['PARTS_CLOAK', 'Cloak'], ['PARTS_MASK', 'Mask']];
     const pick = kinds.map(([part]) => { const c = current(ws, b, name, part); return c ? c.item : ''; });
     const start = pick.slice();
-    let all = true;
+    const all = false;                // fashion is per class and gender (user, 2026-10-21): this preset only
     const opts = kinds.map(([part]) => itemOptions(ctx, b, name).filter(o => FRE.specItem.get(ws.itemById(D.get(o.v) >>> 0), 'dwParts') === D.get(part)));
+    // an empty cloak / mask starts as the Cloak of Bravery / Hipster Glasses (Red); still a choice like any other
+    if (!pick[4] && opts[4].some(o => o.v === DEFAULT_CLOAK)) pick[4] = DEFAULT_CLOAK;
+    if (!pick[5] && opts[5].some(o => o.v === DEFAULT_MASK)) pick[5] = DEFAULT_MASK;
+    // the fashion sets this class + gender can wear: one line per set, its name from the clothes (else the first piece)
+    const fparts = kinds.slice(0, 4).map(([p]) => D.get(p));
+    const sets = O().fashionSets(opts.slice(0, 4).flatMap((os, k) => os.map(o => ({ define: o.v, part: fparts[k] }))), fparts);
+    const nameOfDef = d => { const r = ws.itemById(D.get(d) >>> 0); return r ? r.name || d : d; };
+    const setOpts = sets.map(s => {
+      const ds = fparts.map(p => s.pieces[p]).filter(Boolean), main = s.pieces[fparts[1]] || ds[0];
+      return { v: s.base, label: `${setName(ds.map(nameOfDef)) || nameOfDef(main)} (${ds.length} piece${ds.length === 1 ? '' : 's'})`, find: `${s.base} ${ds.map(nameOfDef).join(' ').replace(/\s+/g, '')}` };
+    });
+    const setNow = () => { const ds = pick.slice(0, 4).filter(Boolean), base = ds.length ? O().fashionBase(ds[0]) : ''; return base && ds.every(d => O().fashionBase(d) === base) ? base : ''; };
+    const copySrc = copySources(ctx, b, name, [kinds.slice(0, 4).map(([p]) => D.get(p)), [D.get('PARTS_CLOAK')], [D.get('PARTS_MASK')]]);
     const body = h('div.form', { style: 'display:flex;flex-wrap:wrap;align-items:flex-start' });
-    // one piece picked -> the rest of its fashion set in the empty slots: same define before HAT / SUIT / GLOVES / SHOES / CLOAK …
-    const baseOf = d => (d || '').replace(/(HAT|HELMET|CAP|SUIT|CLOTHES|CLOTH|COAT|GLOVES|GLOVE|GAUNTLET|SHOES|SHOE|BOOTS|CLOAK|MASK)\d*$/, '');
     function paintF() {
       body.textContent = '';
-      kinds.forEach(([, label], k) => body.appendChild(row(label, [h('div', { style: 'flex:1;min-width:320px' }, FRE.ui.combo({ options: opts[k], value: pick[k], placeholder: 'none', onPick: v => {
-        pick[k] = v;
-        const base = baseOf(v);
-        if (base && base !== v) kinds.forEach((x, j) => { if (!pick[j]) { const o = opts[j].find(op => baseOf(op.v) === base); if (o) pick[j] = o.v; } });
+      body.appendChild(row('Copy from another class (optional)', [h('div', { style: 'flex:1;min-width:420px' }, FRE.ui.combo({ options: copySrc, value: '', placeholder: copySrc.length ? 'Pick a class and set…' : 'no other preset has fashion yet', onPick: v => {
+        const [c, x, sec] = v.split('|'), got = O().copyPieces(pr.byKey.get(`${c}|${x}`), sec, kinds.map(([p]) => D.get(p)), b.cls, b.sex, copyEnv(ws));
+        kinds.forEach(([p], k) => { const y = got.find(z => z.part === D.get(p) && !z.issues.length); pick[k] = y ? y.spec.item : ''; });
         paintF();
-      } })), pick[k] ? h('button.small', { title: 'Leave this slot empty', on: { click: () => { pick[k] = ''; paintF(); } } }, '✕') : null], null, true)));
-      body.appendChild(row('Who gets it', [h('label', h('input', { type: 'checkbox', checked: all, on: { change: e => { all = e.target.checked; } } }), ' Put it in every preset (all classes, male and female)')],
-        'Shows what this set wears now; a change here replaces that piece. Pick any piece and the rest of its fashion set fills the empty slots. Each gender gets its own version (_M_ / _F_).', true));
+      } }))], 'Fills every slot below with what that set wears.', true));
+      body.appendChild(row('Fashion set', [h('div', { style: 'flex:1;min-width:420px' }, FRE.ui.combo({ options: setOpts, value: setNow(), placeholder: 'none', onPick: v => {
+        const s = sets.find(x => x.base === v);
+        fparts.forEach((p, k) => { pick[k] = s.pieces[p] || ''; });
+        paintF();
+      } })), pick.slice(0, 4).some(Boolean) ? h('button.small', { title: 'No fashion set', on: { click: () => { for (let k = 0; k < 4; k++) pick[k] = ''; paintF(); } } }, '✕') : null],
+        h('span', kinds.slice(0, 4).map(([, label], k) => h('div', `${label}: `, pick[k] ? nameOfDef(pick[k]) : h('span.muted', 'none')))), true));
+      kinds.slice(4).forEach(([, label], j) => { const k = j + 4; body.appendChild(row(label, [h('div', { style: 'flex:1;min-width:320px' }, FRE.ui.combo({ options: opts[k], value: pick[k], placeholder: 'none', onPick: v => { pick[k] = v; paintF(); } })),
+        pick[k] ? h('button.small', { title: 'Leave this slot empty', on: { click: () => { pick[k] = ''; paintF(); } } }, '✕') : null], null, true)); });
+      body.appendChild(h('p.muted.small', { style: 'flex-basis:100%' }, `Only ${where} changes: each class and gender picks its own fashion. Shows what this set wears now; a change here replaces that piece. An empty cloak / mask starts as the Cloak of Bravery / Hipster Glasses (Red). One piece only: ✎ / + Pick on its row.`));
     }
     paintF();
     modal({ title: `Fashion, cloak & mask: ${where}`, body, wide: true, buttons: [{ label: 'Cancel' }, { label: 'Apply changes', cls: 'primary', onClick: () => {
       const changed = kinds.map((k, j) => j).filter(j => pick[j] !== start[j] || (all && pick[j]));
       if (!changed.length) return true;
       const parts = changed.map(j => D.get(kinds[j][0])), items = changed.map(j => pick[j]).filter(Boolean);
-      const targets = all ? [...pr.byKey.values()] : st.same ? [b, { cls: b.cls, sex: 1 - b.sex }] : [b];
+      const targets = [b];      // fashion is per class and gender: never another preset
+      // a piece with no version for that class / gender (a male-only set on a female preset): that preset keeps its own piece
+      let skipped = 0;
       apply(ctx, PRF, t => {
         let text = t;
-        for (const tb of targets) text = replaceSlots(text, tb.cls, tb.sex, name, parts, items.map(d => ({ item: O().twinOf(d, tb.sex, has), upgrade: 0, elem: 0, elemLv: 0, awakes: [], cards: [], count: 1 })), ws);
+        for (const tb of targets) {
+          const specs = [];
+          changed.forEach(j => {
+            if (!pick[j]) return;
+            const d = O().twinOf(pick[j], tb.sex, has), rec = ws.itemById(D.get(d) >>> 0);
+            if (!rec || S().wearIssues(rec, tb.cls, tb.sex, D).length) { skipped++; return; }       // no version for this gender: the slot stays empty
+            specs.push({ item: d, upgrade: 0, elem: 0, elemLv: 0, awakes: [], cards: [], count: 1 });
+          });
+          text = replaceSlots(text, tb.cls, tb.sex, name, parts, specs, ws);
+        }
         return diffSplice(t, text);
       }, `${all ? 'Every preset' : where}: fashion, cloak & mask set (${items.length} piece${items.length === 1 ? '' : 's'})`, 'pvp|eq|preset');
+      if (skipped) toast(`${skipped} piece${skipped === 1 ? '' : 's'} left out: no version for that gender (those slots stay empty)`, 'warn');
       return true;
     } }] });
   }
 
   // ---------------------------------------------------------------- Edit item
+  // our weapon tiers (WEAPON_EFFECTS_REVISED.md, SERVER CHANGES/01): HP Vampire / Angel / Bloody / Ancient, ATK Lusaka / Legendary Golden /
+  // Lusaka Crystal / Mystic (ENTANESSUM), Mastercraft (ROYALUM); the Ultimate (UM) versions only, no Baruna (user, 2026-10-21)
+  const TIER_BASE = /^II_WEA_[A-Z]+_(VEMPIRE|ANGEL|BLOODY|ANCIENT|LUZA|LUZAM|LEAGENDG)$/;     // a tier weapon's plain (Unique) version: + UM = its Ultimate
+  const TIER_WEAPON = /^II_WEA_[A-Z]+_((VEMPIRE|ANGEL|BLOODY|ANCIENT|LUZA|LUZAM|LEAGENDG)UM|ENTANESSUM|ROYALUM)$/;
+  // a Baruna weapon: ItemProp::IsBaruna (ProjectCmn.h:581), dwReferStat1 BARUNA_D..BARUNA_S (the BEHE… line, Soul Sword, …)
+  const isBaruna = (ws, rec) => { const D = ws.defines.defines, r = rec ? FRE.specItem.get(rec, 'dwReferStat1') : null; return r !== null && r >= D.get('BARUNA_D') && r <= D.get('BARUNA_S'); };
+  // a Baruna weapon: only those can be made Ultimate (runes, jewels); Baruna armor is Baruna grade too
+  const barunaWeapon = (ws, rec) => isBaruna(ws, rec) && FRE.specItem.get(rec, 'dwItemKind1') === ws.defines.defines.get('IK1_WEAPON');
+  const GEAR_PARTS = ['PARTS_RWEAPON', 'PARTS_LWEAPON', 'PARTS_SHIELD', 'PARTS_CAP', 'PARTS_UPPER_BODY', 'PARTS_HAND', 'PARTS_FOOT'];
+  // a piece with at least one bonus stat (dwDestParam1-6) or a piece of a set with bonuses (propItemEtc.inc: the Lv120+ armor
+  // has its stats there only); look-only weapons and costumes have neither
+  const hasBonus = (ws, rec) => {
+    if (!rec) return false;
+    for (let i = 1; i <= 6; i++) { const d = FRE.specItem.get(rec, 'dwDestParam' + i); if (d && !S().isNull(d)) return true; }
+    if (!ws.files.has('propitemetc.inc')) return false;
+    if (!ws._eqSets) ws._eqSets = FRE.sets.fromWorkspace(ws);
+    const st = ws._eqSets.byItem.get(rec.id);
+    return !!st && FRE.sets.itemAvail(st, st.elems.length, true).length > 0;
+  };
+  const withStats = (ws, o) => {
+    const rec = ws.itemById(ws.defines.defines.get(o.v) >>> 0), st = rec && ws._eqSets ? ws._eqSets.byItem.get(rec.id) : null;
+    const s = [statLine(ws, rec), st ? `set bonus: ${st.name || st.nameKey || `set ${st.id}`}` : ''].filter(Boolean).join(' · ');
+    return s ? Object.assign({}, o, { label: `${o.label} — ${s}` }) : o;
+  };
   const isBuffPet = (rec, D) => FRE.specItem.get(rec, 'dwItemKind3') === D.get('IK3_PET') && FRE.specItem.get(rec, 'dwReferStat1') === D.get('PET_VIS');
   function itemOptions(ctx, b, name, mode) {
     const ws = ctx.ws, D = ws.defines.defines, key = `_eqOpts|${mode === 'pet' ? 'pet' : name === 'BAG' ? 'bag' : `${b.cls}|${b.sex}`}`;
@@ -29123,13 +29541,18 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
       const want = mode.slice(5).split(',').map(x => D.get(x));
       // Slayer's left hand: a 2nd one-handed weapon too (EqPlaceItem moves it there; MoverEquip.cpp:528)
       const dual = b.cls === 0 && want.includes(D.get('PARTS_LWEAPON'));
-      return itemOptions(ctx, b, name, null).filter(o => { const r = ws.itemById(D.get(o.v) >>> 0), p = FRE.specItem.get(r, 'dwParts');
+      const fits = itemOptions(ctx, b, name, null).filter(o => { const r = ws.itemById(D.get(o.v) >>> 0), p = FRE.specItem.get(r, 'dwParts');
         return want.includes(p) || (dual && p === D.get('PARTS_RWEAPON') && FRE.specItem.get(r, 'dwHanded') === D.get('HD_ONE') && r.define !== 'II_WEA_KNU_ISHOFIST'); });
+      // the weapon row: our weapon tiers only; armor rows: the Lv120-130 sets only; the shield / left hand row lists every one. Each line with its stats
+      if (!want.some(p => GEAR_PARTS.map(x => D.get(x)).includes(p))) return fits;
+      if (want.includes(D.get('PARTS_SHIELD'))) return fits.map(o => withStats(ws, o));
+      if (want.includes(D.get('PARTS_RWEAPON'))) return fits.filter(o => TIER_WEAPON.test(o.v) || isBaruna(ws, ws.itemById(D.get(o.v) >>> 0))).map(o => withStats(ws, o));
+      return fits.filter(o => { const r = ws.itemById(D.get(o.v) >>> 0), lv = FRE.specItem.get(r, 'dwLimitLevel1'); return lv >= 120 && lv <= 130 && hasBonus(ws, r); }).map(o => withStats(ws, o));
     }
-    if (mode === 'set') {                              // "Add a set": one line per armor set (its suit), level 105-130 sets only
+    if (mode === 'set') {                              // "Add a set": one line per armor set (its suit), level 120-130 sets only
       const suit = D.get('PARTS_UPPER_BODY');
       return itemOptions(ctx, b, name, null).filter(o => { const r = ws.itemById(D.get(o.v) >>> 0), lv = FRE.specItem.get(r, 'dwLimitLevel1');
-        return FRE.specItem.get(r, 'dwParts') === suit && lv >= 105 && lv <= 130; });
+        return FRE.specItem.get(r, 'dwParts') === suit && lv >= 120 && lv <= 130 && hasBonus(ws, r); }).map(o => withStats(ws, o));
     }
     if (ws[key]) return ws[key];
     const out = [];
@@ -29180,21 +29603,104 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
     return { up: 0, elem: false };
   }
 
+  // ---------------------------------------------------------------- Ultimate Baruna, runes, jewels (V19 feat/eq-baruna-runes)
+  // the stat runes (IK3_BARUNAWEA_PIERCE_RUNE) and the jewels (Ultimate_GemAbility.txt ability items), each with what it gives
+  function runeOptions(ctx) {
+    const ws = ctx.ws, D = ws.defines.defines;
+    if (ws._eqRunes) return ws._eqRunes;
+    const out = [];
+    for (const rec of ws.items.items.values()) if (FRE.specItem.get(rec, 'dwItemKind3') === D.get('IK3_BARUNAWEA_PIERCE_RUNE')) {
+      const s = statLine(ws, rec);
+      out.push({ v: rec.define, label: `${rec.name || rec.define} — ${s || 'no stat'}`, find: `${rec.define} ${rec.name || ''}` });
+    }
+    return (ws._eqRunes = out.sort((a, z) => a.label.localeCompare(z.label)));
+  }
+  function jewelOptions(ctx) {
+    const ws = ctx.ws, gems = eqOf(ctx).gems;
+    if (ws._eqJewels) return ws._eqJewels;
+    const words = FRE.itemTooltip.dstWords(ws), out = [];
+    for (const ab of gems ? gems.abilities : []) for (const g of ab.gems) {
+      const r = ws.itemById(g.item), w = words.get(ab.dst), gem = ws.itemById(g.gem);
+      const stat = w ? (w.word || w.define).replace(/[:\s]+$/, '') : String(ab.dst);
+      out.push({ v: r ? r.define : String(g.item), label: `${gem ? gem.name || gem.define : g.gem}: ${stat} (${g.values.join(' / ')} for 1-5 of it)`, find: `${r ? r.define : ''} ${stat}` });
+    }
+    return (ws._eqJewels = out);
+  }
+  // the rows of the item window for a Baruna weapon (Ultimate + 3 runes) or an Ultimate weapon (5 jewels), and what they give
+  function ultimateRows(ctx, body, spec, rec, paint) {
+    const ws = ctx.ws, D = ws.defines.defines, bar = barunaWeapon(ws, rec);
+    const jew = bar ? spec.ultimate : !!rec && FRE.specItem.get(rec, 'dwReferStat1') === D.get('WEAPON_ULTIMATE');
+    if (!bar && !jew) return;
+    // what it gives: the simulator on the picks (ultimateParts); redrawn in place while the rune list stays open
+    let gameLine = null;
+    const inGame = () => {
+      const up = spec.upgrade > 0 ? spec.upgrade : 0;
+      const item = { id: rec.id, upgrade: up, ultimate: !!spec.ultimate, runes: spec.runes.filter(Boolean).map(d => D.get(d)), jewels: spec.jewels.filter(Boolean).map(d => D.get(d)) };
+      const u = S().ultimateParts(item, rec, D, ws.items.items, eqOf(ctx).gems), words = FRE.itemTooltip.dstWords(ws);
+      const js = Object.entries(u.jewelStats).map(([d, v]) => { const w = words.get(Number(d)); return `${w ? (w.word || w.define).replace(/[:\s]+$/, '') : d} +${v}${w && w.rate ? '%' : ''}`; });
+      const rn = u.runes.map(id => { const r = ws.itemById(id >>> 0); return r ? `${r.name}${statLine(ws, r) ? ` (${statLine(ws, r)})` : ''}` : id; });
+      return h('div.small', { style: 'flex-basis:100%;margin:0 0 12px;padding:6px 10px;border-left:3px solid #01ab19' }, h('b', 'In game: '),
+        [u.ult ? 'Ultimate Baruna' : null, rn.length ? `runes ${rn.join(', ')}` : null, js.length ? `jewels ${js.join(', ')} (${u.activeJewels} of ${u.jewels.length} count)` : null].filter(Boolean).join(' · ') || 'nothing yet',
+        u.skipped.length ? h('div', { style: 'color:#e6a23c' }, `⚠ not given: ${u.skipped.map(x => { const r = ws.itemById(x.id >>> 0); return `${r ? r.name : x.id} (${{ sameStat: 'one rune per stat', closed: 'slot not open yet', notRune: 'not a weapon rune', notJewel: 'not a jewel', needsUltimate: 'needs Ultimate', needsUltimateWeapon: 'needs an Ultimate weapon', notBaruna: 'not Baruna' }[x.why]})`; }).join(', ')}`) : null);
+    };
+    const up = spec.upgrade > 0 ? spec.upgrade : 0;
+    const runeStat = d => FRE.specItem.get(ws.itemById(D.get(d) >>> 0), 'dwDestParam1');     // one rune per stat (same dwDestParam1)
+    if (bar) body.appendChild(row('Ultimate Baruna', [h('label', h('input', { type: 'checkbox', checked: !!spec.ultimate, on: { change: e => { spec.ultimate = e.target.checked; paint(); } } }), ' Made Ultimate (Udi)')],
+      'Attack x1.6 and its own stats +8% (not attack speed); 3 rune slots and the jewel slots open.', true));
+    // the runes: one list, click several (click again to take one out); one per stat, as many as the level opens (1 at +0, 2 at +5, 3 at +10)
+    if (bar && spec.ultimate) {
+      const open = 1 + (up >= 5 ? 1 : 0) + (up >= 10 ? 1 : 0), picked = () => spec.runes.filter(Boolean);
+      const runeRow = row(`Runes (${picked().length} of ${open})`, [h('div', { style: 'flex:1;min-width:320px' }, FRE.ui.combo({ options: runeOptions(ctx), value: '', keepOpen: true,
+        isPicked: v => spec.runes.includes(v), placeholder: picked().length ? picked().map(d => (ws.itemById(D.get(d) >>> 0) || {}).name || d).join(', ') : 'Pick the runes…',
+        onPick: v => {
+          const k = spec.runes.indexOf(v);
+          if (k >= 0) spec.runes[k] = '';
+          else if (picked().some(x => runeStat(x) === runeStat(v))) { toast('One rune per stat: that stat is already picked', 'bad'); return; }
+          else if (picked().length >= open) { toast(`+${up} opens ${open} rune slot${open === 1 ? '' : 's'} (2 at +5, 3 at +10)`, 'bad'); return; }
+          else spec.runes[spec.runes.indexOf('')] = v;
+          spec.runes.sort((a, z) => (!a) - (!z));
+          runeRow.firstChild.textContent = `Runes (${picked().length} of ${open})`;
+          const g = inGame(); gameLine.replaceWith(g); gameLine = g;
+        } })),
+        picked().length ? h('button.small', { title: 'No runes', on: { click: () => { spec.runes.fill(''); paint(); } } }, '✕') : null],
+        `Click every rune you want (✓ = picked, click again to take it out). One per stat (Attack, Skill, Critical); +${up} opens ${open} slot${open === 1 ? '' : 's'} (2 at +5, 3 at +10).`, true);
+      body.appendChild(runeRow);
+    }
+    // one jewel in all 5 slots (the usual: "all PvP Damage"); "different jewels…" opens one picker per slot
+    const mixedJ = st.mixJewels || new Set(spec.jewels.filter(Boolean)).size > 1 || (spec.jewels.some(Boolean) && spec.jewels.some(j => !j));
+    if (jew && !mixedJ) body.appendChild(row('Jewel (all 5 slots)', [h('div', { style: 'flex:1;min-width:320px' }, FRE.ui.combo({ options: jewelOptions(ctx), value: spec.jewels[0], placeholder: 'no jewels', onPick: v => { spec.jewels.fill(v); paint(); } })),
+      spec.jewels[0] ? h('button.small', { title: 'No jewels', on: { click: () => { spec.jewels.fill(''); paint(); } } }, '✕') : null,
+      h('button.small', { title: 'Pick a different jewel for each slot', on: { click: () => { st.mixJewels = true; paint(); } } }, 'different jewels…')],
+      bar && up < 10 ? `Only ${Math.max(0, up - 5)} of the 5 count at +${up} (+6 = 1 .. +10 = 5).` : 'The same jewel 5 times gives the most (the values are for 1-5 of it).', true));
+    if (jew && mixedJ) spec.jewels.forEach((j, k) => {
+      const counts = !bar || up - 5 > k;
+      body.appendChild(row(`Jewel ${k + 1}`, [h('div', { style: 'flex:1;min-width:320px' }, FRE.ui.combo({ options: jewelOptions(ctx), value: j, placeholder: 'no jewel', onPick: v => { spec.jewels[k] = v; paint(); } })),
+        j ? h('button.small', { title: 'No jewel here', on: { click: () => { spec.jewels[k] = ''; paint(); } } }, '✕') : null, k === 0 && j ? h('button.small', { title: 'This jewel in all 5 slots', on: { click: () => { spec.jewels.fill(j); st.mixJewels = false; paint(); } } }, 'same in all 5') : null,
+        counts ? null : h('span.muted.small', `counts from +${k + 6}`)], null, true));
+    });
+    body.appendChild(gameLine = inGame());
+  }
+
+  // the saved item stays in its own list even when the list no longer offers it (a plain weapon saved before only Ultimates were listed)
+  const withCurrent = (ws, opts, d) => (!d || opts.some(o => o.v === d) ? opts : [{ v: d, label: `${(ws.itemById(ws.defines.defines.get(d) >>> 0) || {}).name || d} (${d}) — now`, find: d }, ...opts]);
   function itemDialog(ctx, b, name, i, apply, mode = null) {
     const ws = ctx.ws, D = ws.defines.defines, pr = eqOf(ctx).presets;
     const it = i >= 0 ? b.sections[name].items[i] : null;
-    const spec = it ? O().specOf(it, id => nameOfId(ws, id), v => dstNameOf(ws, v)) : { item: '', upgrade: 0, elem: 1, elemLv: 20, awakes: [], cards: [], count: 1, suitCard: '' };   // new: Fire 20 by default
+    const spec = it ? O().specOf(it, id => nameOfId(ws, id), v => dstNameOf(ws, v)) : { item: '', upgrade: 0, elem: 1, elemLv: 20, awakes: [], cards: [], count: 1, suitCard: '', ultimate: false, runes: [], jewels: [] };   // new: Fire 20 by default
     while (spec.awakes.length < 3) spec.awakes.push({ dst: '', adj: 0 });
+    spec.runes = (spec.runes || []).slice(); spec.jewels = (spec.jewels || []).slice();
+    while (spec.runes.length < 3) spec.runes.push('');
+    while (spec.jewels.length < 5) spec.jewels.push('');
     const where = `${E().CLASSES[b.cls].label} ${E().SEXES[b.sex].toLowerCase()} ${SEC_SHORT[name]}`;
     const body = h('div.form', { style: 'display:flex;flex-wrap:wrap;align-items:flex-start' });
     const recOf = () => (spec.item && D.has(spec.item) ? ws.itemById(D.get(spec.item) >>> 0) : null);
-    st.mixCards = false;
+    st.mixCards = false; st.mixJewels = false;
     function paint() {
       body.textContent = '';
       const rec = recOf(), pet = mode === 'pet' || (rec && isBuffPet(rec, D));
-      body.appendChild(row(pet ? 'Buff pet' : 'Item', [h('div', { style: 'flex:1;min-width:320px' }, FRE.ui.combo({ options: itemOptions(ctx, b, name, mode), value: spec.item,
-        placeholder: mode === 'pet' ? 'Pick a buff pet…' : name === 'BAG' ? 'Premium items, beads, potions, food, scrolls…' : 'Pieces this class + gender can wear at level 150…', onPick: v => { spec.item = v; if (!it) { const lim = limitsOf(ws, recOf()), so0 = recOf() ? S().sockets(recOf(), D) : { cap: 0 }; spec.cards = so0.what === 'card' ? new Array(so0.cap).fill('') : []; spec.upgrade = lim.up; if (!lim.elem) { spec.elem = 0; spec.elemLv = 0; } else if (!spec.elem) { spec.elem = 1; spec.elemLv = 20; } } paint(); } }))],
-        mode === 'set' ? (() => { const ps = setPieces(spec.item, d => D.has(d) && !!ws.itemById(D.get(d) >>> 0)); return spec.item ? (ps.length > 1 ? `Adds the whole set: ${ps.map(d => itemLabel(ws, { id: D.get(d), define: d })).join(', ')}. They all get the + and element below; awakes and cards go on the piece you picked.` : 'Not a helmet / suit / gauntlets / boots set piece: only this item is added.') : 'Pick a set (level 105-130 sets, listed by their suit).'; })() :
+      body.appendChild(row(pet ? 'Buff pet' : 'Item', [h('div', { style: 'flex:1;min-width:320px' }, FRE.ui.combo({ options: withCurrent(ws, itemOptions(ctx, b, name, mode), it ? spec.item : ''), value: spec.item,
+        placeholder: mode === 'pet' ? 'Pick a buff pet…' : name === 'BAG' ? 'Premium items, beads, potions, food, scrolls…' : 'Pieces this class + gender can wear at level 150…', onPick: v => { spec.item = v; if (!it) { const lim = limitsOf(ws, recOf()), so0 = recOf() ? S().sockets(recOf(), D) : { cap: 0 }; spec.cards = so0.what === 'card' ? new Array(so0.cap).fill('') : []; spec.upgrade = lim.up; if (!lim.elem) { spec.elem = 0; spec.elemLv = 0; } else if (!spec.elem) { spec.elem = 1; spec.elemLv = 20; } spec.ultimate = barunaWeapon(ws, recOf()); } paint(); } }))],
+        mode === 'set' ? (() => { const ps = setPieces(spec.item, d => D.has(d) && !!ws.itemById(D.get(d) >>> 0)); return spec.item ? (ps.length > 1 ? `Adds the whole set: ${ps.map(d => itemLabel(ws, { id: D.get(d), define: d })).join(', ')}. They all get the + and element below; awakes and cards go on the piece you picked.` : 'Not a helmet / suit / gauntlets / boots set piece: only this item is added.') : 'Pick a set (level 120-130 sets, listed by their suit).'; })() :
         mode === 'pet' ? 'Buff pets only. Pick its beads below.' : name === 'BAG' ? 'Extras only: premium items, beads, potions, food, scrolls. Gear and pets go in the switch-set slots above.' : 'Only pieces a level 150 Hero / Legend of this class and gender can wear are listed.', true));
       if (rec) {
         const tip = FRE.itemTooltip.build(ws, rec).game.filter(l => l.some(x => x.text));
@@ -29204,13 +29710,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
       const wearable = rec && !S().isNull(FRE.specItem.get(rec, 'dwParts'));
       if (!pet && (name !== 'BAG' || wearable)) {
         const lim = limitsOf(ws, rec);
-        if (lim.up) body.appendChild(row('Upgrade', [h('span', '+'), numInput({ value: Math.min(spec.upgrade, lim.up), min: 0, max: lim.up, onCommit: v => { spec.upgrade = v || 0; } })], `max +${lim.up}`));
+        if (lim.up) body.appendChild(row('Upgrade', [h('span', '+'), numInput({ value: Math.min(spec.upgrade, lim.up), min: 0, max: lim.up, onCommit: v => { spec.upgrade = v || 0; paint(); } }),
+          h('button.small', { title: 'The highest upgrade, element level 20, Ultimate on a Baruna weapon', on: { click: () => { spec.upgrade = lim.up; if (lim.elem) { if (!spec.elem) spec.elem = 1; spec.elemLv = 20; } if (barunaWeapon(ws, rec)) spec.ultimate = true; paint(); } } }, '⬆ Max')], `max +${lim.up}`));
         if (lim.elem) body.appendChild(row('Element', [h('select', { on: { change: e => { const was = spec.elem; spec.elem = +e.target.value; if (spec.elem && !was) spec.elemLv = 20; paint(); } } },
           h('option', { value: 0, selected: !spec.elem }, 'none'), E().ELEMENTS.map((w, k) => h('option', { value: k + 1, selected: spec.elem === k + 1 }, w[0] + w.slice(1).toLowerCase()))),
           spec.elem ? [h('span', 'level'), numInput({ value: spec.elemLv, min: 0, max: 20, onCommit: v => { spec.elemLv = v || 0; } })] : null], spec.elem ? 'max level 20' : null));
         const dsts = dstOptions(ctx);
         spec.awakes.forEach((a, k) => body.appendChild(row(`Awake ${k + 1}`, [h('div', { style: 'flex:1;min-width:260px' }, FRE.ui.combo({ options: dsts, value: a.dst, placeholder: 'no awake', onPick: v => { a.dst = v; paint(); } })),
           a.dst ? [h('span', 'value'), numInput({ value: a.adj, min: -99999, max: 99999, onCommit: v => { a.adj = v || 0; } }), h('button.small', { title: 'No awake here', on: { click: () => { a.dst = ''; a.adj = 0; paint(); } } }, '✕')] : null], null, true)));
+        ultimateRows(ctx, body, spec, rec, paint);
       }
       if (mode === 'set') {
         body.appendChild(row('Suit cards (4 sockets)', [h('div', { style: 'flex:1;min-width:320px' }, FRE.ui.combo({ options: cardOptions(ctx, D.get('IK3_SOCKETCARD')), value: spec.suitCard, placeholder: 'no cards', onPick: v => { spec.suitCard = v; } }))],
@@ -29238,9 +29746,11 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "102+", "whe
     }
     paint();
     const label = it ? `${where}: ${itemLabel(ws, it)} changed` : `${where}: ${mode === 'pet' ? 'buff pet' : 'item'} added`;
-    modal({ title: it ? `Edit item: ${itemLabel(ws, it)}` : mode === 'set' ? `Add a set: ${where}` : mode === 'pet' ? `Add a buff pet: ${where}` : `Add an item: ${where}`, body, wide: true, buttons: [{ label: 'Cancel' },
+    modal({ title: it ? `Edit item: ${itemLabel(ws, it)} — ${where}` : mode === 'set' ? `Add a set: ${where}` : mode === 'pet' ? `Add a buff pet: ${where}` : `Add an item: ${where}`, body, wide: true, buttons: [{ label: 'Cancel' },
       { label: 'Apply changes', cls: 'primary', onClick: () => {
-        const out = Object.assign({}, spec, { awakes: spec.awakes.filter(a => a.dst), cards: spec.cards.filter(Boolean) });
+        const ultOk = barunaWeapon(ws, recOf()), jewOk = ultOk ? spec.ultimate : !!recOf() && FRE.specItem.get(recOf(), 'dwReferStat1') === D.get('WEAPON_ULTIMATE');
+        const out = Object.assign({}, spec, { awakes: spec.awakes.filter(a => a.dst), cards: spec.cards.filter(Boolean), ultimate: ultOk && spec.ultimate,
+          runes: ultOk && spec.ultimate ? spec.runes.filter(Boolean) : [], jewels: jewOk ? spec.jewels.filter(Boolean) : [] });
         if (!out.item) { toast('Pick an item first', 'bad'); return false; }
         if (spec.cards.every(c => !c)) spec.cards = [];      // sockets left without a card: the item gets no sockets
         if (spec.cards.some(c => !c)) { toast(`Every socket needs a card (${spec.cards.filter(c => !c).length} empty): pick them, or lower the number of sockets`, 'bad'); return false; }

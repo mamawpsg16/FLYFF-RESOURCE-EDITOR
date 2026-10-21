@@ -247,7 +247,7 @@
       id: 'pvp', label: 'PvP Events',
       // + Equalized PvP (loaders/equalized.js): EqualizedPvP.inc (which events are equalized, class caps) and EqualizedPresets.inc (the
       // shared gear presets), WorldServer only, /eqreload (ec3657c7).
-      required: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt'], optional: ['GuildSiegePrize.lua', 'EqualizedPvP.inc', 'EqualizedPresets.inc', 'propItemEtc.inc', 'propItemEtc.txt.txt'],   // propItemEtc: the set bonuses shown on the presets page (read only)
+      required: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt'], optional: ['GuildSiegePrize.lua', 'EqualizedPvP.inc', 'EqualizedPresets.inc', 'propItemEtc.inc', 'propItemEtc.txt.txt', 'Ultimate_GemAbility.txt'],   // propItemEtc: the set bonuses shown on the presets page (read only)
       editable: ['FFAManager.inc', 'TDMManager.inc', 'GuildCombat.txt', 'GuildSiegePrize.lua', 'EqualizedPvP.inc', 'EqualizedPresets.inc'],
       client: [], deps: ['GuildSiegePrize.lua', 'EqualizedPvP.inc', 'EqualizedPresets.inc', 'client/npcboard_289.inc', 'client/npcboard_290.inc',
         ...[1, 2, 3, 4, 5, 6].flatMap(n => [`client/guildcombattext_${n}_eng.inc`, `client/guildcombattext_${n}_usa.inc`])],

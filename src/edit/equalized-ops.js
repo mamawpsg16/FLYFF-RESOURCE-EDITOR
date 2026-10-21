@@ -46,6 +46,12 @@
     if (aw.length > 3) throw new Error('At most 3 awakes');
     for (const a of aw) { T.checkDefine(a.dst); T.checkAmount(a.adj, -2147483647, 2147483647, 'The awake value'); s += `\tAWAKE ${a.dst} ${a.adj}`; }
     for (const c of (spec.cards || []).filter(Boolean)) { T.checkDefine(c); s += `\tCARD ${c}`; }
+    if (spec.ultimate) s += '\tULTIMATE';
+    const runes = (spec.runes || []).filter(Boolean), jewels = (spec.jewels || []).filter(Boolean);
+    if (runes.length > 3) throw new Error('At most 3 runes');
+    if (jewels.length > 5) throw new Error('At most 5 jewels');
+    for (const r of runes) { T.checkDefine(r); s += `\tRUNE ${r}`; }
+    for (const j of jewels) { T.checkDefine(j); s += `\tJEWEL ${j}`; }
     if (spec.count && spec.count > 1) { T.checkAmount(spec.count, 1, 32767, 'The amount'); s += `\tCOUNT ${spec.count}`; }
     return s;
   }
@@ -53,7 +59,8 @@
   function specOf(it, nameOf, dstOf) {
     if (it.raisedPet !== undefined) return { raisedPet: it.define, item: '', upgrade: 0, elem: 0, elemLv: 0, awakes: [], cards: [], count: 1 };
     return { item: it.define && it.id >= 0 ? it.define : nameOf(it.id), upgrade: it.upgrade > 0 ? it.upgrade : 0, elem: it.elem || 0, elemLv: it.elemLv > 0 ? it.elemLv : 0,
-      awakes: it.awakes.map(a => ({ dst: a.define || dstOf(a.dst), adj: a.adj })), cards: it.cards.map(nameOf), count: it.count > 1 ? it.count : 1 };
+      awakes: it.awakes.map(a => ({ dst: a.define || dstOf(a.dst), adj: a.adj })), cards: it.cards.map(nameOf), count: it.count > 1 ? it.count : 1,
+      ultimate: !!it.ultimate, runes: (it.runes || []).map(nameOf), jewels: (it.jewels || []).map(nameOf) };
   }
   const lineStartOf = (text, i) => T.lineStart(text, i);
   // insert full lines right before the line holding `pos` (a closing brace), each indented `ind` + extra tabs
@@ -131,25 +138,84 @@
     for (const c of cands) if (c !== define && has(c)) return c;
     return define;
   }
+  // where an edit of one gender's item goes on the other gender (the user, 2026-10-21: copying by list position turned a bow, a
+  // necklace, gauntlets and a helmet into a 2nd suit, because the male and female lists are in different orders).
+  // mine / items: this gender's and the other gender's items of that section; i: the edited item's position in mine;
+  // defOf(item) = its II_ / PK_ define; partOf(define) = its dwParts (null: none).
+  // -> the position of old's twin there (twinOf; weapons, jewelry and pets are the same item): the 2nd copy (2 rings) goes to the
+  //    2nd copy, and with fewer copies there, nothing; no twin at all: the only item worn in the same slot; else -1 (also for a
+  //    line that is not an item; the caller leaves that gender alone)
+  function twinIndex(mine, items, i, toSex, has, defOf, partOf) {
+    const old = mine && mine[i];
+    if (!old || !items) return -1;
+    const pet = it => it.raisedPet !== undefined, d0 = defOf(old);
+    if (!pet(old) && !has(d0)) return -1;                  // not an item: nothing to match
+    const rank = mine.slice(0, i).filter(it => pet(it) === pet(old) && defOf(it) === d0).length;
+    const tw = pet(old) ? d0 : twinOf(d0, toSex, has);
+    const same = items.map((it, k) => (pet(it) === pet(old) && defOf(it) === tw ? k : -1)).filter(k => k >= 0);
+    if (same.length) return rank < same.length ? same[rank] : -1;
+    if (pet(old)) return -1;
+    const p0 = partOf(d0);
+    if (p0 === null || p0 === undefined) return -1;
+    const slot = items.map((it, k) => (!pet(it) && partOf(defOf(it)) === p0 ? k : -1)).filter(k => k >= 0);
+    return slot.length === 1 ? slot[0] : -1;
+  }
   // the preset of the other gender = this one, every armor piece swapped for its twin. Replaces that preset when it exists.
-  // -> splices; out.swapped / out.kept: how many items got a twin / stayed the same (the caller shows them)
-  function mirrorPreset(pr, text, b, nameOf, dstOf, has, out = {}) {
+  // -> splices; out.swapped / out.kept / out.dropped: how many items got a twin / stayed the same / were left out because the other
+  // gender can't wear them (wears(define) false: a male-only fashion set with no female version) (the caller shows them)
+  function mirrorPreset(pr, text, b, nameOf, dstOf, has, out = {}, wears = null) {
     block(pr, b);
     const toSex = 1 - b.sex, sections = {};
-    out.swapped = 0; out.kept = 0;
+    out.swapped = 0; out.kept = 0; out.dropped = 0;
     for (const name of E().SECTIONS) if (b.sections[name]) sections[name] = b.sections[name].items.map(it => {
       const sp = specOf(it, nameOf, dstOf);
       if (sp.raisedPet) { out.kept++; return itemLine(sp); }
       const tw = twinOf(sp.item, toSex, has);
+      if (wears && !wears(tw)) { out.dropped++; return null; }
       if (tw !== sp.item) out.swapped++; else out.kept++;
       sp.item = tw;
       return itemLine(sp);
-    });
+    }).filter(x => x !== null);
     const eol = T.dominantEol(text), body = blockText(b.cls, toSex, sections, eol);
     const other = pr.byKey.get(`${b.cls}|${toSex}`);
     if (other) { block(pr, other); return [{ start: other.header.start, end: other.close.end, insert: body.slice(0, body.length - eol.length) }]; }
     return [{ start: text.length, end: text.length, insert: leadFor(text, eol) + body }];
   }
 
-  FRE.equalizedOps = { setOn, setCap, itemLine, specOf, setItem, addItem, removeItem, addPreset, removePreset, blockText, twinOf, mirrorPreset };
+  // ---------------------------------------------------------------- copying slots between presets (the "Copy from" and fashion set pickers)
+  // one fashion set = the pieces whose define is the same before HAT / SUIT / GLOVES / SHOES … (II_ARM_M_CHR_SANTAHAT, …SANTASUIT)
+  const FASHION_END = /(HAT|HELMET|CAP|SUIT|CLOTHES|CLOTH|COAT|GLOVES|GLOVE|GAUNTLET|SHOES|SHOE|BOOTS|CLOAK|MASK)\d*$/;
+  function fashionBase(define) { return (define || '').replace(FASHION_END, ''); }
+  // pieces [{ define, part }] -> the sets of 2+ pieces: [{ base, pieces: { <part>: define } }], sorted by base; in one set and
+  // slot the first define in sort order wins
+  function fashionSets(pieces, parts) {
+    const by = new Map();
+    for (const p of [...pieces].sort((a, z) => (a.define < z.define ? -1 : a.define > z.define ? 1 : 0))) {
+      if (!parts.includes(p.part)) continue;
+      const base = fashionBase(p.define);
+      if (!base || base === p.define) continue;
+      if (!by.has(base)) by.set(base, {});
+      const s = by.get(base);
+      if (!(p.part in s)) s[p.part] = p.define;
+    }
+    return [...by].filter(([, s]) => Object.keys(s).length >= 2).sort((a, z) => (a[0] < z[0] ? -1 : 1)).map(([base, s]) => ({ base, pieces: s }));
+  }
+  // what a switch set has in some slots (EqPlaceItem's pieces, not the HP pieces an Attack set keeps), as specs for another
+  // class + gender: the other gender's twin, and why that preset can't wear it (wearIssues). env: { defines, items, nameOf, dstOf, has }
+  // -> [{ part, spec, issues }] in the order of `parts`; a part can also be 'buffPet' / 'raisedPet' (the set's pets)
+  function copyPieces(src, name, parts, toCls, toSex, env) {
+    const D = env.defines, Sim = FRE.equalizedSim, sim = Sim.enter(src, { defines: D, items: env.items }), out = [];
+    for (const part of parts) {
+      const pl = sim.placed.find(p => p.sec === name && (typeof part === 'string' ? p.why === part : p.why === 'set' && p.part === part));
+      if (!pl) continue;
+      const spec = specOf(pl.item, env.nameOf, env.dstOf);
+      if (spec.raisedPet) { out.push({ part, spec, issues: [] }); continue; }
+      spec.item = twinOf(spec.item, toSex, env.has);
+      const rec = D.has(spec.item) ? env.items.get(D.get(spec.item) >>> 0) : null;
+      out.push({ part, spec, issues: rec ? Sim.wearIssues(rec, toCls, toSex, D) : ['unknown item'] });
+    }
+    return out;
+  }
+
+  FRE.equalizedOps = { setOn, setCap, itemLine, specOf, setItem, addItem, removeItem, addPreset, removePreset, blockText, twinOf, twinIndex, mirrorPreset, fashionBase, fashionSets, copyPieces };
 })(globalThis.FRE = globalThis.FRE || {});

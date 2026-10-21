@@ -96,6 +96,7 @@ loaders/pvp-sim.js
 loaders/pvp-rules.js
 edit/pvp-ops.js
 validate/pvp.js
+loaders/gem-ability.js
 loaders/equalized.js
 loaders/equalized-sim.js
 edit/equalized-ops.js

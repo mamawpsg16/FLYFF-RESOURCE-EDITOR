@@ -3989,7 +3989,7 @@ section('Equalized PvP: event switches, class limits, shared presets, what a pla
     const s = Sim.enter(b, { defines: D, items });
     const obj = o => Object.fromEntries(Object.keys(o).map(Number).sort((a, z) => a - z).map(p => [String(p), o[p].item.id]));
     return [k, { worn: obj(s.worn), attack: obj(s.attack), bag: s.bag.map(x => [x.item.id, x.count]), why: s.placed.map(p => p.why),
-      items: b.order.flatMap(n => b.sections[n].items.map(it => [n, it.id, it.upgrade, it.elem, it.elemLv, it.count, it.awakes.map(a => [a.dst, a.adj]), it.cards])) }];
+      items: b.order.flatMap(n => b.sections[n].items.map(it => [n, it.id, it.upgrade, it.elem, it.elemLv, it.count, it.awakes.map(a => [a.dst, a.adj]), it.cards, it.ultimate ? 1 : 0, it.runes, it.jewels])) }];
   }));
   if (py) {
     let same = 0;
@@ -4006,6 +4006,49 @@ section('Equalized PvP: event switches, class limits, shared presets, what a pla
       if (a === J(r.events)) sameE++; else print(`   ${J(r.text)}: JS ${a} | Py ${J(r.events)}`);
     }
     eq(sameE, py.events.length, `ReadConfig: ${py.events.length} EqualizedPvP.inc files (the real one, limits <= 0, an unknown event, a repeated event, empty): the same switches and limits`);
+    // ULTIMATE / RUNE / JEWEL (V19 feat/eq-baruna-runes EqPlaceItem + GetDestParamUltimate): every item that names one
+    const gems = base.models.pvp.eq.gems, jsU = [];
+    py.reads.forEach((r, i) => {
+      const pr = Eq.readPresets(tf(r.text), { defines: D, items });
+      for (const key of [...pr.byKey.keys()].sort()) {
+        const b = pr.byKey.get(key);
+        b.order.flatMap(n => b.sections[n].items).forEach((it, j) => {
+          const rec = it.raisedPet === undefined && it.id >= 0 ? items.get(it.id >>> 0) : null;
+          if (!rec || !(it.ultimate || it.runes.length || it.jewels.length)) return;
+          const u = Sim.ultimateParts(it, rec, D, items, gems);
+          jsU.push([i, key, j, [u.ult, u.runes, u.jewels, u.skipped.map(x => [x.id, x.why]),
+            Object.entries(u.jewelStats).map(([d, v]) => [d === 'null' ? -1 : Number(d), v]).sort((a, z) => a[0] - z[0]), u.activeJewels, u.openRunes]]);
+        });
+      }
+    });
+    eq(J(jsU), J(py.ults), `ULTIMATE / RUNE / JEWEL: ${py.ults.length} items (Ultimate Dementia +10 with 3 runes and 5 jewels, +7, no ULTIMATE, an Ultimate yo-yo, an armor rune, no-stat runes, a raw gem): runes placed, jewels and their stats, JS and Python agree`);
+    // Copy from: every switch set x every group x every class + gender (twins, wear checks, upgrades, cards, pets)
+    const GR = [['PARTS_RWEAPON', 'PARTS_SHIELD', 'PARTS_LWEAPON'], ['PARTS_CAP', 'PARTS_UPPER_BODY', 'PARTS_HAND', 'PARTS_FOOT'],
+      ['PARTS_NECKLACE1', 'PARTS_RING1', 'PARTS_RING2', 'PARTS_EARRING1', 'PARTS_EARRING2'],
+      ['PARTS_HAT', 'PARTS_CLOTH', 'PARTS_GLOVE', 'PARTS_BOOTS', 'PARTS_CLOAK', 'PARTS_MASK'], ['buffPet', 'raisedPet']].map(g => g.map(p => (p.endsWith('Pet') ? p : D.get(p))));
+    const env = { defines: D, items, nameOf: id => base.itemById(id >>> 0).define, dstOf: v => base.defines.byValue('DST_', v), has: d => D.has(d) && !!base.itemById(D.get(d) >>> 0) };
+    const code = s => (/another job/.test(s) ? 'job' : /male item/.test(s) ? 'sex' : /needs level/.test(s) ? 'level' : 'unknown');
+    const copyJ = got => got.map(x => (x.spec.raisedPet ? [x.part, 'PET', D.get(x.spec.raisedPet), 0, 0, 0, [], [], []]
+      : [x.part, x.spec.item, x.spec.upgrade, x.spec.elem, x.spec.elemLv, x.spec.awakes.map(a => [D.get(a.dst), a.adj]), x.spec.cards.map(c => D.get(c)), x.issues.map(code)]));
+    const jsCopies = [];
+    for (const k of [0, 2, 8, 11]) {
+      const pr = Eq.readPresets(tf(py.reads[k].text), { defines: D, items });
+      for (const key of [...pr.byKey.keys()].sort()) for (const name of ['HP', 'ATTACK']) GR.forEach((g, gi) => { for (let to = 0; to < 16; to++) {
+        const got = O.copyPieces(pr.byKey.get(key), name, g, to >> 1, to & 1, env);
+        if (got.length) jsCopies.push([k, key, name, gi, to >> 1, to & 1, copyJ(got)]);
+      } });
+    }
+    let sameC = 0;
+    py.copies.forEach((c, i) => { if (J(c) === J(jsCopies[i])) sameC++; else if (sameC + 5 > i) print(`   copy ${J(c).slice(0, 300)}\n     JS ${J(jsCopies[i] || null).slice(0, 300)}`); });
+    eq(`${sameC} of ${jsCopies.length}`, `${py.copies.length} of ${py.copies.length}`, `Copy from: ${py.copies.length} copies (every switch set x weapon / armor / jewelry / fashion / pets x 16 classes + genders; twins, wear checks, upgrades, awakes, cards, raised pets): JS and Python agree`);
+    ok(jsCopies.some(c => c[6].some(x => x[7].length)) && jsCopies.some(c => c[6].some(x => x[1] !== 'PET' && /_F_/.test(x[1]))) && jsCopies.some(c => c[6].some(x => x[1] === 'PET')),
+      'Copy from cases reach a piece a class can\'t wear, a female twin and a raised pet');
+    ok(jsCopies.some(c => c[6].some(x => x[7].includes('sex'))), 'Copy from cases reach a female-only piece with no male twin (sex check)');
+    const fp = ['PARTS_HAT', 'PARTS_CLOTH', 'PARTS_GLOVE', 'PARTS_BOOTS'].map(p => D.get(p));
+    const fs = O.fashionSets([...items.values()].map(r => ({ define: r.define, part: FRE.specItem.get(r, 'dwParts') })), fp);
+    eq(J(fs.map(s => [s.base, Object.fromEntries(Object.entries(s.pieces).map(([p, d]) => [String(p), d]))])), J(py.fashion), `fashion sets: ${py.fashion.length} sets of 2+ pieces, the same in JS and Python`);
+    const santa = fs.find(s => s.base === 'II_ARM_M_CHR_SANTA');
+    ok(santa && santa.pieces[fp[0]] === 'II_ARM_M_CHR_SANTAHAT' && santa.pieces[fp[3]] === 'II_ARM_M_CHR_SANTASHOES', 'fashion set II_ARM_M_CHR_SANTA: hat ... shoes');
   }
   // planted bug: the 2nd ring must go to RING2; a sim that forgets it must differ from the Python copy
   {
@@ -4067,6 +4110,30 @@ section('Equalized PvP: event switches, class limits, shared presets, what a pla
     const ph = Eq.readPresets(tf(hpOnly), { defines: D, items });
     const t6 = FRE.SourceFile.spliceText(hpOnly, O.addItem(ph, hpOnly, ph.byKey.get('5|0'), 'BAG', { item: 'II_CHR_POT_DRI_VITALX', count: 50 }));
     eq(t6, 'ARCANIST\tMALE\r\n{\r\n\tHP\r\n\t{\r\n\t}\r\n\tBAG\r\n\t{\r\n\t\tITEM II_CHR_POT_DRI_VITALX\tCOUNT 50\r\n\t}\r\n}\r\n', 'addItem: a missing BAG section is added with the file\'s tabs and CRLF');
+  }
+  // "Copy my changes to the other gender" goes to the matching item, not the item at the same list position (the user, 2026-10-21:
+  // a bow, a necklace, gauntlets and a helmet became a 2nd suit). Python: eq_twin_index, written from the rule, not from the JS
+  if (py && py.twins) {
+    const has = d => D.has(d) && !!base.itemById(D.get(d) >>> 0);
+    const defOf = it => it.define || (it.id >= 0 && base.itemById(it.id >>> 0) ? base.itemById(it.id >>> 0).define : String(it.id));
+    const partOf = d => { const r = d && D.has(d) ? base.itemById(D.get(d) >>> 0) : null; return r ? FRE.specItem.get(r, 'dwParts') : null; };
+    const prs = [PF.text, py.twinProbe].map(x => Eq.readPresets(tf(x), { defines: D, items }));
+    const tw = (pi, k, name, i) => {
+      const [c, s] = k.split('|').map(Number), b = prs[pi].byKey.get(k), o = prs[pi].byKey.get(`${c}|${1 - s}`);
+      return O.twinIndex(b.sections[name].items, o.sections[name] ? o.sections[name].items : [], i, 1 - s, has, defOf, partOf);
+    };
+    let agree = 0;
+    const diff = [];
+    for (const [pi, k, name, i, j] of py.twins) { const got = tw(pi, k, name, i); if (got === j) agree++; else if (diff.length < 5) diff.push([pi, k, name, i, j, got]); }
+    eq(agree, py.twins.length, `twinIndex: JS and Python send every change to the same item (${py.twins.length} cases)`, J(diff));
+    // the lists in different orders (the user's Crackshooter): male suit (4th) -> female suit (1st), not the female boots at 4th
+    eq(tw(1, '3|0', 'HP', 3), 0, 'twinIndex: the male Lv130 suit goes to the female suit (1st), not the 4th line (her boots)');
+    eq(tw(1, '3|0', 'HP', 0), 2, 'twinIndex: the bow goes to the bow, wherever it is');
+    eq(J([tw(1, '3|0', 'HP', 5), tw(1, '3|0', 'HP', 6)]), J([4, 7]), 'twinIndex: ring 1 -> ring 1, ring 2 -> ring 2');
+    eq(tw(1, '3|0', 'HP', 1), -1, 'twinIndex: a shield the female set lacks: nothing changes there');
+    eq(tw(1, '3|0', 'ATTACK', 0), 1, 'twinIndex: no twin, but the only suit there: that one');
+    eq(tw(1, '3|0', 'ATTACK', 2), -1, 'twinIndex: a 2nd earring where she has only one: nothing changes there');
+    eq(tw(1, '7|0', 'ATTACK', 0), -1, 'twinIndex: no twin and 2 suits there: nothing changes there');
   }
   // after save: /eqreload
   const as = FRE.afterSave.compute({ changes: [{ label: 'x', files: ['equalizedpresets.inc'] }], patches: {} });

@@ -78,6 +78,23 @@
     return [requiredNote(), h('h3', 'Checks'), h('p.muted.small', `⛔ must be fixed before ${action} · ⚠ only a warning`), checks, h('h3', previewTitle), preview];
   }
 
+  // A part of a page that folds open / shut; its header stays at the top while you scroll through it (the user, 2026-10-21:
+  // "collapsible … a sticky header … so I know what I'm editing"). key: open / shut is kept across redraws (and for this browser,
+  // when storage works); top: CSS top of the header (under another sticky bar).
+  const folds = new Map();
+  function section({ title, sub, key, open = true, top }, ...kids) {
+    let isOpen = open;
+    if (key && folds.has(key)) isOpen = folds.get(key);
+    else if (key) try { const v = localStorage.getItem('fre.fold.' + key); if (v === '0' || v === '1') isOpen = v === '1'; } catch (e) { /* storage blocked: the default */ }
+    const d = h('details.fold', { open: isOpen }, h('summary.fold-head', { style: top ? `top:${top}` : null }, title, sub ? h('span.muted.small.fold-sub', sub) : null), ...kids);
+    d.addEventListener('toggle', () => {
+      if (!key) return;
+      folds.set(key, d.open);
+      try { localStorage.setItem('fre.fold.' + key, d.open ? '1' : '0'); } catch (e) { /* storage blocked */ }
+    });
+    return d;
+  }
+
   // The edit pencil, coloured (the user, 2026-10-07): every ✎ button uses it. size in px.
   function pencil(size = 14) {
     const s = h('span.pencil', { 'aria-hidden': 'true' });
@@ -85,5 +102,5 @@
       '<path fill="#e8710a" d="M20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75z"/><path fill="#5f6368" d="M3 21h3.75L3 17.25z"/></svg>';
     return s;
   }
-  FRE.ui = { modules: [], pencil, pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell, whereLine, whereText, copyText, fieldLabel, requiredNote, formFooter };
+  FRE.ui = { modules: [], pencil, pretty, diagRow, diagTags, diagsInSpan, itemCell, jobCell, whereLine, whereText, copyText, fieldLabel, requiredNote, formFooter, section };
 })(globalThis.FRE = globalThis.FRE || {});

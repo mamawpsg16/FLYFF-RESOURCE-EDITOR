@@ -61,6 +61,21 @@
             else if (so.kind3 !== null && FRE.specItem.get(cr, 'dwItemKind3') !== so.kind3) push(PR, 'EQ_CARD_KIND', 'WARN', at, `${where}: ${nm} socket ${i + 1}: ${cr.name || cr.define} does not fit this item (it takes ${so.what === 'bead' ? 'buff pet beads' : so.cap === 4 ? 'suit cards' : 'weapon / shield cards'}).`, `${key}|${i}`);
           });
         }
+        // ULTIMATE / RUNE / JEWEL: the Error() lines of EqPlaceItem (V19 feat/eq-baruna-runes)
+        const up = S().ultimateParts(it, rec, D, items, eq.gems);
+        const nameOfId = id => { const r = id >= 0 ? items.get(id >>> 0) : null; return r ? r.name || r.define : String(id); };
+        for (const x of up.skipped) {
+          const rn = nameOfId(x.id);
+          const msg = { notBaruna: `ULTIMATE on ${nm}: only a Baruna weapon can be made Ultimate, so the server ignores the word (the item stays as it is).`,
+            needsUltimate: `RUNE ${rn} needs an ULTIMATE Baruna weapon: ${nm} gets none.`,
+            notRune: `RUNE ${rn} is not a Baruna rune: skipped.`,
+            sameStat: `a 2nd ${rn} (one rune per stat): skipped.`,
+            closed: `${rn} skipped: +${it.upgrade > 0 ? it.upgrade : 0} opens ${up.openRunes} rune slot${up.openRunes === 1 ? '' : 's'} (2 at +5, 3 at +10).`,
+            needsUltimateWeapon: `JEWEL ${rn} needs an Ultimate weapon or an ULTIMATE Baruna: ${nm} gets none.`,
+            notJewel: `JEWEL ${rn} is not in Ultimate_GemAbility.txt: skipped.` }[x.why];
+          push(PR, x.why === 'notBaruna' ? 'EQ_ULT_IGNORED' : x.why === 'needsUltimateWeapon' || x.why === 'notJewel' ? 'EQ_JEWEL' : 'EQ_RUNE', 'WARN', at, `${where} ${pl.sec}: ${msg} (the server writes it to Server\\error_*.txt)`, `${key}|${x.why}|${x.id}`);
+        }
+        if (up.ult && up.jewels.length > up.activeJewels) push(PR, 'EQ_JEWEL_LEVEL', 'INFO', at, `${where} ${pl.sec}: ${nm} +${it.upgrade > 0 ? it.upgrade : 0}: only ${up.activeJewels} of its ${up.jewels.length} jewels count (a Baruna's jewel slots open at +6 = 1 .. +10 = 5).`, key);
       }
     }
     if (anyOn) for (let c = 0; c < E().CLASSES.length; c++) for (let x = 0; x < 2; x++) {

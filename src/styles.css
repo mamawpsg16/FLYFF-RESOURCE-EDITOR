@@ -443,3 +443,11 @@ details.mt-more > summary { cursor: pointer; color: var(--muted); padding: 6px 0
 /* Rates & Buffs icon field: the picture beside the picker on one line, centred with its label */
 .rt-iconfield { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }
 .rt-iconfield > .combo, .rt-iconfield > input { flex: 0 1 auto; }
+/* folding page parts with a header that stays at the top while scrolling (FRE.ui.section); top -16px = #editor's top padding */
+details.fold { margin: 8px 0; }
+.fold-head { position: sticky; top: -16px; z-index: 3; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 10px; cursor: pointer; font-weight: 600; }
+.fold-head .fold-sub { font-weight: normal; margin-left: 8px; }
+details.fold[open] > .fold-head { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+/* the "what you are editing" bar of a page (Equalized presets): stays at the top of the editor */
+.edit-bar { position: sticky; top: -16px; z-index: 4; background: var(--panel); border-bottom: 2px solid var(--accent); margin: 12px -20px 0; padding: 8px 20px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.edit-bar .edit-where { font-weight: 700; font-size: 15px; }

@@ -40,7 +40,7 @@ elif git -C $SRC cat-file -e feat/secret-room:Server/Resource/OwnerBuff.txt 2>/d
   for i in SecretRoomBuff.png GuildSiegeBuff.png; do git -C $SRC show feat/secret-room:Client/Icon/$i > "$DST/Client/Icon/$i" 2>/dev/null || rm -f "$DST/Client/Icon/$i"; done
 fi
 # Upgrade Rates: the chance tables (+ the game's copies of s.txt and WeaponRarity.inc)
-cp -p $SRC/Server/Resource/ItemUpgrade.lua $SRC/Server/Resource/Baruna.lua $SRC/Server/Resource/s.txt $SRC/Server/Resource/Ultimate_UltimateWeapon.txt \
+cp -p $SRC/Server/Resource/ItemUpgrade.lua $SRC/Server/Resource/Baruna.lua $SRC/Server/Resource/s.txt $SRC/Server/Resource/Ultimate_UltimateWeapon.txt $SRC/Server/Resource/Ultimate_GemAbility.txt \
   $SRC/Server/Resource/WeaponRarity.inc "$DST/Resource/"
 cp -p $SRC/Client/s.txt $SRC/Client/WeaponRarity.inc "$DST/Client/"
 # PvP Events: the FFA / TDM settings, the siege prizes (GuildCombat.txt above) and the rules boards players read (client-only)

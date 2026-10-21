@@ -1338,7 +1338,7 @@
       ins[2].value = '0'; ins[2].dispatchEvent(new Event('change'));
       await tick();
       ok(/\[chat\]/.test(lastModalAny().textContent) && /checked before the chips are taken/.test(lastModalAny().textContent), 'no empty slot: the server\'s chat line and the bag note');
-      btnByText(lastModalAny().querySelector('footer'), 'Close') ? click(btnByText(lastModalAny().querySelector('footer'), 'Close')) : lastModalAny().remove();
+      btnByText(lastModalAny().querySelector('footer'), 'Close') ? click(btnByText(lastModalAny().querySelector('footer'), 'Close')) : lastModalAny().closest('.modal-back').remove();
       // the price box applies while typing (no Enter, no click elsewhere): DS_OVERFLOW shows by itself
       const pin = $('editor').querySelector('table.items tr.fixed input.num-input');
       pin.focus(); pin.value = '214770'; pin.dispatchEvent(new Event('input'));
@@ -1350,7 +1350,7 @@
       click($('btn-save'));
       await waitFor(() => lastModalAny() && /Cannot save/.test(lastModalAny().querySelector('header').textContent), 'Cannot save window');
       ok(/DS_OVERFLOW|214,769/.test(lastModalAny().textContent), 'Save refuses and lists DS_OVERFLOW');
-      lastModalAny().remove();
+      lastModalAny().closest('.modal-back').remove();      // the whole window (an empty backdrop would dim the rest)
       if (STOP === 'dsbuy') return;
       click($('btn-undo'));
       ok(!S.ws.diags.some(d => d.code === 'DS_OVERFLOW'), 'Undo: DS_OVERFLOW gone');
@@ -2085,8 +2085,124 @@
       click($('btn-undo'));
       // the presets page: Arcanist male shown, then Templar female created as a copy and undone
       click(items().find(x => /Equalized presets/.test(x.textContent)));
-      ok(/Equalized presets/.test(ed().textContent) && /Arcanist male/.test(ed().textContent) && /What the player gets/.test(ed().textContent), 'Equalized presets: Arcanist male, its items and what the player gets');
+      ok(/Equalized presets/.test(ed().textContent) && !/What the player gets/.test(ed().textContent), 'Equalized presets: shown, no "What the player gets" table (the user, 2026-10-21)');
+      {
+        // what you are editing stays at the top: the sticky "Editing" bar, the groups fold with sticky headers, the inventory starts shut
+        const bar = ed().querySelector('.edit-bar');
+        ok(bar && /Editing: Arcanist · Male · HP set \(key 9\)/.test(bar.textContent) && getComputedStyle(bar).position === 'sticky', 'the sticky bar says "Editing: Arcanist · Male · HP set (key 9)"');
+        const folds = [...ed().querySelectorAll('details.fold')], heads = folds.map(f => f.querySelector('summary').textContent);
+        ok(['Weapon & shield', 'Armor set', 'Jewelry', 'Pets'].every(g => heads.some(x => x.startsWith(g))) && heads.some(x => /Arcanist male · HP set · \d+ of 2 filled/.test(x)), 'each group folds, its header says where you are ("Arcanist male · HP set · n of 2 filled")');
+        const bag = folds.find(f => /Inventory extras/.test(f.querySelector('summary').textContent));
+        ok(bag && !bag.open && /items?, the same for every class/.test(bag.querySelector('summary').textContent), 'the inventory is folded at first');
+        // scrolled down: the bar is still at the top of the editor
+        const box = $('editor');
+        box.scrollTop = box.scrollHeight;
+        await tick();
+        const top = box.getBoundingClientRect().top, bt = bar.getBoundingClientRect().top;
+        ok(box.scrollTop > 0 && Math.abs(bt - top) <= 2, `scrolled to the bottom: the Editing bar is still at the top (${Math.round(bt - top)}px)`);
+        box.scrollTop = 0;
+        // "Copy my changes to the other gender": the change lands on the matching piece of the female preset, not the same position
+        const D = S.ws.defines.defines, Eq = FRE.equalized, pf = () => S.ws.files.get('equalizedpresets.inc').text;
+        const pres = () => Eq.readPresets({ name: 'x', text: pf() }, { defines: D, items: S.ws.items.items });
+        const m = pres().byKey.get('5|0'), f = pres().byKey.get('5|1');
+        if (m && f && m.sections.HP && f.sections.HP) {
+          const fDefs0 = f.sections.HP.items.map(x => x.define);
+          const ring = m.sections.HP.items.findIndex(x => /_RIN_/.test(x.define || ''));
+          const fRing = f.sections.HP.items.findIndex(x => x.define === (ring >= 0 ? m.sections.HP.items[ring].define : '?'));
+          if (ring >= 0 && fRing >= 0) {
+            const n0 = S.ws.history.length;
+            const rRow = [...ed().querySelectorAll('tr')].find(tr => tr.firstChild && tr.firstChild.textContent === 'Ring 1');
+            click(btnByText(rRow, '✎ Edit'));
+            await waitFor(() => lastModalAny() && /Edit item: .* — Arcanist male/.test(lastModalAny().textContent), 'ring dialog');
+            const ur = [...lastModalAny().querySelectorAll('b.small')].find(x => x.textContent.startsWith('Upgrade')).parentNode, ui = ur.querySelector('input');
+            const want = Math.max(0, (parseInt(ui.value, 10) || 1) - 1);
+            ui.value = String(want); ui.dispatchEvent(new Event('change')); await tick();
+            click(btnByText(lastModalAny().querySelector('footer'), 'Apply changes')); await tick();
+            const f2 = pres().byKey.get('5|1').sections.HP.items;
+            ok(S.ws.history.length === n0 + 1 && JSON.stringify(f2.map(x => x.define)) === JSON.stringify(fDefs0), 'editing the male ring: the female list keeps every piece (nothing turned into a ring)');
+            ok((f2[fRing].upgrade > 0 ? f2[fRing].upgrade : 0) === want, `… and her own ring got the change (+${want})`);
+            ok(/female too/.test([...$('toasts').children].pop().textContent), 'the toast says "+ female too"');
+            click($('btn-undo'));
+          } else ok(true, 'no ring in both Arcanist presets of the fixtures');
+        } else ok(true, 'no Arcanist male + female presets in the fixtures');
+      ok(!document.querySelector('.modal-back'), `no window left open (${document.querySelectorAll('.modal-back').length})`);
+      }
       if (STOP === 'pvpeq') { $('toasts').textContent = ''; return; }
+      {
+        // ⧉ Copy jewelry & pets from Slayer male HP into Arcanist male HP (fashion stays its own); then the fashion set list; then undo
+        const Eq = FRE.equalized, O = FRE.equalizedOps, D = S.ws.defines.defines, its = S.ws.items.items;
+        const env = { defines: D, items: its, nameOf: id => S.ws.itemById(id >>> 0).define, dstOf: v => S.ws.defines.byValue('DST_', v), has: d => D.has(d) && !!S.ws.itemById(D.get(d) >>> 0) };
+        const parts = ['PARTS_NECKLACE1', 'PARTS_RING1', 'PARTS_RING2', 'PARTS_EARRING1', 'PARTS_EARRING2'].map(p => D.get(p)).concat(['buffPet', 'raisedPet']);
+        const fparts = ['PARTS_HAT', 'PARTS_CLOTH', 'PARTS_GLOVE', 'PARTS_BOOTS', 'PARTS_CLOAK', 'PARTS_MASK'].map(p => D.get(p));
+        const pres = () => Eq.readPresets({ name: 'x', text: S.ws.files.get('equalizedpresets.inc').text }, { defines: D, items: its });
+        const fash0 = JSON.stringify(O.copyPieces(pres().byKey.get('5|0'), 'HP', fparts, 5, 0, env).map(x => x.spec.item));
+        const want = O.copyPieces(pres().byKey.get('0|0'), 'HP', parts, 5, 0, env).filter(x => !x.issues.length).map(x => x.spec.item || x.spec.raisedPet);
+        const n0 = S.ws.history.length;
+        click(btnByText(ed(), '⧉ Copy jewelry & pets from…'));
+        await waitFor(() => lastModalAny() && /Copy jewelry & pets: Arcanist male HP set/.test(lastModalAny().textContent), 'copy dialog');
+        const cm = lastModalAny(), cin = cm.querySelector('.combo input');
+        cin.dispatchEvent(new Event('focus')); cin.value = 'slayer male hp'; cin.dispatchEvent(new Event('input'));
+        const opt = [...cm.querySelectorAll('.combo-opt')].find(o => /^Slayer male HP set:/.test(o.textContent));
+        ok(!!opt, 'Copy from lists "Slayer male HP set: …"');
+        opt.dispatchEvent(new MouseEvent('mousedown')); await tick();
+        ok(/Necklace/.test(cm.textContent) && /Buff pet/.test(cm.textContent), 'the preview shows each slot (necklace … buff pet)');
+        click(btnByText(cm.querySelector('footer'), 'Apply changes')); await tick();
+        const got = O.copyPieces(pres().byKey.get('5|0'), 'HP', parts, 5, 0, env).map(x => x.spec.item || x.spec.raisedPet);
+        ok(S.ws.history.length === n0 + 1 && JSON.stringify(got) === JSON.stringify(want), `Arcanist male HP now has Slayer's jewelry and pets (${want.length} pieces), one undo step`);
+        ok(JSON.stringify(O.copyPieces(pres().byKey.get('5|0'), 'HP', fparts, 5, 0, env).map(x => x.spec.item)) === fash0, 'its fashion stays its own');
+        // ⬆ Use the Ultimate versions: every plain tier weapon (…ANCIENT) becomes its …UM, + / element / cards kept
+        const ub = btnByText(ed(), '⬆ Use the Ultimate versions');
+        if (ub) {
+          const plain = /\bITEM II_WEA_[A-Z]+_(VEMPIRE|ANGEL|BLOODY|ANCIENT|LUZA|LUZAM|LEAGENDG)\b/;
+          const n1 = S.ws.history.length;
+          click(ub); await tick();
+          const txt = S.ws.files.get('equalizedpresets.inc').text;
+          ok(!plain.test(txt) && S.ws.history.length === n1 + 1 && /ITEM II_WEA_\w+UM\tUPGRADE/.test(txt), '⬆ Use the Ultimate versions: no plain tier weapon left, + and the rest kept, one undo step');
+          click($('btn-undo'));
+        } else ok(true, 'no plain tier weapon in the fixtures');
+        if (STOP === 'pvpeqcopy') { $('toasts').textContent = ''; return; }
+        // the fashion window: a fashion set list; picking one fills hat ... shoes
+        const fb = [...ed().querySelectorAll('button')].find(x => x.textContent === '+ whole fashion set');
+        click(fb);
+        await waitFor(() => lastModalAny() && /Fashion, cloak & mask:/.test(lastModalAny().textContent), 'fashion dialog');
+        const fm = lastModalAny(), boxes = [...fm.querySelectorAll('.combo')];
+        ok(boxes.length === 4 && /Fashion set/.test(fm.textContent) && /Copy from another class/.test(fm.textContent), 'fashion window: 4 lists (Copy from, Fashion set, Cloak, Mask)');
+        const fin = boxes[1].querySelector('input');
+        fin.dispatchEvent(new Event('focus')); fin.value = 'santa'; fin.dispatchEvent(new Event('input'));
+        const so = boxes[1].querySelector('.combo-opt');
+        ok(!!so, 'the Fashion set list finds a Santa set');
+        so.dispatchEvent(new MouseEvent('mousedown')); await tick();
+        ok(/Hat: [\w ]*Santa Hat/i.test(lastModalAny().textContent) && /Shoes: [\w ]*Santa (Shoes|Boots)/i.test(lastModalAny().textContent), 'picking the set fills the hat ... shoes');
+        if (STOP === 'pvpeqfashion') { $('toasts').textContent = ''; return; }
+        click(btnByText(lastModalAny().querySelector('footer'), 'Cancel'));
+        while (S.ws.history.length > n0) click($('btn-undo'));
+        // Ultimate Baruna: Arcanist male HP weapon -> the Baruna staff, ⬆ Max, an Attack Rune, 5 Diamond (ATK) jewels
+        const wRow = [...ed().querySelectorAll('tr')].find(tr => tr.firstChild && tr.firstChild.textContent === 'Weapon');
+        click(btnByText(wRow, '✎ Edit'));
+        await waitFor(() => lastModalAny() && /Edit item:/.test(lastModalAny().textContent), 'weapon dialog');
+        const wm = lastModalAny(), win = wm.querySelector('.combo input');
+        win.dispatchEvent(new Event('focus')); win.value = 'BEHESTAFF'; win.dispatchEvent(new Event('input'));
+        const bo = wm.querySelector('.combo-opt');
+        ok(bo && /BEHESTAFF/.test(bo.textContent), 'the Weapon list has the Arcanist\'s Baruna staff (II_WEA_STA_BEHESTAFF)');
+        bo.dispatchEvent(new MouseEvent('mousedown')); await tick();
+        click(btnByText(lastModalAny(), '⬆ Max')); await tick();
+        const um = lastModalAny();
+        ok(/Ultimate Baruna/.test(um.textContent) && /Runes \(0 of 3\)/.test(um.textContent), '⬆ Max: +10, Ultimate ticked, all 3 rune slots open');
+        const pick = async (labelText, find) => {
+          const r = [...lastModalAny().querySelectorAll('b.small')].find(x => x.textContent.startsWith(labelText)).parentNode, inp = r.querySelector('.combo input');
+          inp.dispatchEvent(new Event('focus')); inp.value = find; inp.dispatchEvent(new Event('input'));
+          r.querySelector('.combo-opt').dispatchEvent(new MouseEvent('mousedown')); await tick();
+        };
+        await pick('Runes', 'Attack Rune');
+        ok(/Runes \(1 of 3\)/.test(lastModalAny().textContent) && lastModalAny().querySelector('.combo-list') && /In game: Ultimate Baruna · runes Attack Rune/.test(lastModalAny().textContent), 'the rune list: 1 of 3 picked, the list stays open, the In game line follows');
+        await pick('Jewel (all 5 slots)', 'DIAMOND02');
+        ok(/In game: Ultimate Baruna · runes Attack Rune/.test(lastModalAny().textContent) && /\(5 of 5 count\)/.test(lastModalAny().textContent), 'the window shows what it gives: Ultimate, the rune, 5 of 5 jewels');
+        if (STOP === 'pvpeqrunes') { $('toasts').textContent = ''; return; }
+        click(btnByText(lastModalAny().querySelector('footer'), 'Apply changes')); await tick();
+        const line = S.ws.files.get('equalizedpresets.inc').text.split(/\r?\n/).find(l => /II_WEA_STA_BEHESTAFF/.test(l)) || '';
+        ok(/\tULTIMATE\tRUNE II_SYS_SYS_SCR_BARUNARUNE01(\tJEWEL II_GEN_MAT_DIAMOND02){5}/.test(line) && /UPGRADE 10/.test(line), 'written: ULTIMATE, RUNE, 5 JEWELs on the +10 staff');
+        while (S.ws.history.length > n0) click($('btn-undo'));
+      }
       if (STOP === 'pvpffa') { $('toasts').textContent = ''; return; }
       click($('btn-save'));
       await waitFor(() => btnByText(document, 'Back up and write'), 'review dialog (pvp)');

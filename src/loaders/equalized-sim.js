@@ -93,5 +93,53 @@
   // class caps of one event: how many may still pick each class (0 = greyed in the window)
   function capsLeft(ev, counts) { return ev.caps.map((cap, c) => Math.max(0, cap - (counts ? counts[c] || 0 : 0))); }
 
-  FRE.equalizedSim = { elementOk, isBuffPet: (r, D) => isBuffPet(r, D), enter, wearIssues, sockets, capsLeft, isNull };
+  // a Baruna item: ItemProp::IsBaruna (ProjectCmn.h:581), dwReferStat1 BARUNA_D..BARUNA_S
+  const isBaruna = (rec, D) => { const r = rec ? FRE.specItem.get(rec, 'dwReferStat1') : null; return !isNull(r) && r >= D.get('BARUNA_D') && r <= D.get('BARUNA_S'); };
+  // what ULTIMATE / RUNE / JEWEL make of one item (V19 feat/eq-baruna-runes, EqPlaceItem):
+  //   ULTIMATE on a Baruna weapon (IsBaruna + IK1_WEAPON) = Ultimate Baruna (CItemElem::ultbaruna): attack x1.6 (UltBarunaAtk), own positive stats +8% rounded,
+  //     not attack speed (UltBarunaStat, Item.cpp:435); 3 rune positions in front of the cards.
+  //   RUNE: IK3_BARUNAWEA_PIERCE_RUNE only, one per stat (same id or dwDestParam1), into the slots the level opens (GetOpenRuneSlots:
+  //     1 at +0, 2 at +5, 3 at +10), in file order.
+  //   JEWEL: on WEAPON_ULTIMATE or an Ultimate Baruna, ability items of Ultimate_GemAbility.txt only. Their stats: GetDestParamUltimate
+  //     (UltimateWeapon.cpp:889): the slots up to the first empty one, on a Baruna only the first upgrade - 5; per jewel item its count
+  //     n, its stat = its dwReferStat2, the value = GetDST: that stat's ABILITY block, that item's vN; summed per stat.
+  // gems: FRE.gemAbility.load(…) or null -> { ult, runes: [id], jewels: [id], skipped: [{ id, why }], jewelStats: { dst: value },
+  //   activeJewels, openRunes }; why: notBaruna, needsUltimate, notRune, sameStat, closed, needsUltimateWeapon, notJewel
+  function ultimateParts(item, rec, D, items, gems) {
+    const out = { ult: false, runes: [], jewels: [], skipped: [], jewelStats: {}, activeJewels: 0, openRunes: 0 };
+    if (!rec) return out;
+    // a Baruna weapon (Udi makes only weapons Ultimate; Baruna armor is Baruna grade too)
+    const up = item.upgrade > 0 ? item.upgrade : 0, bar = isBaruna(rec, D) && FRE.specItem.get(rec, 'dwItemKind1') === D.get('IK1_WEAPON');
+    if (item.ultimate && !bar) out.skipped.push({ id: item.id, why: 'notBaruna' });
+    out.ult = !!item.ultimate && bar;
+    const runes = item.runes || [], jewels = item.jewels || [];
+    if (out.ult) {
+      out.openRunes = 1 + (up >= 5 ? 1 : 0) + (up >= 10 ? 1 : 0);
+      for (const id of runes) {
+        const r = items.get(id >>> 0);
+        if (!r || FRE.specItem.get(r, 'dwItemKind3') !== D.get('IK3_BARUNAWEA_PIERCE_RUNE')) { out.skipped.push({ id, why: 'notRune' }); continue; }
+        const dst = FRE.specItem.get(r, 'dwDestParam1');
+        if (out.runes.some(x => x === id || FRE.specItem.get(items.get(x >>> 0), 'dwDestParam1') === dst)) { out.skipped.push({ id, why: 'sameStat' }); continue; }
+        if (out.runes.length >= out.openRunes) { out.skipped.push({ id, why: 'closed' }); continue; }
+        out.runes.push(id);
+      }
+    } else for (const id of runes) out.skipped.push({ id, why: 'needsUltimate' });
+    if (jewels.length) {
+      if (FRE.specItem.get(rec, 'dwReferStat1') !== D.get('WEAPON_ULTIMATE') && !out.ult) for (const id of jewels) out.skipped.push({ id, why: 'needsUltimateWeapon' });
+      else for (const id of jewels) { if (gems && gems.byItem.has(id >>> 0)) out.jewels.push(id); else out.skipped.push({ id, why: 'notJewel' }); }
+    }
+    let active = out.jewels.length;
+    if (bar) active = Math.min(active, Math.max(0, up - 5));
+    out.activeJewels = active;
+    const count = new Map();
+    for (let i = 0; i < active; i++) count.set(out.jewels[i], (count.get(out.jewels[i]) || 0) + 1);
+    for (const [id, n] of count) {
+      const r = items.get(id >>> 0), dst = r ? FRE.specItem.get(r, 'dwReferStat2') : null;
+      const ab = gems ? gems.abilities.find(a => a.dst === dst) : null, g = ab ? ab.gems.find(x => x.item === id >>> 0) : null;
+      out.jewelStats[dst] = (out.jewelStats[dst] || 0) + (g ? g.values[n - 1] : 0);
+    }
+    return out;
+  }
+
+  FRE.equalizedSim = { isBaruna, ultimateParts, elementOk, isBuffPet: (r, D) => isBuffPet(r, D), enter, wearIssues, sockets, capsLeft, isNull };
 })(globalThis.FRE = globalThis.FRE || {});
