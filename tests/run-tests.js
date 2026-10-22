@@ -3694,6 +3694,7 @@ section('weapon effects (G part 2): each weapon\'s own stats, rarity, hands, too
   eq(M.weapons.length, 1383, '1383 weapons (IK2_WEAPON_DIRECT / MAGIC; + the cosmetic weapon skins, 10fe3ada)');
   eq(M.weapons.filter(w => w.slots.some(s => s.on)).length, 534, '… 534 with own stats');
   ok(M.byDefine.get('II_WEA_SWT_ANGEL').twin === M.byDefine.get('II_WEA_SWT_ANGELUM') && M.byDefine.get('II_WEA_SWT_LUZAM').twinOf === null, 'Ultimate twins pair by define + UM (LUZAM is the Crystal tier, not a twin)');
+  ok(M.families.get('BLOODY').length === 20 && M.byDefine.get('II_WEA_WAN_BLOODY2').family === 'BLOODY' && M.byDefine.get('II_WEA_WAN_BLOODY2UM').family === 'BLOODY' && M.byDefine.get('II_WEA_WAN_BLOODY2').twin === M.byDefine.get('II_WEA_WAN_BLOODY2UM'), 'the Bloody family has all 10 types + 10 Ultimate twins (the wand is II_WEA_WAN_BLOODY2, the 2 belongs to the name)');
   if (py) {
     const u16 = t => new Uint8Array([0xff, 0xfe, ...[...t].flatMap(ch => [ch.charCodeAt(0) & 255, ch.charCodeAt(0) >> 8])]);
     const tiersOf = k => k === 'real' ? M.rarity : FRE.upgrade.loadRarity(new FRE.SourceFile('WeaponRarity.inc', u16(py.files[k])), D);

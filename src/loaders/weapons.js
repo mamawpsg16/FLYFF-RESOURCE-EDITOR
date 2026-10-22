@@ -24,6 +24,8 @@
     if (!m) return { key: null, twinOf: null };
     let key = m[1], twinOf = null;
     if (/UM$/.test(define) && defines.has(define.slice(0, -2))) { twinOf = define.slice(0, -2); key = key.slice(0, -2); }
+    // the wand is II_WEA_WAN_BLOODY2 (+ BLOODY2UM): a number at the end of an unknown key belongs to the family without it
+    if (!FAMILY[key] && FAMILY[key.replace(/\d+$/, '')]) key = key.replace(/\d+$/, '');
     return { key, twinOf };
   }
 

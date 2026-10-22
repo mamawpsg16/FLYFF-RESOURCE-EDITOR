@@ -515,7 +515,7 @@ details.fold[open] > .fold-head { border-bottom-left-radius: 0; border-bottom-ri
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "106+", "when": "Thu 22 Oct 2026, 18:06", "rev": "fd847cf", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "107+", "when": "Thu 22 Oct 2026, 18:12", "rev": "b3b7060", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -13659,6 +13659,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "106+", "whe
     if (!m) return { key: null, twinOf: null };
     let key = m[1], twinOf = null;
     if (/UM$/.test(define) && defines.has(define.slice(0, -2))) { twinOf = define.slice(0, -2); key = key.slice(0, -2); }
+    // the wand is II_WEA_WAN_BLOODY2 (+ BLOODY2UM): a number at the end of an unknown key belongs to the family without it
+    if (!FAMILY[key] && FAMILY[key.replace(/\d+$/, '')]) key = key.replace(/\d+$/, '');
     return { key, twinOf };
   }
 
