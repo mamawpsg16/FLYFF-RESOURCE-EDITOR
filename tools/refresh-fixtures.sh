@@ -55,6 +55,9 @@ cp -p $SRC/Server/Resource/MiniEvent.inc "$DST/Resource/"
 cp -p $SRC/Server/Resource/FreePKTime.txt "$DST/Resource/"
 # Bot Check: the puzzle words + tuning (server only: never a Client copy)
 cp -p $SRC/Server/Resource/AntiBot.inc "$DST/Resource/"
+# Class Buffs: the skill levels, the skills, their names / tooltips (+ the game's copies)
+cp -p $SRC/Server/Resource/propSkillAdd.csv $SRC/Server/Resource/propSkill.txt $SRC/Server/Resource/propSkill.txt.txt "$DST/Resource/"
+cp -p $SRC/Client/propSkillAdd.csv $SRC/Client/propSkill.txt.txt "$DST/Client/"
 # Mounts: the seat / speed / loops / flying of every mount (+ the game's identical copy)
 cp -p $SRC/Server/Resource/Mount.inc "$DST/Resource/"
 cp -p $SRC/Client/Mount.inc "$DST/Client/"

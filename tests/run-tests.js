@@ -3737,6 +3737,99 @@ section('weapon effects (G part 2): each weapon\'s own stats, rarity, hands, too
   for (const k of ['WE_DST_ZERO', 'WE_SLOT_DUP', 'WE_ASPD_SMALL', 'WE_RARITY_ASPD', 'WE_TIER_ASPD']) ok(FRE.diagHelp[k], `help text for ${k}`);
 }
 
+section('class buffs (2a): propSkillAdd.csv in comma mode, each class\'s buffs, time, weapon rules, edits (JS and Python copies agree)');
+{
+  const J = JSON.stringify;
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} classbuffs ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py classbuffs) gave no readable result', e.message); }
+  const fresh = () => { const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e)); return new FRE.Workspace(fs, { only: 'classbuffs' }).load(); };
+  const ws = fresh(), D = ws.defines.defines, M = ws.models.classbuffs, Sim = FRE.classBuffsSim, env = Sim.envFor(ws);
+  const s32 = v => v | 0;
+  eq(M.add.rows.length, 2492, 'propSkillAdd.csv: 2492 rows, no early stop');
+  eq(M.buffs.length, 68, '68 class buffs (self / other player / party, a stat for a time)');
+  eq(ws.diags.filter(d => d.module === 'classbuffs' && d.severity === 'BLOCK').length, 0, 'the real file: no BLOCK problem');
+  {
+    const t = FRE.csvLexer.tokens('600\nSA_X,5', D);
+    ok(t.length === 2 && t[0].value === 600, 'an LF-only row end: "600\\nSA_X" is ONE token (600): why the game needs the CRLF copy');
+    eq(FRE.csvLexer.tokens('SA_X,1,2,\r\nSA_Y', D).length, 4, 'a trailing comma before CRLF adds no value');
+  }
+  if (py) {
+    let same = 0; const bad = [];
+    for (const c of py.lex) {
+      const j = J(FRE.csvLexer.tokens(c.text, D).map(t => [t.text, t.start, t.end, t.value]));
+      if (j === J(c.toks)) same++; else bad.push(`${J(c.text)}: js ${j} py ${J(c.toks)}`);
+    }
+    eq(same, py.lex.length, `comma tokenizer: every made-up text agrees (${py.lex.length}: trailing comma, LF, -300, =, empty, hex, quotes, comments, NUL, INT_MAX)`);
+    bad.forEach(x => print('   ' + x));
+    const mine = M.buffs.map(b => [b.si, b.tier, b.exe, b.max.lvl, b.slots.map(s => [s.dst, s.adj]), s32(b.max.v.dwSkillTime), s32(b.max.v.dwCooldown),
+      s32(b.max.v.dwAbilityMinPVP), s32(b.max.v.nProbabilityPVP), b.refer.map(r => [r.stat, r.value]), b.descKey, b.desc]).sort((a, b) => a[0] - b[0]);
+    eq(M.add.rows.length, py.load.rows, 'rows: both copies');
+    const pyb = py.load.buffs.slice().sort((a, b) => a[0] - b[0]);
+    let agree = 0; const bad2 = [];
+    for (let i = 0; i < Math.max(mine.length, pyb.length); i++) { if (J(mine[i]) === J(pyb[i])) agree++; else if (bad2.length < 3) bad2.push(`js ${J(mine[i])} py ${J(pyb[i])}`); }
+    eq(agree, pyb.length, `every buff: target, top level, stats, time, cooldown ('=' -> the skill's own), PvP fallbacks, RT_TIME, text agree (${pyb.length})`);
+    bad2.forEach(x => print('   ' + x));
+    let d = 0; const bad3 = [];
+    for (const [si, v, ms] of py.dur) { const b = M.bySi.get(si), j = Sim.duration(env, b, b.max, { STA: v, DEX: v, INT: v }); if (j === ms) d++; else if (bad3.length < 3) bad3.push(`${b.name} @${v}: js ${j} py ${ms}`); }
+    eq(d, py.dur.length, `how long each buff lasts at stat 0 … 1000 (dwSkillTime + SubReferTime, float maths): ${py.dur.length} agree`);
+    bad3.forEach(x => print('   ' + x));
+    let s = 0; const bad4 = [];
+    for (const c of py.self) {
+      const r = Sim.selfBuffs(env, M, c.cls, { gear: c.gearv, stance: c.stance });
+      const j = J({ st: Sim.statList(r.stats), off: r.used.filter(u => !u.ok).map(u => u.b.define).sort() });
+      const p = J({ st: c.stats, off: c.off });
+      if (j === p) s++; else if (bad4.length < 3) bad4.push(`${c.cls} ${c.gear} ${c.stance}: js ${j.slice(0, 200)} py ${p.slice(0, 200)}`);
+    }
+    eq(s, py.self.length, `a player of each class with every own buff on, per weapon and stance: ${py.self.length} agree (fan-outs, weapon rules, Guard / Rage)`);
+    bad4.forEach(x => print('   ' + x));
+    let e = 0;
+    for (const sc of py.edits) {
+      const W = fresh(), f = W.files.get('propskilladd.csv'), tf = W.files.get('propskill.txt.txt'), Dw = W.defines.defines;
+      for (const op of sc.ops) {
+        const b = W.models.classbuffs.bySi.get(Dw.get(op[1])), O = FRE.classBuffsOps;
+        if (op[0] === 'stat') W.apply('propskilladd.csv', O.setStat(f.text, b.max, op[2], op[3] ? { dstName: op[3], adj: op[4] } : null), 'x');
+        else if (op[0] === 'time') W.apply('propskilladd.csv', O.setDuration(f.text, b.max, op[2]), 'x');
+        else if (op[0] === 'cool') W.apply('propskilladd.csv', O.setCooldown(f.text, b.max, op[2]), 'x');
+        else if (op[0] === 'text') W.apply('propskill.txt.txt', O.setText(W.models.classbuffs.strings.meta.get(b.descKey), op[2]), 'x');
+      }
+      const sha = x => GLib.compute_checksum_for_bytes(GLib.ChecksumType.SHA256, new GLib.Bytes(x));
+      const b1 = f.serialize(), b2 = tf.serialize();
+      if (sha(b1) === sc.sha && b1.length === sc.size && sha(b2) === sc.sha2 && b2.length === sc.size2) e++; else print(`   edit ${J(sc.ops)}: js ${b1.length} / ${b2.length} bytes, py ${sc.size} / ${sc.size2}`);
+    }
+    let fsame = 0;
+    for (const c of py.files) {
+      const r = FRE.skillAdd.load(new FRE.SourceFile('propSkillAdd.csv', FRE.bytes.binaryStringToBytes(c.text)), { defines: D, skillReady: () => null });
+      const j = J({ rows: r.rows.length, by: [...r.byId.values()].map(x => [x.id, x.si >>> 0, x.lvl, FRE.skillAdd.FIELDS.map(f => x.v[f] | 0)]).sort((a, b) => a[0] - b[0] || a[2] - b[2]) });
+      if (j === J({ rows: c.rows, by: c.by })) fsame++; else print(`   file ${J(c.text).slice(0, 80)}: js ${j.slice(0, 160)} py ${J(c.by).slice(0, 160)}`);
+    }
+    eq(fsame, py.files.length, `made-up propSkillAdd.csv files: id 0 stops, a repeated id (the later row wins), a short last row, every column (${py.files.length} agree)`);
+    let asame = 0;
+    for (const c of py.amt) {
+      const j = J(Sim.amounts(env, { v: { dwDestParam1: c.v[0], nAdjParamVal1: c.v[1], dwDestParam2: c.v[2], nAdjParamVal2: c.v[3] } }));
+      if (j === J(c.out)) asame++; else print(`   amounts ${J(c.v)}: js ${j} py ${J(c.out)}`);
+    }
+    eq(asame, py.amt.length, `made-up stat rows: every fan-out, a state, instant HP / MP / FP, '=' slots (${py.amt.length} agree)`);
+    eq(e, py.edits.length, `edit scripts: byte-identical propSkillAdd.csv and propSkill.txt.txt (${py.edits.length}: the 2026-10-21 decisions, empty a slot, time, cooldown and back to '=', tooltip text)`);
+  }
+  {
+    const W = fresh(), f = W.files.get('propskilladd.csv'), b = W.models.classbuffs.bySi.get(D.get('SI_BLD_SUP_BERSERK'));
+    W.apply('propskilladd.csv', FRE.classBuffsOps.setStat(f.text, b.max, 2, { dstName: 'DST_SPEED', adj: 10 }), 'x');
+    const changed = f.text.split('\r\n').filter((l, i) => l !== f.originalText.split('\r\n')[i]);
+    ok(changed.length === 1 && /^SA_BERSERK_L10,SI_BLD_SUP_BERSERK,10,.*,DST_CRITICAL_BONUS,DST_SPEED,15,10,/.test(changed[0]), 'Berserk Speed 15 -> 10: only that value of that line changes');
+    ok(W.diags.some(d => d.code === 'CB_TEXT_OLD' && /Berserk/.test(d.message)), 'stats changed, tooltip not: CB_TEXT_OLD');
+    const fr = W.models.classbuffs.bySi.get(D.get('SI_ELE_FIRE_FIREMASTER'));
+    eq(Sim.duration(env, fr, fr.max, { STA: 0, DEX: 0, INT: 100 }), 202020, 'Fire Master at INT 100: 2 s + 20000 / 10 x 100 + level 10 x 100 / 50 = 202.02 s');
+    ok(Sim.blocked(W.models.classbuffs.bySi.get(D.get('SI_ACR_SUP_BOWMASTER')), { yoyo: true }) !== null, 'Bow Mastery drops off without a bow (IsInvalid)');
+    throws(() => FRE.classBuffsOps.setStat(f.text, b.max, 3, null), 'there is no stat slot 3 (ApplyParam reads 2)');
+    throws(() => FRE.classBuffsOps.setText(W.models.classbuffs.strings.meta.get(b.descKey), '   '), 'an empty tooltip text is refused');
+    const H = W.models.classbuffs.bySi.get(D.get('SI_CRA_SUP_HAWKEYE'));
+    W.apply('propskilladd.csv', FRE.classBuffsOps.setStat(f.text, H.max, 1, { dstName: 'DST_HAWKEYE_RATE', adj: 81 }), 'x');
+    ok(W.diags.some(d => d.code === 'CB_HAWKEYE_80'), 'bow range 81: CB_HAWKEYE_80 (the whole bonus is dropped)');
+  }
+  for (const k of ['CB_ID_ZERO', 'CB_FIELDS', 'CB_DST_ZERO', 'CB_SLOT_DUP', 'CB_HAWKEYE_80', 'CB_BLOCK_CAP', 'CB_HIT_CAP', 'CB_ASPD_SAT', 'CB_PARTY', 'CB_TEXT_OLD', 'CB_SPEED_STACK']) ok(FRE.diagHelp[k], `help text for ${k}`);
+}
+
 section('consumable stats (L): use, use again, same-kind blocks, the timer, edits (JS and Python copies agree)');
 {
   const J = JSON.stringify;

@@ -525,7 +525,7 @@
     // the cards are drawn after the patch check (io/patch-state.js reads one C++ file per patch)
     await waitFor(() => document.querySelector('.task-card:not(:disabled)'), 'task cards enabled');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
-    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 16 && document.querySelector('.task-card[data-task="antibot"]') && document.querySelector('.task-card[data-task="minievent"]') && document.querySelector('.task-card[data-task="mounts"]') && document.querySelector('.task-card[data-task="consumables"]') && document.querySelector('.task-card[data-task="dungeon"]') && document.querySelector('.task-card[data-task="pvp"]') && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 16 tasks to pick (Bot Check; Mini Events; Mounts; Consumable Stats; Dungeons; PvP Events; Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 17 && document.querySelector('.task-card[data-task="classbuffs"]') && document.querySelector('.task-card[data-task="antibot"]') && document.querySelector('.task-card[data-task="minievent"]') && document.querySelector('.task-card[data-task="mounts"]') && document.querySelector('.task-card[data-task="consumables"]') && document.querySelector('.task-card[data-task="dungeon"]') && document.querySelector('.task-card[data-task="pvp"]') && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 17 tasks to pick (Class Buffs; Bot Check; Mini Events; Mounts; Consumable Stats; Dungeons; PvP Events; Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     if (STOP === 'dungeon') { await dungeonStage(); return; }
@@ -2058,6 +2058,31 @@
       cell.value = '77'; cell.dispatchEvent(new Event('change'));
       ok(/77/.test([...$('toasts').children].pop().textContent) && new RegExp(`\\(was ${was}\\)`).test([...$('toasts').children].pop().textContent), 'a family cell edit: written, "(was …)"');
       if (STOP === 'weaponsfamily') { $('toasts').textContent = ''; return; }
+      while (S.ws.history.length) click($('btn-undo'));
+      ok(!S.ws.dirtyFiles().length, 'Undo all: nothing left to save');
+    }
+
+    // ---- Class Buffs (2a)
+    {
+      await openTask('classbuffs');
+      const ed = () => $('editor'), items = () => [...document.querySelectorAll('#list .npc')];
+      const folds = [...document.querySelectorAll('#list details.fold')];
+      ok(S.mode === 'classbuffs' && folds.length === 8 && /Slayer \(Blade\)/.test(folds[0].textContent), 'Class Buffs: 8 classes, each a folding section (Slayer (Blade) first)');
+      const search = $('list-search');
+      if (search) { search.value = 'berserk'; search.dispatchEvent(new Event('input')); }
+      click(items().find(x => /^Berserk/.test((x.querySelector('.n') || x).textContent)));
+      ok(/Berserk/.test(ed().querySelector('h2').textContent) && /Editing: Slayer · 2nd job · Berserk/.test(ed().querySelector('.edit-bar').textContent), 'Berserk: the sticky bar says Slayer · 2nd job · Berserk');
+      const box = ed().querySelector('input[data-key$="|2"][data-key^="cb|"]');
+      box.value = '10'; box.dispatchEvent(new Event('change'));
+      const b = S.ws.models.classbuffs.bySi.get(S.ws.defines.defines.get('SI_BLD_SUP_BERSERK'));
+      ok(/\(was 15\)/.test([...$('toasts').children].pop().textContent) && b.slots[1].adj === 10, 'Speed 15 → 10: written, toast "(was 15)"');
+      ok(/stats changed but its tooltip text did not/.test(ed().textContent), '… and the problem: the tooltip text still says the old numbers');
+      const ta = ed().querySelector('textarea.cb-text');
+      ta.value = 'Increases Critical Damage by 15% and Speed by 10%.'; ta.dispatchEvent(new Event('change'));
+      ok(S.ws.models.classbuffs.bySi.get(b.si).desc === 'Increases Critical Damage by 15% and Speed by 10%.' && !/stats changed but its tooltip/.test(ed().textContent), 'tooltip text edited: the problem is gone');
+      ok(/A Slayer with every own buff on/.test(ed().textContent) && /no cap on move speed/.test(ed().textContent), 'what a Slayer gets, with the move speed note');
+      if (STOP === 'classbuffs') { $('toasts').textContent = ''; return; }
+      if (search) { search.value = ''; search.dispatchEvent(new Event('input')); }
       while (S.ws.history.length) click($('btn-undo'));
       ok(!S.ws.dirtyFiles().length, 'Undo all: nothing left to save');
     }

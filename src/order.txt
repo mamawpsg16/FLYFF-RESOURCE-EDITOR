@@ -4,6 +4,7 @@ core/num.js
 core/xrandom.js
 core/sourcefile.js
 core/lexer.js
+core/csv-lexer.js
 loaders/defines.js
 loaders/strings.js
 loaders/textclient.js
@@ -71,6 +72,12 @@ loaders/weapons.js
 loaders/weapons-sim.js
 edit/weapons-ops.js
 validate/weapons.js
+loaders/skillprop.js
+loaders/skilladd.js
+loaders/classbuffs.js
+loaders/classbuffs-sim.js
+edit/classbuffs-ops.js
+validate/classbuffs.js
 loaders/consumables.js
 loaders/consumables-sim.js
 edit/consumables-ops.js
@@ -136,6 +143,7 @@ ui/rates.js
 ui/upgrade.js
 ui/sets.js
 ui/weapons.js
+ui/classbuffs.js
 ui/consumables.js
 ui/mounts.js
 ui/minievent.js

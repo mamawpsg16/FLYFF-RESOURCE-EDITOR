@@ -37,11 +37,14 @@
     dwEquipActiveSkillId:n dwEquipActiveSkillLv:n dwSmelting:n dwAttsmelting:n dwGemsmelting:n dwPierce:n
     dwUprouse:n bAbsoluteTime:n dwItemGrade:n bCanTrade:n dwMainCategory:n dwSubCategory:n
     bCanHaveServerTransform:n bCanSavePotion:n bCanLooksChange:n bIsLooksChangeMaterial:n`;
-  const SCHEMA = SCHEMA_SRC.trim().split(/\s+/).map(s => { const [name, k] = s.split(':'); return { name, kind: k }; });
+  const parseSchema = src => src.trim().split(/\s+/).map(s => { const [name, k] = s.split(':'); return { name, kind: k }; });
+  const SCHEMA = parseSchema(SCHEMA_SRC), SPEC_SCHEMA = SCHEMA;
   const FIELD_INDEX = new Map(SCHEMA.map((f, i) => [f.name, i]));
   const VALUES_PER_RECORD = SCHEMA.length + 3;   // + ver, dwID, szName  (= 175)
 
-  function loadSpecItem(file, ctx) {
+  // opts.schema: another field list read the same way (propSkill.txt: loaders/skillprop.js, LoadPropItemEx)
+  function loadSpecItem(file, ctx, opts = {}) {
+    const SCHEMA = opts.schema || SPEC_SCHEMA;
     const script = new Script(file.text, { file: file.name, defines: ctx.defines, strings: ctx.strings, diags: [] });
     const items = new Map();       // id -> item (later rows overwrite, like SetAtGrow)
     const rows = [];
@@ -96,5 +99,5 @@
   const get = (item, field) => item.values[FIELD_INDEX.get(field)];
   const getRaw = (item, field) => item.raw[FIELD_INDEX.get(field)];
 
-  FRE.specItem = { loadSpecItem, SCHEMA, FIELD_INDEX, VALUES_PER_RECORD, get, getRaw, SERVER_VER };
+  FRE.specItem = { loadSpecItem, parseSchema, SCHEMA, FIELD_INDEX, VALUES_PER_RECORD, get, getRaw, SERVER_VER };
 })(globalThis.FRE = globalThis.FRE || {});

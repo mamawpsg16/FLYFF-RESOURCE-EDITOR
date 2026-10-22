@@ -46,6 +46,9 @@
     'donationshop.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:967 -> ProjectCmn.cpp:1845 LoadDonationShop' },
     'battlepass.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:935 -> ProjectCmn.cpp:1682 LoadBattlePass' },
     // the game parses propMoverEx.inc too, but keeps no drop lines: DropItem / DropKind / DropGold are added #ifdef __WORLDSERVER
+    // Class Buffs: both at startup (Project.cpp:839 / :3014 LoadPropAddSkill, ProjectCmn.cpp:1253 LoadStrings); 8cfef4e7 / f8754f67
+    'propskilladd.csv': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:842 LoadPropAddSkill (the "propSkillAdd" line of Masquerade.prj)' },
+    'propskill.txt.txt': { server: STARTUP, client: STARTUP, cite: 'ProjectCmn.cpp:1253 LoadStrings' },
     'propmoverex.inc': { server: STARTUP, client: null, cite: 'Project.cpp:850 LoadPropMoverEx (drops #ifdef __WORLDSERVER :3242; a lowest amount, the 5th DropItem value, needs the WorldServer built with V19 b9646b69)' },
     // random boxes: LoadGiftbox sits in #ifdef __WORLDSERVER (Project.cpp:858-869); sets: the game loads its own copy too (Item Wiki, e08528a5)
     'propgiftbox.inc': { server: STARTUP, client: null, cite: 'Project.cpp:864 LoadGiftbox (#ifdef __WORLDSERVER :836)' },

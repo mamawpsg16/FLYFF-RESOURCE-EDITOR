@@ -195,6 +195,16 @@
       validate(ws, model) { return FRE.weaponChecks(model, { ws }); },
     },
     {
+      // Class Buffs (2a, loaders/classbuffs.js): each class's buffs at their top level in propSkillAdd.csv (LoadPropAddSkill,
+      // Project.cpp:3014, comma mode) + the tooltip text in propSkill.txt.txt; propSkill.txt read-only (LoadPropItemEx). Both the
+      // WorldServer and the game read them at startup; the Client copies get the same change (8cfef4e7 / f8754f67).
+      id: 'classbuffs', label: 'Class Buffs',
+      required: ['propSkillAdd.csv', 'propSkill.txt', 'propSkill.txt.txt'], editable: ['propSkillAdd.csv', 'propSkill.txt.txt'],
+      client: ['propSkillAdd.csv', 'propSkill.txt.txt'], deps: [],
+      parse(ws) { return FRE.classBuffs.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.classBuffChecks(model, { ws }); },
+    },
+    {
       // Consumable Stats (task L, loaders/consumables.js): each used item's 6 stat slots and buff time dwSkillTime in Spec_Item.txt
       // (editsSpec: the server copy and its LF Client copy; applied by CMover::DoUseItem MoverSkill.cpp:1455 -> ApplySkill Ctrl.cpp:1102).
       id: 'consumables', label: 'Consumable Stats', editsSpec: true,

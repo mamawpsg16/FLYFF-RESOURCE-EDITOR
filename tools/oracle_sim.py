@@ -14770,6 +14770,375 @@ def ob_run_all(root):
         edits.append({'base': base, 'ops': sc, 'text': t})
     return {'files': files, 'loads': loads, 'stories': stories, 'runs': runs, 'edits': edits}
 
+
+# ---------------------------------------------------------------- Class Buffs (2a): propSkillAdd.csv, propSkill.txt, propSkill.txt.txt
+# Written from the C++ (not from the JS copy):
+#   CScanner::GetToken( TRUE ) scanner.cpp:575-683, GetNumber :860-910, CScript::GetToken Script.cpp:184 (define lookup)
+#   CProject::LoadPropAddSkill Project.cpp:3014-3105 (36 GetNumber( TRUE ), id 0 stops, '=' fallbacks)
+#   CMover::ApplyParam MoverActEvent.cpp:211 (__FIX_STAT_BUFF: slots 0-1), SetDestParam MoverParam.cpp:2523 (fan-outs)
+#   CMover::SubReferTime MoverActEvent.cpp:174 (RT_TIME), CBuffSkill::IsInvalid buff.cpp:415-480, CBuffMgr::AddBuff buff.cpp:759
+CB_NULL = 0xFFFFFFFF
+CB_FIELDS = ('dwID dwName dwSkillLvl dwAbilityMin dwAbilityMax dwAbilityMinPVP dwAbilityMaxPVP dwAttackSpeed dwDmgShift nProbability '
+             'nProbabilityPVP dwTaunt dwDestParam1 dwDestParam2 nAdjParamVal1 nAdjParamVal2 dwChgParamVal1 dwChgParamVal2 nDestData1_1 '
+             'nDestData1_2 nDestData1_3 dwActiveSkill dwActiveSkillRate dwActiveSkillRatePVP nReqMp nReqFp dwCooldown dwCastingTime '
+             'dwSkillRange dwCircleTime dwPainTime dwSkillTime nSkillCount dwSkillExp dwExp dwComboSkillTime').split()
+
+
+def cb_msvc_atoi(s):
+    m = re.match(r'[\t\n\v\f\r ]*([+-]?)(\d+)', s)
+    if not m:
+        return 0
+    v = int(m.group(2)) * (-1 if m.group(1) == '-' else 1)
+    return max(-2147483648, min(2147483647, v))
+
+
+def cb_tokens(text, D):
+    """comma-mode tokens of a byte string (latin-1 str): [(text, start, end, value)]"""
+    end_all = text.find('\0')
+    if end_all < 0:
+        end_all = len(text)
+    ch = lambda i: text[i] if i < end_all else '\0'
+    white = lambda c: c != '\0' and ord(c) <= 0x20
+    out, p = [], 0
+    while True:
+        while True:
+            while white(ch(p)):
+                p += 1
+            if ch(p) == '/' and ch(p + 1) == '/':
+                p += 2
+                while p < end_all and ch(p) not in '\r\n':
+                    p += 1
+                if ch(p) == '\r':
+                    p += 1
+                    if ch(p) == '\n':
+                        p += 1
+                elif ch(p) == '\n':
+                    p += 1
+                continue
+            if ch(p) == '/' and ch(p + 1) == '*':
+                q = text.find('*/', p + 2)
+                if q < 0 or q >= end_all:
+                    return out
+                p = q + 2
+                continue
+            break
+        if p >= end_all:
+            return out
+        quoted = ch(p) == '"'
+        if quoted:
+            p += 1
+            s = p
+            while p < end_all and ch(p) not in '"\r':
+                p += 1
+            e = p
+            p += 1
+        else:
+            s = p
+            while p < end_all and ch(p) not in ',\r':
+                p += 1
+            e = p
+        if ch(p) in (',', '\r'):
+            p += 1
+        if not quoted:
+            while e > s and white(text[e - 1]):
+                e -= 1
+        raw = text[s:e]
+        out.append((raw, s, e, cb_value(raw, quoted, D)))
+
+
+def cb_value(raw, quoted, D):
+    if raw == '':
+        return 0
+    if not quoted and raw.startswith('0x'):
+        v = 0
+        for c in raw[2:].lower():
+            v = (v * 16 + (ord(c) - 87 if c >= 'a' else ord(c) - 48)) % 4294967296
+        return v
+    if not quoted and not raw[0].isdigit() and raw in D:
+        return s32(D[raw])
+    if raw[0] == '=':
+        return CB_NULL
+    return cb_msvc_atoi(raw)
+
+
+def cb_strings(path):
+    """propSkill.txt.txt (UTF-16): key -> (text, start, end) in the decoded text"""
+    return cb_strings_text(open(path, 'rb').read()[2:].decode('utf-16-le'))
+
+
+def cb_skills(root, D):
+    """propSkill.txt rows by their header columns: SI id -> dict"""
+    t = open(os.path.join(root, 'propSkill.txt'), 'rb').read()[2:].decode('utf-16-le')
+    lines = t.split('\r\n')
+    head = [x.strip().lstrip('/') for x in lines[1].split('\t')]   # the header row's names ('//ver', '//dwID'; szComment = szCommand)
+    col = {n: i for i, n in enumerate(head)}
+    num = lambda x: (-1 if x.strip() == '=' else (D.get(x.strip(), 0) if x.strip() and not re.match(r'[-\d]', x.strip()) else cb_msvc_atoi(x)))
+    out = {}
+    for l in lines[2:]:
+        c = l.split('\t')
+        if len(c) < len(head) or l.lstrip().startswith('//'):
+            continue
+        sid = D.get(c[col['dwID']].strip())
+        if sid is None:
+            continue
+        g = lambda n: num(c[col[n]])
+        out[sid] = {'id': sid, 'define': c[col['dwID']].strip(), 'ver': g('ver'), 'job': g('dwItemJob'),
+                    'exe': c[col['dwExeTarget']].strip(), 'max': g('ExpertMax'), 'ready': g('dwSkillReady') & 0xFFFFFFFF,
+                    'name': c[col['szName']].strip(), 'desc': c[col['szComment']].strip(),
+                    'refer': [(g('dwReferStat%d' % i), g('dwReferValue%d' % i) & 0xFFFFFFFF) for i in (1, 2) if c[col['dwReferTarget%d' % i]].strip() == 'RT_TIME']}
+    return out
+
+
+def cb_add(text, D, skills):
+    """LoadPropAddSkill -> [row]; row = {'id','sa','si','lvl','v': {field: value}, 'tok': [(text,start,end,value)]}"""
+    tk = cb_tokens(text, D)
+    rows, k = [], 0
+    while k < len(tk):
+        if tk[k][3] & 0xFFFFFFFF == 0:
+            break
+        part = tk[k:k + 36]
+        k += 36
+        v = {f: (part[i][3] if i < len(part) else 0) for i, f in enumerate(CB_FIELDS)}
+        u = lambda f: v[f] & 0xFFFFFFFF
+        if u('dwAbilityMinPVP') == CB_NULL:
+            v['dwAbilityMinPVP'] = v['dwAbilityMin']
+        if u('dwAbilityMaxPVP') == CB_NULL:
+            v['dwAbilityMaxPVP'] = v['dwAbilityMax']
+        sp = skills.get(v['dwName'] & 0xFFFFFFFF)
+        if sp and u('dwCooldown') == CB_NULL:
+            v['dwCooldown'] = sp['ready']
+            if sp['ver'] < 9 and u('dwCastingTime') != CB_NULL:
+                v['dwCastingTime'] = int(v['dwCastingTime'] / 4)
+        if u('nProbabilityPVP') == CB_NULL:
+            v['nProbabilityPVP'] = v['nProbability']
+        if u('dwActiveSkillRatePVP') == CB_NULL:
+            v['dwActiveSkillRatePVP'] = v['dwActiveSkillRate']
+        rows.append({'id': tk[k - 36][3] & 0xFFFFFFFF, 'sa': part[0][0], 'si': v['dwName'] & 0xFFFFFFFF, 'lvl': v['dwSkillLvl'], 'v': v, 'tok': part})
+    by = {}
+    for r in rows:
+        by[r['id']] = r                               # SetAtGrow: a later row with the same id replaces it
+    return rows, by
+
+
+CB_LINES = [('slayer', ['JOB_MERCENARY', 'JOB_BLADE', 'JOB_BLADE_MASTER', 'JOB_BLADE_HERO', 'JOB_STORMBLADE_HERO']),
+            ('templar', ['JOB_MERCENARY', 'JOB_KNIGHT', 'JOB_KNIGHT_MASTER', 'JOB_KNIGHT_HERO', 'JOB_LORDTEMPLER_HERO']),
+            ('harlequin', ['JOB_ACROBAT', 'JOB_JESTER', 'JOB_JESTER_MASTER', 'JOB_JESTER_HERO', 'JOB_WINDLURKER_HERO']),
+            ('crackshooter', ['JOB_ACROBAT', 'JOB_RANGER', 'JOB_RANGER_MASTER', 'JOB_RANGER_HERO', 'JOB_CRACKSHOOTER_HERO']),
+            ('seraph', ['JOB_ASSIST', 'JOB_RINGMASTER', 'JOB_RINGMASTER_MASTER', 'JOB_RINGMASTER_HERO', 'JOB_FLORIST_HERO']),
+            ('forcemaster', ['JOB_ASSIST', 'JOB_BILLPOSTER', 'JOB_BILLPOSTER_MASTER', 'JOB_BILLPOSTER_HERO', 'JOB_FORCEMASTER_HERO']),
+            ('mentalist', ['JOB_MAGICIAN', 'JOB_PSYCHIKEEPER', 'JOB_PSYCHIKEEPER_MASTER', 'JOB_PSYCHIKEEPER_HERO', 'JOB_MENTALIST_HERO']),
+            ('arcanist', ['JOB_MAGICIAN', 'JOB_ELEMENTOR', 'JOB_ELEMENTOR_MASTER', 'JOB_ELEMENTOR_HERO', 'JOB_ELEMENTORLORD_HERO'])]
+CB_TARGETS = ('EXT_SELFCHGPARAMET', 'EXT_ANOTHERWITH', 'EXT_TROUPE', 'EXT_TROUPEWITH')
+CB_GATE = {'yoyo': 'SI_JST_SUP_POISON SI_JST_SUP_BLEEDING SI_JST_SUP_ABSORB SI_ACR_SUP_YOYOMASTER SI_JST_YOYO_CRITICALSWING SI_JST_MASTER_YOYOMASTER',
+           'bow': 'SI_RAG_SUP_FASTATTACK SI_ACR_SUP_BOWMASTER SI_RAG_MASTER_BOWMASTER SI_RAG_HERO_HAWKEYE SI_CRA_SUP_HAWKEYE',
+           'dual': 'SI_BLD_MASTER_ONEHANDMASTER', 'two': 'SI_KNT_MASTER_TWOHANDMASTER', 'element': 'SI_MER_SUP_IMPOWERWEAPON',
+           'sword': 'SI_MER_SUP_BLAZINGSWORD SI_MER_SUP_SWORDMASTER', 'axe': 'SI_MER_SUP_SMITEAXE SI_MER_SUP_AXEMASTER',
+           'knuckle': 'SI_BIL_PST_ASMODEUS', 'shield': 'SI_MER_SHIELD_PROTECTION SI_MER_SHIELD_PANBARRIER'}
+CB_NEED = {d: k for k, v in CB_GATE.items() for d in v.split()}
+
+
+def cb_buffs(D, skills, add_by):
+    by_si = {}
+    for r in add_by.values():
+        by_si.setdefault(r['si'], []).append(r)
+    tier = {}
+    for _, line in CB_LINES:
+        for t, j in enumerate(line):
+            tier[D[j]] = t
+    out = []
+    for sid, s in skills.items():
+        if s['job'] not in tier or s['exe'] not in CB_TARGETS or sid not in by_si:
+            continue
+        top = sorted(by_si[sid], key=lambda r: r['lvl'])[-1]
+        v = top['v']
+        slots = [(v['dwDestParam%d' % i] & 0xFFFFFFFF, s32(v['nAdjParamVal%d' % i])) for i in (1, 2)]
+        if not any(d not in (CB_NULL, 0, D['DST_CHRSTATE']) for d, _ in slots):
+            continue
+        if v['dwSkillTime'] & 0xFFFFFFFF == CB_NULL or s32(v['dwSkillTime']) <= 0:
+            continue
+        out.append({'si': sid, 'define': s['define'], 'job': s['job'], 'tier': tier[s['job']], 'exe': s['exe'], 'row': top, 'refer': s['refer'],
+                    'desc': s['desc']})
+    return out
+
+
+def cb_f32(x):
+    return struct.unpack('f', struct.pack('f', x))[0]
+
+
+def cb_duration(D, b, row, sta, dex, intl):
+    ms = s32(row['v']['dwSkillTime'])
+    for stat, value in b['refer']:
+        st = sta if stat == D['DST_STA'] else dex if stat == D['DST_DEX'] else intl if stat == D['DST_INT'] else 0
+        a = cb_f32(cb_f32(cb_f32(value) / cb_f32(10.0)) * cb_f32(st))
+        c = cb_f32(cb_f32(row['lvl']) * cb_f32(cb_f32(st) / cb_f32(50.0)))
+        ms = s32(ms + (int(cb_f32(a + c)) & 0xFFFFFFFF))
+    return ms
+
+
+def cb_amounts(D, row):
+    fan = {'DST_RESIST_ALL': [('DST_RESIST_ELECTRICITY', 1), ('DST_RESIST_FIRE', 1), ('DST_RESIST_WIND', 1), ('DST_RESIST_WATER', 1), ('DST_RESIST_EARTH', 1)],
+           'DST_STAT_ALLUP': [('DST_STR', 1), ('DST_DEX', 1), ('DST_INT', 1), ('DST_STA', 1)],
+           'DST_HPDMG_UP': [('DST_HP_MAX', 1), ('DST_CHR_DMG', 1)], 'DST_DEFHITRATE_DOWN': [('DST_ADJDEF', 1), ('DST_ADJ_HITRATE', 1)],
+           'DST_LOCOMOTION': [('DST_SPEED', 1), ('DST_JUMPING', 3)]}
+    fanv = {D[k]: [(D[a], m) for a, m in v if a in D] for k, v in fan.items() if k in D}
+    skip = {D['DST_CHRSTATE'], D['DST_HP'], D['DST_MP'], D['DST_FP'], CB_NULL}
+    out = []
+    for i in (1, 2):
+        d, a = row['v']['dwDestParam%d' % i] & 0xFFFFFFFF, row['v']['nAdjParamVal%d' % i]
+        if d == CB_NULL and a & 0xFFFFFFFF == CB_NULL:
+            continue
+        if d in skip:
+            continue
+        a = s32(a)
+        if d in fanv:
+            out += [(x, a * m) for x, m in fanv[d]]
+        else:
+            out.append((d, a))
+    return out
+
+
+def cb_self(D, buffs, cls, gear, stance):
+    line = dict(CB_LINES)[cls]
+    jobs = [D[j] for j in line]
+    stats, off = {}, []
+    for t, j in enumerate(jobs):
+        for b in sorted([x for x in buffs if x['job'] == j], key=lambda x: x['si']):
+            if b['exe'] == 'EXT_TROUPE':
+                continue
+            need = CB_NEED.get(b['define'])
+            bad = need is not None and not gear.get(need)
+            st_off = (b['define'] == 'SI_KNT_SUP_GUARD' and stance != 'guard') or (b['define'] == 'SI_KNT_SUP_RAGE' and stance != 'rage')
+            if bad or st_off:
+                off.append(b['define'])
+                continue
+            for d, a in cb_amounts(D, b['row']):
+                stats[d] = stats.get(d, 0) + a
+    return sorted([[d, a] for d, a in stats.items() if a]), sorted(off)
+
+
+def cb_splice(text, sp):
+    for s, e, ins in sorted(sp, key=lambda x: -x[0]):
+        text = text[:s] + ins + text[e:]
+    return text
+
+
+def cb_run_all(root):
+    D = defines(root)
+    skills = cb_skills(root, D)
+    raw = open(os.path.join(root, 'propSkillAdd.csv'), 'rb').read()
+    text = raw.decode('latin-1')
+    rows, by = cb_add(text, D, skills)
+    buffs = cb_buffs(D, skills, by)
+    txt_text, strs = cb_strings(os.path.join(root, 'propSkill.txt.txt'))
+    # 1. the tokenizer on made-up text
+    lex = []
+    for s in ['a,b,c', 'SA_X,1,2,\r\nSA_Y,3', '600\nSA_X,5', ' x , y \r\n', '-300,=,,0x1F,"q,w",//c\r\n9', 'DST_STR,DST_NOPE,12ab',
+              '2147483648,-2147483649', 'a/*x*/,b', '\r\n\r\n,', 'a\0b,c']:
+        lex.append({'text': s, 'toks': [[t[0], t[1], t[2], t[3]] for t in cb_tokens(s, D)]})
+    # 2. what loads
+    load = {'rows': len(rows), 'ids': len(by), 'buffs': sorted([[b['si'], b['tier'], b['exe'], b['row']['lvl'],
+        [[d, a] for d, a in ((b['row']['v']['dwDestParam%d' % i] & 0xFFFFFFFF, s32(b['row']['v']['nAdjParamVal%d' % i])) for i in (1, 2))],
+        s32(b['row']['v']['dwSkillTime']), s32(b['row']['v']['dwCooldown']), s32(b['row']['v']['dwAbilityMinPVP']), s32(b['row']['v']['nProbabilityPVP']),
+        [[a, v] for a, v in b['refer']], b['desc'], strs.get(b['desc'], ('',))[0]] for b in buffs])}
+    # 3. how long each buff lasts at stats 0 / 1 / 49 / 50 / 100 / 255 / 1000
+    dur = [[b['si'], v, cb_duration(D, b, b['row'], v, v, v)] for b in buffs for v in (0, 1, 49, 50, 100, 255, 1000)]
+    # 4. a player of each class with every own buff on, per weapon and stance
+    gears = {'sword': {'sword': 1, 'shield': 1}, 'axe': {'axe': 1, 'shield': 1}, 'two': {'two': 1, 'sword': 1}, 'dual': {'dual': 1, 'sword': 1},
+             'yoyo': {'yoyo': 1}, 'bow': {'bow': 1}, 'knuckle': {'knuckle': 1}, 'none': {}, 'all': {k: 1 for k in CB_GATE}}
+    selfc = []
+    for cls, _ in CB_LINES:
+        for g, gv in gears.items():
+            for stance in ('guard', 'rage', None):
+                st, off = cb_self(D, buffs, cls, gv, stance)
+                selfc.append({'cls': cls, 'gear': g, 'gearv': gv, 'stance': stance, 'stats': st, 'off': off})
+    # 5. edit scripts -> sha256 + size of both files
+    import hashlib
+    bd = {b['define']: b for b in buffs}
+    scripts = [
+        [['stat', 'SI_BLD_SUP_BERSERK', 2, 'DST_SPEED', 10]],
+        [['stat', 'SI_MER_SUP_BLAZINGSWORD', 2, 'DST_CRITICAL_BONUS', 5]],
+        [['stat', 'SI_LOD_SUP_HOLYARMOR', 1, 'DST_BLOCK_MELEE', 10], ['stat', 'SI_LOD_SUP_HOLYARMOR', 2, 'DST_PVP_DMG_RATE', -8]],
+        [['stat', 'SI_ASS_CHEER_CATSREFLEX', 1, 'DST_ADJDEF_RATE', 8]],
+        [['stat', 'SI_FLO_SQU_BLESSSTEP', 2, None, 0]],
+        [['time', 'SI_RIN_SUP_SPIRITUREFORTUNE', 180000], ['cool', 'SI_RIN_SUP_SPIRITUREFORTUNE', 5000]],
+        [['cool', 'SI_BLD_SUP_BERSERK', None]],
+        [['text', 'SI_BLD_SUP_BERSERK', 'Increases Critical Damage by 15% and Speed by 10%.']],
+        [['text', 'SI_FLO_SQU_BLESSBODY', '  Block +5 / +5\r\nfor the party  ']],
+    ]
+    edits = []
+    for sc in scripts:
+        t, tt = text, txt_text
+        for op in sc:
+            r_by = cb_add(t, D, skills)[1]
+            b = [x for x in cb_buffs(D, skills, r_by) if x['define'] == op[1]][0]
+            tok = b['row']['tok']
+            col = lambda f: tok[CB_FIELDS.index(f)]
+            sp = []
+            if op[0] == 'stat':
+                dn = op[3] or '='
+                av = '=' if op[3] is None else str(op[4])
+                for f, ins in (('dwDestParam%d' % op[2], dn), ('nAdjParamVal%d' % op[2], av)):
+                    x = col(f)
+                    if t[x[1]:x[2]] != ins:
+                        sp.append((x[1], x[2], ins))
+            elif op[0] in ('time', 'cool'):
+                x = col('dwSkillTime' if op[0] == 'time' else 'dwCooldown')
+                ins = '=' if op[2] is None else str(op[2])
+                if t[x[1]:x[2]] != ins:
+                    sp.append((x[1], x[2], ins))
+            t = cb_splice(t, sp)
+            if op[0] == 'text':
+                _, ss = cb_strings_text(tt)
+                v = re.sub(r'[\r\n]+', ' ', op[2]).strip()
+                _, s, e = ss[b['desc']]
+                tt = tt[:s] + v + tt[e:]
+        b1 = t.encode('latin-1')
+        b2 = b'\xff\xfe' + tt.encode('utf-16-le')
+        edits.append({'ops': sc, 'sha': hashlib.sha256(b1).hexdigest(), 'size': len(b1), 'sha2': hashlib.sha256(b2).hexdigest(), 'size2': len(b2)})
+    # 6. made-up files: the id 0 stop, a repeated id (the later row wins), a short last row, defines / numbers / '=' in every column
+    row = lambda sa, lvl, rest: '%s,SI_BLD_SUP_BERSERK,%d,%s' % (sa, lvl, rest)
+    full = ','.join(['=', '=', '7', '=', '9', '=', '-3', '0x10', '2147483648', 'DST_STR', 'DST_SPEED', '5', '-5', '=', '=', '1', '2', '3', '=', '4', '=', '6', '7', '=', '=', '8', '9', '10', '11', '12', '13', '14', '15'])   # the 33 values after id, name, level
+    mk = lambda *rows: '//head\r\n' + ''.join(r + '\r\n' for r in rows)
+    files_ = [mk(row('SA_BERSERK_L01', 1, full), row('SA_BERSERK_L02', 2, full)),
+              mk(row('SA_BERSERK_L01', 1, full), row('SA_BERSERK_L01', 7, full)),
+              mk(row('SA_BERSERK_L01', 1, full), row('SA_NOPE_X', 2, full), row('SA_BERSERK_L03', 3, full)),
+              mk(row('SA_BERSERK_L01', 1, full), 'SA_BERSERK_L02,SI_BLD_SUP_BERSERK,2,5'),
+              mk(row('SA_BERSERK_L01', 1, full).replace(',7,', ',  7 ,', 1))]
+    fl = []
+    for ft in files_:
+        rs, b_ = cb_add(ft, D, {})
+        fl.append({'text': ft, 'rows': len(rs), 'by': sorted([[r['id'], r['si'], r['lvl'], [s32(r['v'][f]) for f in CB_FIELDS]] for r in b_.values()])})
+    # 7. made-up stat rows: every fan-out, a state, an instant HP, '=' '=' slots, a name with a value
+    amt = []
+    for d1, a1, d2, a2 in [('DST_RESIST_ALL', 5, 'DST_STAT_ALLUP', 3), ('DST_HPDMG_UP', 7, 'DST_DEFHITRATE_DOWN', -2), ('DST_LOCOMOTION', 10, 'DST_CHRSTATE', 4),
+                           ('DST_HP', 100, 'DST_MP', 5), (None, None, 'DST_STR', 9), (None, 6, 'DST_FP', 1), ('DST_SPEED', None, 'DST_ADJDEF_RATE', 8)]:
+        v = {'dwDestParam1': D[d1] if d1 else CB_NULL, 'nAdjParamVal1': CB_NULL if a1 is None else a1,
+             'dwDestParam2': D[d2], 'nAdjParamVal2': a2}
+        amt.append({'v': [v['dwDestParam1'], s32(v['nAdjParamVal1']), v['dwDestParam2'], v['nAdjParamVal2']], 'out': [[d, a] for d, a in cb_amounts(D, {'v': v})]})
+    return {'lex': lex, 'load': load, 'dur': dur, 'self': selfc, 'edits': edits, 'files': fl, 'amt': amt}
+
+
+def cb_strings_text(t):
+    """LoadStrings, per line: the IDS key, then the rest of the line up to CR, white space cut off both ends; the first key wins"""
+    out, p = {}, 0
+    while p < len(t):
+        e = t.find('\n', p)
+        e = len(t) if e < 0 else e + 1
+        line = t[p:e]
+        m = re.match(r'[ \t]*(IDS\w*)', line)
+        if m:
+            s0 = p + m.end()
+            end = p + (line.find('\r') if '\r' in line else len(line))
+            while s0 < end and t[s0] in ' \t':
+                s0 += 1
+            while end > s0 and t[end - 1] in ' \t\n':
+                end -= 1
+            if m.group(1) not in out:
+                out[m.group(1)] = (t[s0:end], s0, end)
+        p = e
+    return t, out
+
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -14823,6 +15192,8 @@ if __name__ == '__main__':
         print(json.dumps(se_run(root)))
     elif what == 'weapons':                     # weapon effects: each weapon's own stats, rarity, hands, tooltip, edits
         print(json.dumps(we_run_all(root)))
+    elif what == 'classbuffs':                  # Class Buffs: propSkillAdd.csv (comma mode), the buffs per class, time, weapon rules, edits
+        print(json.dumps(cb_run_all(root)))
     elif what == 'consumables':                 # consumable stats: use, use again, same-kind blocks, expiry, edits
         print(json.dumps(cs_run_all(root)))
     elif what == 'antibot':                     # Bot Check: AntiBot.inc (LoadScript), a player's hour, edits
