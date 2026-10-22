@@ -26,8 +26,14 @@
       if (get('DST_ATTACKSPEED') || get('DST_ATTACKSPEED_RATE')) push(b, 'CB_ASPD_SAT', 'INFO', `${b.name}: gives attack speed, which is capped at 2.0; endgame weapons + DEX already reach it, so this stat often does nothing (the 2026-10-21 decisions swap these out).`);
       if (b.party && b.exe !== 'EXT_ANOTHERWITH' && (get('DST_CRITICAL_BONUS') || get('DST_CHR_CHANCECRITICAL')))
         push(b, 'CB_PARTY', 'INFO', `${b.name} is a party buff with a crit stat: party members who cast skills (crit never applies to skills) get nothing from it.`);
+      if (!b.eqRow) push(b, 'CB_EQ_NOROW', 'WARN', `${b.name}: its max level (dwExpertMax ${b.expertMax}) has no row in propSkillAdd.csv: Equalized PvP sets the skill to that level, so players there get no row for it.`);
       const base = ws._cbBase.get(b.si);
       if (base && base.sig !== sig(b) && base.desc === b.desc) push(b, 'CB_TEXT_OLD', 'WARN', `${b.name}: its stats changed but its tooltip text did not: players read the old numbers.`);
+    }
+    for (const a of model.attacks) {
+      const v = a.max.v;
+      if ((v.dwAbilityMinPVP | 0) > (v.dwAbilityMaxPVP | 0)) out.push({ module: 'classbuffs', file: F, code: 'CB_PVP_MINMAX', severity: 'WARN', start: a.max.start, end: a.max.end,
+        key: `CB_PVP_MINMAX|${a.define}`, message: `${a.name}: PvP power lowest ${v.dwAbilityMinPVP} is above the highest ${v.dwAbilityMaxPVP}.` });
     }
     // move speed: every class's own buffs + its party buffs, added up (no cap in GetSpeed)
     for (const c of model.classes) {

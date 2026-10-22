@@ -3737,7 +3737,7 @@ section('weapon effects (G part 2): each weapon\'s own stats, rarity, hands, too
   for (const k of ['WE_DST_ZERO', 'WE_SLOT_DUP', 'WE_ASPD_SMALL', 'WE_RARITY_ASPD', 'WE_TIER_ASPD']) ok(FRE.diagHelp[k], `help text for ${k}`);
 }
 
-section('class buffs (2a): propSkillAdd.csv in comma mode, each class\'s buffs, time, weapon rules, edits (JS and Python copies agree)');
+section('class buffs (2a + 2b): propSkillAdd.csv in comma mode, each class\'s buffs, time, weapon rules, edits (JS and Python copies agree)');
 {
   const J = JSON.stringify;
   const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} classbuffs ${FIXTURES}`);
@@ -3811,6 +3811,23 @@ section('class buffs (2a): propSkillAdd.csv in comma mode, each class\'s buffs, 
     }
     eq(asame, py.amt.length, `made-up stat rows: every fan-out, a state, instant HP / MP / FP, '=' slots (${py.amt.length} agree)`);
     eq(e, py.edits.length, `edit scripts: byte-identical propSkillAdd.csv and propSkill.txt.txt (${py.edits.length}: the 2026-10-21 decisions, empty a slot, time, cooldown and back to '=', tooltip text)`);
+    // part 2b
+    eq(J(M.buffs.map(b => [b.si, b.expertMax, b.eqRow ? b.eqRow.lvl : null]).sort((x, y) => x[0] - y[0])), J(py.eq), `Equalized PvP: each buff's level (dwExpertMax) and its row (${py.eq.length} agree)`);
+    const myAtt = M.attacks.map(a => { const v = a.max.v; return [a.si, a.tier, a.rows.length, v.dwAbilityMin | 0, v.dwAbilityMax | 0, v.dwAbilityMinPVP | 0, v.dwAbilityMaxPVP | 0, v.dwCooldown | 0]; }).sort((x, y) => x[0] - y[0]);
+    eq(J(myAtt), J(py.att), `attack skills: which, levels, damage, PvP power ('=' -> PvE), cooldown (${py.att.length} agree)`);
+    eq(J(py.attf.map(([mn, mx]) => [mn, mx, FRE.classBuffs.isAttack({ v: { dwAbilityMin: mn, dwAbilityMax: mx } })])), J(py.attf), `attack skill test on made-up damage (0-0, '=', INT_MAX …): ${py.attf.length} agree`);
+    let sc2 = 0;
+    for (const sc of py.scaled) {
+      const W = fresh(), f = W.files.get('propskilladd.csv'), Dw = W.defines.defines, O = FRE.classBuffsOps;
+      for (const op of sc.ops) {
+        const b = W.models.classbuffs.bySi.get(Dw.get(op[1]));
+        if (op[0] === 'scale') W.apply('propskilladd.csv', O.scaleLevels(f.text, b.rows, op[2], op[3]), 'x');
+        else W.apply('propskilladd.csv', O.setAbility(f.text, b.max, op[2], op[3], op[0] === 'pvp'), 'x');
+      }
+      const b1 = f.serialize();
+      if (GLib.compute_checksum_for_bytes(GLib.ChecksumType.SHA256, new GLib.Bytes(b1)) === sc.sha && b1.length === sc.size) sc2++; else print(`   2b edit ${J(sc.ops)}: js ${b1.length} bytes, py ${sc.size}`);
+    }
+    eq(sc2, py.scaled.length, `2b edit scripts: every level in step, PvP power, back to '=' (${py.scaled.length} byte-identical)`);
   }
   {
     const W = fresh(), f = W.files.get('propskilladd.csv'), b = W.models.classbuffs.bySi.get(D.get('SI_BLD_SUP_BERSERK'));
@@ -3827,7 +3844,7 @@ section('class buffs (2a): propSkillAdd.csv in comma mode, each class\'s buffs, 
     W.apply('propskilladd.csv', FRE.classBuffsOps.setStat(f.text, H.max, 1, { dstName: 'DST_HAWKEYE_RATE', adj: 81 }), 'x');
     ok(W.diags.some(d => d.code === 'CB_HAWKEYE_80'), 'bow range 81: CB_HAWKEYE_80 (the whole bonus is dropped)');
   }
-  for (const k of ['CB_ID_ZERO', 'CB_FIELDS', 'CB_DST_ZERO', 'CB_SLOT_DUP', 'CB_HAWKEYE_80', 'CB_BLOCK_CAP', 'CB_HIT_CAP', 'CB_ASPD_SAT', 'CB_PARTY', 'CB_TEXT_OLD', 'CB_SPEED_STACK']) ok(FRE.diagHelp[k], `help text for ${k}`);
+  for (const k of ['CB_ID_ZERO', 'CB_FIELDS', 'CB_DST_ZERO', 'CB_SLOT_DUP', 'CB_HAWKEYE_80', 'CB_BLOCK_CAP', 'CB_HIT_CAP', 'CB_ASPD_SAT', 'CB_PARTY', 'CB_TEXT_OLD', 'CB_SPEED_STACK', 'CB_EQ_NOROW', 'CB_PVP_MINMAX']) ok(FRE.diagHelp[k], `help text for ${k}`);
 }
 
 section('consumable stats (L): use, use again, same-kind blocks, the timer, edits (JS and Python copies agree)');

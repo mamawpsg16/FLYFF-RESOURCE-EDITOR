@@ -1,4 +1,4 @@
-// Class Buffs (task, part 2a): which skills are each class's buffs, joined from propSkill.txt (loaders/skillprop.js: job, target,
+// Class Buffs (task, parts 2a + 2b): which skills are each class's buffs, joined from propSkill.txt (loaders/skillprop.js: job, target,
 // max level, names), propSkillAdd.csv (loaders/skilladd.js: what each level gives) and propSkill.txt.txt (name + tooltip text).
 //   A buff here = a skill of one of the 8 class lines whose target is you / another player / the party (dwExeTarget
 //   EXT_SELFCHGPARAMET / EXT_ANOTHERWITH / EXT_TROUPE / EXT_TROUPEWITH, CCtrl::ApplySkill Ctrl.cpp:1102) and whose top level row
@@ -20,6 +20,9 @@
   ];
   const TIERS = ['1st job', '2nd job', 'Master (Lv60)', 'Hero (Lv120)', '3rd job (Lv130)'];
   const WHO = { EXT_SELFCHGPARAMET: 'you', EXT_ANOTHERWITH: 'you or one other player', EXT_TROUPE: 'your party (not you)', EXT_TROUPEWITH: 'you and your party' };
+
+  // an attack skill's top row: a damage above 0 in dwAbilityMin or dwAbilityMax ('=' reads as -1)
+  const isAttack = row => (row.v.dwAbilityMin | 0) > 0 || (row.v.dwAbilityMax | 0) > 0;
 
   // ws: a Workspace -> { classes: [{ ...CLASSES[i], tiers: [{ tier, label, job, buffs }] }], buffs, bySi, add, skills, strings }
   function fromWorkspace(ws) {
@@ -55,14 +58,33 @@
         // RT_TIME: extra time from the caster's STA / DEX / INT (CMover::SubReferTime, MoverActEvent.cpp:174)
         refer: [1, 2].filter(i => G(sk, 'dwReferTarget' + i) === D.get('RT_TIME')).map(i => ({ stat: G(sk, 'dwReferStat' + i), value: G(sk, 'dwReferValue' + i) >>> 0 })),
       };
+      // Equalized PvP sets every skill to dwExpertMax (WORLDSERVER/EqualizedPvP.cpp:590-597): that level's row is what players get there
+      b.eqRow = rows.find(r => r.lvl === b.expertMax) || null;
       buffs.push(b); bySi.set(b.si, b);
+    }
+    // attack skills (2b): the class's other skills whose top row has a damage (dwAbilityMin / Max > 0), e.g. Asal, Hit of Penya;
+    // their cooldown and PvP power (dwAbilityMinPVP / MaxPVP, '=' = the PvE value, LoadPropAddSkill __SKILL_0706) are edited here
+    const attacks = [];
+    for (const sk of skills.items.values()) {
+      const job = G(sk, 'dwItemJob');
+      if (!jobOf.has(job) || bySi.has(sk.id)) continue;
+      const rows = add.bySkill.get(sk.id);
+      if (!rows || !rows.length) continue;
+      const max = rows[rows.length - 1];
+      if (!isAttack(max)) continue;
+      const a = { kind: 'attack', si: sk.id, define: sk.define, name: sk.name || sk.define, job, jobName: ws.defines.byValue('JOB_', job), tier: jobOf.get(job),
+        exe: exeName(G(sk, 'dwExeTarget')), expertMax: G(sk, 'dwExpertMax'), rows, max, skill: sk };
+      a.eqRow = rows.find(r => r.lvl === a.expertMax) || null;
+      attacks.push(a); bySi.set(a.si, a);
     }
     const classes = CLASSES.map(c => {
       const jobs = c.line.map(j => D.get(j));
-      return Object.assign({}, c, { tiers: TIERS.map((label, t) => ({ tier: t, label, job: jobs[t], buffs: buffs.filter(b => b.job === jobs[t]).sort((a, b) => a.name.localeCompare(b.name)) })) });
+      const byName = (a, b) => a.name.localeCompare(b.name);
+      return Object.assign({}, c, { tiers: TIERS.map((label, t) => ({ tier: t, label, job: jobs[t], buffs: buffs.filter(b => b.job === jobs[t]).sort(byName),
+        attacks: attacks.filter(a => a.job === jobs[t]).sort(byName) })) });
     });
-    return { classes, buffs, bySi, add, skills, strings, TIERS };
+    return { classes, buffs, attacks, bySi, add, skills, strings, TIERS };
   }
 
-  FRE.classBuffs = { fromWorkspace, CLASSES, TIERS, WHO };
+  FRE.classBuffs = { fromWorkspace, isAttack, CLASSES, TIERS, WHO };
 })(globalThis.FRE = globalThis.FRE || {});

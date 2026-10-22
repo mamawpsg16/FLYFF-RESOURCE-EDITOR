@@ -15016,6 +15016,11 @@ def cb_self(D, buffs, cls, gear, stance):
     return sorted([[d, a] for d, a in stats.items() if a]), sorted(off)
 
 
+def cb_is_attack(v):
+    """a class skill is an attack skill when its top row has a damage above 0 (dwAbilityMin or Max; '=' = -1)"""
+    return s32(v['dwAbilityMin']) > 0 or s32(v['dwAbilityMax']) > 0
+
+
 def cb_splice(text, sp):
     for s, e, ins in sorted(sp, key=lambda x: -x[0]):
         text = text[:s] + ins + text[e:]
@@ -15115,7 +15120,69 @@ def cb_run_all(root):
         v = {'dwDestParam1': D[d1] if d1 else CB_NULL, 'nAdjParamVal1': CB_NULL if a1 is None else a1,
              'dwDestParam2': D[d2], 'nAdjParamVal2': a2}
         amt.append({'v': [v['dwDestParam1'], s32(v['nAdjParamVal1']), v['dwDestParam2'], v['nAdjParamVal2']], 'out': [[d, a] for d, a in cb_amounts(D, {'v': v})]})
-    return {'lex': lex, 'load': load, 'dur': dur, 'self': selfc, 'edits': edits, 'files': fl, 'amt': amt}
+    # 8. part 2b: every skill's rows by level (JS bySkill: SetAtGrow winners, sorted by level)
+    by_si = {}
+    for r in by.values():
+        by_si.setdefault(r['si'], []).append(r)
+    for l in by_si.values():
+        l.sort(key=lambda r: r['lvl'])
+    #   Equalized PvP: every skill at dwExpertMax (EqualizedPvP.cpp:590-597) -> the row of that level, or none
+    eq = sorted([[b['si'], skills[b['si']]['max'], next((r['lvl'] for r in by_si[b['si']] if r['lvl'] == skills[b['si']]['max']), None)] for b in buffs])
+    #   attack skills: a class-line skill that is not a buff, whose top row has dwAbilityMin or Max > 0
+    tier = {D[j]: t for _, line in CB_LINES for t, j in enumerate(line)}
+    bsi = {b['si'] for b in buffs}
+    att = []
+    for sid, sk in skills.items():
+        if sk['job'] not in tier or sid in bsi or sid not in by_si:
+            continue
+        v = by_si[sid][-1]['v']
+        if not cb_is_attack(v):
+            continue
+        att.append([sid, tier[sk['job']], len(by_si[sid]), s32(v['dwAbilityMin']), s32(v['dwAbilityMax']), s32(v['dwAbilityMinPVP']), s32(v['dwAbilityMaxPVP']), s32(v['dwCooldown'])])
+    att.sort()
+    attf = [[mn, mx, cb_is_attack({'dwAbilityMin': mn, 'dwAbilityMax': mx})] for mn, mx in ((0, 0), (0, 5), (5, 0), (-1, -1), (-1, 3), (1, 1), (0x7FFFFFFF, 0), (CB_NULL, CB_NULL))]
+    #   edit scripts: scale one slot on every level in step (round(old x new / oldTop), JS Math.round = floor(x + 0.5)); PvP power; back to '='
+    def scale(t, sid, i, new):
+        rs = cb_add(t, D, skills)[1]
+        rows_ = sorted([r for r in rs.values() if r['si'] == sid], key=lambda r: r['lvl'])
+        top = rows_[-1]
+        dst = top['v']['dwDestParam%d' % i] & 0xFFFFFFFF
+        old = s32(top['v']['nAdjParamVal%d' % i])
+        sp = []
+        for r in rows_:
+            if r['v']['dwDestParam%d' % i] & 0xFFFFFFFF != dst:
+                continue
+            nv = new if r is top else math.floor(s32(r['v']['nAdjParamVal%d' % i]) * new / old + 0.5)
+            x = r['tok'][CB_FIELDS.index('nAdjParamVal%d' % i)]
+            if t[x[1]:x[2]] != str(nv):
+                sp.append((x[1], x[2], str(nv)))
+        return cb_splice(t, sp)
+    def ability(t, sid, pvp, lo, hi):
+        rs = cb_add(t, D, skills)[1]
+        top = sorted([r for r in rs.values() if r['si'] == sid], key=lambda r: r['lvl'])[-1]
+        k = 'PVP' if pvp else ''
+        sp = []
+        for f, val in (('dwAbilityMin' + k, lo), ('dwAbilityMax' + k, hi)):
+            x = top['tok'][CB_FIELDS.index(f)]
+            ins = '=' if val is None else str(val)
+            if t[x[1]:x[2]] != ins:
+                sp.append((x[1], x[2], ins))
+        return cb_splice(t, sp)
+    s2 = [[['scale', 'SI_BLD_SUP_BERSERK', 1, 20]], [['scale', 'SI_ASS_CHEER_HASTE', 1, 7]], [['scale', 'SI_LOD_SUP_HOLYARMOR', 2, 30]],
+          [['scale', 'SI_MER_SUP_IMPOWERWEAPON', 1, 1]],
+          [['pvp', 'SI_BIL_PST_ASALRAALAIKUM', 60, 80]], [['pvp', 'SI_JST_YOYO_HITOFPENYA', None, None]], [['pve', 'SI_JST_YOYO_HITOFPENYA', 10, 12]]]
+    scaled = []
+    for sc in s2:
+        t = text
+        for op in sc:
+            sid = D[op[1]]
+            if op[0] == 'scale':
+                t = scale(t, sid, op[2], op[3])
+            else:
+                t = ability(t, sid, op[0] == 'pvp', op[2], op[3])
+        b1 = t.encode('latin-1')
+        scaled.append({'ops': sc, 'sha': hashlib.sha256(b1).hexdigest(), 'size': len(b1)})
+    return {'lex': lex, 'load': load, 'dur': dur, 'self': selfc, 'edits': edits, 'files': fl, 'amt': amt, 'eq': eq, 'att': att, 'attf': attf, 'scaled': scaled}
 
 
 def cb_strings_text(t):

@@ -2062,7 +2062,7 @@
       ok(!S.ws.dirtyFiles().length, 'Undo all: nothing left to save');
     }
 
-    // ---- Class Buffs (2a)
+    // ---- Class Buffs (2a + 2b)
     {
       await openTask('classbuffs');
       const ed = () => $('editor'), items = () => [...document.querySelectorAll('#list .npc')];
@@ -2081,6 +2081,43 @@
       ta.value = 'Increases Critical Damage by 15% and Speed by 10%.'; ta.dispatchEvent(new Event('change'));
       ok(S.ws.models.classbuffs.bySi.get(b.si).desc === 'Increases Critical Damage by 15% and Speed by 10%.' && !/stats changed but its tooltip/.test(ed().textContent), 'tooltip text edited: the problem is gone');
       ok(/A Slayer with every own buff on/.test(ed().textContent) && /no cap on move speed/.test(ed().textContent), 'what a Slayer gets, with the move speed note');
+      // 2b: every level moved in step, the level picker, Equalized PvP, the filters, attack skills
+      const lo = b.rows[0];
+      ok((lo.v.nAdjParamVal2 | 0) === 60 && ![...$('toasts').children].some(x => /every level in step/.test(x.textContent)), '2b: Berserk levels 1-9 hold other stats than level 10 (main): only level 10 changes, no "in step" claim');
+      ok(/Equalized PvP: level \d+/.test(ed().textContent), '2b: the page says which level Equalized PvP uses');
+      {
+        // typing 2 then 20 (live typing commits each): level 1 must scale from the values before typing, not from "2"
+        const M2 = S.ws.models.classbuffs, n0 = S.ws.history.length;
+        const hb = M2.buffs.find(x => x.rows.length > 2 && x.rows.some(r => r !== x.max && (r.v.dwDestParam1 >>> 0) === x.slots[0].dst && (r.v.nAdjParamVal1 | 0) > 0) && x.slots[0].adj > 2);
+        {
+          const top0 = hb.slots[0].adj, low0 = hb.rows[0].v.nAdjParamVal1 | 0, want = Math.round(low0 * 20 / top0);
+          click([...document.querySelectorAll('#list .npc')].find(x => x.querySelector('.n span') && x.querySelector('.n span').textContent === hb.name) || items()[0]);
+          if (!ed().querySelector('h2') || ed().querySelector('h2').textContent !== hb.name) { if (search) { search.value = hb.name; search.dispatchEvent(new Event('input')); } click(items().find(x => x.querySelector('.n span').textContent === hb.name)); }
+          for (const t of ['2', '20']) { const bx = ed().querySelector(`input[data-key^="cb|${hb.si}|"][data-key$="|1"]`); bx.value = t; bx.dispatchEvent(new Event('change')); }
+          const nb = S.ws.models.classbuffs.bySi.get(hb.si);
+          ok(nb.slots[0].adj === 20 && (nb.rows[0].v.nAdjParamVal1 | 0) === want && S.ws.history.length === n0 + 1,
+            `2b: typing 2 then 20 on ${hb.name}: level 1 = ${want} (from ${low0} x 20 / ${top0}), one undo step (got ${nb.rows[0].v.nAdjParamVal1 | 0}, ${S.ws.history.length - n0} steps)`);
+          click($('btn-undo'));
+          ok((S.ws.models.classbuffs.bySi.get(hb.si).rows[0].v.nAdjParamVal1 | 0) === low0, '2b: one Undo puts every level back');
+          if (search) { search.value = 'berserk'; search.dispatchEvent(new Event('input')); }
+          click(items().find(x => /^Berserk/.test((x.querySelector('.n') || x).textContent)));
+        }
+      }
+      const lv = ed().querySelector('select option[value="1"]').parentNode;
+      lv.value = '1'; lv.dispatchEvent(new Event('change'));
+      ok(/Stats at level 1 \(2 slots\)/.test(ed().textContent), '2b: level 1 picked: its own stats are shown');
+      lv.value = String(b.max.lvl); lv.dispatchEvent(new Event('change'));
+      const who = [...document.querySelectorAll('select.npc-filter')].find(x => [...x.options].some(o => o.value === 'attack'));
+      if (search) { search.value = ''; search.dispatchEvent(new Event('input')); }
+      who.value = 'party'; who.dispatchEvent(new Event('change'));
+      ok(items().length > 0 && !items().some(x => /^Berserk/.test(x.textContent)), '2b: filter "Party buffs": Berserk (only you) is gone');
+      who.value = 'attack'; who.dispatchEvent(new Event('change'));
+      const asal = items().find(x => /Asalraalaikum|Asal/.test(x.textContent));
+      ok(!!asal && /PvP/.test(asal.textContent), '2b: filter "Attack skills": Asal is listed with its PvP power');
+      click(asal);
+      ok(/Against players \(PvP\)/.test(ed().textContent) && /Cooldown/.test(ed().textContent), '2b: the Asal page: power vs monsters, vs players, cooldown');
+      ok(/Editing: Force Master · 2nd job · Asal/.test(ed().querySelector('.edit-bar').textContent), '2b: the Asal bar names the class (Force Master)');
+      who.value = ''; who.dispatchEvent(new Event('change'));
       if (STOP === 'classbuffs') { $('toasts').textContent = ''; return; }
       if (search) { search.value = ''; search.dispatchEvent(new Event('input')); }
       while (S.ws.history.length) click($('btn-undo'));

@@ -319,6 +319,8 @@
     CB_ASPD_SAT: ['Attack speed is capped at 2.0 (MoverAttack.cpp:193). Endgame weapons and DEX already reach it, so an attack speed buff often does nothing.', 'Consider another stat (the 2026-10-21 decisions use Crit Damage).'],
     CB_PARTY: ['A party buff gives crit, but crit never applies to skills: casters in the party get nothing from it.', 'Consider Monster damage or Attack % (the 2026-10-21 decisions).'],
     CB_TEXT_OLD: ['The buff gives different stats now, but its tooltip text in propSkill.txt.txt is still the old one, so players read the old numbers.', 'Edit the tooltip text on the buff page.'],
+    CB_EQ_NOROW: ['Equalized PvP raises every skill to its max level (dwExpertMax in propSkill.txt), but propSkillAdd.csv has no row for that level, so the buff gives nothing there.', 'Add the missing level row, or check dwExpertMax.'],
+    CB_PVP_MINMAX: ['The lowest PvP power is above the highest, so the damage roll against players is wrong.', 'Swap the two PvP numbers on the attack skill page.'],
     CB_SPEED_STACK: ['Move speed has no cap (GetSpeed, MoverParam.cpp:3585): every Speed % from buffs and gear adds up.', 'Nothing to fix if the total is what you want.'],
     CS_NO_TIME: ['A buff item with no buff time ("=" or a negative number): ApplySkill makes no buff, yet still applies the stats, so nothing takes them off until the player logs out.', 'Give it a time (ms), or Permanent (999999999).'],
     CS_KEEP_REFUSED: ['An IK2_KEEP item whose time is negative as a number: AddBuff refuses it and the item does nothing.', 'Give it a time between 0 and 2147483647 ms.'],
