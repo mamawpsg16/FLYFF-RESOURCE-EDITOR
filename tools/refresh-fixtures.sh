@@ -58,6 +58,12 @@ cp -p $SRC/Server/Resource/AntiBot.inc "$DST/Resource/"
 # Class Buffs: the skill levels, the skills, their names / tooltips (+ the game's copies)
 cp -p $SRC/Server/Resource/propSkillAdd.csv $SRC/Server/Resource/propSkill.txt $SRC/Server/Resource/propSkill.txt.txt "$DST/Resource/"
 cp -p $SRC/Client/propSkillAdd.csv $SRC/Client/propSkill.txt.txt "$DST/Client/"
+# GM Commands: the command table and the build switches (read-only C++, under src/), the pet kinds (pet.inc)
+cp -p $SRC/Server/Resource/pet.inc "$DST/Resource/"
+mkdir -p "$DST/src/worldserver" "$DST/src/neuz"
+cp -p "$SRC/Source/Source/_Interface/FuncTextCmd.cpp" "$SRC/Source/Source/_Common/CustomCommon.h" "$DST/src/"
+cp -p "$SRC/Source/Source/WORLDSERVER/VersionCommon.h" "$DST/src/worldserver/"
+cp -p "$SRC/Source/Source/Neuz/VersionCommon.h" "$DST/src/neuz/"
 # Mounts: the seat / speed / loops / flying of every mount (+ the game's identical copy)
 cp -p $SRC/Server/Resource/Mount.inc "$DST/Resource/"
 cp -p $SRC/Client/Mount.inc "$DST/Client/"

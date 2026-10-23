@@ -13,6 +13,8 @@ import { checkMounts } from './mount-check.js';
 import { checkMiniEvent, checkTurnIn, checkWeek, checkRace } from './minievent-check.js';
 import { checkAntiBot } from './antibot-check.js';
 import { checkOwnerBuff } from './ownerbuff-check.js';
+import { checkGmCmd } from './gmcmd-check.js';
+import { gmCpp } from './run-gmcmd-cpp.js';
 
 const FIXTURES = ROOT + '/test-data/fixtures/Resource';
 const REAL = ROOT + '/../FLYFF-V19-SOURCE/Server/Resource';
@@ -4496,6 +4498,46 @@ if (exists(FIXTURES + '/OwnerBuff.txt')) {
   try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py ownerbuff) gave no readable result', e.message); }
   if (py) checkOwnerBuff({ FRE, py, ok, eq, print });
 } else print('  (no OwnerBuff.txt in the fixtures: run tools/refresh-fixtures.sh)');
+
+// ---------------------------------------------------------------- GM Commands (FuncTextCmd.cpp, read-only)
+section('GM Commands: the command table per build, the /open stop, typed lines, pet.inc (JS and Python copies agree)');
+if (exists(ROOT + '/test-data/fixtures/src/FuncTextCmd.cpp')) {
+  const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e));
+  const W = new FRE.Workspace(fs, { only: 'gmcmd', cpp: gmCpp(ROOT) }).load();
+  const m = W.models.gmcmd, J = JSON.stringify, G = FRE.gmCmd, S = FRE.gmCmdSim;
+  eq(J([m.rows.length, m.rows.filter(r => r.live).length, m.rows.filter(r => r.dead && r.compiled).length]), J([277, 171, 98]),
+    'V19 main: 277 rows (3 more inside /* */ are not compiled), 171 work, 98 built but below /open');
+  eq(m.rows.find(r => r.isOpen).line, 6841, '/open is FuncTextCmd.cpp:6841 (DEAD_GM_COMMANDS_AFTER_OPEN.md)');
+  eq(J(m.rows.filter(r => !r.compiled && !r.dead).map(r => r.name).slice(0, 2)), J(['GuildRanking', 'GuildRankingUpdate']), '__GUILDRANK is off: /GuildRanking is not built');
+  eq(m.rows.find(r => r.name === 'tradeagree').inServer, false, '/tradeagree is game-only (#ifdef __CLIENT)');
+  eq(S.type(m, '/ta x', { auth: 'ADMINISTRATOR' }).row.name, 'tradeagree', '/ta runs /tradeagree, not /notalk (same short name, /tradeagree first)');
+  eq(S.type(m, '/cn 20 1 0', { auth: 'GAMEMASTER2' }).result, 'ignored', '/cn needs GM 3: a GM 2 gets nothing');
+  eq(S.type(m, '/CN 20', { auth: 'ADMINISTRATOR' }).known, false, '/CN is not /cn (exact names)');
+  const cn = m.rows.find(r => r.name === 'createnpc'), pet = m.rows.find(r => r.name === 'Pet'), te = m.rows.find(r => r.name === 'teleport');
+  eq(G.build(cn, [20, 5, '1']), '/createnpc 20 5 1', '/cn: monster id, how many, aggressive (TextCmd_CreateNPC)');
+  eq(G.build(cn, [20, 5, '1'], { short: true }), '/cn 20 5 1', 'short names');
+  eq(G.build(pet, ['Kevin', 0, 100, '13579', 99]), '/Pet Kevin 0 100 13579 99', '/Pet: player, kind, EXP %, stages D-S, life (TextCmd_Pet)');
+  eq(G.build(pet, ['Kevin', '', 100, '13579', 99]), '/Pet Kevin <Pet> 100 13579 99', 'an empty word stays a visible <gap>: never shifts the next words');
+  ok(G.incomplete('/Pet Kevin <Pet> 100') && !G.incomplete('/system a < b > c'), 'a line with a <gap> is not copied');
+  eq(G.build(te, [1, 6971, 3328]), '/teleport 1 6971 3328', '/teleport: map id, x, z');
+  eq(G.build(m.rows.find(r => r.name === 'level'), ['Force Master', 120, 0]), '/level "Force Master" 120', 'a job with a space goes in quotes; Hero/Legend 0 is left out');
+  const byLow = n => m.rows.find(r => r.name.toLowerCase() === n);
+  eq(G.build(byLow('guildstat'), ['pxp', 9999]), '/GuildStat pxp 9999', '/GuildStat: the word, then its number (TextCmd_GuildStat)');
+  eq(G.argsOf(byLow('guildstat'), 'notice').map(a => a.k).join(), 'sub,word', '/GuildStat notice: the word field + one text word');
+  eq(G.build(byLow('weather'), ['rain', '2h']), `/${byLow('weather').name} rain 2h`, '/weather rain 2h (TextCmd_Weather)');
+  eq(G.build(byLow('weather'), ['off']), `/${byLow('weather').name} off`, '/weather off: no time');
+  eq(G.build(byLow('antibot'), ['', 'Bob']), `/${byLow('antibot').name} Bob`, '/antibot <name>: the empty word writes nothing');
+  eq(J([m.pets.kinds.length, m.pets.stageMax.join('')]), J([7, '99999']), 'pet.inc: 7 kinds, every stage rolls up to 9 on our server');
+  ok(m.jobs.some(j => j.name === 'Blade'), 'etc.inc job names (Blade) for /level and /changejob');
+  eq(W.diags.map(d => d.code).join(), 'GM_DEAD', 'one INFO: the commands below /open');
+  for (const k of ['GM_DEAD', 'GM_NO_SOURCE']) ok(FRE.diagHelp[k], `help text for ${k}`);
+  const W0 = new FRE.Workspace(fs, { only: 'gmcmd' }).load();
+  eq(W0.diags.map(d => d.code).join(), 'GM_NO_SOURCE', 'no C++ (test-data without src/): GM_NO_SOURCE, the page asks for the source');
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} gmcmd ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py gmcmd) gave no readable result', e.message); }
+  if (py) checkGmCmd({ FRE, py, m, ok, eq });
+} else print('  (no src/FuncTextCmd.cpp in the fixtures: run tools/refresh-fixtures.sh)');
 
 print(`\n${pass} passed, ${fail} failed`);
 if (fail) System.exit(1);

@@ -15206,6 +15206,196 @@ def cb_strings_text(t):
     return t, out
 
 
+# ---------------------------------------------------------------- GM Commands (FuncTextCmd.cpp, ParsingCommand)
+# Written from the C++: the m_textCmdFunc table between BEGINE_TEXTCMDFUNC_MAP and END_TEXTCMDFUNC_MAP (ON_TEXTCMDFUNC rows, the
+# preprocessor lines around them, // and /* */ comments), the switches of each build (_Common/CustomCommon.h + WORLDSERVER/ or
+# Neuz/VersionCommon.h), and ParsingCommand: '/' + the command word (CScanner), the walk in table order, the stop at a name starting
+# with "open" (non-Korean), the exact match on any of the 4 names, the level check (break), the game -> server hand-over by m_nServer.
+GM_AUTH = {'OBSERVER': 'D', 'GENERAL': 'F', 'LOGCHATTING': 'G', 'JOURNALIST': 'H', 'HELPER': 'J', 'GAMEMASTER': 'L',
+           'GAMEMASTER2': 'M', 'GAMEMASTER3': 'N', 'OPERATOR': 'O', 'ADMINISTRATOR': 'P'}
+
+
+def gm_switches(path):
+    on = set()
+    for raw in open(path, 'rb').read().decode('latin-1').splitlines():
+        m = re.match(r'[ \t]*#[ \t]*define[ \t]+(\w+)', raw)
+        if m:
+            on.add(m.group(1))
+    return on
+
+
+def gm_if_true(word, rest, on):
+    rest = re.sub(r'//.*', '', rest).strip()
+    if word == 'ifdef':
+        return rest in on
+    if word == 'ifndef':
+        return rest not in on
+    m = re.match(r'__VER\s*>=\s*(\d+)', rest)
+    if m:
+        return int(m.group(1)) <= 19
+    m = re.match(r'(!?)\s*defined\s*\(\s*(\w+)\s*\)', rest)
+    if m:
+        return (m.group(2) in on) != (m.group(1) == '!')
+    return rest in on
+
+
+def gm_table(cpp, on_ws, on_nz):
+    src = open(cpp, 'rb').read().decode('latin-1').splitlines()
+    i = 0
+    while 'BEGINE_TEXTCMDFUNC_MAP' not in src[i] or '#define' in src[i]:
+        i += 1
+    rows, cond, comment = [], [], False
+    for k in range(i + 1, len(src)):
+        ln = src[k]
+        if comment:
+            if '*/' not in ln:
+                continue
+            ln = ln[ln.index('*/') + 2:]
+            comment = False
+        if 'END_TEXTCMDFUNC_MAP' in ln:
+            break
+        pp = re.match(r'\s*#\s*(\w+)(.*)', ln)
+        if pp:
+            w, rest = pp.group(1), pp.group(2)
+            if w in ('if', 'ifdef', 'ifndef'):
+                cond.append([gm_if_true(w, rest, on_ws), gm_if_true(w, rest, on_nz)])
+            elif w == 'else':
+                cond[-1] = [not cond[-1][0], not cond[-1][1]]
+            elif w == 'endif':
+                cond.pop()
+            continue
+        s = ln.strip()
+        if s.startswith('//'):
+            continue
+        if s.startswith('/*'):
+            comment = '*/' not in s
+            continue
+        if not s.startswith('ON_TEXTCMDFUNC'):
+            continue
+        q = re.findall(r'"([^"]*)"', s)
+        fields = [x.strip() for x in re.sub(r'"[^"]*"', '""', s[s.index('(') + 1:s.rindex(')')]).split(',')]
+        rows.append({'line': k + 1, 'name': q[0], 'short': q[1], 'kr': q[2], 'krs': q[3],
+                     'server': fields[5][4:], 'auth': fields[6][5:],
+                     'ws': all(c[0] for c in cond), 'nz': all(c[1] for c in cond)})
+    return rows
+
+
+def gm_word(line):
+    t = [x.decode('latin-1') for x in tokens(line.encode('latin-1'))]
+    w = t[1] if len(t) > 1 else ''
+    return w[1:-1] if w[:1] == '"' else w        # CScanner::GetToken: a "..." token is the text inside the quotes (scanner.cpp:655)
+
+
+def gm_parse(rows, build, word, level):
+    # ParsingCommand on one build: -> (stop, row)
+    for r in rows:
+        if not r[build]:
+            continue
+        if r['name'][:4] == 'open':                 # memcmp( m_pCommand, "open", 4 ) == 0 -> break
+            return 'open', None
+        if word in (r['name'], r['short'], r['kr'], r['krs']):
+            if GM_AUTH[r['auth']] > level:          # m_dwAuthorization > the player's -> break
+                return 'auth', r
+            return 'match', r
+    return 'none', None
+
+
+def gm_type(rows, line, auth):
+    level = GM_AUTH[auth]
+    word = gm_word(line)
+    if not line.startswith('/'):
+        return {'result': 'chat', 'row': None, 'game': None, 'server': None}
+    g, gr = gm_parse(rows, 'nz', word, level)
+    res = {'result': 'ignored', 'row': None, 'game': g, 'server': None}
+    if g != 'match':
+        return res
+    res['row'] = gr['name']
+    if gr['server'] == 'CLIENT':
+        res['result'] = 'game'
+        return res
+    s, sr = gm_parse(rows, 'ws', word, level)
+    res['server'] = s
+    if s != 'match':
+        res['result'] = 'game' if gr['server'] == 'BOTH' else 'chat'    # OnChat: ParsingCommand FALSE -> chat
+        return res
+    res['row'] = sr['name']
+    if sr['server'] == 'CLIENT':
+        res['result'] = 'game' if gr['server'] == 'BOTH' else 'swallowed'
+    else:
+        res['result'] = 'both' if gr['server'] == 'BOTH' else 'server'
+    return res
+
+
+def gm_pets(root, D):
+    # CPetProperty::LoadScript (pet.cpp): AvailDestParam rows -> kinds; LevelupAvail rows (from PL_D) -> highest roll = last i with p > 0, + 1
+    path = os.path.join(root, 'pet.inc')
+    if not os.path.exists(path):
+        return None
+    raw = open(path, 'rb').read()
+    if raw[:2] == b'\xff\xfe':                     # CScript::Load: a UTF-16LE file (the Korean is only in comments)
+        raw = raw[2:].decode('utf-16-le').encode('utf-8')
+    t = [x.decode('utf-8') for x in tokens(raw)]
+    num = lambda x: D[x] if x in D else atoi(x)
+    kinds, top, k = [], [], 0
+    while k < len(t):
+        if t[k] == 'AvailDestParam':
+            k += 2
+            while t[k] != '}':
+                kinds.append({'dst': num(t[k]), 'params': [num(x) for x in t[k + 1:k + 10]], 'item': num(t[k + 10])})
+                k += 15
+        elif t[k] == 'LevelupAvail':
+            k += 2
+            while t[k] != '}':
+                row = [num(x) for x in t[k:k + 9]]
+                top.append(max([i for i in range(9) if row[i] > 0] or [-1]) + 1)
+                k += 9
+        k += 1
+    return {'kinds': kinds, 'top': top}
+
+
+def gm_run(root):
+    src = os.path.join(root, '..', 'src')
+    base = gm_switches(os.path.join(src, 'CustomCommon.h'))
+    on_ws = base | gm_switches(os.path.join(src, 'worldserver', 'VersionCommon.h')) | {'__WORLDSERVER'}
+    on_nz = base | gm_switches(os.path.join(src, 'neuz', 'VersionCommon.h')) | {'__CLIENT'}
+    rows = gm_table(os.path.join(src, 'FuncTextCmd.cpp'), on_ws, on_nz)
+    words = []
+    for r in rows:
+        words += [r['name'], r['short'], r['name'].upper(), r['name'].lower()]
+    words += ['', 'nosuchcommand', 'opener', 'Open']
+    lines = []
+    for w in dict.fromkeys(words):
+        lines.append('/' + w + ' 1 2')
+    lines += ['hello', '/ cn 20', '/cn', '/"cn" 20', 'x/cn']
+    cases = [{'line': ln, 'auth': a, 'out': gm_type(rows, ln, a)} for ln in lines for a in ('GENERAL', 'GAMEMASTER', 'GAMEMASTER2', 'GAMEMASTER3', 'ADMINISTRATOR')]
+    # made-up tables: branches today's table never reaches
+    R = lambda n, s, srv, a: '\tON_TEXTCMDFUNC( TextCmd_%s, "%s", "%s", "kr", "k", TCM_%s, AUTH_%s, "" )' % (n, n, s, srv, a)
+    made = []
+    body = ['#if __VER >= 19', R('ver19', 'v19', 'SERVER', 'GENERAL'), '#endif', '#if __VER >= 20', R('ver20', 'v20', 'SERVER', 'GENERAL'), '#endif',
+            '#ifdef __CLIENT', R('bothgame', 'bg', 'BOTH', 'GENERAL'), R('srvgame', 'sg', 'SERVER', 'GENERAL'), '#else', R('srvonly', 'so', 'SERVER', 'GENERAL'), '#endif',
+            '#ifndef SW_OFF', R('notoff', 'no', 'BOTH', 'GAMEMASTER'), '#endif', '#if defined(SW_ON)', R('defon', 'do', 'CLIENT', 'GENERAL'), '#endif', '#if !defined(SW_ON)', R('notdefon', 'nd', 'CLIENT', 'GENERAL'), '#endif',
+            '/*', R('blocked', 'bl', 'SERVER', 'GENERAL'), '*/', '//' + R('slashed', 'sl', 'SERVER', 'GENERAL'),
+            R('operate', 'op', 'CLIENT', 'GENERAL'), R('opal', 'opl', 'SERVER', 'GENERAL'), R('opener', 'opn', 'CLIENT', 'GENERAL'), R('after', 'af', 'SERVER', 'GENERAL'),
+            '#ifdef __WORLDSERVER', R('wsclient', 'wc', 'CLIENT', 'GENERAL'), '#endif']
+    made.append('\r\n'.join(['// made up', 'BEGINE_TEXTCMDFUNC_MAP'] + body + ['END_TEXTCMDFUNC_MAP', '']))
+    body2 = ['\tON_TEXTCMDFUNC( TextCmd_a, "dup", "d", "kr", "k", TCM_CLIENT, AUTH_ADMINISTRATOR, "x, y" )', R('dup', 'd2', 'SERVER', 'GENERAL'),
+             '#ifdef __CLIENT', R('cmdc', 'cc', 'BOTH', 'GENERAL'), '#endif', '#ifdef __WORLDSERVER', R('cmdc', 'cs', 'CLIENT', 'GENERAL'), '#endif',
+             R('open', 'open', 'CLIENT', 'GENERAL'), R('late', 'lt', 'SERVER', 'GENERAL')]
+    made.append('\n'.join(['BEGINE_TEXTCMDFUNC_MAP'] + body2 + ['END_TEXTCMDFUNC_MAP']))
+    sw = {'ws': sorted({'SW_ON'} | {'__WORLDSERVER'}), 'nz': sorted({'SW_ON', '__CLIENT'})}
+    tables = []
+    tmp = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'gm_made_%d.cpp' % os.getpid())
+    for text in made:
+        open(tmp, 'wb').write(text.encode('latin-1'))
+        mr = gm_table(tmp, set(sw['ws']), set(sw['nz']))
+        ws_ = [w for r in mr for w in (r['name'], r['short'])] + ['nothing', 'kr']
+        tc = [{'line': '/' + w, 'auth': a, 'out': gm_type(mr, '/' + w, a)} for w in dict.fromkeys(ws_) for a in ('GENERAL', 'GAMEMASTER', 'ADMINISTRATOR')]
+        tables.append({'text': text, 'rows': [[r['line'], r['name'], r['short'], r['server'], r['auth'], r['ws'], r['nz']] for r in mr], 'cases': tc})
+    os.remove(tmp)
+    return {'rows': [[r['line'], r['name'], r['short'], r['server'], r['auth'], r['ws'], r['nz']] for r in rows],
+            'cases': cases, 'pets': gm_pets(root, defines(root)), 'switches': sw, 'tables': tables}
+
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -15281,6 +15471,8 @@ if __name__ == '__main__':
         print(json.dumps(eq_run(root)))
     elif what == 'pvp':                         # PvP Events: FFA / TDM ReadConfig, GuildCombat.txt, GuildSiegePrize.lua, schedules, money, battles, edits
         print(json.dumps(pv_run(root)))
+    elif what == 'gmcmd':                       # GM Commands: the FuncTextCmd.cpp table per build, ParsingCommand for typed lines, pet.inc
+        print(json.dumps(gm_run(root)))
     elif what == 'dds':                         # a folder of .dds icons -> {file: [w, h, sha256 of the RGBA]}
         print(json.dumps(dds_run(root)))
     elif what == 'modeltex':                    # index for a test copy: Mvr_X.o3d<TAB>texture<TAB>... per NPC model

@@ -1,0 +1,8 @@
+GuildBuffTiers
+{
+	1 10 5  10003 10  66 3   52 3   67 10  0 0  0 0  0 0  0 0  "Guild Buff Lv.1" "All Stat +10, Atk +3%, HP +3%, EXP +10%" "GuildBuff1.png"
+	2 20 10  10003 15  66 6   52 6   67 20  0 0  0 0  0 0  0 0  "Guild Buff Lv.2" "All Stat +15, Atk +6%, HP +6%, EXP +20%" "GuildBuff2.png"
+	3 30 15  10003 20  66 9   52 9   67 30  0 0  0 0  0 0  0 0  "Guild Buff Lv.3" "All Stat +20, Atk +9%, HP +9%, EXP +30%" "GuildBuff3.png"
+	4 40 20  10003 25  66 12  52 12  67 40  0 0  0 0  0 0  0 0  "Guild Buff Lv.4" "All Stat +25, Atk +12%, HP +12%, EXP +40%" "GuildBuff4.png"
+	5 50 30  10003 30  66 15  52 15  67 50  79 5  0 0  0 0  0 0  "Guild Buff Lv.5" "All Stat +30, Atk +15%, HP +15%, EXP +50%, PvE Dmg +5%" "GuildBuff5.png"
+}

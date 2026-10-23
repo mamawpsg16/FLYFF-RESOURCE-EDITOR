@@ -1,0 +1,76 @@
+// Penya Table - Penya a monster gives per kill, by monster level.
+//
+// For the ranks listed under RANKS, this replaces the DropGold(min, max) values in
+// propMoverEx.inc. Everything else still multiplies on top, exactly as before:
+//  - the level-gap cut (killer 3-4 levels above: 80%, 5-7 above: 65%, 8+ above: 50%)
+//  - Event.lua "Server Rates" SetGoldDropFactor (x10 now)
+//  - Anarchy and Penya Rate items (St. Patrick's Day Cloak +50%)
+// Every rank not listed keeps its propMoverEx.inc DropGold.
+// A monster with no DropGold line still gives no Penya.
+//
+// LEVELS   level   minGold   maxGold
+//  - these are BASE amounts: the player gets them x10 (Server Rates) at the same level
+//  - the curve grows about 5% per level, the same way monster EXP does
+//  - levels between two rows are filled in on a straight line, so every level gives
+//    a little more than the one below; below the first row the first row is used,
+//    above the last row the last row is used
+//
+// RANKS    rank   percent   mode
+//  - rank: 1 = LOW, 2 = NORMAL, 3 = CAPTAIN, 4 = BOSS (giants), 5 = MIDBOSS, 7 = SUPER
+//  - percent of the LEVELS amount that rank gets; leave a rank out to keep its DropGold
+//  - mode 0: the table replaces DropGold
+//    mode 1: whichever is higher, the table or DropGold - for bosses, some of which
+//            (Skeldevil, Behemoth, Kraken ...) already pay millions from DropGold
+//  - every row needs all three numbers
+//
+// WORLDS   worldID   percent
+//  - multiplies the table amount for monsters killed in that map (not listed: 100)
+//  - world IDs are in defineWorld.h (5 = WI_WORLD_DARKRARTESIA, Dark Traseia)
+//  - Dark Traseia is THE Penya-farming map: x2 of the same level anywhere else.
+//    Madrigal is for levelling, Monster Hunt and giant hunting.
+//
+// Restart the WorldServer after editing this file.
+
+LEVELS
+{
+//	lv	min	max		// per kill at x10, NORMAL rank:   elsewhere  |  in Dark Traseia (x2)
+	1	15	17		// 150 - 170
+	10	24	26		// 240 - 260
+	20	38	42		// 380 - 420
+	30	60	68		// 600 - 680
+	40	98	108		// 980 - 1.1k
+	50	158	175		// 1.6k - 1.8k
+	60	255	285		// 2.6k - 2.9k
+	70	410	455		// 4.1k - 4.6k
+	80	675	725		// 6.8k - 7.3k
+	90	1075	1175		// 11k - 12k
+	100	1725	1925		// 17k - 19k
+	110	2800	3100		// 28k - 31k
+	120	4500	5000		// 45k - 50k
+	129	6950	7650		// 70k - 77k      |  Dark Guardian Terrapin   139k - 153k
+	133	8400	9300		// 84k - 93k      |  Dark Usagi Fighter       168k - 186k
+	137	10150	11250		// 102k - 113k    |  Dark Usagi Blade Master  203k - 225k
+	141	12300	13600		// 123k - 136k    |  Dark Usagi Yari          246k - 272k
+	145	14900	16500		// 149k - 165k    |  Dark Usagi Ninja         298k - 330k
+	149	18000	20000		// 180k - 200k    |  Dark Usagi Axe Master    360k - 400k
+	152	20900	23100		// 209k - 231k
+}
+
+RANKS
+{
+//	rank	percent	mode
+	1	80	0	// LOW
+	2	100	0	// NORMAL
+	3	150	0	// CAPTAIN
+	4	20000	1	// BOSS (giants)  Lv121 giant ~9-10M, Lv116 ~7.6-8.5M, Lv67 ~0.7-0.8M at the same level
+	5	12000	1	// MIDBOSS
+	7	12000	1	// SUPER          Basilisk Lv146: about 19-21M at the same level
+}
+
+WORLDS
+{
+//	world	percent
+	3	10		// Coral Island (WI_WORLD_CISLAND) - the Red Chip map, not a Penya map
+	4	10		// Day Traseia (WI_WORLD_RARTESIA) - the Moonstone/Sunstone map, not a Penya map
+	5	200		// Dark Traseia (WI_WORLD_DARKRARTESIA)
+}

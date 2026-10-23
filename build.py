@@ -54,6 +54,11 @@ def main():
         for var, name in (('HARNESS_TEX_LIST', 'ModelTexture.list'), ('HARNESS_TEX_INDEX', 'Model.textures')):
             f = ROOT / 'test-data' / 'fixtures' / 'Client' / name
             parts.append(f'FRE.{var} = ' + json.dumps(f.read_text(encoding='latin-1') if f.exists() else None) + ';')
+        # GM Commands: the command table + build switches, at their real place under Source/Source (io/source-read.js)
+        sx = ROOT / 'test-data' / 'fixtures' / 'src'
+        gm = {'Source/Source/_Interface/FuncTextCmd.cpp': 'FuncTextCmd.cpp', 'Source/Source/_Common/CustomCommon.h': 'CustomCommon.h',
+              'Source/Source/WORLDSERVER/VersionCommon.h': 'worldserver/VersionCommon.h', 'Source/Source/Neuz/VersionCommon.h': 'neuz/VersionCommon.h'}
+        parts.append('FRE.HARNESS_SRC = ' + json.dumps({k: base64.b64encode((sx / v).read_bytes()).decode() for k, v in gm.items() if (sx / v).exists()}) + ';')
         # Client/Item icons (Boxes shows each box's icon)
         it = ROOT / 'test-data' / 'fixtures' / 'Client' / 'Item'
         parts.append('FRE.HARNESS_ITEMS = ' + json.dumps({f.name: base64.b64encode(f.read_bytes()).decode() for f in sorted(it.iterdir())} if it.exists() else {}) + ';')

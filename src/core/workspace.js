@@ -296,6 +296,15 @@
       },
     },
     {
+      // GM Commands (loaders/gmcmd.js): the chat command table read from the loaded C++ (FuncTextCmd.cpp + the build switches,
+      // io/source-read.js), nothing editable. propMover / pet.inc / etc.inc: the monster, pet and job pickers.
+      id: 'gmcmd', label: 'GM Commands',
+      required: [], editable: [], client: [],
+      optional: ['propMover.txt', 'propMover.txt.txt', 'pet.inc'],
+      parse(ws) { return FRE.gmCmd.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.gmCmd.checks(model); },
+    },
+    {
       // Where is this item from? (task H, loaders/where.js): every model above parsed read-only, nothing editable.
       // Last, so its parse sees the other models. maps: towns of the NPCs, and whether they stand in the game.
       id: 'where', label: 'Item Sources & Uses',

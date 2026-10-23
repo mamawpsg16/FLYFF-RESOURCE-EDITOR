@@ -26,6 +26,7 @@
   const LEVEL = SCHEMA.findIndex(f => f.name === 'dwLevel');
   const CLASS = SCHEMA.findIndex(f => f.name === 'dwClass');
   const FLYING = SCHEMA.findIndex(f => f.name === 'dwFlying');
+  const ELEMENT = SCHEMA.findIndex(f => f.name === 'eElementType');
   const CORRECTION = SCHEMA.findIndex(f => f.name === 'dwCorrectionValue');
   const EXPVALUE = SCHEMA.findIndex(f => f.name === 'nExpValue');
 
@@ -59,7 +60,7 @@
         id: id.value, define: id.define || miOf.get(id.value) || file.text.slice(id.start, id.end),
         name, nameKey: nameTok.stringKey || null,
         level: vals[LEVEL], rankId: vals[CLASS], rank: RANKS[vals[CLASS]] || `rank ${vals[CLASS]}`,
-        flying: vals[FLYING], correction: vals[CORRECTION], exp: vals[EXPVALUE],   // the kill path: drops into the bag; DropKind's chance % (Mover.cpp:8613 / 8866)
+        flying: vals[FLYING], element: vals[ELEMENT], correction: vals[CORRECTION], exp: vals[EXPVALUE],   // the kill path: drops into the bag; DropKind's chance % (Mover.cpp:8613 / 8866)
         start: id.start,
       });
     }

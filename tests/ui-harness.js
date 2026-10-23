@@ -117,6 +117,15 @@
   serverDir.children.set('Resource', res);
   root.children.set('Server', serverDir);
   root.children.set('Client', clientDir);
+  // GM Commands: Source/Source/... (the C++ the page reads, embedded by build.py --harness)
+  for (const [path, b64] of Object.entries(FRE.HARNESS_SRC || {})) {
+    const bin = atob(b64), u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const parts = path.split('/'), n = parts.pop();
+    let dir = root;
+    for (const p of parts) { if (!dir.children.has(p)) dir.children.set(p, new FakeDir(p)); dir = dir.children.get(p); }
+    dir.children.set(n, new FakeFile(n, u8));
+  }
   FRE.fsa = Object.assign({}, FRE.fsa, {
     supported: () => true,
     pickFolder: async id => (id === 'flyff-root' ? root : backups),
@@ -439,6 +448,48 @@
     res.children.get('MiniEvent.inc').bytes = original.get('MiniEvent.inc');
   }
 
+  // the GM Commands task (?stop=gmcmd: summon a monster, Copy; ?stop=gmcmdpet: the raised pet, a dead command, search)
+  async function gmCmdStage() {
+    const S = FRE.app.state;
+    await openTask('gmcmd');
+    const ed = () => $('editor'), cats = () => [...document.querySelectorAll('#list .npc')], bar = () => ed().querySelector('input.gm-line');
+    const card = n => ed().querySelector(`.gm-card[data-cmd="${n}"]`);
+    ok(S.mode === 'gmcmd' && cats().some(c => c.dataset.cat === 'summon') && cats().some(c => c.dataset.cat === 'off'), 'GM Commands: categories listed, with "Not working"');
+    ok(/171 commands work/.test(ed().textContent), `171 working commands read from FuncTextCmd.cpp (${(/(\d+) commands work/.exec(ed().textContent) || [])[1]})`);
+    click(card('createnpc').querySelector('.gm-head'));
+    ok(bar() && bar().value.startsWith('/createnpc'), `picking /createnpc puts it in the bar (${bar() && bar().value})`);
+    const num = card('createnpc').querySelector('input[type=number]');
+    num.value = '5'; num.dispatchEvent(new Event('input'));
+    const mi = [...S.ws.movers.movers.values()].find(v => v.define === 'MI_AIBATT1');
+    S.ws._gmMon = null;
+    FRE.ui.modules.find(m => m.id === 'gmcmd').st.vals['createnpc|0'] = mi.id;
+    num.dispatchEvent(new Event('input'));
+    ok(bar().value === `/createnpc ${mi.id} 5 0`, `Aibatt, 5, not aggressive: /createnpc ${mi.id} 5 0 (got ${bar().value})`);
+    ok(/Runs on the server/.test(ed().querySelector('.gm-what').textContent), 'what happens: runs on the server');
+    const gs = m => m.rows.find(r => r.name.toLowerCase() === 'guildstat');
+    const gsName = gs(S.ws.models.gmcmd).name;
+    click(cats().find(c => c.dataset.cat === FRE.gmCmd.catOf(gs(S.ws.models.gmcmd))));
+    ok(/Logo · PXP · Penya · Notice/.test(card(gsName).querySelector('.gm-subs').textContent), 'GuildStat closed: its words show (Logo · PXP · Penya · Notice)');
+    click(card(gsName).querySelector('.gm-head'));
+    click(card(gsName).querySelector('.gm-opt[data-v="pxp"]'));
+    ok(bar().value === `/${gsName} pxp 9999` && card(gsName).querySelector('.gm-opt.sel').dataset.v === 'pxp', `GuildStat: the PXP button, 9999 (got ${bar().value})`);
+    click(card(gsName).querySelector('.gm-opt[data-v="notice"]'));
+    ok(bar().value === `/${gsName} notice <Notice text (the guild window shows it)>`, `GuildStat: Notice clears PXP's number, asks for the text (got ${bar().value})`);
+    if (STOP === 'gmcmd') { $('toasts').textContent = ''; return; }
+    click(cats().find(c => c.dataset.cat === 'pets'));
+    click(card('Pet').querySelector('.gm-head'));
+    const name = card('Pet').querySelector('input[type=text]');
+    name.value = 'Kevin'; name.dispatchEvent(new Event('input'));
+    ok(bar().value === '/Pet Kevin <Pet> 100 13579 99' && /Fill in <Pet>/.test(ed().querySelector('.gm-what').textContent), `no pet picked yet: a visible <Pet> gap, not a shifted line (got ${bar().value})`);
+    click(card('Pet').querySelector('.gm-pet'));
+    ok(bar().value === '/Pet Kevin 0 100 13579 99', `raised pet, White Tiger, perfect 1/3/5/7/9: /Pet Kevin 0 100 13579 99 (got ${bar().value})`);
+    click(cats().find(c => c.dataset.cat === 'off'));
+    ok(card('close') && card('close').classList.contains('off') && /below \/open/.test(card('close').textContent), '/close is greyed: never runs, below /open');
+    FRE.app.ctx.setQuery('snow'); FRE.app.ctx.renderAll(false);
+    ok(card('FallSnow') && card('StopSnow'), 'search "snow": /FallSnow and /StopSnow');
+    $('toasts').textContent = '';
+  }
+
   // the Mounts task (?stop=mounts: the list and Nightmare Dragon; ?stop=mountsedit: edits, paste, a new block, Save)
   async function mountsStage() {
     const S = FRE.app.state;
@@ -525,12 +576,13 @@
     // the cards are drawn after the patch check (io/patch-state.js reads one C++ file per patch)
     await waitFor(() => document.querySelector('.task-card:not(:disabled)'), 'task cards enabled');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
-    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 17 && document.querySelector('.task-card[data-task="classbuffs"]') && document.querySelector('.task-card[data-task="antibot"]') && document.querySelector('.task-card[data-task="minievent"]') && document.querySelector('.task-card[data-task="mounts"]') && document.querySelector('.task-card[data-task="consumables"]') && document.querySelector('.task-card[data-task="dungeon"]') && document.querySelector('.task-card[data-task="pvp"]') && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 17 tasks to pick (Class Buffs; Bot Check; Mini Events; Mounts; Consumable Stats; Dungeons; PvP Events; Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 18 && document.querySelector('.task-card[data-task="gmcmd"]') && document.querySelector('.task-card[data-task="classbuffs"]') && document.querySelector('.task-card[data-task="antibot"]') && document.querySelector('.task-card[data-task="minievent"]') && document.querySelector('.task-card[data-task="mounts"]') && document.querySelector('.task-card[data-task="consumables"]') && document.querySelector('.task-card[data-task="dungeon"]') && document.querySelector('.task-card[data-task="pvp"]') && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 18 tasks to pick (GM Commands; Class Buffs; Bot Check; Mini Events; Mounts; Consumable Stats; Dungeons; PvP Events; Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     if (STOP === 'dungeon') { await dungeonStage(); return; }
     if (STOP === 'antibot' || STOP === 'antibotedit') { await antiBotStage(); return; }
     if (STOP === 'minievent' || STOP === 'mineventprizes' || STOP === 'mineventhide' || STOP === 'mineventrace' || STOP === 'mineventweek' || STOP === 'mineventqs' || STOP === 'mineventturnin' || STOP === 'mineventedit' || STOP === 'mineventsave') { await miniEventStage(); return; }
+    if (STOP === 'gmcmd' || STOP === 'gmcmdpet') { await gmCmdStage(); return; }
     if (STOP === 'mounts' || STOP === 'mountsmore' || STOP === 'mountsimple' || STOP === 'mountsgame' || STOP === 'mountsedit' || STOP === 'mountsave') { await mountsStage(); return; }
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
     click(document.querySelector('.task-card[data-task="npc"]'));

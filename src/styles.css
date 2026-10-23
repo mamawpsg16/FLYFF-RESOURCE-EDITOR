@@ -451,3 +451,26 @@ details.fold[open] > .fold-head { border-bottom-left-radius: 0; border-bottom-ri
 /* the "what you are editing" bar of a page (Equalized presets): stays at the top of the editor */
 .edit-bar { position: sticky; top: -16px; z-index: 4; background: var(--panel); border-bottom: 2px solid var(--accent); margin: 12px -20px 0; padding: 8px 20px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .edit-bar .edit-where { font-weight: 700; font-size: 15px; }
+/* GM Commands */
+.gm-opts { margin: 6px 0 10px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+.gm-list { display: flex; flex-direction: column; gap: 4px; max-width: 980px; padding-bottom: 120px; }
+.gm-card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; }
+.gm-card.sel { border-color: var(--ok); }
+.gm-card.off { opacity: .55; }
+.gm-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; cursor: pointer; }
+.gm-card.off .gm-head { cursor: default; }
+.gm-desc { flex: 1 1 200px; }
+.gm-form { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 8px 0 4px; }
+.gm-field { display: flex; flex-direction: column; gap: 3px; }
+.gm-pick { display: inline-flex; align-items: center; gap: 6px; }
+.gm-pets { display: flex; flex-wrap: wrap; gap: 6px; }
+.gm-pet { display: flex; align-items: center; gap: 4px; padding: 3px 8px; }
+.gm-pet.sel { border-color: var(--ok); }
+.gm-btns { display: flex; flex-wrap: wrap; gap: 4px; }
+.gm-opt { padding: 2px 8px; }
+.gm-opt.sel { border-color: var(--ok); font-weight: 600; }
+.gm-bar { position: sticky; bottom: 0; background: var(--bg); border-top: 2px solid var(--ok); padding: 8px 0 10px; max-width: 980px; }
+.gm-row { display: flex; gap: 8px; }
+.gm-line { flex: 1; font-family: monospace; font-size: 18px; padding: 6px 10px; }
+.gm-what { margin-top: 4px; }
+.gm-recent { margin-top: 4px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }

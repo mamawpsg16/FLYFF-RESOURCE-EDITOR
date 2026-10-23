@@ -53,6 +53,8 @@ validate/newmenu.js
 loaders/newnpc-sim.js
 loaders/gifts.js
 loaders/gifts-sim.js
+loaders/gmcmd.js
+loaders/gmcmd-sim.js
 loaders/where.js
 loaders/rates.js
 loaders/rates-sim.js
@@ -138,6 +140,7 @@ ui/battlepass.js
 ui/drops.js
 ui/boxes.js
 ui/exchange.js
+ui/gmcmd.js
 ui/where.js
 ui/rates.js
 ui/upgrade.js

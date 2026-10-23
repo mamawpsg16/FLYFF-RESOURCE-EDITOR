@@ -1,0 +1,18 @@
+// Owner buffs - a guild-wide buff for the guild that holds a title (__OWNER_BUFF, OwnerBuff.cpp)
+//
+//   type 0 = Secret Room owner: the guild that won the Secret Room on an open continent.
+//            Starts right after the win; gone while the next Secret Room runs.
+//   type 1 = Guild Siege winner: the last siege's winner guild. Gone while the next siege runs.
+//
+// type   on (1/0)   4 x (stat amount)   "name"   "description"   "icon"
+//
+// - stats are DST_ numbers + amounts like GuildBuff.txt (0 0 = empty slot); every row needs all 4 pairs
+//     79 = DST_MONSTER_DMG (PvE damage %)   11 = DST_SPEED (%)
+//     66 = DST_ATKPOWER_RATE (attack %)     52 = DST_HP_MAX_RATE (max HP %)
+// - the icon is any file in Client\Icon (32 x 32)
+// - restart the WorldServer after editing this file; holders are checked every 30 s
+OwnerBuffs
+{
+	0  1   79 15   11 20   0 0   0 0   "Secret Room Owner"   "Your guild conquered the Secret Room and rules the continent: +15% PvE damage, +20% speed."   "SecretRoomBuff.png"
+	1  1   66 10   52 10   0 0   0 0   "Guild Siege Winner"   "Your guild won the last Guild Siege: +10% attack, +10% max HP."   "GuildSiegeBuff.png"
+}

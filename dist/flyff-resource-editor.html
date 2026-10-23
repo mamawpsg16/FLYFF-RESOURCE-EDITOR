@@ -459,6 +459,29 @@ details.fold[open] > .fold-head { border-bottom-left-radius: 0; border-bottom-ri
 /* the "what you are editing" bar of a page (Equalized presets): stays at the top of the editor */
 .edit-bar { position: sticky; top: -16px; z-index: 4; background: var(--panel); border-bottom: 2px solid var(--accent); margin: 12px -20px 0; padding: 8px 20px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .edit-bar .edit-where { font-weight: 700; font-size: 15px; }
+/* GM Commands */
+.gm-opts { margin: 6px 0 10px; display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+.gm-list { display: flex; flex-direction: column; gap: 4px; max-width: 980px; padding-bottom: 120px; }
+.gm-card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; }
+.gm-card.sel { border-color: var(--ok); }
+.gm-card.off { opacity: .55; }
+.gm-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; cursor: pointer; }
+.gm-card.off .gm-head { cursor: default; }
+.gm-desc { flex: 1 1 200px; }
+.gm-form { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 8px 0 4px; }
+.gm-field { display: flex; flex-direction: column; gap: 3px; }
+.gm-pick { display: inline-flex; align-items: center; gap: 6px; }
+.gm-pets { display: flex; flex-wrap: wrap; gap: 6px; }
+.gm-pet { display: flex; align-items: center; gap: 4px; padding: 3px 8px; }
+.gm-pet.sel { border-color: var(--ok); }
+.gm-btns { display: flex; flex-wrap: wrap; gap: 4px; }
+.gm-opt { padding: 2px 8px; }
+.gm-opt.sel { border-color: var(--ok); font-weight: 600; }
+.gm-bar { position: sticky; bottom: 0; background: var(--bg); border-top: 2px solid var(--ok); padding: 8px 0 10px; max-width: 980px; }
+.gm-row { display: flex; gap: 8px; }
+.gm-line { flex: 1; font-family: monospace; font-size: 18px; padding: 6px 10px; }
+.gm-what { margin-top: 4px; }
+.gm-recent { margin-top: 4px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 
 </style>
 </head>
@@ -515,7 +538,7 @@ details.fold[open] > .fold-head { border-bottom-left-radius: 0; border-bottom-ri
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "107+", "when": "Thu 22 Oct 2026, 18:12", "rev": "b3b7060", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "110+", "when": "Fri 23 Oct 2026, 08:07", "rev": "f554d78", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -1943,6 +1966,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "107+", "whe
   const LEVEL = SCHEMA.findIndex(f => f.name === 'dwLevel');
   const CLASS = SCHEMA.findIndex(f => f.name === 'dwClass');
   const FLYING = SCHEMA.findIndex(f => f.name === 'dwFlying');
+  const ELEMENT = SCHEMA.findIndex(f => f.name === 'eElementType');
   const CORRECTION = SCHEMA.findIndex(f => f.name === 'dwCorrectionValue');
   const EXPVALUE = SCHEMA.findIndex(f => f.name === 'nExpValue');
 
@@ -1976,7 +2000,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "107+", "whe
         id: id.value, define: id.define || miOf.get(id.value) || file.text.slice(id.start, id.end),
         name, nameKey: nameTok.stringKey || null,
         level: vals[LEVEL], rankId: vals[CLASS], rank: RANKS[vals[CLASS]] || `rank ${vals[CLASS]}`,
-        flying: vals[FLYING], correction: vals[CORRECTION], exp: vals[EXPVALUE],   // the kill path: drops into the bag; DropKind's chance % (Mover.cpp:8613 / 8866)
+        flying: vals[FLYING], element: vals[ELEMENT], correction: vals[CORRECTION], exp: vals[EXPVALUE],   // the kill path: drops into the bag; DropKind's chance % (Mover.cpp:8613 / 8866)
         start: id.start,
       });
     }
@@ -6425,6 +6449,8 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "107+", "whe
     SE_PLUS_SHIFT: ['A Setitem row has fewer than 5 numbers. The server reads 5 per row anyway, so it takes numbers from the next row (and past the }) and every value after is shifted.', 'Give each row exactly 5 numbers.'],
     SE_PLUS_ROWS: ['The Setitem table should have 10 rows (+1 to +10). Fewer: the missing levels give nothing. 11: the last is unused. More than 11: the server writes past its table at startup.', 'Keep exactly 10 rows.'],
     WE_DST_ZERO: ['A weapon stat slot holds stat 0 (an unknown DST_ name becomes 0). The server applies it and nothing happens.', 'Pick a stat, or empty the slot.'],
+    GM_NO_SOURCE: ['The GM Commands page reads the command table from the C++ (Source/Source/_Interface/FuncTextCmd.cpp). It was not found in the picked folder.', 'Pick FLYFF-V19-SOURCE, or run tools/refresh-fixtures.sh test-data to copy it into the test folder (src/).'],
+    GM_DEAD: ['ParsingCommand stops at the first command whose name starts with "open" (any non-Korean build), so every command listed after /open in FuncTextCmd.cpp can never run. Typing one does nothing, with no message.', 'Move the ON_TEXTCMDFUNC line of a command you need above the /open line in V19 (as /rrbp and /gspn were), then build the WorldServer and Neuz.'],
     WE_SLOT_DUP: ['The same stat is in two slots of one weapon. Both are added, so the weapon gives their sum (and the tooltip shows two lines).', 'Merge them into one slot.'],
     WE_ASPD_SMALL: ['DST_ATTACKSPEED is counted in 1/20 % (the speed factor gets amount / 1000; the tooltip shows amount / 20), so a small number is almost nothing.', 'Use DST_ATTACKSPEED_RATE for a whole percent, or multiply the number by 20.'],
     WE_RARITY_ASPD: ['A Weapon Rarity tier adds its % bonus to every rate stat, Attack Speed included, but Attack Speed is counted in 1/20 %: the bonus is tiny there, while the tooltip shows it as a whole %.', 'Nothing to fix in the file; it is how WeaponRarity_ScaleParam works.'],
@@ -10777,6 +10803,440 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "107+", "whe
 
   FRE.giftsSim = { envFor, life, levelPays, couple, siege, weekly, bag, STONES,
     MAX_JOB_LEVEL, MAX_EXP_LEVEL, MAX_GENERAL_LEVEL, MAX_LEGEND_LEVEL, MAX_3RD_LEGEND_LEVEL };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/gmcmd.js ----
+// GM Commands (task "GM Commands", read-only): the chat command table of the source, read from the loaded C++ (io/source-read.js),
+// never from a copy kept here, so a renamed or moved command (V19 branch feat/gm-rules) shows once it is in the source.
+//   FuncTextCmd.cpp: BEGINE_TEXTCMDFUNC_MAP ... END_TEXTCMDFUNC_MAP, one ON_TEXTCMDFUNC( fn, name, short, kr, krShort, TCM_x, AUTH_x, help )
+//   a row; `//` rows and `/* */` blocks are not compiled; #ifdef / #ifndef / #if __VER / #else / #endif decide which build has a row.
+//   CustomCommon.h + WORLDSERVER/VersionCommon.h (the WorldServer) and + Neuz/VersionCommon.h (the game) give the switched-on names.
+//   ParsingCommand (FuncTextCmd.cpp, "open" check): on a non-Korean build the walk stops at the first row whose name starts with
+//   "open", so every row after it can never run (SOURCES DOCUMENTATION/Bug Fixes/DEAD_GM_COMMANDS_AFTER_OPEN.md).
+// Not modelled: #if expressions other than __VER >= / defined(); #define lines inside #if blocks of the version headers count as on.
+// The argument forms (ARGS) are written from each handler's GetToken / GetNumber order; a command without one gets a free text box.
+(function (FRE) {
+  'use strict';
+
+  const FILE = 'functextcmd.cpp', CUSTOM = 'customcommon.h', WS_VER = 'worldserver/versioncommon.h', NZ_VER = 'neuz/versioncommon.h';
+  // authorization.h: AUTH_* letters, compared as numbers (m_dwAuthorization > the player's)
+  const AUTH = {
+    OBSERVER: ['D', 'Observer'], GENERAL: ['F', 'Every player'], LOGCHATTING: ['G', 'Logged chat'], JOURNALIST: ['H', 'Journalist'], HELPER: ['J', 'Helper'],
+    GAMEMASTER: ['L', 'GM 1'], GAMEMASTER2: ['M', 'GM 2'], GAMEMASTER3: ['N', 'GM 3'], OPERATOR: ['O', 'Operator'], ADMINISTRATOR: ['P', 'Admin'],
+  };
+  const LEVELS = ['GENERAL', 'GAMEMASTER', 'GAMEMASTER2', 'GAMEMASTER3', 'ADMINISTRATOR'];
+
+  // #define names a header switches on (commented lines are off)
+  function defines(text) {
+    const s = new Set();
+    for (const l of String(text || '').split(/\r?\n/)) { const m = /^\s*#\s*define\s+(\w+)/.exec(l); if (m) s.add(m[1]); }
+    return s;
+  }
+
+  // one #if line -> true / false for a build's defines
+  function cond(kind, expr, D) {
+    expr = expr.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//g, '').trim();
+    if (kind === 'ifdef') return D.has(expr);
+    if (kind === 'ifndef') return !D.has(expr);
+    let m = /^__VER\s*>=\s*(\d+)/.exec(expr);
+    if (m) return 19 >= +m[1];
+    m = /^defined\s*\(\s*(\w+)\s*\)/.exec(expr);
+    if (m) return D.has(m[1]);
+    m = /^!\s*defined\s*\(\s*(\w+)\s*\)/.exec(expr);
+    if (m) return !D.has(m[1]);
+    return D.has(expr);
+  }
+
+  // the comma-separated macro arguments of one ON_TEXTCMDFUNC( ... ) (quotes kept as text)
+  function macroArgs(s) {
+    const out = [];
+    let cur = '', q = false;
+    for (const c of s) {
+      if (c === '"') { q = !q; cur += c; continue; }
+      if (c === ',' && !q) { out.push(cur.trim()); cur = ''; continue; }
+      cur += c;
+    }
+    out.push(cur.trim());
+    return out;
+  }
+  const unq = s => (/^"(.*)"$/.exec(s) || [null, s])[1];
+
+  // -> { rows, beginLine, endLine } ; text = FuncTextCmd.cpp (latin1), ws / nz = the two builds' define sets
+  function parseTable(text, ws, nz) {
+    const lines = String(text).split('\n').map(l => l.replace(/\r$/, ''));
+    const begin = lines.findIndex(l => /BEGINE_TEXTCMDFUNC_MAP/.test(l) && !/#\s*define/.test(l));
+    const rows = [];
+    if (begin < 0) return { rows, beginLine: 0, endLine: 0 };
+    const stack = [];      // { kind, expr, ws, nz, neg }
+    let inBlock = false, end = lines.length;
+    for (let i = begin + 1; i < lines.length; i++) {
+      let l = lines[i];
+      if (inBlock) { const k = l.indexOf('*/'); if (k < 0) continue; l = l.slice(k + 2); inBlock = false; }
+      if (/END_TEXTCMDFUNC_MAP/.test(l)) { end = i; break; }
+      const pp = /^\s*#\s*(ifdef|ifndef|if|else|elif|endif)\b\s*(.*)$/.exec(l);
+      if (pp) {
+        const [, k, e] = pp;
+        if (k === 'endif') stack.pop();
+        else if (k === 'else' && stack.length) { const t = stack[stack.length - 1]; t.ws = !t.ws; t.nz = !t.nz; t.neg = true; }
+        else if (k === 'elif' && stack.length) { const t = stack[stack.length - 1]; t.ws = !t.ws && cond('if', e, ws); t.nz = !t.nz && cond('if', e, nz); t.expr = e.trim(); }
+        else if (k !== 'else' && k !== 'elif') stack.push({ kind: k, expr: e.replace(/\/\/.*$/, '').trim(), ws: cond(k, e, ws), nz: cond(k, e, nz), neg: false });
+        continue;
+      }
+      const bs = l.indexOf('/*'), cm = l.indexOf('//'), on = l.indexOf('ON_TEXTCMDFUNC');
+      if (on < 0) { if (bs >= 0 && l.indexOf('*/', bs) < 0) inBlock = true; continue; }
+      if ((cm >= 0 && cm < on) || (bs >= 0 && bs < on)) { if (bs >= 0 && bs < on && l.indexOf('*/', bs) < 0) inBlock = true; continue; }
+      const open = l.indexOf('(', on), close = l.lastIndexOf(')');
+      const a = macroArgs(l.slice(open + 1, close));
+      if (a.length < 8) continue;
+      const auth = a[6].replace(/^AUTH_/, '');
+      rows.push({
+        n: rows.length, line: i + 1, fn: a[0], name: unq(a[1]), short: unq(a[2]), kr: unq(a[3]), krShort: unq(a[4]),
+        side: a[5].replace(/^TCM_/, ''), auth, authChar: (AUTH[auth] || ['P'])[0], help: unq(a[7]),
+        conds: stack.map(t => (t.neg ? 'not ' : '') + (t.kind === 'if' ? t.expr : t.expr)),
+        inServer: stack.every(t => t.ws), inClient: stack.every(t => t.nz),
+      });
+    }
+    // ParsingCommand's "open" stop, per build (memcmp( m_pCommand, "open", 4 ))
+    for (const side of ['inServer', 'inClient']) {
+      let stop = false;
+      for (const r of rows) {
+        if (!r[side]) continue;
+        r[side === 'inServer' ? 'deadServer' : 'deadClient'] = stop;
+        if (!stop && r.name.slice(0, 4) === 'open') { stop = true; r.isOpen = true; }
+      }
+    }
+    for (const r of rows) {
+      r.dead = !!(r.deadServer || r.deadClient);
+      // usable when the game knows it (the game parses first) and, for a server command, the WorldServer too
+      r.compiled = r.side === 'SERVER' ? r.inClient && r.inServer : r.side === 'CLIENT' ? r.inClient : r.inClient;
+      r.live = r.compiled && !r.dead;
+    }
+    return { rows, beginLine: begin + 1, endLine: end + 1 };
+  }
+
+  // the line of ParsingCommand and of its "open" check (cited on the page)
+  function parsingLines(text) {
+    const lines = String(text).split('\n');
+    return { parsing: lines.findIndex(l => /^int\s+ParsingCommand\s*\(/.test(l)) + 1, openCheck: lines.findIndex(l => /memcmp\(\s*pTextCmdFunc->m_pCommand,\s*"open"/.test(l)) + 1 };
+  }
+
+  // ------------------------------------------------------------------ what each command is for (by name, lowercase)
+  const CATS = [
+    ['summon', 'Summon monsters'], ['items', 'Give items'], ['upgrade', 'Upgrade items'], ['pets', 'Pets'], ['me', 'My character'],
+    ['move', 'Move'], ['players', 'Other players'], ['quests', 'Quests'], ['party', 'Party & Guild'], ['siege', 'Guild Siege & 1v1'],
+    ['pvp', 'FFA, TDM, Free PK'], ['events', 'Events'], ['couple', 'Couples'], ['server', 'Server & weather'], ['everyone', 'Every player'], ['other', 'Other'],
+  ];
+  // name -> [category, what it does]
+  const INFO = {
+    createnpc: ['summon', 'Spawn monsters next to you'], rmvnpc: ['summon', 'Remove the monster / NPC you target'], aroundkill: ['summon', 'Kill the monsters around you'],
+    onekill: ['summon', 'Your hits kill monsters at once'], noonekill: ['summon', 'Turn one-hit kills off'], disguise: ['me', 'Look like a monster'], nodisguise: ['me', 'Back to your own look'],
+    createitem: ['items', 'Create an item in your bag'], createitem2: ['items', 'Create an item with a random option id'], getgold: ['items', 'Give yourself Penya'],
+    piercing: ['upgrade', 'Piercing on an item'], refineaccessory: ['upgrade', 'Set the + level of the accessory in your bag'], refinecollector: ['upgrade', 'Set the + level of a collector'],
+    genrandomoption: ['upgrade', 'Roll random options (awake)'], initializerandomoption: ['upgrade', 'Remove random options (awake)'], setrandomoption: ['upgrade', 'Set random options (awake): stat, amount, ...'],
+    resistitem: ['upgrade', 'Element and element level on an item'],
+    pet: ['pets', 'Set a player\'s pet: kind, EXP, stages, life'], petlevel: ['pets', 'Raise your pet one stage (its EXP must be 100%)'], petexp: ['pets', 'Fill your pet\'s EXP to 100%'],
+    makepetfeed: ['pets', 'Open the pet food mill'], setpetname: ['pets', 'Name your pet'], clearpetname: ['pets', 'Remove your pet\'s name'],
+    level: ['me', 'Set your job and level'], stat: ['me', 'Set a stat (str / sta / dex / int / gp / all / restate)'], changejob: ['me', 'Change your job'], jobname: ['me', 'Job names'],
+    skilllevel: ['me', 'Set a skill\'s level'], skilllevelall: ['me', 'Max every skill'], initskillexp: ['me', 'Reset your skills'], setrebirthlevel: ['me', 'Set your rebirth level'],
+    undying: ['me', 'You cannot die'], undying2: ['me', 'You cannot die (HP stays)'], noundying: ['me', 'You can die again'], invisible: ['me', 'Players cannot see you'], noinvisible: ['me', 'Visible again'],
+    title: ['me', 'Overhead title'], honortitleset: ['me', 'Set an honor title\'s count'], removebuff: ['me', 'Remove your buffs'], badge: ['me', 'Badges'], record: ['me', 'Record Book'], mountset: ['me', 'Mount values of your mount'],
+    teleport: ['move', 'Go to a player, or to a map and place'], position: ['move', 'Show where you stand'], summon: ['move', 'Bring a player to you'],
+    out: ['players', 'Kick a player'], freeze: ['players', 'Freeze a player'], nofreeze: ['players', 'Unfreeze a player'], mute: ['players', 'Mute a player'],
+    talk: ['players', 'Let a player talk again'], notalk: ['players', 'Stop a player talking'], ip: ['players', 'A player\'s IP'], indirect: ['players', 'Make an NPC say a line'],
+    count: ['players', 'How many players are online'], gmlist: ['everyone', 'The GMs online'],
+    beginquest: ['quests', 'Start a quest'], endquest: ['quests', 'Finish a quest'], removequest: ['quests', 'Remove a quest'], removeallquest: ['quests', 'Remove every quest'],
+    removecompletequest: ['quests', 'Remove the finished quests'], queststate: ['quests', 'Set a quest\'s state'],
+    partylevel: ['party', 'Set your party\'s level and points'], guildstat: ['party', 'Guild stats: logo, pxp, penya, notice'], createguild: ['party', 'Create a guild'], destroyguild: ['party', 'Disband a guild'],
+    gcin: ['siege', 'Guild Siege: let players in'], gcopen: ['siege', 'Guild Siege: open sign-up'], gcclose: ['siege', 'Guild Siege: close'], gcnext: ['siege', 'Guild Siege: next step'],
+    gscancel: ['siege', 'Guild Siege: cancel, no prizes, every fee back'], gsinfo: ['siege', 'Guild Siege: phase and signed-up guilds'],
+    gwfight: ['siege', 'Guild Siege fight buff'], gwprizepayout: ['siege', 'Pay the Guild Siege prizes now'], statuerefresh: ['siege', 'Refresh the winner statues'],
+    gc1to1open: ['siege', '1v1 guild fight: open'], gc1to1close: ['siege', '1v1 guild fight: close'], gc1to1next: ['siege', '1v1 guild fight: next step'],
+    freepkstart: ['pvp', 'Start Free PK Time'], freepkstop: ['pvp', 'Stop Free PK Time'], pvpparam: ['pvp', 'Set your fame and slaughter'], pkparam: ['pvp', 'PK values'],
+    ffastart: ['pvp', 'FFA: announce one now (sign-up minutes)'], ffaend: ['pvp', 'FFA: end the battle now, with rewards'], ffaskip: ['pvp', 'FFA: next phase now'], ffanext: ['pvp', 'FFA: the next scheduled one'],
+    ffainfo: ['pvp', 'FFA: state and players'], ffarefund: ['pvp', 'FFA: cancel, refund, everyone to town'], ffareload: ['pvp', 'FFA: reload FFAManager.inc'],
+    tdmstart: ['pvp', 'TDM: announce one now (sign-up minutes)'], tdmend: ['pvp', 'TDM: end the battle now, with rewards'], tdmskip: ['pvp', 'TDM: next phase now'], tdmnext: ['pvp', 'TDM: the next scheduled one'],
+    tdminfo: ['pvp', 'TDM: state and players'], tdmrefund: ['pvp', 'TDM: cancel, refund, everyone to town'], tdmreload: ['pvp', 'TDM: reload TDMManager.inc'],
+    savetmp: ['pvp', 'Equalized: save your gear as a preset'], copytmp: ['pvp', 'Equalized: copy a preset'], eqreload: ['pvp', 'Equalized: reload the files'],
+    eventstart: ['events', 'Mini Event: start'], eventend: ['events', 'Mini Event: end'], eventskip: ['events', 'Mini Event: skip'], eventnext: ['events', 'Mini Event: next'],
+    eventstatus: ['events', 'Mini Event: status'], eventreload: ['events', 'Mini Events: reload MiniEvent.inc'], eventrecipe: ['events', 'Turn-in Race: pick the round\'s items'],
+    hidespot: ['events', 'Hide and Seek: spots'], hidegoto: ['events', 'Hide and Seek: go to a spot'], racestart: ['events', 'Vagrant Race: start line'], racepoint: ['events', 'Vagrant Race: checkpoint'],
+    eventlist: ['events', 'Lua events: the list'], eventinfo: ['events', 'Lua events: one event'], lua: ['events', 'Reload the Lua events'],
+    propose: ['couple', 'Propose'], refuse: ['couple', 'Refuse a proposal'], couple: ['couple', 'Make a couple'], decouple: ['couple', 'Break a couple'], clearpropose: ['couple', 'Clear proposals'], nextcouplelevel: ['couple', 'Next couple level'],
+    system: ['server', 'Notice to everyone'], fallsnow: ['server', 'Snow'], stopsnow: ['server', 'Stop the snow'], fallrain: ['server', 'Rain'], stoprain: ['server', 'Stop the rain'], weather: ['server', 'Weather'],
+    gamesetting: ['server', 'Game settings'], loadscript: ['server', 'Reload scripts'], reloadconstant: ['server', 'Reload constant.inc'], antibot: ['server', 'Bot Check'],
+    vendorlist: ['server', 'Offline vendors'], vendorclose: ['server', 'Close an offline vendor'], resetbattlepass: ['server', 'Reset the Battle Pass'], ctd: ['server', 'ctd'], crashtest: ['server', 'Crash test'],
+    whisper: ['everyone', 'Whisper'], say: ['everyone', 'Say'], shout: ['everyone', 'Shout'], partychat: ['everyone', 'Party chat'], guildchat: ['everyone', 'Guild chat'], time: ['everyone', 'The time'],
+    wiki: ['everyone', 'Item wiki'], switch: ['everyone', 'Switch'], sw: ['everyone', 'Switch'],
+  };
+  // a row that is only a window shortcut / chat setting for every player
+  // feat/gm-rules renames a command and keeps the old name in a Korean-name slot (e.g. "gsstart", "gsstart", "GCOpen", "gcopen"):
+  // the old name still finds what it is for
+  const infoOf = r => INFO[r.name.toLowerCase()] || INFO[String(r.kr).toLowerCase()] || INFO[String(r.krShort).toLowerCase()] || null;
+  const catOf = r => (infoOf(r) || [r.auth === 'GENERAL' ? 'everyone' : 'other'])[0];
+  const whatOf = r => (/^[\x20-\x7e]+$/.test(r.help) && /[a-z]{3}/i.test(r.help) && infoOf(r) && r.name.toLowerCase() !== (r.kr || '').toLowerCase() && !INFO[r.name.toLowerCase()] ? r.help.trim() : null)
+    || (infoOf(r) || [null, null])[1] || (/^[\x20-\x7e]+$/.test(r.help) && r.help.trim() ? r.help.trim() : null);
+
+  // ------------------------------------------------------------------ argument forms (from each handler, line cited by the UI)
+  // k: monster (id), item (id), player (a name), job, world, petkind, stages, num, word, choice, rest (the rest of the line)
+  const P = { k: 'player', label: 'Player name' };
+  const ARGS = {
+    createnpc: [{ k: 'monster', label: 'Monster' }, { k: 'num', label: 'How many', def: 1, min: 1, max: 100 }, { k: 'choice', label: 'Aggressive', def: '0', opts: [['0', 'No'], ['1', 'Yes']] }],
+    createitem: [{ k: 'item', label: 'Item' }, { k: 'num', label: 'How many', def: 1, min: 1 }],
+    disguise: [{ k: 'monster', label: 'Monster' }],
+    pet: [P, { k: 'petkind', label: 'Pet' }, { k: 'num', label: 'EXP %', def: 100, min: 0, max: 100 }, { k: 'stages', label: 'Stages D C B A S', def: '13579' }, { k: 'num', label: 'Life', def: 99, min: 0, max: 99 }],
+    petlevel: [], petexp: [], makepetfeed: [], skilllevelall: [], invisible: [], noinvisible: [], count: [], fallsnow: [], stopsnow: [], fallrain: [], stoprain: [],
+    setpetname: [{ k: 'word', label: 'Pet name' }],
+    teleport: [{ k: 'world', label: 'Map' }, { k: 'num', label: 'X', def: 0, min: 1 }, { k: 'num', label: 'Z', def: 0, min: 1 }],
+    summon: [P], out: [P], freeze: [P], nofreeze: [P],
+    mute: [P, { k: 'num', label: 'Mute value (m_dwMute)', def: 1, min: 0 }],
+    system: [{ k: 'rest', label: 'Message' }],
+    stat: [{ k: 'choice', label: 'Stat', def: 'str', opts: [['str', 'STR'], ['sta', 'STA'], ['dex', 'DEX'], ['int', 'INT'], ['gp', 'Stat points'], ['all', 'All four'], ['restate', 'Reset stats']] }, { k: 'num', label: 'Amount', def: 15, min: 0 }],
+    level: [{ k: 'job', label: 'Job' }, { k: 'num', label: 'Level', def: 1, min: 1 }, { k: 'num', label: 'Hero / Legend (0 = no, 1-3)', def: 0, min: 0, max: 3, optional: true }],
+    changejob: [{ k: 'job', label: 'Job' }],
+    getgold: [{ k: 'num', label: 'Penya', def: 1000000, min: 1 }],
+    skilllevel: [{ k: 'num', label: 'Skill id', def: 1, min: 0 }, { k: 'num', label: 'Level', def: 1, min: 0 }],
+    beginquest: [{ k: 'num', label: 'Quest id', def: 0, min: 0 }], endquest: [{ k: 'num', label: 'Quest id', def: 0, min: 0 }],
+    partylevel: [{ k: 'num', label: 'Party level', def: 10, min: 1 }, { k: 'num', label: 'Points', def: 0, min: 0 }],
+    indirect: [{ k: 'num', label: 'NPC object id', def: 0, min: 0 }, { k: 'rest', label: 'What it says' }],
+    honortitleset: [{ k: 'num', label: 'Title index', def: 0, min: 0 }, { k: 'num', label: 'Count', def: 1, min: 0 }],
+    pvpparam: [{ k: 'num', label: 'Fame', def: 0, min: 0 }, { k: 'num', label: 'Slaughter', def: 0 }],
+    ffastart: [{ k: 'num', label: 'Sign-up minutes', def: '', min: 1, optional: true }], tdmstart: [{ k: 'num', label: 'Sign-up minutes', def: '', min: 1, optional: true }],
+    refineaccessory: [{ k: 'num', label: '+ level', def: 1, min: 0, max: 20 }],
+  };
+  // a command with sub-words (/GuildStat logo|pxp|penya|notice): { sub: [[word, label, [its own fields]], ...] } -> the first field picks
+  // the word (buttons), the rest are that word's fields. A word '' writes nothing (e.g. /antibot <name>).
+  const SUB = (label, opts) => ({ sub: opts.map(([v, l, args]) => ({ v, label: l, args: args || [] })), label });
+  const N = (label, def = '', more = {}) => Object.assign({ k: 'num', label, def, min: 0 }, more);
+  const OPT = { optional: true };
+  Object.assign(ARGS, {
+    // TextCmd_GuildStat (FuncTextCmd.cpp:2422): a word, then a number (notice: one word, quoted when it has spaces)
+    guildstat: SUB('What', [['logo', 'Logo', [N('Logo number', 1)]], ['pxp', 'PXP', [N('Points', 9999)]], ['penya', 'Penya', [N('Penya', 1000000)]],
+      ['notice', 'Notice', [{ k: 'word', label: 'Notice text (the guild window shows it)' }]]]),
+    // TextCmd_stat (:1406): a word, then the number (restate: none)
+    stat: SUB('Stat', [['str', 'STR', [N('Amount', 15)]], ['sta', 'STA', [N('Amount', 15)]], ['dex', 'DEX', [N('Amount', 15)]], ['int', 'INT', [N('Amount', 15)]],
+      ['all', 'All four', [N('Amount', 15)]], ['gp', 'Stat points', [N('Points', 0)]], ['restate', 'Reset stats']]),
+    // TextCmd_Weather (:5016): rain | snow [time: 30 | 2h | 5d, max 20 days; none = until /weather off] | off
+    weather: SUB('Weather', [['rain', 'Rain', [{ k: 'word', label: 'How long (30 = minutes, 2h, 5d; empty = until off)', optional: true }]],
+      ['snow', 'Snow', [{ k: 'word', label: 'How long (30 = minutes, 2h, 5d; empty = until off)', optional: true }]], ['off', 'Stop']]),
+    // TextCmd_Badge (:1546): add | del | set <id> ; count <id> <count> ; all | clear
+    badge: SUB('Do', [['add', 'Unlock', [N('Badge id', 1)]], ['del', 'Remove', [N('Badge id', 1)]], ['set', 'Wear (0 = job icon, -1 = none)', [N('Badge id', 1, { min: -1 })]],
+      ['count', 'Set counter', [N('Badge id', 1), N('Count', 0)]], ['all', 'Unlock all'], ['clear', 'Remove all']]),
+    // TextCmd_Record (:1945): set <type> <value> ; top <type> ; clear | stats | refresh
+    record: SUB('Do', [['set', 'Set a record', [N('Record type', 0), N('Value', 0)]], ['top', 'Top 30 of a type', [N('Record type', 0)]],
+      ['stats', 'My records'], ['clear', 'Clear mine'], ['refresh', 'Reload the top 30']]),
+    // TextCmd_AntiBot (:1880): <name> (send the puzzle) | info <name> | free <name> | reload
+    antibot: SUB('Do', [['', 'Send the puzzle', [{ k: 'player', label: 'Player name' }]], ['info', 'Info', [{ k: 'player', label: 'Player name' }]],
+      ['free', 'Free', [{ k: 'player', label: 'Player name' }]], ['reload', 'Reload AntiBot.inc']]),
+    // TextCmd_Title (:2081): spender <name> 1|2|3|off ; set <title> [name] ; info [name]
+    title: SUB('Do', [['spender', 'Top Donator title', [{ k: 'player', label: 'Player name' }, { k: 'choice', label: 'Rank', def: '1', opts: [['1', '1'], ['2', '2'], ['3', '3'], ['off', 'Off']] }]],
+      ['set', 'Set a title', [N('Title', 1), Object.assign({ k: 'player', label: 'Player name' }, OPT)]], ['info', 'Info', [Object.assign({ k: 'player', label: 'Player name' }, OPT)]]]),
+    // TextCmd_Lua (:3976): event | ms | rr
+    lua: SUB('Reload', [['event', 'Lua events'], ['ms', 'ms'], ['rr', 'Rainbow Race']]),
+    // TextCmd_MiniEventStart (:1717): [event|random] [minutes] [players needed]
+    eventstart: [{ k: 'choice', label: 'Event', def: 'random', opts: [['random', 'Random'], ['colorgame', 'Color Game'], ['quickhands', 'Quick Hands'], ['oxquiz', 'O/X Quiz'],
+      ['luckydraw', 'Lucky Draw'], ['turnin', 'Turn-in Race'], ['hideseek', 'Hide and Seek'], ['race', 'Vagrant Race']] }, N('Minutes', '', OPT), N('Players needed', '', OPT)],
+    eventrecipe: [{ k: 'rest', label: 'The round\'s items (rest of the line, item links work)' }],
+    // TextCmd_EqCopyPresets (:553): FFA | TDM | GS, from then to (CEqualizedPvP::EventFromName)
+    copytmp: [{ k: 'choice', label: 'From', def: 'FFA', opts: [['FFA', 'FFA'], ['TDM', 'TDM'], ['GS', 'Guild Siege']] }, { k: 'choice', label: 'To', def: 'TDM', opts: [['FFA', 'FFA'], ['TDM', 'TDM'], ['GS', 'Guild Siege']] }],
+    // TextCmd_GuildCombatClose (:5548): 0 = close now, other = close after the wait
+    gcclose: [{ k: 'choice', label: 'When', def: '0', opts: [['0', 'Now'], ['1', 'After the wait']] }],
+    gwfight: [N('Wait seconds', 60), N('Fight minutes', 30)],
+    gc1to1open: [{ k: 'choice', label: 'Server going down', def: '0', opts: [['0', 'No'], ['1', 'Yes']] }],
+    talk: [P], notalk: [P], ip: [P], propose: [P],
+    pkparam: [N('PK value', 0), N('Propensity', 0)], setrebirthlevel: [N('Rebirth tier', 1)],
+    vendorclose: [{ k: 'player', label: 'Vendor owner' }], createguild: [{ k: 'word', label: 'Guild name' }],
+    removequest: [N('Quest id', 0), Object.assign({ k: 'player', label: 'Player name' }, OPT)],
+    queststate: [N('Quest id', 0), N('State', 0), Object.assign({ k: 'player', label: 'Player name' }, OPT)],
+    eventinfo: [N('Event id', 0)], rmvnpc: [N('Object id', 0)], refinecollector: [N('+ level', 1, { max: 20 })], piercing: [N('Item object id', 0), N('Sockets', 1)],
+    resistitem: [N('Item object id', 0), { k: 'choice', label: 'Element', def: '1', opts: [['0', 'None'], ['1', 'Fire'], ['2', 'Water'], ['3', 'Electricity'], ['4', 'Wind'], ['5', 'Earth']] }, N('Element level', 1), N('Ability option', 0)],
+  });
+  // no words after these (the handler reads none)
+  for (const n of ['freepkstart', 'freepkstop', 'ffarefund', 'ffaskip', 'ffaend', 'ffanext', 'ffainfo', 'ffareload', 'tdmrefund', 'tdmskip', 'tdmend', 'tdmnext', 'tdminfo', 'tdmreload',
+    'savetmp', 'eqreload', 'undying', 'undying2', 'noundying', 'onekill', 'noonekill', 'aroundkill', 'eventend', 'eventskip', 'eventnext', 'eventstatus', 'hidegoto', 'racestart',
+    'racepoint', 'eventreload', 'statuerefresh', 'vendorlist', 'initskillexp', 'removeallquest', 'removecompletequest', 'destroyguild', 'gcin', 'gcopen', 'gcnext', 'eventlist',
+    'gamesetting', 'nodisguise', 'reloadconstant', 'ctd', 'genrandomoption', 'initializerandomoption', 'clearpetname', 'refuse', 'couple', 'decouple', 'clearpropose',
+    'nextcouplelevel', 'removebuff', 'resetbattlepass', 'gwprizepayout', 'gc1to1close', 'gc1to1next']) if (!ARGS[n]) ARGS[n] = [];
+  // -> the fields of a command (a sub-word command: the word field + the chosen word's own fields)
+  function argsOf(r, sub) {
+    const a = ARGS[r.name.toLowerCase()];
+    if (!a || !a.sub) return a;
+    const pick = a.sub.find(o => o.v === sub) || a.sub[0];
+    return [{ k: 'sub', label: a.label, def: a.sub[0].v, opts: a.sub.map(o => [o.v, o.label]) }, ...pick.args];
+  }
+
+  // one argument value as it goes on the line (a name with spaces in quotes: CScanner reads "..." as one token)
+  function word(v) {
+    v = String(v == null ? '' : v).trim();
+    return /\s/.test(v) && !/"/.test(v) ? `"${v}"` : v;
+  }
+  // -> the command line; vals: one per ARGS entry ({ world: {id}, x, z } style already flattened by the UI)
+  function build(r, vals, opts = {}) {
+    const cmd = '/' + (opts.short ? r.short : r.name);
+    const spec = argsOf(r, vals[0]);
+    if (!spec) return (cmd + ' ' + String(vals[0] || '').trim()).trim();
+    const out = [];
+    spec.forEach((a, i) => {
+      const v = vals[i];
+      const empty = v === '' || v == null;
+      if (a.k === 'sub') { if (!empty) out.push(String(v)); return; }
+      if (a.optional && (empty || String(v) === String(a.def))) return;
+      // a required word left empty: a visible gap, never a shift (the server reads the words in order)
+      out.push(empty ? `<${a.label}>` : a.k === 'rest' ? String(v).trim() : word(v));
+    });
+    return [cmd, ...out].join(' ');
+  }
+
+  // ------------------------------------------------------------------ pet.inc (CPetProperty::LoadScript, pet.cpp): the kinds and how high a stage can roll
+  function loadPets(file, ctx) {
+    const out = { kinds: [], stageMax: [] };
+    if (!file) return out;
+    const s = new FRE.lexer.Script(file.text, { file: file.name, defines: ctx.defines, strings: ctx.strings, diags: [] });
+    for (let t = s.getToken(); !s.eof; t = s.getToken()) {
+      if (t.text === 'AvailDestParam') {
+        s.getToken();
+        let dst = s.getNumber();
+        while (!s.eof && s.token.text !== '}') {
+          const params = []; for (let i = 0; i < 9; i++) params.push(s.getNumber().value);
+          const item = s.getNumber();
+          s.getNumber(); s.getNumber(); s.getNumber(); s.getNumber();
+          out.kinds.push({ kind: out.kinds.length, dst: dst.value, item: item.value, params });
+          dst = s.getNumber();
+        }
+      } else if (t.text === 'LevelupAvail') {
+        s.getToken();
+        let p = s.getNumber();
+        while (!s.eof && s.token.text !== '}') {
+          let max = p.value > 0 ? 0 : -1;
+          for (let i = 1; i < 9; i++) if (s.getNumber().value > 0) max = i;
+          out.stageMax.push(max + 1);       // GetLevelupAvailLevel returns i + 1
+          p = s.getNumber();
+        }
+      }
+    }
+    return out;
+  }
+
+  // etc.inc "job" { JOB_x IDS_name base type } (CProject::LoadEtc): the job names /level and /changejob compare with
+  function loadJobs(file, ctx) {
+    const out = [];
+    if (!file) return out;
+    const s = new FRE.lexer.Script(file.text, { file: file.name, defines: ctx.defines, strings: ctx.strings, diags: [] });
+    for (let t = s.getToken(); !s.eof; t = s.getToken()) {
+      if (t.text !== 'job') continue;
+      s.getToken();
+      let id = s.getNumber();
+      while (!s.eof && s.token.text !== '}') {
+        const name = s.getToken();
+        s.getNumber(); s.getNumber();
+        out.push({ id: id.value, name: name.text });
+        id = s.getNumber();
+      }
+      break;
+    }
+    return out;
+  }
+
+  function fromWorkspace(ws) {
+    const cpp = ws.cpp || null, text = cpp && cpp.get(FILE);
+    if (!text) return { ok: false, rows: [], cats: CATS };
+    const base = defines(cpp.get(CUSTOM));
+    const W = new Set([...base, ...defines(cpp.get(WS_VER)), '__WORLDSERVER']), N = new Set([...base, ...defines(cpp.get(NZ_VER)), '__CLIENT']);
+    const t = parseTable(text, W, N);
+    if (!ws.movers && ws.files.get('propmover.txt')) ws.movers = FRE.propMover.loadPropMover(ws.files.get('propmover.txt'), { defines: ws.defines.defines, strings: ws.strings.map });
+    const ctx = { defines: ws.defines.defines, strings: ws.strings.map };
+    return Object.assign(t, {
+      ok: true, cats: CATS, lines: parsingLines(text), hasVer: !!(cpp.get(WS_VER) && cpp.get(NZ_VER)),
+      pets: loadPets(ws.files.get('pet.inc'), ctx), jobs: loadJobs(ws.files.get('etc.inc'), ctx),
+    });
+  }
+
+  function checks(m) {
+    if (!m.ok) return [{ module: 'gmcmd', code: 'GM_NO_SOURCE', severity: 'WARN', key: 'GM_NO_SOURCE', file: 'FuncTextCmd.cpp', message: 'FuncTextCmd.cpp was not found: pick FLYFF-V19-SOURCE, or run tools/refresh-fixtures.sh test-data' }];
+    const dead = m.rows.filter(r => r.dead && r.compiled).length;
+    return dead ? [{ module: 'gmcmd', code: 'GM_DEAD', severity: 'INFO', key: 'GM_DEAD', file: 'FuncTextCmd.cpp', message: `${dead} commands are listed below /open: they can never run` }] : [];
+  }
+
+  // a line still holding a <gap> (build above)
+  const GAP = /<\S(?:[^<>]*\S)?>/g;
+  const gaps = line => String(line).match(GAP) || [];
+  const incomplete = line => gaps(line).length > 0;
+
+  FRE.gmCmd = { incomplete, gaps, FILE, CUSTOM, WS_VER, NZ_VER, AUTH, LEVELS, CATS, INFO, ARGS, defines, parseTable, parsingLines, catOf, whatOf, argsOf, build, word, loadPets, loadJobs, fromWorkspace, checks };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- loaders/gmcmd-sim.js ----
+// GM Commands simulator: what happens when a player of a given level types a line in the chat box.
+// Port of:
+//   CWndMgr chat (WndManager.cpp:4365): a line starting with '/' goes to ParsingCommand in the game; nothing else is sent for it.
+//   ParsingCommand (FuncTextCmd.cpp, int ParsingCommand): CScanner GetToken twice ('/', then the command word); walks the table in order;
+//     a non-Korean build stops at the first row whose name starts with "open"; a row matches on name, short name or the two Korean
+//     names (exact, case-sensitive CString ==); too low a level stops the walk (break); the game runs TCM_CLIENT / TCM_BOTH rows and
+//     sends the line on for TCM_SERVER rows (TCM_BOTH: sent on when the handler returns TRUE).
+//   CDPSrvr::OnChat (WORLDSERVER/DPSrvr.cpp:875): the server runs ParsingCommand on its own table; when that returns FALSE the
+//     line is ordinary chat (everyone near sees it), unless the player is in talk mode / muted.
+// Not modelled: what each handler does with its arguments; a TCM_BOTH handler returning FALSE; emoticon lines ("/" + an emoticon word).
+(function (FRE) {
+  'use strict';
+
+  // the command word, as CScanner reads it (the second token)
+  function commandWord(line) {
+    const L = new FRE.lexer.Lexer(String(line));
+    L.next();
+    const t = L.next();
+    return t.type === 'eof' ? '' : t.text;
+  }
+
+  // one build's walk -> { row, stop: 'match' | 'open' | 'auth' | 'none' }
+  function walk(rows, side, word, authChar) {
+    const inBuild = side === 'client' ? 'inClient' : 'inServer';
+    for (const r of rows) {
+      if (!r[inBuild]) continue;
+      if (r.name.slice(0, 4) === 'open') return { row: null, stop: 'open', at: r };
+      if (word === r.name || word === r.short || word === r.kr || word === r.krShort) {
+        if (r.authChar > authChar) return { row: r, stop: 'auth' };
+        return { row: r, stop: 'match' };
+      }
+    }
+    return { row: null, stop: 'none' };
+  }
+
+  // -> { word, game: walk, server: walk | null, result, text }
+  //   result: 'game' (runs in the game only), 'both' (game, then server), 'server', 'ignored' (nothing happens), 'chat' (shown as chat),
+  //   'swallowed' (the server matched a TCM_CLIENT row: nothing happens)
+  function type(model, line, opts = {}) {
+    const authChar = (FRE.gmCmd.AUTH[opts.auth || 'ADMINISTRATOR'] || ['P'])[0];
+    const s = String(line);
+    const word = commandWord(s);
+    const out = { word, game: null, server: null, result: 'ignored', row: null,
+      known: model.rows.some(r => word === r.name || word === r.short || word === r.kr || word === r.krShort) };
+    if (s[0] !== '/') { out.result = 'chat'; return out; }
+    const g = out.game = walk(model.rows, 'client', word, authChar);
+    if (g.stop !== 'match') return out;
+    out.row = g.row;
+    if (g.row.side === 'CLIENT') { out.result = 'game'; return out; }
+    const sv = out.server = walk(model.rows, 'server', word, authChar);
+    if (sv.stop !== 'match') { out.result = g.row.side === 'BOTH' ? 'game' : 'chat'; return out; }
+    out.row = sv.row;
+    out.result = sv.row.side === 'CLIENT' ? (g.row.side === 'BOTH' ? 'game' : 'swallowed') : g.row.side === 'BOTH' ? 'both' : 'server';
+    return out;
+  }
+
+  // plain words for the page
+  function explain(r) {
+    const name = x => `/${x.name}`;
+    const why = (w, where) => !r.known ? `${where} does not know "/${r.word}" (names are exact: small and capital letters count)` : w.stop === 'open' ? `${where} stops at ${name(w.at)} (FuncTextCmd.cpp:${w.at.line}) before reaching it`
+      : w.stop === 'auth' ? `${where} needs ${FRE.gmCmd.AUTH[w.row.auth][1]} or higher` : `${where} does not know "/${r.word}"`;
+    switch (r.result) {
+      case 'game': return `Runs in the game (${name(r.row)}).`;
+      case 'both': return `Runs in the game, then on the server (${name(r.row)}).`;
+      case 'server': return `Runs on the server (${name(r.row)}).`;
+      case 'swallowed': return 'The server knows it only as a game-side command: nothing happens.';
+      case 'chat': return r.game ? `Shown as normal chat: everyone near sees the line. The ${why(r.server, 'server')}.` : 'Not a command: normal chat.';
+      default: return `Nothing happens: the ${why(r.game, 'game')}.`;
+    }
+  }
+
+  FRE.gmCmdSim = { commandWord, walk, type, explain };
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- loaders/where.js ----
@@ -19342,6 +19802,15 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "107+", "whe
       },
     },
     {
+      // GM Commands (loaders/gmcmd.js): the chat command table read from the loaded C++ (FuncTextCmd.cpp + the build switches,
+      // io/source-read.js), nothing editable. propMover / pet.inc / etc.inc: the monster, pet and job pickers.
+      id: 'gmcmd', label: 'GM Commands',
+      required: [], editable: [], client: [],
+      optional: ['propMover.txt', 'propMover.txt.txt', 'pet.inc'],
+      parse(ws) { return FRE.gmCmd.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.gmCmd.checks(model); },
+    },
+    {
       // Where is this item from? (task H, loaders/where.js): every model above parsed read-only, nothing editable.
       // Last, so its parse sees the other models. maps: towns of the NPCs, and whether they stand in the game.
       id: 'where', label: 'Item Sources & Uses',
@@ -20283,21 +20752,35 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "107+", "whe
 
 // ---- io/source-read.js ----
 // The C++ files a task reads (never writes) when FLYFF-V19-SOURCE is picked: the Guild Siege prize amounts are
-// compiled in, not in a data file (loaders/gifts.js `compiled`). -> Map lowercase name -> text (latin1), or null
-// (test-data, or the files are not there: the editor then uses its own copy of the numbers).
+// compiled in, not in a data file (loaders/gifts.js `compiled`); the GM command table and the build switches (loaders/gmcmd.js).
+// -> Map key -> text (latin1), or null (the files are not there: the editor then uses its own copy of the numbers).
+// A test copy (test-data) has them under src/<key> (tools/refresh-fixtures.sh).
 (function (FRE) {
   'use strict';
-  const FILES = ['Source/Source/_Common/eveschool.cpp', 'Source/Source/_Common/GuildSiegePrize.cpp'];
+  // [path in FLYFF-V19-SOURCE, key]
+  const FILES = [
+    ['Source/Source/_Common/eveschool.cpp', 'eveschool.cpp'],
+    ['Source/Source/_Common/GuildSiegePrize.cpp', 'guildsiegeprize.cpp'],
+    ['Source/Source/_Interface/FuncTextCmd.cpp', 'functextcmd.cpp'],
+    ['Source/Source/_Common/CustomCommon.h', 'customcommon.h'],
+    ['Source/Source/WORLDSERVER/VersionCommon.h', 'worldserver/versioncommon.h'],
+    ['Source/Source/Neuz/VersionCommon.h', 'neuz/versioncommon.h'],
+  ];
+
+  async function readOne(root, path) {
+    const parts = path.split('/'), name = parts.pop();
+    const dir = parts.length ? await FRE.fsa.dirAt(root, parts.join('/')) : root;
+    const fh = dir && (await FRE.fsa.findFiles(dir, [name])).get(name.toLowerCase());
+    return fh ? new TextDecoder('latin1').decode((await FRE.fsa.readHandle(fh)).bytes) : null;
+  }
 
   async function read(layout) {
-    if (!layout || layout.kind !== 'real') return null;
+    if (!layout || (layout.kind !== 'real' && layout.kind !== 'test')) return null;
     const out = new Map();
-    for (const path of FILES) {
+    for (const [path, key] of FILES) {
       try {
-        const parts = path.split('/'), name = parts.pop();
-        const dir = await FRE.fsa.dirAt(layout.root, parts.join('/'));
-        const fh = dir && (await FRE.fsa.findFiles(dir, [name])).get(name.toLowerCase());
-        if (fh) out.set(name.toLowerCase(), new TextDecoder('latin1').decode((await FRE.fsa.readHandle(fh)).bytes));
+        const text = await readOne(layout.root, layout.kind === 'real' ? path : 'src/' + key);
+        if (text !== null) out.set(key, text);
       } catch (e) { /* not readable: left out */ }
     }
     return out.size ? out : null;
@@ -25402,6 +25885,220 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "107+", "whe
     addTarget: ctx => mod.addTarget(ctx),
     menuByName: (ctx, name) => (model(ctx) ? model(ctx).menus.find(x => x.name === name && !x.isJunk) : null) || null,
   };
+})(globalThis.FRE = globalThis.FRE || {});
+
+// ---- ui/gmcmd.js ----
+// GM Commands: every chat command of the loaded source (loaders/gmcmd.js), sorted by what it is for, with a small form per command
+// that builds the line, ONE command bar at the bottom with Copy, and what happens when it is typed (loaders/gmcmd-sim.js).
+// Read-only: nothing is written anywhere.
+(function (FRE) {
+  'use strict';
+  const { h, toast, keepFocus } = FRE.dom;
+  const G = () => FRE.gmCmd, Sim = () => FRE.gmCmdSim;
+  const model = ctx => ctx.ws.models.gmcmd;
+  // SAI79::ePropType (data.h): NO_PROP, FIRE, WATER, ELECTRICITY, WIND, EARTH
+  const ELEMENTS = ['none', 'Fire', 'Water', 'Electricity', 'Wind', 'Earth'];
+  const st = { cat: 'summon', sel: null, vals: {}, bar: '', auth: 'ADMINISTRATOR', short: false, recent: [], showOff: false };
+  try { st.recent = JSON.parse(localStorage.getItem('fre.gm.recent') || '[]').slice(0, 8); } catch (e) { st.recent = []; }
+  const keep = () => { try { localStorage.setItem('fre.gm.recent', JSON.stringify(st.recent)); } catch (e) { /* private window: not kept */ } };
+  const iconOf = it => (it ? String(FRE.specItem.get(it, 'szIcon') || '').replace(/"/g, '').trim() : '');
+  const levelName = a => (G().AUTH[a] || [null, a])[1];
+  const sideText = r => r.side === 'CLIENT' ? 'in the game' : r.side === 'BOTH' ? 'game + server' : 'server';
+
+  function state(r) {
+    if (r.live) return null;
+    if (!r.compiled) return r.side === 'SERVER' && r.inServer && !r.inClient ? 'not built into the game (the game never sends it)' : `not built (${r.conds.join(', ') || 'switched off'})`;
+    return 'never runs: below /open';
+  }
+  function shown(ctx) {
+    const m = model(ctx), q = (ctx.query || '').trim().toLowerCase();
+    if (q) {
+      const words = q.split(/\s+/);
+      return m.rows.filter(r => r.live || st.showOff).filter(r => words.every(w => `/${r.name} /${r.short} ${G().whatOf(r) || ''} ${(G().CATS.find(c => c[0] === G().catOf(r)) || [])[1]}`.toLowerCase().includes(w)));
+    }
+    if (st.cat === 'off') return m.rows.filter(r => !r.live);
+    const rows = m.rows.filter(r => r.live || st.showOff);
+    return st.cat === 'all' ? rows : rows.filter(r => G().catOf(r) === st.cat);
+  }
+
+  // ------------------------------------------------------------------ pickers
+  function monsterOptions(ws) {
+    if (!ws._gmMon) ws._gmMon = ws.movers ? [...ws.movers.movers.values()].filter(v => v.name && !/^IDS_/.test(v.name) && !/^MI_PET_/.test(v.define))
+      .sort((a, b) => a.level - b.level || a.name.localeCompare(b.name))
+      .map(v => ({ v: v.id, label: `${v.name} · Lv ${v.level} · ${v.rank}${v.element ? ' · ' + ELEMENTS[v.element] : ''}`, find: `${v.define} ${v.id}` })) : [];
+    return ws._gmMon;
+  }
+  function itemOptions(ws) {
+    if (!ws._gmItems) ws._gmItems = [...ws.items.items.values()].map(it => ws.itemInfo(it)).filter(i => i.name && !/^IDS_/.test(i.name))
+      .sort((a, b) => a.name.localeCompare(b.name)).map(i => ({ v: i.id, label: `${i.name} (${i.id})`, find: i.define }));
+    return ws._gmItems;
+  }
+  function field(ctx, r, a, i) {
+    const m = model(ctx), ws = ctx.ws, key = r.name + '|' + i;
+    const v = st.vals[key];
+    const set = x => { st.vals[key] = x; rebuild(ctx, r); };
+    if (a.k === 'monster') {
+      const pick = ws.movers && ws.movers.movers.get(+v);
+      return h('span.gm-pick', FRE.ui.combo({ options: monsterOptions(ws), value: v, placeholder: 'Type a monster name, MI_ or id…', onPick: x => { set(x); ctx.renderAll(false); } }),
+        pick ? h('span.muted.small', ` ${pick.define} · id ${pick.id}`) : null);
+    }
+    if (a.k === 'item') {
+      const it = v != null ? ws.itemById(+v) : null;
+      return h('span.gm-pick', it ? FRE.dds.picture(ctx, iconOf(it), { cls: '.bx-icon' }) : null,
+        FRE.ui.combo({ options: itemOptions(ws), value: v, placeholder: 'Type an item name, II_ or id…', onPick: x => { set(x); ctx.renderAll(false); } }),
+        it ? h('span.muted.small', ` ${it.define} · id ${it.id}`) : null);
+    }
+    if (a.k === 'petkind') {
+      return h('span.gm-pets', m.pets.kinds.map(k => {
+        const it = ws.itemById(k.item);
+        return h('button.gm-pet' + (String(v) === String(k.kind) ? '.sel' : ''), { title: it ? it.name : `kind ${k.kind}`, on: { click: () => { set(k.kind); ctx.renderAll(false); } } },
+          h('span.small', it ? (it.name || it.define) : `kind ${k.kind}`));
+      }));
+    }
+    if (a.k === 'stages') {
+      const cur = String(v || a.def).padEnd(5, '1').slice(0, 5).split('');
+      const tops = m.pets.stageMax.length ? m.pets.stageMax : [9, 9, 9, 9, 9];
+      return h('span.gm-stages', ['D', 'C', 'B', 'A', 'S'].map((s, j) => h('label.small', ` ${s} `,
+        h('select', { on: { change: e => { cur[j] = e.target.value; set(cur.join('')); } } },
+          Array.from({ length: tops[j] || 9 }, (_, n) => h('option', { value: n + 1, selected: +cur[j] === n + 1 }, n + 1))))),
+        ' ', h('button', { title: 'D 1, C 3, B 5, A 7, S 9: the best an official pet can roll', on: { click: () => { set('13579'); ctx.renderAll(false); } } }, 'Perfect 1/3/5/7/9'),
+        ' ', h('button', { title: `The highest our pet.inc allows: ${tops.join('/')}`, on: { click: () => { set(tops.join('')); ctx.renderAll(false); } } }, `Max ${tops.join('/')}`));
+    }
+    if (a.k === 'job') {
+      const opts = m.jobs.filter(j => j.name).map(j => ({ v: j.name, label: j.name }));
+      return FRE.ui.combo({ options: opts, value: v, placeholder: 'Type a job…', onPick: x => { set(x); ctx.renderAll(false); } });
+    }
+    if (a.k === 'world') {
+      const list = ws.worldList ? ws.worldList() : [];
+      return h('select', { on: { change: e => set(e.target.value) } }, h('option', { value: '' }, '— pick a map —'),
+        list.map(w => h('option', { value: w.id, selected: String(v) === String(w.id) }, `${w.name} (${w.define}, ${w.id})`)));
+    }
+    if (a.k === 'sub' || a.k === 'choice') {
+      // buttons (the user): a new sub-word clears the old word's own fields
+      const cur = String(v == null ? a.def : v);
+      const pick = x => {
+        if (a.k === 'sub' && x !== cur) for (const k of Object.keys(st.vals)) if (k.startsWith(r.name + '|') && k !== key) delete st.vals[k];
+        set(x); ctx.renderAll(false);
+      };
+      return h('span.gm-btns', a.opts.map(([x, t]) => h('button.gm-opt' + (cur === x ? '.sel' : ''), { 'data-v': x, on: { click: () => pick(x) } }, t)));
+    }
+    if (a.k === 'num') return h('input', { type: 'number', min: a.min, max: a.max, value: v == null ? a.def : v, style: 'width:9em', 'data-gm': key, on: { input: e => set(e.target.value) } });
+    return h('input', { type: 'text', value: v == null ? '' : v, style: a.k === 'rest' ? 'width:28em' : 'width:14em', 'data-gm': key,
+      placeholder: a.k === 'player' ? 'name (in game)' : '', on: { input: e => set(e.target.value) } });
+  }
+  function valuesOf(r) {
+    const first = st.vals[r.name + '|0'];
+    const spec = G().argsOf(r, first == null ? undefined : first);
+    if (!spec) return [st.vals[r.name + '|free'] || ''];
+    return spec.map((a, i) => { const v = st.vals[r.name + '|' + i]; return v == null || v === '' ? (a.def == null ? '' : a.def) : v; });
+  }
+  function rebuild(ctx, r) {
+    st.sel = r.name;
+    st.bar = G().build(r, valuesOf(r), { short: st.short });
+    paintBar(ctx);
+  }
+
+  // ------------------------------------------------------------------ the command bar
+  let barEl = null;
+  function paintBar(ctx) {
+    if (!barEl) return;
+    const input = barEl.querySelector('input.gm-line'), what = barEl.querySelector('.gm-what');
+    if (input && input !== document.activeElement) input.value = st.bar;
+    if (what) {
+      const res = Sim().type(model(ctx), st.bar, { auth: st.auth });
+      const gap = G().incomplete(st.bar);
+      what.textContent = !st.bar ? 'Pick a command above: its line shows here.' : gap ? `⚠ Fill in ${G().gaps(st.bar).join(', ')} above.`
+        : `${levelName(st.auth)} typing it: ${Sim().explain(res)}`;
+      what.className = 'gm-what small ' + (!gap && /^(game|server|both)$/.test(res.result) ? 'ok-text' : 'warn-text');
+    }
+  }
+  function copy(ctx) {
+    const line = st.bar.trim();
+    if (!line) { toast('Nothing to copy: pick a command first.', 'bad'); return; }
+    if (G().incomplete(line)) { toast(`Fill in ${G().gaps(line).join(', ')} first.`, 'bad'); return; }
+    st.recent = [line, ...st.recent.filter(x => x !== line)].slice(0, 8); keep();
+    FRE.ui.copyText(line);
+    ctx.renderAll(false);
+  }
+  function bar(ctx) {
+    barEl = h('div.gm-bar',
+      h('div.gm-row', h('input.gm-line', { type: 'text', value: st.bar, spellcheck: false, placeholder: '/command …', on: { input: e => { st.bar = e.target.value; paintBar(ctx); }, keydown: e => { if (e.key === 'Enter') copy(ctx); } } }),
+        h('button.primary', { on: { click: () => copy(ctx) } }, 'Copy')),
+      h('div.gm-what.small'),
+      st.recent.length ? h('div.gm-recent.small', 'Recent: ', st.recent.map(l => h('button.chip', { title: 'Put back in the bar', on: { click: () => { st.bar = l; paintBar(ctx); } } }, l))) : null);
+    paintBar(ctx);
+    return barEl;
+  }
+
+  // ------------------------------------------------------------------ one command
+  function card(ctx, r) {
+    const off = state(r), open = st.sel === r.name && !off;
+    const spec = G().argsOf(r, st.vals[r.name + '|0']);
+    const head = h('div.gm-head', h('b', '/' + r.name), r.short !== r.name ? h('span.muted', ` /${r.short}`) : null,
+      h('span.tag', { title: 'This level and every higher one' }, r.auth === 'GENERAL' ? levelName(r.auth) : levelName(r.auth) + '+'), h('span.tag.muted', sideText(r)),
+      h('span.gm-desc', G().whatOf(r) || ''), off ? h('span.warn-text.small', ` ⛔ ${off}`) : null,
+      h('span.muted.small', { title: 'Where the command is listed' }, ` FuncTextCmd.cpp:${r.line}`));
+    // closed card of a sub-word command: its words show, so it is clear it does more than one thing
+    const subs = (G().ARGS[r.name.toLowerCase()] || {}).sub;
+    if (subs && !open) head.querySelector('.gm-desc').appendChild(h('span.gm-subs.muted.small', ' · ' + subs.map(o => o.label).join(' · ')));
+    const el = h('div.gm-card' + (open ? '.sel' : '') + (off ? '.off' : ''), { 'data-cmd': r.name }, head);
+    if (!off) head.addEventListener('click', () => { if (st.sel !== r.name) { rebuild(ctx, r); ctx.renderAll(false); } });
+    if (!open) return el;
+    if (spec && spec.length) {
+      el.appendChild(h('div.gm-form', spec.map((a, i) => h('label.gm-field', FRE.ui.fieldLabel(a.label, !a.optional), field(ctx, r, a, i)))));
+    } else if (!spec) {
+      el.appendChild(h('div.gm-form', h('label.gm-field', FRE.ui.fieldLabel('Words after the command', false),
+        h('input', { type: 'text', style: 'width:28em', value: st.vals[r.name + '|free'] || '', on: { input: e => { st.vals[r.name + '|free'] = e.target.value; rebuild(ctx, r); } } }),
+        h('div.muted.small', `This command's words are not described here yet: see TextCmd_${r.fn.replace(/^TextCmd_/, '')} in FuncTextCmd.cpp.`))));
+    } else el.appendChild(h('p.muted.small', 'No words after it.'));
+    if (r.name === 'notalk' && r.short === 'ta') el.appendChild(h('p.warn-text.small', '⚠ Its short name /ta is also /tradeagree\'s, which comes first: /ta runs /tradeagree. The bar always writes /notalk.'));
+    if (r.name === 'petlevel') el.appendChild(h('p.muted.small', 'Works only when your pet\'s EXP is 100% (use /petexp first). Your own pet only.'));
+    if (r.name === 'pet') el.appendChild(h('p.muted.small', 'The player must be online with a pet out. Stages: one number per stage reached, D first (1-9 each).'));
+    return el;
+  }
+
+  const mod = {
+    id: 'gmcmd', label: 'GM Commands', searchPlaceholder: 'Search every command', noItems: true,
+    help: 'GM Commands: every chat command of the source, by what it is for; pick one, fill it in, Copy (read only)',
+    st,
+    onLoad() { st.sel = null; st.cat = 'summon'; },
+    renderList(el, ctx) {
+      const m = model(ctx);
+      if (!m.ok) { el.appendChild(h('p.warn-text', 'FuncTextCmd.cpp not found.')); return; }
+      const live = m.rows.filter(r => r.live);
+      const entry = (id, label, n) => el.appendChild(h('div.npc' + (st.cat === id ? '.sel' : ''), { 'data-cat': id, on: { click: () => { st.cat = id; ctx.renderAll(false); } } },
+        h('div.n', h('span', label)), h('div.k', `${n} command${n === 1 ? '' : 's'}`)));
+      for (const [id, label] of G().CATS) { const n = live.filter(r => G().catOf(r) === id).length; if (n) entry(id, label, n); }
+      entry('all', 'All working commands', live.length);
+      entry('off', 'Not working', m.rows.length - live.length);
+    },
+    renderEditor(el, ctx) {
+      keepFocus(el, () => {
+        const m = model(ctx);
+        if (!m.ok) {
+          el.appendChild(h('div.npc-title', h('h2', 'GM Commands')));
+          el.appendChild(h('p.warn-text', '⚠ The command list is read from Source/Source/_Interface/FuncTextCmd.cpp. Pick the FLYFF-V19-SOURCE folder, or run sh tools/refresh-fixtures.sh test-data to copy it into the test folder.'));
+          return;
+        }
+        const rows = shown(ctx), cat = st.cat === 'all' ? 'All working commands' : st.cat === 'off' ? 'Not working' : (G().CATS.find(c => c[0] === st.cat) || [0, ''])[1];
+        const live = m.rows.filter(r => r.live).length, dead = m.rows.filter(r => r.dead && r.compiled).length;
+        el.appendChild(h('div.npc-title', h('h2', ctx.query ? `Search: ${ctx.query}` : cat), h('span.def', `${rows.length} shown`)));
+        el.appendChild(h('p.muted.small', `${live} commands work, read from FuncTextCmd.cpp (lines ${m.beginLine}-${m.endLine}). ${dead} more are listed below /open and never run (ParsingCommand stops there, line ${m.lines.openCheck}). `
+          + 'Names are exact: small and capital letters count. Monsters and items go in by number (a text name is matched against the display name, and spaces split it).'));
+        el.appendChild(h('div.gm-opts.small',
+          h('label', 'You are: ', h('select', { on: { change: e => { st.auth = e.target.value; paintBar(ctx); } } }, G().LEVELS.map(a => h('option', { value: a, selected: st.auth === a }, levelName(a))))),
+          ' ', h('label', h('input', { type: 'checkbox', checked: st.short, on: { change: e => { st.short = e.target.checked; const r = m.rows.find(x => x.name === st.sel); if (r) rebuild(ctx, r); } } }), ' short names (/cn)'),
+          ' ', st.cat !== 'off' ? h('label', h('input', { type: 'checkbox', checked: st.showOff, on: { change: e => { st.showOff = e.target.checked; ctx.renderAll(false); } } }), ' show the ones that do not work') : null));
+        el.appendChild(h('div.gm-list', rows.map(r => card(ctx, r))));
+        if (!rows.length) el.appendChild(h('p.muted', 'No command matches.'));
+        el.appendChild(bar(ctx));
+      });
+    },
+    addTarget() { return { ok: false, title: 'Nothing to add: this page only builds commands to copy' }; },
+    locate(d) { if (d.module !== 'gmcmd') return false; st.cat = 'off'; return true; },
+  };
+
+  FRE.ui.modules.push(mod);
 })(globalThis.FRE = globalThis.FRE || {});
 
 // ---- ui/where.js ----
