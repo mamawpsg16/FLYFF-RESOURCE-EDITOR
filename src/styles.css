@@ -474,3 +474,16 @@ details.fold[open] > .fold-head { border-bottom-left-radius: 0; border-bottom-ri
 .gm-line { flex: 1; font-family: monospace; font-size: 18px; padding: 6px 10px; }
 .gm-what { margin-top: 4px; }
 .gm-recent { margin-top: 4px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+/* Boss Mechanics preview (ui/bosses.js) */
+.bm-preview { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.bm-canvas { background: #1c1c20; border: 1px solid var(--line); border-radius: 8px; max-width: 100%; }
+.bm-log { list-style: none; padding: 0; margin: 0; max-height: 520px; overflow: auto; flex: 1; min-width: 260px; }
+.bm-log li { padding: 2px 0; border-bottom: 1px solid var(--line); }
+.bm-log li.bm-shout { color: #d7ebff; font-weight: 600; }
+.bm-snippet { max-height: 320px; overflow: auto; }
+/* Boss Mechanics v3: every shape on one page, the /position paste box */
+.bm-shapes { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.bm-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.bm-card-canvas { background: #1c1c20; border: 1px solid var(--line); border-radius: 6px; width: 100%; max-width: 260px; align-self: center; }
+.bm-paste { display: block; width: 100%; max-width: 40em; margin-top: 6px; font-family: monospace; font-size: 12px; }
+.bm-card .bm-card-canvas { margin-top: auto; }

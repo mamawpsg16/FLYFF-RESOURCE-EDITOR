@@ -49,6 +49,12 @@
     for (const p of parts) { if (!dir.children.has(p)) dir.children.set(p, new FakeDir(p)); dir = dir.children.get(p); }
     dir.children.set(n, new FakeFile(n, u8));
   }
+  // the bosses stages read the branch's boss files (fixtures/Boss) in place of main's defineSkill.h / propSkillAdd.csv
+  if (/^bosses/.test(STOP)) for (const [n, b64] of Object.entries(FRE.HARNESS_BOSS || {})) {
+    const bin = atob(b64), u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    res.children.set(n, new FakeFile(n, u8));
+  }
   const original = new Map([...res.children].filter(([, f]) => f.kind === 'file').map(([n, f]) => [n, f.bytes]));
   const backups = new FakeDir('backups');
   // fake Client folder like the real one: character.inc / DonationShop.inc identical,
@@ -491,6 +497,68 @@
   }
 
   // the Mounts task (?stop=mounts: the list and Nightmare Dragon; ?stop=mountsedit: edits, paste, a new block, Save)
+  // the Boss Mechanics task (?stop=bosses: the list and Drakul; bossesedit: chance 50 %, tier, Storm, undo; bossessave: Save)
+  async function bossesStage() {
+    const S = FRE.app.state;
+    await openTask('bosses');
+    const ed = () => $('editor'), items = () => [...document.querySelectorAll('#list .npc')], txt = () => S.ws.files.get('bossmechanics.inc').text;
+    ok(S.mode === 'bosses' && items().length === 19, `Boss Mechanics: the 19 bosses listed (got ${items().length})`);
+    ok(!S.ws.diags.some(d => d.module === 'bosses'), 'Boss Mechanics: the branch file has no problem');
+    click(items().find(x => x.dataset.boss === 'MI_VEMPAIN01'));
+    ok(/Drakul the Diabolic/.test(ed().textContent) && /3 attack lines out of 15 = 20 %/.test(ed().textContent), 'Drakul: 3 attack rows in 15 rows = 20 %');
+    ok(/Below 30 %/.test(ed().textContent) && ed().querySelector('canvas.bm-canvas'), 'the phase table and the preview canvas');
+    if (STOP === 'bosses') { $('toasts').textContent = ''; return; }
+    const chance = ed().querySelector('input[data-key="bm|MI_VEMPAIN01|chance"]');
+    chance.focus(); chance.value = '50'; chance.dispatchEvent(new Event('change'));
+    const v = () => S.ws.models.bosses.byName.get('MI_VEMPAIN01');
+    ok(v().rows.length === 6 && v().live === 3, `chance 50 %: 3 attacks + 3 no-attack rows (got ${v().rows.length})`);
+    const tier = ed().querySelector('select[data-key="bm|MI_VEMPAIN01|tier"]');
+    tier.value = 'BOSSTIER_HARD'; tier.dispatchEvent(new Event('change'));
+    ok(S.ws.newBlocking().some(d => d.code === 'BM_MIX') && /⛔ Hard needs/.test(ed().textContent), 'tier Hard: the mix line says ⛔ and BM_MIX blocks Save');
+    click($('btn-undo'));
+    ok(!S.ws.newBlocking().length && v().rows.length === 6, 'Ctrl+Z: one step back (tier), the chance stays');
+    click(btnByText(ed(), 'Play the fight'));
+    ok(ed().querySelector('.bm-log li'), 'Play the fight: the swing log starts');
+    if (STOP === 'bossesedit') return;
+    // design v3 (?stop=bossesv3): the arena from pasted /position lines, the page with every shape, Add to boss
+    const arena = () => ed().querySelector('input[data-key="bm|MI_VEMPAIN01|arena"]');
+    ok(arena() && arena().value === '24' && /Arena \(m\)/.test(ed().textContent), 'Drakul: Arena (m) 24');
+    const ta = ed().querySelector('textarea.bm-paste');
+    ta.value = 'Position : x = 6970.000000, y = 100.000000, z = 3337.000000\nhello\nPosition : x = 7006.000000, y = 100.000000, z = 3337.000000';
+    ta.dispatchEvent(new Event('input'));
+    ok(/farthest 36 m from the boss → arena 36 m/.test(ed().textContent) && /Skipped 1 line/.test(ed().textContent), 'paste: farthest 36 m → arena 36, 1 line skipped');
+    click(btnByText(ed(), 'Use it'));
+    ok(v().arena && v().arena.value === 36 && /\tarena 36\r\n/.test(txt()) && arena().value === '36', 'Use it: arena 36 written (one undo step)');
+    arena().focus(); arena().value = ''; arena().dispatchEvent(new Event('change'));
+    ok(v().arena.value === 36, 'emptying the arena of a boss whose shapes need it is refused');
+    click(btnByText(document.body, 'All shapes'));
+    const cards = () => [...ed().querySelectorAll('.bm-card')];
+    ok(cards().length === 31 && ed().querySelectorAll('canvas.bm-card-canvas').length === 31, `All shapes: 31 cards with a preview (got ${cards().length})`);
+    click(btnByText(ed(), 'Hard (11)'));
+    ok(cards().length === 11 && cards().some(c => /Outer ring/.test(c.textContent)), 'filter Hard: 11 cards, Outer ring among them');
+    click(btnByText(cards().find(c => /Outer ring/.test(c.textContent)), 'Add to boss'));
+    const dlg = lastModalAny(), bi = dlg.querySelector('.combo input');
+    bi.dispatchEvent(new Event('focus'));
+    const opt = [...dlg.querySelectorAll('.combo-opt')].find(x => /MI_VEMPAIN01\b/.test(x.textContent));
+    opt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    const add = () => dlg.querySelector('footer button.primary');
+    ok(/⛔ Normal needs 1 Easy, 2 Medium different shapes · after this: 1 Easy, 2 Medium, 1 Hard/.test(dlg.textContent) && add().disabled, 'Add to Drakul as a new line: the mix line says ⛔ and Add is greyed out');
+    const where = dlg.querySelectorAll('.nn-form select')[0];
+    where.value = 'replace'; where.dispatchEvent(new Event('change'));
+    const line = dlg.querySelectorAll('.nn-form select')[1];
+    line.value = [...line.options].find(o => /Medium/.test(o.textContent)).value; line.dispatchEvent(new Event('change'));
+    ok(/after this: 1 Easy, 1 Medium, 1 Hard/.test(dlg.textContent), 'instead of a Medium line: the mix line shows 1 Easy, 1 Medium, 1 Hard');
+    const steps = S.ws.history.length;
+    where.value = 'sig'; where.dispatchEvent(new Event('change'));
+    const shout = [...dlg.querySelectorAll('.nn-form input')].find(i => /ground shakes/.test(i.placeholder));
+    shout.value = 'Out of my room!'; shout.dispatchEvent(new Event('input'));
+    ok(!add().disabled, 'as its signature: Add is on');
+    click(add());
+    ok(S.ws.history.length === steps + 1 && /SIGNATURE ATTACK_OUTER_RING BOSSATK_HITSELF \S+ 6 "Out of my room!"/.test(txt()), 'Add: Outer ring is Drakul\'s signature, one undo step');
+    if (STOP === 'bossesv3') return;
+    $('toasts').textContent = '';
+  }
+
   async function mountsStage() {
     const S = FRE.app.state;
     await openTask('mounts');
@@ -576,13 +644,14 @@
     // the cards are drawn after the patch check (io/patch-state.js reads one C++ file per patch)
     await waitFor(() => document.querySelector('.task-card:not(:disabled)'), 'task cards enabled');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
-    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 18 && document.querySelector('.task-card[data-task="gmcmd"]') && document.querySelector('.task-card[data-task="classbuffs"]') && document.querySelector('.task-card[data-task="antibot"]') && document.querySelector('.task-card[data-task="minievent"]') && document.querySelector('.task-card[data-task="mounts"]') && document.querySelector('.task-card[data-task="consumables"]') && document.querySelector('.task-card[data-task="dungeon"]') && document.querySelector('.task-card[data-task="pvp"]') && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 18 tasks to pick (GM Commands; Class Buffs; Bot Check; Mini Events; Mounts; Consumable Stats; Dungeons; PvP Events; Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 19 && document.querySelector('.task-card[data-task="bosses"]') && document.querySelector('.task-card[data-task="gmcmd"]') && document.querySelector('.task-card[data-task="classbuffs"]') && document.querySelector('.task-card[data-task="antibot"]') && document.querySelector('.task-card[data-task="minievent"]') && document.querySelector('.task-card[data-task="mounts"]') && document.querySelector('.task-card[data-task="consumables"]') && document.querySelector('.task-card[data-task="dungeon"]') && document.querySelector('.task-card[data-task="pvp"]') && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 19 tasks to pick (Boss Mechanics; GM Commands; Class Buffs; Bot Check; Mini Events; Mounts; Consumable Stats; Dungeons; PvP Events; Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     if (STOP === 'dungeon') { await dungeonStage(); return; }
     if (STOP === 'antibot' || STOP === 'antibotedit') { await antiBotStage(); return; }
     if (STOP === 'minievent' || STOP === 'mineventprizes' || STOP === 'mineventhide' || STOP === 'mineventrace' || STOP === 'mineventweek' || STOP === 'mineventqs' || STOP === 'mineventturnin' || STOP === 'mineventedit' || STOP === 'mineventsave') { await miniEventStage(); return; }
     if (STOP === 'gmcmd' || STOP === 'gmcmdpet') { await gmCmdStage(); return; }
+    if (/^bosses/.test(STOP)) { await bossesStage(); return; }
     if (STOP === 'mounts' || STOP === 'mountsmore' || STOP === 'mountsimple' || STOP === 'mountsgame' || STOP === 'mountsedit' || STOP === 'mountsave') { await mountsStage(); return; }
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done
     click(document.querySelector('.task-card[data-task="npc"]'));

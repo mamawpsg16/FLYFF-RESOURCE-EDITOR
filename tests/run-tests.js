@@ -10,6 +10,7 @@ import { FRE, ROOT, readBytes, listDir, loadFolder, openSource, exists, loadWorl
 const ORACLE_SIM = GLib.getenv('ORACLE_SIM') || ROOT + '/tools/oracle_sim.py';
 import { bpServer } from './bp-server.js';
 import { checkMounts } from './mount-check.js';
+import { checkBosses } from './bosses-check.js';
 import { checkMiniEvent, checkTurnIn, checkWeek, checkRace } from './minievent-check.js';
 import { checkAntiBot } from './antibot-check.js';
 import { checkOwnerBuff } from './ownerbuff-check.js';
@@ -128,7 +129,8 @@ const W = freshWorkspace();
   eq(W.items.skippedVer, 0, 'no rows above __VER 19');
   eq(W.chars.npcs.length, 596, 'NPC blocks across 3 files');
   eq(W.diags.filter(d => d.code === 'C_NO_OPEN_BRACE').length, 6, '6 NPCs without "{"');
-  eq(W.diags.filter(d => d.severity === 'BLOCK').length, 0, 'no blocking problems in the current data');
+  // bosses: fixtures/Resource keeps main's 36-column propSkillAdd.csv (no bomb column); the branch files are checked in the Boss Mechanics section
+  eq(W.diags.filter(d => d.severity === 'BLOCK' && d.module !== 'bosses').length, 0, 'no blocking problems in the current data');
   const cnt = {};
   for (const npc of W.chars.npcs) for (const s of npc.statements) cnt[s.cmd] = (cnt[s.cmd] || 0) + 1;
   // differential check against the independent Python oracle
@@ -4479,6 +4481,47 @@ section('Mounts: Mount.inc, leg loops, ground, flying, take-off, edits (JS and P
   const p = FRE.mounts.parsePaste('Mount 225049: fGroundSpeed=0.40; fAnimSpeed=1.65; fWalkAnimSpeed=1.25; fNameOffset=0.00;\nszRun="item_Mount058_run.ani"; szWalk="item_Mount058_walk.ani"; szWalkBack="item_Mount058_walkback.ani";');
   eq(J([p.id, Object.keys(p.values).length, p.values.fAnimSpeed, p.values.szWalkBack]), J([225049, 7, 1.65, 'item_Mount058_walkback.ani']), 'a /mountset reply: the mount id and its 7 values');
 }
+
+// ---------------------------------------------------------------- Boss Mechanics (bossMechanics.inc, V19 feat/boss-patterns)
+section('Boss Mechanics: bossMechanics.inc, the branch checker, swings, phases, the chance box, edits (JS and Python copies agree)');
+if (exists(ROOT + '/test-data/fixtures/Boss/bossMechanics.inc')) {
+  const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e));
+  for (const [k, e] of loadFolder(ROOT + '/test-data/fixtures/Boss')) fs.set(k, openSource(e));     // the branch's files (3dac171b)
+  const W = new FRE.Workspace(fs, { only: 'bosses' }).load();
+  const m = W.models.bosses, J = JSON.stringify, O = FRE.bossesOps, Sim = FRE.bossSim;
+  eq(J([m.bosses.length, m.errors.length]), J([19, 0]), 'the branch file: 19 bosses, no problem (= check_boss_mechanics.py "OK: 19 bosses")');
+  eq(W.diags.filter(d => d.module === 'bosses').length, 0, 'no diagnostics on the real file');
+  const v = m.byName.get('MI_VEMPAIN01');
+  eq(J([v.mover && v.mover.name, v.tier.value, v.rows.length, v.live, v.phases.length]), J(['Drakul the Diabolic', 'BOSSTIER_NORMAL', 15, 3, 1]), 'MI_VEMPAIN01: Drakul, NORMAL, 3 attacks in 15 rows, one PHASE');
+  const t = Sim.table(v);
+  eq(J([Math.round(t[0].attack * 100), Math.round(t[1].byTier[2] / t[1].attack * 100)]), J([20, 86]), 'MI_VEMPAIN01: 20 % of swings attack; below 30 % HP, 86 % of its attacks are Medium (BOSS_DESIGN_V2.md 4)');
+  ok(m.bombSkills.includes('SI_BOSSATTACK_LOWDMG_1') && !m.bombSkills.includes('SI_VAG_ONE_CLEANHIT'), 'the skill list: only skills with a bomb type in column 37');
+  ok(m.candidates.length > 0 && m.candidates.every(x => [4, 5, 7].includes(x.rankId) && !m.byName.has(x.define)), `+ boss offers ${m.candidates.length} bosses / mid bosses / giants not listed yet`);
+  // the Python copy
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} bosses ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py bosses) gave no readable result', e.message); }
+  if (py) checkBosses({ FRE, py, ws: W, ok });
+  // through the workspace: chance 50 %, a tier change blocks, undo = the same bytes
+  const f = W.files.get('bossmechanics.inc'), before = f.serialize();
+  W.apply('bossmechanics.inc', O.setChance(f.text, W.models.bosses.byName.get('MI_VEMPAIN01'), 50), 'chance');
+  const v2 = W.models.bosses.byName.get('MI_VEMPAIN01');
+  eq(J([v2.rows.length, v2.live]), J([6, 3]), 'attack chance 50 %: 3 attacks + 3 no-attack rows');
+  eq(W.newBlocking().length, 0, 'still no problem');
+  W.apply('bossmechanics.inc', O.setTier(f.text, v2, 'BOSSTIER_HARD'), 'tier');
+  ok(W.newBlocking().some(d => d.code === 'BM_MIX'), 'tier HARD on a 1 Easy + 2 Medium boss: BM_MIX blocks saving');
+  W.apply('bossmechanics.inc', O.setRows(f.text, W.models.bosses.byName.get('MI_VEMPAIN01'), [['ATTACK_STORM', 'BOSSATK_HITSELF', 'SI_BOSSATTACK_BURN', 'NO_DELAY', '0', 'APPLY_INSTANT']]), 'storm');
+  ok(W.newBlocking().some(d => d.code === 'BM_STORM'), 'a Storm row without a storm skill: BM_STORM blocks saving');
+  while (W.undo());
+  ok(B.bytesEqual(f.serialize(), before), 'undo: bossMechanics.inc is byte-identical (CRLF)');
+  throws(() => O.setPhases(f.text, v, [{ hp: 30, speed: 75, w: [1, 3, 0], shout: '' }, { hp: 80, speed: 75, w: [1, 1, 1], shout: '' }]), 'a phase at 80 % after one at 30 % is refused (HP must go down)');
+  throws(() => O.setSignature(f.text, v, { type: 'ATTACK_METEOR', hit: 'BOSSATK_HITSELF', skill: 'SI_BOSSATTACK_BURN', every: 1, shout: 'x' }), 'a signature every 1 swing is refused (2-50)');
+  throws(() => O.setSignature(f.text, v, { type: 'ATTACK_METEOR', hit: 'BOSSATK_HITSELF', skill: 'SI_BOSSATTACK_BURN', every: 5, shout: 'say "hi"' }), 'a shout with a quote is refused');
+  for (const k of ['BM_SYNTAX', 'BM_MONSTER', 'BM_DUP', 'BM_INORDER', 'BM_DEAD', 'BM_WORD', 'BM_NONE_ROW', 'BM_SKILL', 'BM_STORM', 'BM_NO_ATTACK', 'BM_TIER', 'BM_MIX', 'BM_SIG', 'BM_PHASE', 'BM_RAGE']) ok(FRE.diagHelp[k], `help text for ${k}`);
+  const as = FRE.afterSave.compute({ changes: [{ label: 'x', files: ['bossmechanics.inc'] }] });
+  eq(as.steps.map(s => s.id).join(), 'servers', 'bossMechanics.inc: Stop / Start Server.bat (the WorldServer reads it once at start)');
+  ok(as.notes.some(n => n.id === 'branch' && /feat\/boss-patterns/.test(n.text)), 'Save says it needs a WorldServer built from feat/boss-patterns');
+} else print('  (no fixtures/Boss: run tools/refresh-fixtures.sh)');
 
 // ---------------------------------------------------------------- Secret Room Winner / Guild Siege Winner (OwnerBuff.txt)
 section('owner buffs: OwnerBuff.txt, who has the buff when (JS and Python copies agree)');

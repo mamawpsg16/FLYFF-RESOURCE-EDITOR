@@ -250,6 +250,16 @@
       validate(ws, model) { return FRE.mountChecks(model, { hasModels: ws.clientModels }); },
     },
     {
+      // Boss Mechanics (loaders/bosses.js): bossMechanics.inc, WorldServer only (V19 branch feat/boss-patterns 09f500c3, design v2
+      // 3dac171b; the C++ reader is planned, not written: CPP_PORT_LIST.md). propSkillAdd.csv (the branch's 38 columns, 97aa58b7):
+      // which skills have a bomb type (column 37), read-only. propMover.txt: boss names, ranks and swing delay (read-only).
+      id: 'bosses', label: 'Boss Mechanics',
+      required: ['bossMechanics.inc'], optional: ['propSkillAdd.csv', 'propMover.txt', 'propMover.txt.txt'],
+      editable: ['bossMechanics.inc'], client: [], deps: [],
+      parse(ws) { return FRE.bosses.fromWorkspace(ws); },
+      validate(ws, model) { return FRE.bossChecks(model); },
+    },
+    {
       // PvP Events (loaders/pvp.js): FFAManager.inc / TDMManager.inc (ReadConfig: WorldServer start + /ffareload, /tdmreload),
       // GuildCombat.txt (the siege day / time AUTO_OPEN_IDC and the minimum bid JOINPENYA, CGuildCombat::LoadScript),
       // GuildSiegePrize.lua (the siege prizes, PvP events part B 6de6da39). Server files only; the rules boards players read are

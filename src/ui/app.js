@@ -462,7 +462,7 @@
         h('button.primary', { id: 'btn-root', on: { click: chooseRoot } }, 'Choose the source folder')));
     }
     wrap.appendChild(h('div.start-step', '2 · Task'));
-    wrap.appendChild(h('div.task-grid', FRE.Workspace.MODULES.filter(wm => !wm.hidden).map(wm => {
+    wrap.appendChild(h('div.task-grid', FRE.Workspace.MODULES.filter(wm => !wm.hidden).slice().sort((a, b) => a.label.localeCompare(b.label)).map(wm => {
       const um = modules().find(x => x.id === wm.id);
       return h('button.task-card' + (S.loadingTask === wm.id ? '.loading' : ''), { 'data-task': wm.id, disabled: !L || S.busy, title: L ? '' : 'Choose the folder first', on: { click: () => loadTask(wm.id) } },
         h('b', wm.label), h('span', um && um.help ? um.help.replace(/^[^:]+:\s*/, '').replace(/^./, c => c.toUpperCase()) : wm.required.join(', ')),

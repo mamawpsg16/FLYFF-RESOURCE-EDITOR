@@ -20,7 +20,7 @@ if ! command -v firefox >/dev/null 2>&1; then
   [ -n "$BRAVE" ] || { echo "no firefox and no brave.exe found (set BRAVE=...)"; exit 1; }
   if command -v cygpath >/dev/null 2>&1; then WIN=$(cygpath -m "$PWD"); else WIN=$(wslpath -m "$PWD"); fi
 fi
-ALL="start loaded shoptype review newnpcform newnpc newmenu mfcards mftry npcedit shoprules rulesmenu nnmenus npcmove pospaste dsbuy dstree drops dropskill dropsgen boxes boxesopen newbox boxsettings where wheregifts rates ownerbuff ratescalc levelgifts rebirth bpexpired bpseason bpladder bpmonsters bphistory exchange exsim exrecipe classbuffs pvp pvpeqcopy pvpeqfashion pvpeqrunes pvpffa pvpreview dungeon minievent mineventqs mineventturnin mineventhide mineventrace mineventweek mineventedit mineventsave antibot antibotedit mounts mountsimple mountsgame mountsedit mountsave end"
+ALL="start loaded shoptype review newnpcform newnpc newmenu mfcards mftry npcedit shoprules rulesmenu nnmenus npcmove pospaste dsbuy dstree drops dropskill dropsgen boxes boxesopen newbox boxsettings where wheregifts rates ownerbuff ratescalc levelgifts rebirth bpexpired bpseason bpladder bpmonsters bphistory exchange exsim exrecipe classbuffs pvp pvpeqcopy pvpeqfashion pvpeqrunes pvpffa pvpreview dungeon minievent mineventqs mineventturnin mineventhide mineventrace mineventweek mineventedit mineventsave antibot antibotedit mounts mountsimple mountsgame mountsedit mountsave bosses bossesedit bossesv3 end"
 if [ "$BROWSER" = brave ]; then
   # one browser for every stage, driven over DevTools: each shot is taken when the harness has finished (tests/ui-shot.mjs)
   BRAVE="$BRAVE" exec node tests/ui-shot.mjs ${STAGES:-$ALL}

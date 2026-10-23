@@ -88,6 +88,10 @@ loaders/mounts.js
 loaders/mount-sim.js
 edit/mounts-ops.js
 validate/mounts.js
+loaders/bosses.js
+loaders/bosses-sim.js
+edit/bosses-ops.js
+validate/bosses.js
 loaders/minievent.js
 loaders/minievent-sim.js
 loaders/minievent-turnin.js
@@ -149,6 +153,8 @@ ui/weapons.js
 ui/classbuffs.js
 ui/consumables.js
 ui/mounts.js
+ui/bosses-preview.js
+ui/bosses.js
 ui/minievent.js
 ui/antibot.js
 ui/pvp-equalized.js

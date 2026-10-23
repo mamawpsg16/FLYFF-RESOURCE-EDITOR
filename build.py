@@ -62,6 +62,9 @@ def main():
         # Client/Item icons (Boxes shows each box's icon)
         it = ROOT / 'test-data' / 'fixtures' / 'Client' / 'Item'
         parts.append('FRE.HARNESS_ITEMS = ' + json.dumps({f.name: base64.b64encode(f.read_bytes()).decode() for f in sorted(it.iterdir())} if it.exists() else {}) + ';')
+        # Boss Mechanics: the branch's bossMechanics.inc / defineSkill.h / propSkillAdd.csv (fixtures/Boss), used by the bosses stages only
+        bd = ROOT / 'test-data' / 'fixtures' / 'Boss'
+        parts.append('FRE.HARNESS_BOSS = ' + json.dumps({f.name: base64.b64encode(f.read_bytes()).decode() for f in sorted(bd.iterdir())} if bd.exists() else {}) + ';')
         parts.append((ROOT / 'tests' / 'ui-harness.js').read_text(encoding='utf-8'))
     js = '\n'.join(parts)
     js = re.sub(r'</(script)', r'<\\/\1', js, flags=re.I)   # never close the inline <script> early

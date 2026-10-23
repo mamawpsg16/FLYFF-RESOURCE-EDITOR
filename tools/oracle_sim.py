@@ -15396,6 +15396,683 @@ def gm_run(root):
             'cases': cases, 'pets': gm_pets(root, defines(root)), 'switches': sw, 'tables': tables}
 
 
+
+# ---------------------------------------------------------------- Boss Mechanics (bossMechanics.inc, V19 feat/boss-patterns)
+# Written from the branch's Python checker (Tools/BossMechanics/check_boss_mechanics.py, 3dac171b + design v3 8da5dc21: the format's authority until the
+# C++ exists) and the planned dispatcher (PLANS/Boss Mechanics/CPP_PORT_LIST.md v2-3 / v2-5), not from the editor's JS.
+# Edits are made line by line (a list of lines with their EOLs).
+BM_LIVE = ['ATTACK_AROUNDSELF', 'ATTACK_LINE', 'ATTACK_TRIANGLE', 'ATTACK_SQUARE', 'ATTACK_RANDOM', 'ATTACK_TARGET', 'ATTACK_CROSS',
+           'ATTACK_STORM', 'ATTACK_CORNER', 'ATTACK_CIRCLE1', 'ATTACK_CIRCLE2', 'ATTACK_CIRCLE3', 'ATTACK_SPIRAL', 'ATTACK_RINGWAVE',
+           'ATTACK_CHECKER', 'ATTACK_SAFELANE', 'ATTACK_BEAM', 'ATTACK_TWINSPIRAL', 'ATTACK_CROSS_SPIN', 'ATTACK_METEOR', 'ATTACK_HUNTER',
+           'ATTACK_PETALS', 'ATTACK_STOMP', 'ATTACK_CHARGE', 'ATTACK_CROSSFIRE', 'ATTACK_QUADS', 'ATTACK_WALLS', 'ATTACK_SWEEP',
+           'ATTACK_OUTER_RING', 'ATTACK_CROSSLINES', 'ATTACK_CROSSHAIR']
+# v3: these shapes reach players across the room, so the block needs 'arena <12-48>'
+BM_ARENA_SHAPES = {'ATTACK_HUNTER', 'ATTACK_CHARGE', 'ATTACK_CROSSFIRE', 'ATTACK_CROSSLINES', 'ATTACK_CROSSHAIR', 'ATTACK_WALLS', 'ATTACK_SWEEP',
+                   'ATTACK_OUTER_RING', 'ATTACK_STOMP', 'ATTACK_TARGET', 'ATTACK_STORM', 'ATTACK_CORNER', 'ATTACK_AROUNDSELF'}
+BM_TIER = {}
+for _k, _names in ((1, 'TARGET AROUNDSELF LINE CROSS TRIANGLE STORM STOMP CHARGE'),
+                   (2, 'SQUARE CIRCLE1 CIRCLE2 RANDOM CORNER SPIRAL CHECKER TWINSPIRAL CROSSFIRE QUADS CROSSLINES CROSSHAIR'),
+                   (3, 'CIRCLE3 RINGWAVE SAFELANE BEAM CROSS_SPIN METEOR HUNTER PETALS WALLS SWEEP OUTER_RING')):
+    for _n in _names.split():
+        BM_TIER['ATTACK_' + _n] = _k
+BM_TIER_NAME = {1: 'Easy', 2: 'Medium', 3: 'Hard'}
+BM_BOSS_TIERS = {'BOSSTIER_EASY': {1: 2, 2: 1}, 'BOSSTIER_NORMAL': {1: 1, 2: 2}, 'BOSSTIER_HARD': {2: 2, 3: 1}, 'BOSSTIER_WORLD': {2: 1, 3: 2}}
+BM_DEAD = {'ATTACK_CROSSSQUARE', 'ATTACK_SINGLELINEFORWARD', 'ATTACK_LINE_CROSS', 'ATTACK_LINE_CIRCLE', 'ATTACK_FOLLOWTARGET',
+           'ATTACK_LEFTSTRIKE', 'ATTACK_RIGHTSTRIKE', 'ATTACK_BACKSTRIKE', 'ATTACK_FRONTSTRIKE', 'ATTACK_LEFTSTRIKE2',
+           'ATTACK_RIGHTSTRIKE2', 'ATTACK_BACKSTRIKE2', 'ATTACK_FRONTSTRIKE2', 'ATTACK_CIRCLE4', 'ATTACK_CIRCLE5', 'ATTACK_SQUARE2', 'ATTACK_CIRCLE6'}
+BM_HITS = ['BOSSATK_HITSELF', 'BOSSATK_HITTARGET', 'BOSSATK_HITTYPE_ALL']
+BM_DELAYS = ['NO_DELAY', 'RANDOM_DELAY']
+BM_APPLIES = ['APPLY_INSTANT', 'APPLY_STEP']
+BM_BOMBS = {'TYPE_BOMB', 'TYPE_MINE', 'TYPE_MOVER', 'TYPE_STORM', 'TYPE_BURN', 'TYPE_LINE', 'TYPE_FOLLOW'}
+BM_NONE = ['ATTACK_NONE', '0', '0', '0', '0', '0']
+
+
+def bm_lines(text):
+    """the file's lines, each with its own EOL (\\r\\n, \\n or \\r)"""
+    return re.findall(r'[^\r\n]*(?:\r\n|\n|\r)|[^\r\n]+$', text)
+
+
+def bm_words(line):
+    """the words of one line: "quoted" (one word), braces / brackets, the rest between spaces; // outside quotes ends the line"""
+    out = []
+    for m in re.finditer(r'"[^"]*"|//.*|[{}\[\]]|[^\s{}\[\]"]+', line.rstrip('\r\n')):
+        if m.group().startswith('//'):
+            break
+        out.append((m.start(), m.end(), m.group()))
+    return out
+
+
+def bm_skill_table(text):
+    bombs = {}
+    for line in re.split(r'\r\n|\n|\r', text):
+        c = line.split(',')
+        if len(c) >= 37 and c[1].startswith('SI_'):
+            bombs.setdefault(c[1], set()).add(c[36].strip())
+    return bombs
+
+
+def bm_check(text, monsters, skills, bombs):
+    """-> (errors ['line: text'], bosses [{name, line, inorder, tier, sig, phases, rows, lines...}])"""
+    errors, seen, bosses = [], {}, []
+    toks = [(n, w) for n, line in enumerate(bm_lines(text), 1) for (_, _, w) in bm_words(line)]
+    st = {'i': 0}
+
+    def err(no, msg):
+        errors.append('%d: %s' % (no, msg))
+
+    def take():
+        if st['i'] >= len(toks):
+            return (toks[-1][0] if toks else 0), None
+        st['i'] += 1
+        return toks[st['i'] - 1]
+
+    def same_line(no, n, stop=()):
+        row = []
+        while len(row) < n and st['i'] < len(toks) and toks[st['i']][0] == no and toks[st['i']][1] not in stop:
+            row.append(take()[1])
+        return row
+
+    def skill(mi, no, s, what):
+        if s not in skills:
+            err(no, "%s: %s '%s' is not in defineSkill.h" % (mi, what, s))
+            return
+        cells = bombs.get(s)
+        if not cells:
+            err(no, "%s: %s '%s' has no propSkillAdd.csv row" % (mi, what, s))
+        elif not cells & BM_BOMBS:
+            err(no, "%s: %s '%s' has no bomb type in propSkillAdd.csv column 37 (found %s)" % (mi, what, s, ', '.join(sorted(cells))))
+
+    def shout(mi, no, s, what):
+        if not (len(s) >= 3 and s[0] == '"' and s[-1] == '"' and s[1:-1].strip()):
+            err(no, "%s: %s shout must be a \"quoted text\", found '%s'" % (mi, what, s))
+        elif len(s) - 2 > 120 or any(ord(c) > 126 for c in s):
+            err(no, '%s: %s shout: plain ASCII, at most 120 characters' % (mi, what))
+
+    digits = lambda v: re.fullmatch(r'[0-9]+', v) is not None
+    while st['i'] < len(toks):
+        no, word = take()
+        if word != 'monster':
+            err(no, "expected 'monster', found '%s'" % word)
+            continue
+        no, mi = take()
+        if mi is None:
+            err(no, "file ends after 'monster'")
+            break
+        if mi not in monsters:
+            err(no, '%s is not in defineObj.h (server would crash at boot)' % mi)
+        if mi in seen:
+            err(no, '%s already listed on line %d (the second block replaces the first)' % (mi, seen[mi]))
+        seen.setdefault(mi, no)
+        head = no
+        no, word = take()
+        if word != '{':
+            err(no, "%s: expected '{', found '%s'" % (mi, word))
+            continue
+        b = {'name': mi, 'line': head, 'open': no, 'close': None, 'inorder': None, 'inorder_line': None, 'tier': None, 'tier_lines': [],
+             'sig': None, 'sig_lines': [], 'phases': [], 'phase_lines': [], 'pattern': None, 'rows': [], 'row_lines': [], 'shapes': [],
+             'arena': None, 'arena_lines': []}
+        bosses.append(b)
+        pattern, live, tier, sig, shapes, sig_kind = False, 0, None, False, set(), None
+        while True:
+            no, word = take()
+            if word is None:
+                err(no, "%s: file ends before '}'" % mi)
+                break
+            if word == '}':
+                b['close'] = no
+                break
+            if word == 'inorder':
+                b['inorder_line'] = no
+                no, v = take()
+                if v not in ('0', '1'):
+                    err(no, "%s: inorder must be 0 or 1, found '%s'" % (mi, v))
+                b['inorder'] = v
+                continue
+            if word == 'tier':
+                b['tier_lines'].append(no)
+                no, v = take()
+                if v not in BM_BOSS_TIERS:
+                    err(no, "%s: tier must be BOSSTIER_EASY, _NORMAL, _HARD or _WORLD, found '%s'" % (mi, v))
+                elif tier:
+                    err(no, '%s: tier written twice' % mi)
+                else:
+                    tier = (no, v)
+                    b['tier'] = v
+                continue
+            if word == 'arena':
+                b['arena_lines'].append(no)
+                no, v = take()
+                if v is None or not digits(v) or not 12 <= int(v) <= 48:
+                    err(no, "%s: arena must be 12 to 48 (m), found '%s'" % (mi, v))
+                elif b['arena'] is not None:
+                    err(no, '%s: arena written twice' % mi)
+                else:
+                    b['arena'] = int(v)
+                continue
+            if word == 'RAGE':
+                err(no, '%s: RAGE is the old name, write PHASE <hp> <speed> <Easy> <Medium> <Hard weight> "shout" (the weight on its hardest tier)' % mi)
+                same_line(no, 10 ** 6)
+                continue
+            if word == 'SIGNATURE':
+                row = same_line(no, 5)
+                b['sig_lines'].append(no)
+                if sig:
+                    err(no, '%s: SIGNATURE written twice (one per boss)' % mi)
+                sig = True
+                if b['sig'] is None:
+                    b['sig'] = row
+                sig_kind = row[0] if row else None
+                if len(row) != 5:
+                    err(no, '%s: SIGNATURE needs 5 words after it (type hit skill every "shout"), found %d' % (mi, len(row)))
+                    continue
+                if row[0] == 'ATTACK_STORM' or row[0] not in BM_LIVE:
+                    err(no, "%s: SIGNATURE type '%s' must be one of the shapes (not NONE / STORM)" % (mi, row[0]))
+                if row[1] not in BM_HITS:
+                    err(no, "%s: unknown hit type '%s'" % (mi, row[1]))
+                skill(mi, no, row[2], 'signature skill')
+                if not digits(row[3]) or not 2 <= int(row[3]) <= 50:
+                    err(no, "%s: SIGNATURE every must be 2 to 50 swings, found '%s'" % (mi, row[3]))
+                shout(mi, no, row[4], 'SIGNATURE')
+                continue
+            if word == 'PHASE':
+                row = same_line(no, 6)
+                b['phase_lines'].append(no)
+                if len(b['phases']) == 4:
+                    err(no, '%s: at most 4 PHASE lines' % mi)
+                if len(row) not in (5, 6):
+                    err(no, '%s: PHASE needs 5 numbers (hp %%, swing time %%, Easy, Medium, Hard weight) and an optional "shout", found %d words' % (mi, len(row)))
+                    continue
+                good = True
+                for v, lo, hi, what in zip(row, (1, 30, 0, 0, 0), (99, 100, 10, 10, 10), ('hp %', 'swing time %', 'Easy weight', 'Medium weight', 'Hard weight')):
+                    if not digits(v) or not lo <= int(v) <= hi:
+                        err(no, "%s: PHASE %s must be %d to %d, found '%s'" % (mi, what, lo, hi, v))
+                        good = False
+                if len(row) == 6:
+                    shout(mi, no, row[5], 'PHASE')
+                if good:
+                    n = [int(v) for v in row[:5]]
+                    if b['phases'] and n[0] >= b['phases'][-1]['hp']:
+                        err(no, '%s: PHASE hp must go down in file order (%d after %d)' % (mi, n[0], b['phases'][-1]['hp']))
+                    b['phases'].append({'line': no, 'hp': n[0], 'speed': n[1], 'w': n[2:], 'shout': row[5][1:-1] if len(row) == 6 else ''})
+                continue
+            if word == 'randomized':
+                err(no, "%s: 'randomized' is the old name, write 'inorder'" % mi)
+                take()
+                continue
+            if word == 'PATTERN':
+                if b['inorder'] is None:
+                    err(no, "%s: 'inorder' must come before PATTERN" % mi)
+                pattern = True
+                b['pattern'] = no
+                no, word = take()
+                if word != '[':
+                    err(no, "%s: expected '[' after PATTERN, found '%s'" % (mi, word))
+                    continue
+                b['bracket'] = no
+                while True:
+                    no, word = take()
+                    if word is None:
+                        err(no, "%s: file ends before ']'" % mi)
+                        break
+                    if word == ']':
+                        break
+                    if word != 'BOSSATTACK':
+                        err(no, "%s: expected BOSSATTACK, found '%s'" % (mi, word))
+                        continue
+                    row = same_line(no, 6, ('BOSSATTACK', ']', '}'))
+                    if len(row) != 6:
+                        err(no, '%s: BOSSATTACK needs 6 words after it, found %d' % (mi, len(row)))
+                        continue
+                    b['rows'].append(row)
+                    b['row_lines'].append(no)
+                    if row == BM_NONE:
+                        continue
+                    if row[0] == 'ATTACK_NONE':
+                        err(no, "%s: ATTACK_NONE row must be 'ATTACK_NONE 0 0 0 0 0'" % mi)
+                        continue
+                    if row[0] in BM_DEAD:
+                        err(no, '%s: %s is never fired by the server, use one of the 31 types' % (mi, row[0]))
+                        continue
+                    if row[0] == 'ATTACK_ZIGZAG':
+                        err(no, '%s: ATTACK_ZIGZAG is the old name, write ATTACK_CROSSFIRE' % mi)
+                        continue
+                    if row[0] not in BM_LIVE:
+                        err(no, "%s: unknown attack type '%s'" % (mi, row[0]))
+                        continue
+                    if row[1] not in BM_HITS:
+                        err(no, "%s: unknown hit type '%s'" % (mi, row[1]))
+                    if row[3] not in BM_DELAYS:
+                        err(no, "%s: unknown delay '%s'" % (mi, row[3]))
+                    if row[5] not in BM_APPLIES:
+                        err(no, "%s: unknown apply '%s'" % (mi, row[5]))
+                    skill(mi, no, row[2], 'skill')
+                    if row[0] == 'ATTACK_STORM':
+                        if row[4] == '0':
+                            err(no, '%s: ATTACK_STORM needs a storm skill (5th word)' % mi)
+                        else:
+                            skill(mi, no, row[4], 'storm skill')
+                    elif row[4] != '0':
+                        err(no, "%s: storm skill '%s' only works on ATTACK_STORM rows" % (mi, row[4]))
+                    live += 1
+                    shapes.add(row[0])
+                continue
+            err(no, "%s: unknown word '%s'" % (mi, word))
+        if not pattern:
+            err(no, '%s: no PATTERN block' % mi)
+        elif live == 0:
+            err(no, '%s: no real attack (only ATTACK_NONE rows)' % mi)
+        if tier:
+            want, have = BM_BOSS_TIERS[tier[1]], {}
+            for s in shapes:
+                have[BM_TIER[s]] = have.get(BM_TIER[s], 0) + 1
+            if have != want:
+                say = lambda d: ', '.join('%d %s' % (d[k], BM_TIER_NAME[k]) for k in sorted(d)) or 'none'
+                err(tier[0], '%s: %s needs %s different shapes, has %s' % (mi, tier[1], say(want), say(have)))
+        if b['arena'] is None:
+            need = sorted(shapes & BM_ARENA_SHAPES)
+            if sig_kind in BM_ARENA_SHAPES and sig_kind not in need:
+                need.append(sig_kind)
+            if need:
+                err(no, '%s: no arena line, needed by %s (write arena <12-48>)' % (mi, ', '.join(need)))
+        used = sorted(set(BM_TIER[x] for x in shapes))
+        for p in b['phases']:
+            if used and all(p['w'][t - 1] == 0 for t in used):
+                err(p['line'], '%s: PHASE %d sets every shape tier the boss uses to 0 (it would never attack)' % (mi, p['hp']))
+        b['shapes'] = sorted(shapes)
+    return errors, bosses
+
+
+# ---- what a swing does (CPP_PORT_LIST.md v2-3 OnAttackMelee_CustomBoss1 + v2-5 the swing time)
+def bm_weight(b, phase, row):
+    if phase < 0 or row[0] == 'ATTACK_NONE':
+        return 1
+    return b['phases'][phase]['w'][BM_TIER.get(row[0], 2) - 1]
+
+
+def bm_chances(b, phase):
+    ws = [bm_weight(b, phase, r) for r in b['rows']]
+    total = sum(ws)
+    attack, shape, tiers = 0, {}, {1: 0, 2: 0, 3: 0}
+    for w, r in zip(ws, b['rows']):
+        if r[0] == 'ATTACK_NONE':
+            continue
+        p = w / total if total else 0
+        attack += p
+        shape[r[0]] = shape.get(r[0], 0) + p
+        tiers[BM_TIER.get(r[0], 2)] += p
+    return {'total': total, 'attack': attack, 'shape': sorted(shape.items()), 'tier': [tiers[1], tiers[2], tiers[3]]}
+
+
+def bm_fight(b, seed, swings, hp_end, re_attack, busy):
+    rnd = Rand(seed)
+    sig = b['sig'] if b['sig'] is not None and len(b['sig']) == 5 else None
+    every = int(sig[3]) if sig and re.fullmatch(r'[0-9]+', sig[3]) else 0
+    has_sig = sig is not None and every >= 2
+    swing_no, count, phase, out = 0, 0, -1, []
+
+    def wait():
+        d = re_attack - 1000 + rnd(2000)
+        if phase >= 0:
+            d = int(d * b['phases'][phase]['speed'] / 100)   # C++ int math: truncates toward 0
+        return d
+    for k in range(swings):
+        hp = 100 - (k * (100 - hp_end)) // swings
+        if not b['rows']:
+            out.append([hp, swing_no, phase, [], 'none', -1, wait()])
+            continue
+        if k in busy:                                   # the last attack is still on the ground: no new one, no swing counted
+            out.append([hp, swing_no, phase, [], 'busy', -1, wait()])
+            continue
+        swing_no += 1
+        shouts = []
+        now = -1
+        for j, p in enumerate(b['phases']):
+            if hp <= p['hp']:
+                now = j
+        if now > phase:
+            phase = now
+            if b['phases'][phase]['shout']:
+                shouts.append(b['phases'][phase]['shout'])
+        row = -1
+        if has_sig and swing_no % every == 0:
+            shouts.append(sig[4][1:-1] if sig[4].startswith('"') and sig[4].endswith('"') else sig[4])
+            kind = 'signature'
+        elif b['inorder'] == '1':
+            row = count % len(b['rows'])
+            count += 1
+            kind = 'none' if b['rows'][row][0] == 'ATTACK_NONE' else 'row'
+        else:
+            total = sum(bm_weight(b, phase, r) for r in b['rows'])
+            roll = rnd(max(total, 1))
+            for j, r in enumerate(b['rows']):
+                w = bm_weight(b, phase, r)
+                if roll < w:
+                    row = j
+                    break
+                roll -= w
+            kind = 'none' if row < 0 or b['rows'][row][0] == 'ATTACK_NONE' else 'row'
+        out.append([hp, swing_no, phase, shouts, kind, row, wait()])
+    return out
+
+
+def bm_spread(rows, pct):
+    """the attack chance box: R real rows kept in order among N rows, R / N nearest to pct; real row i at slot floor((2i+1)N / 2R)"""
+    real = [r for r in rows if r[0] != 'ATTACK_NONE']
+    if not real or not 1 <= pct <= 100:
+        return None
+    n_real = len(real)
+    n = max(n_real, int(math.floor(n_real * 100 / pct + 0.5)))
+    out = [list(BM_NONE) for _ in range(n)]
+    for i, r in enumerate(real):
+        out[(2 * i + 1) * n // (2 * n_real)] = list(r)
+    return {'rows': out, 'total': n, 'pct': 100 * n_real / n}
+
+
+# ---- edits, line by line
+def bm_indent(line):
+    return re.match(r'[ \t]*', line).group()
+
+
+def bm_eol(line):
+    m = re.search(r'(\r\n|\n|\r)$', line)
+    return m.group(1) if m else ''
+
+
+def bm_file_eol(text):
+    crlf = text.count('\r\n')
+    return '\r\n' if crlf >= text.count('\n') - crlf else '\n'
+
+
+class BmRefused(Exception):
+    pass
+
+
+def bm_edit(text, op, ctx):
+    """one edit -> the new text (raises BmRefused when the editor must refuse it)"""
+    lines = bm_lines(text)
+    errors, bosses = bm_check(text, *ctx)
+    kind = op[0]
+    if kind == 'add':
+        _, mi, tmpl, skill = op
+        if any(x['name'] == mi for x in bosses):
+            raise BmRefused('listed')
+        eol = bm_file_eol(text)
+        if tmpl:
+            t = next(x for x in bosses if x['name'] == tmpl)
+            body = ''.join(lines[t['line'] - 1:t['close']])
+            first = lines[t['line'] - 1]
+            at = first.index('monster') + len('monster')
+            m = re.match(r'\s+', first[at:])
+            at += m.end()
+            body = body[:at] + mi + body[at + len(tmpl):]
+            if not re.search(r'[\r\n]$', body):
+                body += eol
+        else:
+            rows = [['ATTACK_TARGET', 'BOSSATK_HITTARGET', skill, 'NO_DELAY', '0', 'APPLY_INSTANT']] + [BM_NONE] * 4
+            body = ''.join(l + eol for l in ['monster ' + mi, '{', '\tinorder 0', '\tarena 24', '\tPATTERN', '\t['] + ['\t\tBOSSATTACK ' + ' '.join(r) for r in rows] + ['\t]', '}'])
+        lead = '' if not text else (eol if re.search(r'[\r\n]$', text) else eol + eol)
+        return text + lead + body
+    b = next(x for x in bosses if x['name'] == op[1])
+    if b['close'] is None:
+        raise BmRefused('open')
+    eol = bm_eol(lines[b['open'] - 1]) or bm_file_eol(text)
+    ind_line = b['inorder_line'] or b['pattern']
+    ind = bm_indent(lines[ind_line - 1]) if ind_line else '\t'
+
+    def replace_word(no, keyword, k, new):
+        """the k-th word after `keyword` on line no becomes new"""
+        line = lines[no - 1]
+        ws = bm_words(line)
+        j = [w[2] for w in ws].index(keyword)
+        s, e, _ = ws[j + 1 + k]
+        lines[no - 1] = line[:s] + new + line[e:]
+
+    def put(at, new_lines):
+        """insert lines before line number `at` (1-based)"""
+        lines[at - 1:at - 1] = [ind + l + eol for l in new_lines]
+
+    def first_of(*nos):
+        for n in nos:
+            if n:
+                return n
+        return None
+    if kind == 'remove':
+        s, e = b['line'] - 1, b['close']
+        if s > 0 and re.fullmatch(r'[ \t]*(\r\n|\n|\r)', lines[s - 1]):
+            s -= 1
+        del lines[s:e]
+    elif kind == 'inorder':
+        if op[2] not in ('0', '1'):
+            raise BmRefused('inorder')
+        replace_word(b['inorder_line'], 'inorder', 0, op[2])
+    elif kind == 'tier':
+        v = op[2]
+        if v is not None and v not in BM_BOSS_TIERS:
+            raise BmRefused('tier')
+        tl = b['tier_lines']
+        if v is None:
+            for n in reversed(tl):
+                del lines[n - 1]
+        elif tl:
+            for n in reversed(tl[1:]):
+                del lines[n - 1]
+            replace_word(tl[0], 'tier', 0, v)
+        else:
+            at = first_of(b['arena_lines'][0] if b['arena_lines'] else None, b['sig_lines'][0] if b['sig_lines'] else None,
+                          b['phase_lines'][0] if b['phase_lines'] else None, b['pattern'])
+            put(at or b['open'] + 1, ['tier ' + v])
+    elif kind == 'arena':
+        v = op[2]
+        al = b['arena_lines']
+        if v is None:
+            for n in reversed(al):
+                del lines[n - 1]
+        else:
+            if not isinstance(v, int) or not 12 <= v <= 48:
+                raise BmRefused('arena')
+            if al:
+                for n in reversed(al[1:]):
+                    del lines[n - 1]
+                replace_word(al[0], 'arena', 0, str(v))
+            else:
+                at = first_of(b['sig_lines'][0] if b['sig_lines'] else None, b['phase_lines'][0] if b['phase_lines'] else None, b['pattern'])
+                put(at or b['open'] + 1, ['arena %d' % v])
+    elif kind == 'sig':
+        sl = b['sig_lines']
+        if op[2] is None:
+            for n in reversed(sl):
+                del lines[n - 1]
+        else:
+            s = op[2]
+            if s['type'] == 'ATTACK_STORM' or s['type'] not in BM_LIVE or s['hit'] not in BM_HITS or not 2 <= s['every'] <= 50 or not bm_shout_ok(s['shout']):
+                raise BmRefused('sig')
+            new = 'SIGNATURE %s %s %s %d "%s"' % (s['type'], s['hit'], s['skill'], s['every'], s['shout'].strip())
+            if sl:
+                for n in reversed(sl[1:]):
+                    del lines[n - 1]
+                line = lines[sl[0] - 1]
+                ws = bm_words(line)
+                j = [w[2] for w in ws].index('SIGNATURE')
+                last = ws[min(len(ws) - 1, j + 5)]
+                lines[sl[0] - 1] = line[:ws[j][0]] + new + line[last[1]:]
+            else:
+                put(first_of(b['phase_lines'][0] if b['phase_lines'] else None, b['pattern']) or b['open'] + 1, [new])
+    elif kind == 'phases':
+        ph = op[2]
+        if len(ph) > 4:
+            raise BmRefused('phases')
+        new = []
+        for k, p in enumerate(ph):
+            if not 1 <= p['hp'] <= 99 or not 30 <= p['speed'] <= 100 or any(not 0 <= w <= 10 for w in p['w']) or (k and p['hp'] >= ph[k - 1]['hp']):
+                raise BmRefused('phase')
+            if p['shout'].strip() and not bm_shout_ok(p['shout']):
+                raise BmRefused('shout')
+            new.append('PHASE %d %d %d %d %d%s' % (p['hp'], p['speed'], p['w'][0], p['w'][1], p['w'][2], ' "%s"' % p['shout'].strip() if p['shout'].strip() else ''))
+        pl = b['phase_lines']
+        at = pl[0] if pl else b['pattern']
+        for n in reversed(pl):
+            del lines[n - 1]
+        put(at, new)
+    elif kind in ('rows', 'chance'):
+        rows = op[2] if kind == 'rows' else None
+        if kind == 'chance':
+            sp = bm_spread(b['rows'], op[2])
+            if sp is None:
+                raise BmRefused('chance')
+            rows = sp['rows']
+        if not any(r[0] != 'ATTACK_NONE' for r in rows):
+            raise BmRefused('no attack')
+        for r in rows:
+            if r[0] == 'ATTACK_NONE' and r != BM_NONE:
+                raise BmRefused('none row')
+            if r[0] != 'ATTACK_NONE' and (r[0] not in BM_LIVE or r[1] not in BM_HITS or r[3] not in BM_DELAYS or r[5] not in BM_APPLIES):
+                raise BmRefused('row')
+        rl = b['row_lines']
+        rind = bm_indent(lines[rl[0] - 1]) if rl else ind + '\t'
+        body = [rind + 'BOSSATTACK ' + ' '.join(r) + eol for r in rows]
+        if rl:
+            lines[rl[0] - 1:rl[-1]] = body
+        else:
+            lines[b['bracket']:b['bracket']] = body
+    return ''.join(lines)
+
+
+def bm_arena_from(text):
+    """pasted /position lines -> the arena: line 1 the boss's spot, the rest the room's edge; the farthest edge spot (x, z), rounded half up, 12-48"""
+    spots, skipped = [], []
+    for l in re.split(r'\r\n|\n|\r', text):
+        if not l.strip():
+            continue
+        p = nv_parse_pos(l)
+        if p is None:
+            skipped.append(l.strip())
+        else:
+            spots.append([p['x'], p['z']])
+    if len(spots) < 2:
+        return {'spots': spots, 'skipped': skipped, 'far': None, 'arena': None, 'clamped': False}
+    cx, cz = spots[0]
+    far = max(math.hypot(x - cx, z - cz) for x, z in spots[1:])
+    r = int(math.floor(far + 0.5))
+    a = min(48, max(12, r))
+    return {'spots': spots, 'skipped': skipped, 'far': math.floor(far * 10 + 0.5) / 10, 'arena': a, 'clamped': a != r}
+
+
+def bm_shout_ok(s):
+    s = s.strip()
+    return bool(s) and len(s) <= 120 and all(32 <= ord(c) <= 126 for c in s) and '"' not in s
+
+
+def bm_run(root):
+    boss_dir = os.path.join(os.path.dirname(os.path.abspath(root)), 'Boss')
+    pick = lambda f: os.path.join(boss_dir, f) if os.path.exists(os.path.join(boss_dir, f)) else os.path.join(root, f)
+    D = {}
+    for f in DEFINE_FILES:
+        real = next((n for n in os.listdir(root) if n.lower() == f.lower()), None)
+        p = pick(f) if os.path.exists(pick(f)) else (os.path.join(root, real) if real else None)
+        if not p or not os.path.exists(p):
+            continue
+        for m in re.finditer(rb'^[ \t]*#define[ \t]+(\w+)[ \t]+(0x[0-9a-fA-F]+|\d+)[ \t]*(?://.*)?\r?$', open(p, 'rb').read(), re.M):
+            D.setdefault(m.group(1).decode(), 0)
+    monsters = {k for k in D if k.startswith('MI_')}
+    skills = {k for k in D if k.startswith('SI_')}
+    bombs = bm_skill_table(open(pick('propSkillAdd.csv'), 'rb').read().decode('latin-1'))
+    ctx = (monsters, skills, bombs)
+    real = open(pick('bossMechanics.inc'), 'rb').read().decode('latin-1')
+    body = real.index('\nmonster ')
+    P = '\tPHASE 30 75 1 3 0 "goes into a rage!"\r\n'
+    # made-up files: one planted mistake each (the first match after the header comment), or a good variant
+    plants = [('MI_VEMPAIN01\r', 'MI_NOTREAL01\r'), ('ATTACK_TRIANGLE', 'ATTACK_CIRCLE4'), ('ATTACK_TARGET', 'ATTACK_ZIGZAG2'),
+              ('inorder 0', 'randomized 0'), ('inorder 0', 'inorder 2'), ('\tinorder 0\r\n\ttier', '\ttier'), ('MI_VEMPAIN01_1', 'MI_VEMPAIN01'),
+              ('BOSSATK_HITTARGET', 'BOSSATK_HITRANDOM'), ('NO_DELAY 0 APPLY_INSTANT', 'SLOW 0 APPLY_INSTANT'), ('0 APPLY_INSTANT', '0 APPLY_LATER'),
+              (' NO_DELAY 0 APPLY_INSTANT', ' NO_DELAY 0'), ('SI_BOSSATTACK_BURN ', 'SI_BOSSATTACK_NOPE '), ('SI_BOSSATTACK_LOWDMG_1 ', 'SI_VAG_ONE_CLEANHIT '),
+              ('ATTACK_TARGET BOSSATK_HITTARGET', 'ATTACK_STORM BOSSATK_HITTARGET'), ('NO_DELAY 0 APPLY_INSTANT', 'NO_DELAY SI_BOSSATTACK_BURN APPLY_INSTANT'),
+              ('ATTACK_NONE 0 0 0 0 0', 'ATTACK_NONE 0 0 5 0 0'), ('\r\n}', '\r\n'), ('PATTERN\r\n\t[', 'PATTERN\r\n\t('),
+              ('tier BOSSTIER_NORMAL', 'tier BOSSTIER_EASY'), ('tier BOSSTIER_NORMAL', 'tier BOSSTIER_EASY2'),
+              ('tier BOSSTIER_NORMAL', 'tier BOSSTIER_NORMAL\r\n\ttier BOSSTIER_HARD'),
+              (P, '\tSIGNATURE ATTACK_STORM BOSSATK_HITSELF SI_BOSSATTACK_BURN 5 "Hot!"\r\n' + P),
+              (P, '\tSIGNATURE ATTACK_METEOR BOSSATK_HITSELF SI_BOSSATTACK_BURN 1 "Hot!"\r\n' + P),
+              (P, '\tSIGNATURE ATTACK_METEOR BOSSATK_HITSELF SI_BOSSATTACK_BURN 51 "Hot!"\r\n' + P),
+              (P, '\tSIGNATURE ATTACK_METEOR BOSSATK_HITSELF SI_BOSSATTACK_BURN 5 Hot\r\n' + P),
+              (P, '\tSIGNATURE ATTACK_METEOR BOSSATK_HITSELF SI_BOSSATTACK_BURN 5\r\n' + P),
+              (P, '\tSIGNATURE ATTACK_METEOR BOSSATK_HITSELF SI_BOSSATTACK_BURN 5 "Hot!"\r\n\tSIGNATURE ATTACK_SWEEP BOSSATK_HITSELF SI_BOSSATTACK_BURN 5 "Hot!"\r\n' + P),
+              (P, '\tSIGNATURE ATTACK_METEOR BOSSATK_HITSELF SI_BOSSATTACK_BURN 5 "' + 'x' * 121 + '"\r\n' + P),
+              (P, '\tRAGE 30 75 3\r\n'), ('PHASE 30 75', 'PHASE 0 75'), ('PHASE 30 75', 'PHASE 99 75'), ('PHASE 30 75', 'PHASE 30 20'),
+              ('PHASE 30 75', 'PHASE 30 29'), ('PHASE 30 75 1 3 0', 'PHASE 30 75 1 3 11'), ('PHASE 30 75 1 3 0', 'PHASE 30 75 1 3 10'),
+              (P, '\tPHASE 30 75 1 1\r\n'), (P, '\tPHASE 30 75 1 3 0 rage\r\n'), (P, '\tPHASE 30 75 1 3 0\r\n\tPHASE 50 75 1 3 0\r\n'),
+              (P, '\tPHASE 30 75 1 3 0\r\n\tPHASE 30 75 1 3 0\r\n'), (P, '\tPHASE 30 75 0 0 3\r\n'), (P, '\tPHASE 30 75 0 1 0\r\n'),
+              (P, '\tPHASE 90 90 1 1 1\r\n\tPHASE 70 90 1 1 1\r\n\tPHASE 50 90 1 1 1\r\n\tPHASE 40 90 1 1 1\r\n' + P),
+              (P, '\tSIGNATURE ATTACK_METEOR BOSSATK_HITSELF SI_BOSSATTACK_BURN 5 "The ground // shakes!"\r\n' + P),
+              (P, '\tPHASE 30 75 1 3 0\r\n'), (P, '\tPHASE 70 90 0 3 1\r\n' + P), ('\tinorder 0\r\n\ttier BOSSTIER_NORMAL', '\tinorder 1\r\n\ttier BOSSTIER_NORMAL'),
+              ('}\r\n\r\nmonster MI_VEMPAIN01_1', '}\r\nmonster MI_FOO\r\n{\r\n\tinorder 0\r\n}\r\n\r\nmonster MI_VEMPAIN01_1'),
+              ('}\r\n\r\nmonster MI_VEMPAIN01_1', '}\r\nstray\r\n\r\nmonster MI_VEMPAIN01_1'), ('\tPATTERN\r\n\t[\r\n', '\tPATTERN\r\n\t[\r\n\t\tBOSSATTACK ATTACK_NONE\r\n'),
+              ('\tinorder 0\r\n', '\tinorder 0\r\n\tspeed 3\r\n'), ('BOSSATTACK ATTACK_TARGET', 'ATTACKBOSS ATTACK_TARGET'),
+              # v3: the arena line
+              ('\tarena 24\r\n', ''), ('arena 24', 'arena 11'), ('arena 24', 'arena 49'), ('arena 24', 'arena 12'), ('arena 24', 'arena 48'),
+              ('arena 24', 'arena x'), ('arena 24', 'arena -5'), ('\tarena 24\r\n', '\tarena 24\r\n\tarena 30\r\n'), ('\tarena 24\r\n', '\tarena\r\n'),
+              ('ATTACK_CROSSFIRE', 'ATTACK_ZIGZAG'), ('ATTACK_TARGET BOSSATK', 'ATTACK_OUTER_RING BOSSATK'), ('ATTACK_TARGET BOSSATK', 'ATTACK_CROSSHAIR BOSSATK'),
+              (P, '\tSIGNATURE ATTACK_WALLS BOSSATK_HITSELF SI_BOSSATTACK_BURN 5 "Hot!"\r\n' + P)]
+    # a boss with no arena and no arena shape is fine; one whose only arena shape is its signature is not
+    no_arena = real[body:].replace('\tarena 24\r\n', '')
+    plants_whole = [no_arena, no_arena.replace('ATTACK_TARGET BOSSATK', 'ATTACK_OUTER_RING BOSSATK', 1)]
+    files = [None] + [real[:body] + real[body:].replace(a, b, 1) for a, b in plants] + [real[:body] + t for t in plants_whole]
+    out_files = []
+    for t in files:
+        e, bs = bm_check(real if t is None else t, *ctx)
+        out_files.append({'text': t, 'errors': e, 'bosses': [[x['name'], x['line'], x['inorder'], x['tier'], x['sig'], [[p['hp'], p['speed']] + p['w'] + [p['shout']] for p in x['phases']], x['rows'], x['shapes'], x['arena']] for x in bs]})
+    _, bosses = bm_check(real, *ctx)
+    chances = [[x['name'], k, bm_chances(x, k)] for x in bosses for k in range(-1, len(x['phases']))]
+    fights = []
+    for x in bosses:
+        for seed, re_attack, busy in ((1, 2400, []), (7, 900, [3, 4]), (12345, 4000, [0, 9, 10, 11])):
+            fights.append([x['name'], seed, 40, 5, re_attack, busy, bm_fight(x, seed, 40, 5, re_attack, busy)])
+    spreads = []
+    for x in bosses[:6]:
+        for pct in (1, 5, 13.3, 20, 33.3, 50, 66.7, 99, 100, 0, 101):
+            spreads.append([x['name'], pct, bm_spread(x['rows'], pct)])
+    # edit scripts on the real file: each op on the text the last one left
+    sig = lambda t, h, s, n, sh: {'type': t, 'hit': h, 'skill': s, 'every': n, 'shout': sh}
+    ph = lambda hp, sp, e, m, h, sh='': {'hp': hp, 'speed': sp, 'w': [e, m, h], 'shout': sh}
+    row = lambda t, h='BOSSATK_HITSELF', s='SI_BOSSATTACK_BURN', d='NO_DELAY', st='0', a='APPLY_INSTANT': [t, h, s, d, st, a]
+    scripts = [
+        [['inorder', 'MI_VEMPAIN01', '1'], ['inorder', 'MI_VEMPAIN01', '0'], ['inorder', 'MI_SKELDEVIL', '0']],
+        [['tier', 'MI_VEMPAIN01', 'BOSSTIER_HARD'], ['tier', 'MI_VEMPAIN01', None], ['tier', 'MI_VEMPAIN01', 'BOSSTIER_EASY'], ['tier', 'MI_KALGASBOSS', 'BOSSTIER_WORLD']],
+        [['sig', 'MI_VEMPAIN01', sig('ATTACK_METEOR', 'BOSSATK_HITSELF', 'SI_BOSSATTACK_BURN', 5, 'The sky burns!')],
+         ['sig', 'MI_VEMPAIN01', sig('ATTACK_WALLS', 'BOSSATK_HITTARGET', 'SI_BOSSATTACK_LOWDMG_1', 50, '  Walls // close!  ')],
+         ['sig', 'MI_SKELGENERAL', None], ['sig', 'MI_BEHESTATUE01', sig('ATTACK_SWEEP', 'BOSSATK_HITSELF', 'SI_BOSSATTACK_BURN', 2, 'x')]],
+        [['phases', 'MI_VEMPAIN01', [ph(80, 90, 1, 1, 1), ph(30, 75, 1, 3, 0, 'goes into a rage!')]], ['phases', 'MI_VEMPAIN01', []],
+         ['phases', 'MI_VEMPAIN01', [ph(50, 60, 0, 5, 0, 'Now!')]], ['phases', 'MI_BEHESTATUE01', [ph(99, 100, 10, 10, 10), ph(60, 30, 0, 0, 1), ph(40, 50, 2, 2, 2), ph(1, 30, 0, 1, 0, 'last')]],
+         ['phases', 'MI_KALGASBOSS', [ph(30, 60, 0, 1, 4, 'goes into a rage!'), ph(70, 90, 0, 3, 1)]]],
+        [['chance', 'MI_VEMPAIN01', 50], ['chance', 'MI_VEMPAIN01', 20], ['chance', 'MI_VEMPAIN01', 100], ['chance', 'MI_VEMPAIN01', 7],
+         ['chance', 'MI_SKELDEVIL', 33.3], ['chance', 'MI_BEHEMOTH', 0]],
+        [['rows', 'MI_VEMPAIN01', [row('ATTACK_STOMP'), BM_NONE, row('ATTACK_CHARGE', 'BOSSATK_HITTARGET', 'SI_BOSSATTACK_LOWDMG_1', 'RANDOM_DELAY', '0', 'APPLY_STEP'), BM_NONE]],
+         ['rows', 'MI_VEMPAIN01', [BM_NONE, BM_NONE]], ['rows', 'MI_VEMPAIN01', [row('ATTACK_STORM', st='SI_BOSSATTACK_BURN')]],
+         ['rows', 'MI_VEMPAIN01', [row('ATTACK_NONE', 'BOSSATK_HITSELF')]], ['rows', 'MI_VEMPAIN01', [row('ATTACK_CIRCLE4')]]],
+        [['add', 'MI_KALGAS', 'MI_VEMPAIN01', None], ['add', 'MI_GIANTFOO', None, 'SI_BOSSATTACK_LOWDMG_1'], ['add', 'MI_KALGAS', None, 'SI_BOSSATTACK_BURN'],
+         ['remove', 'MI_KALGAS'], ['remove', 'MI_VEMPAIN01'], ['remove', 'MI_SHIPHARPINEES_1'], ['add', 'MI_VEMPAIN01', 'MI_KALGASBOSS', None]],
+        [['arena', 'MI_VEMPAIN01', 36], ['arena', 'MI_VEMPAIN01', 36], ['arena', 'MI_VEMPAIN01', None], ['tier', 'MI_VEMPAIN01', None],
+         ['arena', 'MI_VEMPAIN01', 12], ['tier', 'MI_VEMPAIN01', 'BOSSTIER_NORMAL'], ['arena', 'MI_VEMPAIN01', 48], ['arena', 'MI_VEMPAIN01', 49],
+         ['arena', 'MI_VEMPAIN01', 11], ['arena', 'MI_KALGASBOSS', None], ['arena', 'MI_KALGASBOSS', 30], ['arena', 'MI_KALGASBOSS', None], ['sig', 'MI_KALGASBOSS', None], ['arena', 'MI_KALGASBOSS', 20],
+         ['rows', 'MI_VEMPAIN01', [row('ATTACK_OUTER_RING'), BM_NONE, row('ATTACK_CROSSLINES'), row('ATTACK_CROSSHAIR')]], ['rows', 'MI_VEMPAIN01', [row('ATTACK_ZIGZAG')]]],
+    ]
+    edits = []
+    for sc in scripts:
+        t, texts = real, []
+        for op in sc:
+            try:
+                t = bm_edit(t, op, ctx)
+                texts.append(t)
+            except BmRefused:
+                texts.append(None)
+        edits.append({'ops': sc, 'texts': texts})
+    pos = lambda x, z: 'Position : x = %f, y = 100.000000, z = %f' % (x, z)
+    pastes = ['\n'.join([pos(6970, 3337), pos(6990, 3337), pos(6970, 3366.4)]),
+              '\n'.join([pos(0, 0), pos(3, 4)]), '\n'.join([pos(0, 0), pos(100, 0)]), '\n'.join([pos(0, 0), pos(30.5, 0)]), '\n'.join([pos(0, 0), pos(31.5, 0)]),
+              pos(1, 2), '', 'hello\n' + pos(0, 0) + '\n\nnope\n[12:04] ' + pos(-12.25, 18.75) + '\n6970 100 3337',
+              '\r\n'.join([pos(-500.5, -20), pos(-520, -20), pos(-500.5, 4.5), pos(-480, -20)])]
+    arenas = [[t, bm_arena_from(t)] for t in pastes]
+    return {'files': out_files, 'chances': chances, 'fights': fights, 'spreads': spreads, 'edits': edits, 'arenas': arenas}
+
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -15465,6 +16142,8 @@ if __name__ == '__main__':
         print(json.dumps(me_run(root)))
     elif what == 'mount':                       # Mounts: Mount.inc (LoadMountAnimationList), loops, ground, flight, take-off, edits
         print(json.dumps(mt_run(root)))
+    elif what == 'bosses':                      # Boss Mechanics: bossMechanics.inc (the branch checker), swings, the chance box, edits
+        print(json.dumps(bm_run(root)))
     elif what == 'dungeon':                     # Dungeons: PartyDungeon.lua (LoadScript), entering, the clock, the map monsters, edits
         print(json.dumps(dg_run(root)))
     elif what == 'equalized':                   # Equalized PvP: EqualizedPvP.inc, EqualizedPresets.inc, what a player gets on entry

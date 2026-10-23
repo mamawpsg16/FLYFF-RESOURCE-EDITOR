@@ -67,6 +67,21 @@ cp -p "$SRC/Source/Source/Neuz/VersionCommon.h" "$DST/src/neuz/"
 # Mounts: the seat / speed / loops / flying of every mount (+ the game's identical copy)
 cp -p $SRC/Server/Resource/Mount.inc "$DST/Resource/"
 cp -p $SRC/Client/Mount.inc "$DST/Client/"
+# Boss Mechanics: on V19 branch feat/boss-patterns (3dac171b) until it is merged. bossMechanics.inc from the working tree when it is
+# there, else from that branch with git show. The automated tests always read the branch's three files from Boss/ (the boss
+# skills are in its defineSkill.h + 38-column propSkillAdd.csv; the other tasks keep main's copies in Resource/)
+if [ -f $SRC/Server/Resource/bossMechanics.inc ]; then cp -p $SRC/Server/Resource/bossMechanics.inc "$DST/Resource/"
+elif git -C $SRC cat-file -e feat/boss-patterns:Server/Resource/bossMechanics.inc 2>/dev/null; then
+  git -C $SRC show feat/boss-patterns:Server/Resource/bossMechanics.inc > "$DST/Resource/bossMechanics.inc"
+fi
+if [ "$DST" = "test-data/fixtures" ] && git -C $SRC cat-file -e feat/boss-patterns:Server/Resource/bossMechanics.inc 2>/dev/null; then
+  mkdir -p "$DST/Boss"
+  for f in bossMechanics.inc defineSkill.h propSkillAdd.csv; do git -C $SRC show feat/boss-patterns:Server/Resource/$f > "$DST/Boss/$f"; done
+  # V19 checked out on the branch: Resource/ got the branch's define.h / defineSkill.h / propSkillAdd.csv; the tests want main's there
+  for f in $(git -C $SRC diff --name-only main feat/boss-patterns -- Server/Resource); do
+    b=$(basename "$f"); [ "$b" != bossMechanics.inc ] && [ -f "$DST/Resource/$b" ] && git -C $SRC show "main:$f" > "$DST/Resource/$b"
+  done
+fi
 # the buff icons (Client/Icon): all of them in a manual test copy, the two the buff files use for the tests
 mkdir -p "$DST/Client/Icon"
 if [ "$DST" = "test-data/fixtures" ]; then cp -p "$SRC/Client/Icon/Badge_EventPackage.png" "$SRC/Client/Icon/Itm_SysSysScrChaCla1.dds" "$DST/Client/Icon/"

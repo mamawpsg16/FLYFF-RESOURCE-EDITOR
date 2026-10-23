@@ -29,6 +29,7 @@
   const ELEMENT = SCHEMA.findIndex(f => f.name === 'eElementType');
   const CORRECTION = SCHEMA.findIndex(f => f.name === 'dwCorrectionValue');
   const EXPVALUE = SCHEMA.findIndex(f => f.name === 'nExpValue');
+  const REATTACK = SCHEMA.findIndex(f => f.name === 'dwReAttackDelay');
 
   // dwClass values (defineAttribute.h RANK_*), as BattlePass.inc's row comments name them
   const RANKS = { 1: 'low', 2: 'normal', 3: 'captain', 4: 'boss', 5: 'midboss', 6: 'material', 7: 'super', 8: 'guard', 9: 'citizen' };
@@ -60,7 +61,7 @@
         id: id.value, define: id.define || miOf.get(id.value) || file.text.slice(id.start, id.end),
         name, nameKey: nameTok.stringKey || null,
         level: vals[LEVEL], rankId: vals[CLASS], rank: RANKS[vals[CLASS]] || `rank ${vals[CLASS]}`,
-        flying: vals[FLYING], element: vals[ELEMENT], correction: vals[CORRECTION], exp: vals[EXPVALUE],   // the kill path: drops into the bag; DropKind's chance % (Mover.cpp:8613 / 8866)
+        flying: vals[FLYING], element: vals[ELEMENT], correction: vals[CORRECTION], exp: vals[EXPVALUE], reAttack: vals[REATTACK],   // the kill path: drops into the bag; DropKind's chance % (Mover.cpp:8613 / 8866)
         start: id.start,
       });
     }

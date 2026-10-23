@@ -103,6 +103,8 @@
     // Mounts: the seat, speed, loops and flying of every mount; both read it once at start (no reload; /mountset changes only the
     // running copy until a restart)
     'mount.inc': { server: STARTUP, client: STARTUP, cite: 'Project.cpp:1102 LoadMountAnimationList (#ifdef __MOUNT)' },
+    // Boss Mechanics: the planned LoadBossMechanics (V19 feat/boss-patterns, CPP_PORT_LIST.md part A), WorldServer only, once at start
+    'bossmechanics.inc': { server: STARTUP, client: null, cite: 'LoadBossMechanics (planned, V19 feat/boss-patterns; needs a WorldServer built from that branch)', branch: 'feat/boss-patterns' },
     'partydungeon.lua': { server: STARTUP, client: null, cite: 'Project.cpp:908 CInstanceDungeonParty::LoadScript -> InstanceDungeonBase.cpp:384' },
   };
   const DYO = { server: STARTUP, client: null, cite: 'WorldFile.cpp:297 LoadObject (#ifdef __WORLDSERVER :269)' };
@@ -170,6 +172,10 @@
         if (r.client === WINDOW) {
           needs.add('reopen:donation'); why.push(`the game reads Client/Client/${name} each time the Donation Shop window opens (${r.cite})`);
           if (treePatch) { needs.add('patch:donation-tree'); why.push('a category the game\'s code does not know sorts last and gets the wrong card text until donation-tree.diff is built into Neuz'); }
+        }
+        if (r.branch && !noted.has(key)) {
+          noted.add(key);
+          notes.push({ id: 'branch', file: name, text: `${name}: the WorldServer reads it only when built from V19 branch ${r.branch} (part A, its C++ is not written yet). An older WorldServer ignores the file.` });
         }
         if (r.patch) { needs.add('patch:' + r.patch); why.push(`the server and the game read ${name} only with ${r.patch}.diff built into the WorldServer and Neuz; without it they keep the fees compiled in the C++`); }
         if (r.client === CLICK && r.noPatch) { needs.add('click:board'); why.push(`the game reads Client/Client/${name} each time the board menu is clicked (${r.cite})`); }
