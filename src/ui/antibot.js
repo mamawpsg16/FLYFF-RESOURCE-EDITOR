@@ -74,19 +74,24 @@
       + (rnd ? `The random check alone opens it about every ${Math.round(rnd / kph * 60)} minutes on average.` : 'No random check.')));
     // maps
     el.appendChild(h('h3', 'Maps where kills never count'));
-    el.appendChild(h('p.muted.small', 'Towns and safe areas, events, PvP / Guild Siege maps, secret rooms, guild houses and party dungeons never count anyway. Add other maps here (e.g. Bear\'s Cave).'));
+    el.appendChild(h('p.muted.small', 'Towns and safe areas, events, PvP / Guild Siege maps, secret rooms, guild houses and party dungeons never count anyway. Add other maps here (e.g. Bear\'s Cave, which the game calls "Boss Monster: Mushmoot").'));
     const worlds = ctx.ws.worldList ? ctx.ws.worldList() : [];
-    const wname = id => { const w = worlds.find(x => (x.id >>> 0) === id); return w ? `${w.name} (${w.define})` : `map ${id}`; };
+    // the in-game name (World.inc SetTitle, loaders/area.js) when the maps were read; the folder name otherwise
+    let titles = ctx.ws.area ? ctx.ws.area.worlds : null;
+    if (!titles) try { titles = FRE.area.readWorlds(ctx.ws.files.get('world.inc'), ctx.ws.defines.defines, FRE.area.loadStrings(p => ctx.ws.files.get(p.toLowerCase()) || null)); } catch (e) { titles = new Map(); }
+    const wtitle = w => { const a = titles.get(w.id >>> 0); return a && a.title.trim() ? a.title.trim() : w.name; };
+    const wlabel = w => wtitle(w) === w.name ? `${w.name} (${w.define})` : `${wtitle(w)} (${w.name}, ${w.define})`;
+    const wname = id => { const w = worlds.find(x => (x.id >>> 0) === id); return w ? wlabel(w) : `map ${id}`; };
     const wl = [h('tr', h('th', 'Map'), h('th', ''))];
     for (const w of m.worlds) wl.push(h('tr', h('td', wname(w.world)), h('td', ed ? h('button.icon.danger', { on: { click: () => edit(ctx, tx => O().removeWorld(tx, model(ctx), w.world), `Bot Check: kills count again on ${wname(w.world)}`) } }, '✕') : null)));
     if (m.worlds.length) el.appendChild(table(['90%', '10%'], wl));
     else el.appendChild(h('p.muted.small', 'None.'));
     if (ed && worlds.length) {
       const opts = [...new Map(worlds.map(w => [w.id >>> 0, w])).values()].filter(w => !m.worlds.some(x => x.world === (w.id >>> 0)))
-        .map(w => ({ v: w.define, label: `${w.name} (${w.define})`, find: w.define }));
+        .map(w => ({ v: w.define, label: wlabel(w), find: `${wtitle(w)} ${w.name} ${w.define}` }));
       el.appendChild(h('div.dr-line', FRE.ui.combo({ options: opts, value: '', placeholder: '+ Add a map where kills never count', onPick: d => {
         const w = worlds.find(x => x.define === d); if (!w) return;
-        try { edit(ctx, tx => O().addWorld(tx, model(ctx), w.define, w.id >>> 0), `Bot Check: kills never count on ${w.name}`); } catch (er) { toast(er.message, 'bad'); }
+        try { edit(ctx, tx => O().addWorld(tx, model(ctx), w.define, w.id >>> 0), `Bot Check: kills never count on ${wtitle(w)}`); } catch (er) { toast(er.message, 'bad'); }
       } })));
     }
   }
@@ -99,7 +104,7 @@
       const nw = st.newW, msg = h('div.small');
       const add = h('button.primary', { on: { click: () => {
         const it = ws.itemById(nw.id), w = nw.word;
-        try { edit(ctx, tx => O().addWord(tx, model(ctx), nw.id, it.define, w), `Bot Check: new word "${w}" (${nameOf(ws, nw.id)})`); } catch (er) { toast(er.message, 'bad'); return; }
+        try { edit(ctx, tx => O().addWord(tx, model(ctx), nw.id, it.define, w), `Bot Check: new word "${String(w).trim()}" (${nameOf(ws, nw.id)})`); } catch (er) { toast(er.message, 'bad'); return; }
         st.newW = { id: null, word: '' }; ctx.renderAll(false);
       } } }, '+ Add word');
       const check = () => {
@@ -128,7 +133,7 @@
       box.dataset.key = `ab-word|${r.start}`;
       box.addEventListener('change', () => {
         const v = box.value;
-        try { edit(ctx, tx => O().editWord(tx, model(ctx), r, v), `Bot Check: "${r.word.text}" -> "${v}"`); } catch (er) { toast(er.message, 'bad'); ctx.renderAll(false); }
+        try { edit(ctx, tx => O().editWord(tx, model(ctx), r, v), `Bot Check: "${r.word.text}" -> "${String(v).trim()}"`); } catch (er) { toast(er.message, 'bad'); ctx.renderAll(false); }
       });
       rows.push(h('tr', h('td', FRE.dds.picture(ctx, iconOf(it), { scale: 2, cls: '.bx-icon-big' })),
         h('td', it ? nameOf(ws, r.id) : `#${r.id}`, h('div.muted.small', r.item.define), why ? h('div.small.warn-text', `⚠ skipped by the server: ${why}`) : null),

@@ -10,14 +10,17 @@
   }
   const wordRow = (define, w) => `ANTIBOT_ITEM\t${define}\t"${w}"`;
   const lastOf = list => list.reduce((a, b) => (b.start > a.start ? b : a));
+  // the ends are trimmed ("axe " is "axe"); spaces inside stay
+  const clean = w => (typeof w === 'string' ? w.trim() : w);
   function addWord(text, m, id, define, w) {
+    w = clean(w);
     checkWord(m, w, null);
     if (m.lines.some(r => r.id === id) || m.skipped.some(r => r.id === id)) throw new Error('That item is already in the list');
     const all = [...m.lines, ...m.skipped];
     if (all.length) return T.insertRowAfter(text, lastOf(all), wordRow(define, w));
     return [{ start: text.length, end: text.length, insert: `${text.length && !text.endsWith('\n') ? m.eol : ''}${wordRow(define, w)}${m.eol}` }];
   }
-  function editWord(text, m, rec, w) { checkWord(m, w, rec.id); return w === rec.word.text ? [] : [{ start: rec.word.start, end: rec.word.end, insert: `"${w}"` }]; }
+  function editWord(text, m, rec, w) { w = clean(w); checkWord(m, w, rec.id); return w === rec.word.text ? [] : [{ start: rec.word.start, end: rec.word.end, insert: `"${w}"` }]; }
   function changeItem(text, m, rec, define, id) {
     if (m.lines.some(r => r !== rec && r.id === id)) throw new Error('That item is already in the list');
     return [{ start: rec.item.start, end: rec.item.end, insert: define }];

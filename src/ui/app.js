@@ -550,7 +550,12 @@
     const el = $('editor');
     if (!S.ws) return;
     FRE.ui.tooltip.hide();                       // its element is about to be replaced
-    const m = active(), view = S.mode + '|' + JSON.stringify(m.st || {}, (k, v) => SAME_VIEW.has(k) ? undefined : v);
+    // A list with a selected row (.sel): the view is that row, so a page's own inputs (How many, Preview, a filter...)
+    // never jump to the top (the user, 2026-10-24). Without one, the module state minus SAME_VIEW decides.
+    const m = active(), selEl = $('list').querySelector('.sel');
+    const view = S.task + '|' + S.mode + '|' + (selEl
+      ? 'sel|' + JSON.stringify(selEl.dataset) + '|' + (selEl.querySelector('.n span') || selEl).textContent
+      : JSON.stringify(m.st || {}, (k, v) => SAME_VIEW.has(k) ? undefined : v));
     const top = view === lastView ? el.scrollTop : 0;
     lastView = view;
     if (!S.ws.available[S.mode].ok) { el.className = ''; el.textContent = ''; el.appendChild(h('p.empty-state', `Not available: missing ${S.ws.available[S.mode].missing.join(', ')}`)); return; }

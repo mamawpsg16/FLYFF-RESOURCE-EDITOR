@@ -551,7 +551,7 @@ details.fold[open] > .fold-head { border-bottom-left-radius: 0; border-bottom-ri
 <div id="modal-root"></div>
 <div id="toasts"></div>
 <script>
-globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "112+", "when": "Fri 23 Oct 2026, 16:24", "rev": "acd563d", "dirty": true};
+globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "113+", "when": "Sat 24 Oct 2026, 19:16", "rev": "6cf334f", "dirty": true};
 // ---- core/bytes.js ----
 // Byte <-> string helpers. Nothing here ever "fixes" data: every mapping is
 // lossless so that encode(decode(bytes)) === bytes. See docs/DESIGN.md §1.2.
@@ -10966,7 +10966,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "112+", "whe
     piercing: ['upgrade', 'Piercing on an item'], refineaccessory: ['upgrade', 'Set the + level of the accessory in your bag'], refinecollector: ['upgrade', 'Set the + level of a collector'],
     genrandomoption: ['upgrade', 'Roll random options (awake)'], initializerandomoption: ['upgrade', 'Remove random options (awake)'], setrandomoption: ['upgrade', 'Set random options (awake): stat, amount, ...'],
     resistitem: ['upgrade', 'Element and element level on an item'],
-    pet: ['pets', 'Set a player\'s pet: kind, EXP, stages, life'], petlevel: ['pets', 'Raise your pet one stage (its EXP must be 100%)'], petexp: ['pets', 'Fill your pet\'s EXP to 100%'],
+    pet: ['pets', 'Set a player\'s pet: kind, EXP, stages, life (the pet must be out, not in the bag; else nothing happens)'], petlevel: ['pets', 'Raise your pet one stage (its EXP must be 100%)'], petexp: ['pets', 'Fill your pet\'s EXP to 100%'],
     makepetfeed: ['pets', 'Open the pet food mill'], setpetname: ['pets', 'Name your pet'], clearpetname: ['pets', 'Remove your pet\'s name'],
     level: ['me', 'Set your job and level'], stat: ['me', 'Set a stat (str / sta / dex / int / gp / all / restate)'], changejob: ['me', 'Change your job'], jobname: ['me', 'Job names'],
     skilllevel: ['me', 'Set a skill\'s level'], skilllevelall: ['me', 'Max every skill'], initskillexp: ['me', 'Reset your skills'], setrebirthlevel: ['me', 'Set your rebirth level'],
@@ -10994,7 +10994,10 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "112+", "whe
     hidespot: ['events', 'Hide and Seek: spots'], hidegoto: ['events', 'Hide and Seek: go to a spot'], racestart: ['events', 'Vagrant Race: start line'], racepoint: ['events', 'Vagrant Race: checkpoint'],
     eventlist: ['events', 'Lua events: the list'], eventinfo: ['events', 'Lua events: one event'], lua: ['events', 'Reload the Lua events'],
     propose: ['couple', 'Propose'], refuse: ['couple', 'Refuse a proposal'], couple: ['couple', 'Make a couple'], decouple: ['couple', 'Break a couple'], clearpropose: ['couple', 'Clear proposals'], nextcouplelevel: ['couple', 'Next couple level'],
-    system: ['server', 'Notice to everyone'], fallsnow: ['server', 'Snow'], stopsnow: ['server', 'Stop the snow'], fallrain: ['server', 'Rain'], stoprain: ['server', 'Stop the rain'], weather: ['server', 'Weather'],
+    system: ['server', 'Notice to everyone'], fallsnow: ['server', 'Snow for 60 min (CoreServer OnFallSnow; needs the CoreServer with the 2026-10-24 fix)'],
+    stopsnow: ['server', 'Stop the weather (rain or snow)'],
+    fallrain: ['server', 'Rain for 60 min'],
+    stoprain: ['server', 'Stop the weather (rain or snow)'], weather: ['server', 'Weather'],
     gamesetting: ['server', 'Game settings'], loadscript: ['server', 'Reload scripts'], reloadconstant: ['server', 'Reload constant.inc'], antibot: ['server', 'Bot Check'],
     vendorlist: ['server', 'Offline vendors'], vendorclose: ['server', 'Close an offline vendor'], resetbattlepass: ['server', 'Reset the Battle Pass'], ctd: ['server', 'ctd'], crashtest: ['server', 'Crash test'],
     whisper: ['everyone', 'Whisper'], say: ['everyone', 'Say'], shout: ['everyone', 'Shout'], partychat: ['everyone', 'Party chat'], guildchat: ['everyone', 'Guild chat'], time: ['everyone', 'The time'],
@@ -18009,14 +18012,17 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "112+", "whe
   }
   const wordRow = (define, w) => `ANTIBOT_ITEM\t${define}\t"${w}"`;
   const lastOf = list => list.reduce((a, b) => (b.start > a.start ? b : a));
+  // the ends are trimmed ("axe " is "axe"); spaces inside stay
+  const clean = w => (typeof w === 'string' ? w.trim() : w);
   function addWord(text, m, id, define, w) {
+    w = clean(w);
     checkWord(m, w, null);
     if (m.lines.some(r => r.id === id) || m.skipped.some(r => r.id === id)) throw new Error('That item is already in the list');
     const all = [...m.lines, ...m.skipped];
     if (all.length) return T.insertRowAfter(text, lastOf(all), wordRow(define, w));
     return [{ start: text.length, end: text.length, insert: `${text.length && !text.endsWith('\n') ? m.eol : ''}${wordRow(define, w)}${m.eol}` }];
   }
-  function editWord(text, m, rec, w) { checkWord(m, w, rec.id); return w === rec.word.text ? [] : [{ start: rec.word.start, end: rec.word.end, insert: `"${w}"` }]; }
+  function editWord(text, m, rec, w) { w = clean(w); checkWord(m, w, rec.id); return w === rec.word.text ? [] : [{ start: rec.word.start, end: rec.word.end, insert: `"${w}"` }]; }
   function changeItem(text, m, rec, define, id) {
     if (m.lines.some(r => r !== rec && r.id === id)) throw new Error('That item is already in the list');
     return [{ start: rec.item.start, end: rec.item.end, insert: define }];
@@ -31945,19 +31951,24 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "112+", "whe
       + (rnd ? `The random check alone opens it about every ${Math.round(rnd / kph * 60)} minutes on average.` : 'No random check.')));
     // maps
     el.appendChild(h('h3', 'Maps where kills never count'));
-    el.appendChild(h('p.muted.small', 'Towns and safe areas, events, PvP / Guild Siege maps, secret rooms, guild houses and party dungeons never count anyway. Add other maps here (e.g. Bear\'s Cave).'));
+    el.appendChild(h('p.muted.small', 'Towns and safe areas, events, PvP / Guild Siege maps, secret rooms, guild houses and party dungeons never count anyway. Add other maps here (e.g. Bear\'s Cave, which the game calls "Boss Monster: Mushmoot").'));
     const worlds = ctx.ws.worldList ? ctx.ws.worldList() : [];
-    const wname = id => { const w = worlds.find(x => (x.id >>> 0) === id); return w ? `${w.name} (${w.define})` : `map ${id}`; };
+    // the in-game name (World.inc SetTitle, loaders/area.js) when the maps were read; the folder name otherwise
+    let titles = ctx.ws.area ? ctx.ws.area.worlds : null;
+    if (!titles) try { titles = FRE.area.readWorlds(ctx.ws.files.get('world.inc'), ctx.ws.defines.defines, FRE.area.loadStrings(p => ctx.ws.files.get(p.toLowerCase()) || null)); } catch (e) { titles = new Map(); }
+    const wtitle = w => { const a = titles.get(w.id >>> 0); return a && a.title.trim() ? a.title.trim() : w.name; };
+    const wlabel = w => wtitle(w) === w.name ? `${w.name} (${w.define})` : `${wtitle(w)} (${w.name}, ${w.define})`;
+    const wname = id => { const w = worlds.find(x => (x.id >>> 0) === id); return w ? wlabel(w) : `map ${id}`; };
     const wl = [h('tr', h('th', 'Map'), h('th', ''))];
     for (const w of m.worlds) wl.push(h('tr', h('td', wname(w.world)), h('td', ed ? h('button.icon.danger', { on: { click: () => edit(ctx, tx => O().removeWorld(tx, model(ctx), w.world), `Bot Check: kills count again on ${wname(w.world)}`) } }, '✕') : null)));
     if (m.worlds.length) el.appendChild(table(['90%', '10%'], wl));
     else el.appendChild(h('p.muted.small', 'None.'));
     if (ed && worlds.length) {
       const opts = [...new Map(worlds.map(w => [w.id >>> 0, w])).values()].filter(w => !m.worlds.some(x => x.world === (w.id >>> 0)))
-        .map(w => ({ v: w.define, label: `${w.name} (${w.define})`, find: w.define }));
+        .map(w => ({ v: w.define, label: wlabel(w), find: `${wtitle(w)} ${w.name} ${w.define}` }));
       el.appendChild(h('div.dr-line', FRE.ui.combo({ options: opts, value: '', placeholder: '+ Add a map where kills never count', onPick: d => {
         const w = worlds.find(x => x.define === d); if (!w) return;
-        try { edit(ctx, tx => O().addWorld(tx, model(ctx), w.define, w.id >>> 0), `Bot Check: kills never count on ${w.name}`); } catch (er) { toast(er.message, 'bad'); }
+        try { edit(ctx, tx => O().addWorld(tx, model(ctx), w.define, w.id >>> 0), `Bot Check: kills never count on ${wtitle(w)}`); } catch (er) { toast(er.message, 'bad'); }
       } })));
     }
   }
@@ -31970,7 +31981,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "112+", "whe
       const nw = st.newW, msg = h('div.small');
       const add = h('button.primary', { on: { click: () => {
         const it = ws.itemById(nw.id), w = nw.word;
-        try { edit(ctx, tx => O().addWord(tx, model(ctx), nw.id, it.define, w), `Bot Check: new word "${w}" (${nameOf(ws, nw.id)})`); } catch (er) { toast(er.message, 'bad'); return; }
+        try { edit(ctx, tx => O().addWord(tx, model(ctx), nw.id, it.define, w), `Bot Check: new word "${String(w).trim()}" (${nameOf(ws, nw.id)})`); } catch (er) { toast(er.message, 'bad'); return; }
         st.newW = { id: null, word: '' }; ctx.renderAll(false);
       } } }, '+ Add word');
       const check = () => {
@@ -31999,7 +32010,7 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "112+", "whe
       box.dataset.key = `ab-word|${r.start}`;
       box.addEventListener('change', () => {
         const v = box.value;
-        try { edit(ctx, tx => O().editWord(tx, model(ctx), r, v), `Bot Check: "${r.word.text}" -> "${v}"`); } catch (er) { toast(er.message, 'bad'); ctx.renderAll(false); }
+        try { edit(ctx, tx => O().editWord(tx, model(ctx), r, v), `Bot Check: "${r.word.text}" -> "${String(v).trim()}"`); } catch (er) { toast(er.message, 'bad'); ctx.renderAll(false); }
       });
       rows.push(h('tr', h('td', FRE.dds.picture(ctx, iconOf(it), { scale: 2, cls: '.bx-icon-big' })),
         h('td', it ? nameOf(ws, r.id) : `#${r.id}`, h('div.muted.small', r.item.define), why ? h('div.small.warn-text', `⚠ skipped by the server: ${why}`) : null),
@@ -34110,7 +34121,12 @@ globalThis.FRE = globalThis.FRE || {}; FRE.BUILD_INFO = {"version": "112+", "whe
     const el = $('editor');
     if (!S.ws) return;
     FRE.ui.tooltip.hide();                       // its element is about to be replaced
-    const m = active(), view = S.mode + '|' + JSON.stringify(m.st || {}, (k, v) => SAME_VIEW.has(k) ? undefined : v);
+    // A list with a selected row (.sel): the view is that row, so a page's own inputs (How many, Preview, a filter...)
+    // never jump to the top (the user, 2026-10-24). Without one, the module state minus SAME_VIEW decides.
+    const m = active(), selEl = $('list').querySelector('.sel');
+    const view = S.task + '|' + S.mode + '|' + (selEl
+      ? 'sel|' + JSON.stringify(selEl.dataset) + '|' + (selEl.querySelector('.n span') || selEl).textContent
+      : JSON.stringify(m.st || {}, (k, v) => SAME_VIEW.has(k) ? undefined : v));
     const top = view === lastView ? el.scrollTop : 0;
     lastView = view;
     if (!S.ws.available[S.mode].ok) { el.className = ''; el.textContent = ''; el.appendChild(h('p.empty-state', `Not available: missing ${S.ws.available[S.mode].missing.join(', ')}`)); return; }
