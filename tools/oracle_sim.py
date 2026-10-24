@@ -14337,6 +14337,8 @@ def rm_spawns(text, movers, D):
                 sec = int((tm & 0xFFFF) * (0.5 if mid in half else 0.7)) & 0xFFFF
         elif typ == 5:
             skipped = 'unknown'
+        if skipped not in ('guard', 'material'):
+            sec = (sec & 0xFFFF) // 2                      # CRespawner::Add (Respawn.cpp:241): m_uTime /= 2 for every line it gets
         out.append([mid, mv['rank'] if mv else 0, cnt, att, sec, skipped])
     return out
 
@@ -16073,6 +16075,456 @@ def bm_run(root):
     return {'files': out_files, 'chances': chances, 'fights': fights, 'spreads': spreads, 'edits': edits, 'arenas': arenas}
 
 
+# ---- Economy (docs/plans/E-economy.md): farming spots, the respawn cap, earnings per hour. Written from the C++:
+#   ReadRespawn       _Common/WorldFile.cpp:554-770 (respawn / respawn2-7, the control element, the WorldServer cuts x0.5 / x0.7)
+#   CRespawner::Add   _Common/Respawn.cpp:237 (m_uTime /= 2, m_nGMIndex = how many records it got before)
+#   CRespawner::Spawn _Common/Respawn.cpp:373-676 (once a second: game-clock gate, m_cbTime--, nTime = (short)((m_uTime *
+#                     xRandom(50, 150)) / 100), refill to m_nMaxcb, every other refill only m_nMaxcb / 2, Madrigal's first line)
+#   CGameTimer::Compute _Common/timer.cpp:183 (TIMESPEED 83 ms a game second)
+#   OnSellItem        WORLDSERVER/DPSrvr.cpp (GetCost / 4, at least 1; refused: IK3_EVENTMAIN, IK3_QUEST, Sealed Character, Perin)
+#   GetCost           _Common/Item.cpp:136; AddShopItem (Project.cpp:3717) sets dwCost server-wide, the last one wins
+# The player (not C++, the page's own rule, the same in both copies): after the respawn pass of each second, budget += speed / 60;
+# kill while budget >= 1 and a monster is up (the first line in list order with one up); with nothing up a budget above 1 drops to 1.
+# speed None = every monster up dies that second.
+EC_HALF = ('MI_AIBATT1', 'MI_AIBATT2', 'MI_AIBATT3', 'MI_MUSHPANG1', 'MI_MUSHPANG2', 'MI_MUSHPANG3', 'MI_BURUDENG1', 'MI_BURUDENG2', 'MI_BURUDENG3')
+
+
+def ec_s16(v):
+    v &= 0xFFFF
+    return v - 0x10000 if v >= 0x8000 else v
+
+
+def ec_tokens(data):
+    """the .rgn text as CScanner tokens (white space / comments skipped); numbers are the only thing read here"""
+    t = data[2:].decode('utf-16-le', 'replace') if data[:2] == b'\xff\xfe' else data.decode('latin-1')
+    t = re.sub(r'/\*.*?\*/', ' ', t, flags=re.S)
+    t = re.sub(r'//[^\n]*', ' ', t)
+    return t.split()
+
+
+def ec_num(tok, D):
+    if tok in D:
+        return D[tok]
+    m = re.match(r'[-+]?\d+', tok)
+    return int(m.group(0)) if m else 0
+
+
+def ec_read(data, D):
+    toks, i, out = ec_tokens(data), 0, []
+    def nx():
+        nonlocal i
+        v = toks[i] if i < len(toks) else '0'
+        i += 1
+        return v
+    while i < len(toks):
+        w = toks[i]
+        i += 1
+        m = re.fullmatch(r'respawn([2-7]?)', w)
+        if not m:
+            continue
+        ver = int(m.group(1)) if m.group(1) else 1
+        n = lambda: ec_num(nx(), D)
+        r = {'ver': ver, 'type': n() & 0xFFFFFFFF, 'index': n() & 0xFFFFFFFF}
+        nx(); nx(); nx()                                   # x y z
+        r['max'] = n()
+        r['time'] = n() & 0xFFFF                           # (short)GetNumber() into the u_short m_uTime
+        r['attack'] = n()
+        n(); n(); n(); n()                                 # the box
+        r['win'] = [1, 30, 1, 24]
+        if ver >= 2:
+            r['win'] = [n(), n(), n(), n()]
+            n(); n()
+        if ver >= 4:
+            n(); nx()
+        if ver >= 5:
+            n()
+        if ver >= 6:
+            n()
+        if ver >= 3:
+            c = n()
+            if c:
+                k = (2 if c != 2 else 3) + 3 + (4 if c == 2 else 0) + 1 + (16 if ver <= 6 else 32) + 3 + 4 * 2 + 3 * 3 + 3 + 3 * 2 + (4 if c == 2 else 0)
+                for _ in range(k):
+                    n()
+        out.append(r)
+    return out
+
+
+def ec_server_lines(recs, D, mv):
+    """[(mover, max, seconds, gmIndex, win)] the WorldServer keeps of one map"""
+    out, added = [], 0
+    half = {D.get(k) for k in EC_HALF}
+    for r in recs:
+        keep = False
+        if r['type'] == D.get('OT_MOVER') and r['index'] in mv:
+            rank = mv[r['index']]['rank']
+            if rank == D.get('RANK_GUARD') or rank == D.get('RANK_MATERIAL'):
+                continue                                   # returned before CRespawner::Add
+            t = r['time']
+            if rank != D.get('RANK_BOSS'):
+                t = int(t * (0.5 if r['index'] in half else 0.7)) & 0xFFFF
+            t //= 2
+            out.append((r['index'], r['max'], t, added, r['win']))
+        added += 1
+    return out
+
+
+def ec_cap(mx, sec):
+    if mx <= 0:
+        return 0.0
+    wait = 0
+    for r in range(50, 150):
+        nt = ec_s16(((sec * r) & 0xFFFFFFFF) // 100)
+        wait += nt + 1 if nt >= 0 else 1
+    wait = wait / 100
+    return 60 * ((mx + max(0, int(mx / 2))) / 2) / wait
+
+
+def ec_day_hour(ms):
+    s = math.fmod(ms / 83, 30.0 * 24 * 60 * 60)
+    if s < 0:
+        s += 30.0 * 24 * 60 * 60
+    t = int(s)
+    return t // 86400 % 30 + 1, t // 3600 % 24 + 1
+
+
+def ec_open(win, day, hour):
+    d0, d1, h0, h1 = win
+    if d0 < d1:
+        if day < d0 or day > d1:
+            return False
+    elif day < d0 and day > d1:
+        return False
+    if h0 < h1:
+        if hour < h0 or hour > h1:
+            return False
+    elif hour < h0 and hour > h1:
+        return False
+    return True
+
+
+def ec_timeline(lines, speed, seed, seconds=3600, warmup=600, start=0, madrigal=False, rebirth=1.0, respawn=1.0):
+    R = Rand(seed)
+    st = [[0, 0, False] for _ in lines]                    # m_cb, m_cbTime, m_bHalf
+    kills = spawned = expiries = 0
+    budget = 0.0
+    per = None if speed is None else speed / 60
+    for t in range(warmup + seconds):
+        on = t >= warmup
+        day, hour = ec_day_hour(start + t * 1000)
+        for (mover, mx, sec, gm, win), p in zip(lines, st):
+            if not ec_open(win, day, hour):
+                continue
+            p[1] = ec_s16(p[1] - 1)
+            if p[1] >= 0:
+                continue
+            nt = ec_s16(((sec * (50 + R(100))) & 0xFFFFFFFF) // 100)
+            cb = 0
+            if gm != 0 or not madrigal:
+                p[1] = nt
+                if mx - p[0] > 0:
+                    cb = ec_s16(mx - p[0])
+            else:
+                p[1] = ec_s16(int(dr_f32(nt * dr_f32(rebirth))))
+                want = dr_f32(dr_f32(mx * dr_f32(respawn)) - p[0])
+                if want > 0:
+                    cb = ec_s16(int(want))
+            if p[2]:
+                cb = ec_s16(int(mx / 2) - (mx - cb))
+            p[2] = not p[2]
+            if on:
+                expiries += 1
+            while cb > 0:
+                cb -= 1
+                p[0] += 1
+                if on:
+                    spawned += 1
+        up = sum(p[0] for p in st)
+        if per is None:
+            if on:
+                kills += up
+            for p in st:
+                p[0] = 0
+        else:
+            budget += per
+            while budget >= 1 and up > 0:
+                p = next(x for x in st if x[0] > 0)
+                p[0] -= 1
+                up -= 1
+                budget -= 1
+                if on:
+                    kills += 1
+            if up == 0 and budget > 1:
+                budget = 1
+    return {'kills': kills, 'spawned': spawned, 'expiries': expiries, 'alive': sum(p[0] for p in st)}
+
+
+def ec_prices(root, D):
+    """item id -> {'cost': dwCost after AddShopItem, 'ik3'}"""
+    rows = dr_columns(os.path.join(root, 'Spec_Item.txt'), ['ver6', 'dwID', 'dwCost', 'dwItemKind3'])
+    it = {}
+    for r in rows:
+        if dr_val(r['ver6'], D) > 19:
+            continue
+        i = dr_val(r['dwID'], D) & 0xFFFFFFFF
+        c = r['dwCost'].strip()
+        if len(c) >= 2 and c[0] == '"' and c[-1] == '"':
+            c = c[1:-1]                                    # a quoted value is one CScanner token; GetNumber = atoi of its text ("3,260" -> 3)
+        it[i] = {'cost': dr_val(c, D) & 0xFFFFFFFF, 'ik3': dr_val(r['dwItemKind3'], D) & 0xFFFFFFFF}
+    names = {n.lower(): n for n in os.listdir(root)}
+    for f in ('character.inc', 'character-etc.inc', 'character-school.inc'):
+        if f not in names:
+            continue
+        b = open(os.path.join(root, names[f]), 'rb').read()
+        t = b[2:].decode('utf-16-le', 'replace') if b[:2] == b'\xff\xfe' else b.decode('latin-1')
+        t = re.sub(r'/\*.*?\*/', ' ', t, flags=re.S)
+        t = re.sub(r'//[^\n]*', ' ', t)
+        for m in re.finditer(r'AddShopItem\s*\(\s*([-\w]+)\s*,\s*(\w+)\s*,\s*([-\w]+)\s*\)', t):
+            iid = ec_num(m.group(2), D) & 0xFFFFFFFF
+            if iid in it:
+                it[iid]['cost'] = ec_num(m.group(3), D) & 0xFFFFFFFF
+    return it
+
+
+def ec_sell(P, D, iid, plus):
+    p = P.get(iid)
+    if p is None:
+        return None
+    if p['ik3'] in (D.get('IK3_EVENTMAIN', -1) & 0xFFFFFFFF, D.get('IK3_QUEST', -1) & 0xFFFFFFFF):
+        return None
+    if iid in (D.get('II_SYS_SYS_SCR_SEALCHARACTER'), D.get('II_SYS_SYS_SCR_PERIN')):
+        return None
+    dw = p['cost']
+    if dw == 0xFFFFFFFF:
+        cost = -1
+    elif plus:
+        c = dr_f32(float(dw))
+        v = dr_f32(c + dr_f32(c * dr_f32(dr_f32(0.1) + dr_f32(dr_f32(float(plus * plus)) / dr_f32(18.0)))))
+        cost = -2147483648 if (v != v or v >= 2147483648 or v < -2147483648) else int(v)
+    else:
+        cost = dw - (1 << 32) if dw >= 1 << 31 else dw
+    n = int(cost / 4)
+    return 1 if n == 0 else n
+
+
+def ec_per_kill(W, P, mid, level, loops, world, kills, seed):
+    o = dict(DR_OPTS, itemRate=W.rates['item'], pieceRate=W.rates['piece'], goldRate=W.rates['gold'], playerLevel=level, loops=loops, worldId=world)
+    R = Rand(seed)
+    gold = loot = 0
+    items = {}
+    for _ in range(kills):
+        k = dr_kill(W, mid, o, R)
+        if k['x'] is not None:
+            break
+        gold += k['p']
+        for d in k['d']:
+            items[d[1]] = items.get(d[1], 0) + d[2]
+            v = ec_sell(P, W.D, d[1], d[3])
+            if v is not None:
+                loot += v * d[2]
+    return {'gold': gold, 'loot': loot, 'items': {str(k): v for k, v in sorted(items.items())}}
+
+
+def ec_exact(W, mid, level, loops, rates=None):
+    """exact drops per kill of every item on the DropItem / event lines: the gate (level gap, Mover.cpp:8586), GetAt, the Maxitem
+    stop, x rolls, x the average amount (min + max) / 2"""
+    lst, kinds, mx = W.drop_list(mid)
+    mv = W.mv.get(mid, {'level': 1, 'rank': 1, 'fly': 0, 'corr': 100})
+    noadj = mid in [W.D.get(n) for n in ('MI_CLOCKWORK1', 'MI_DEMIAN5', 'MI_KEAKOON5', 'MI_MUFFRIN5')]
+    d = level - mv['level']
+    npr = 100 if noadj else (100 if d <= 1 else 80 if d <= 2 else 60 if d <= 4 else 30 if d <= 7 else 10)
+    rt = rates or W.rates
+    fi = dr_f32(1.0)
+    for v in (1.0, 1.0, 1.0, rt['item']):
+        fi = dr_f32(fi * dr_f32(v))
+    fp = dr_f32(dr_f32(1.0) * dr_f32(rt['piece']))
+    gate = wh_below(100, sum(1 for r in range(100) if dr_f32(float(r)) < dr_f32(npr * fi)))
+    fly = bool(mv['fly'])
+    alive = {0: 1.0}
+    out = {}
+    for e in lst:
+        if e[0] != 'item':
+            continue
+        q = wh_below(DR_ONE, wh_pass_count(e[2], fp)) if fp > 0 else 1.0
+        per = gate * sum(alive[k] for k in sorted(alive)) * q * loops
+        num = 1 if e[4] == DR_NONE else e[4]
+        if num:
+            lo = e[5] if len(e) == 6 and e[5] > 1 and e[4] != DR_NONE else 1
+            lo = min(lo, num)
+            out[e[1]] = out.get(e[1], 0.0) + per * ((lo + num) / 2)
+        nxt = {}
+        for nn in sorted(alive):
+            p = alive[nn]
+            nxt[nn] = nxt.get(nn, 0.0) + p * (1 - q)
+            n2 = nn + (1 if e[4] != DR_NONE else 0)
+            stop = (n2 & 0xFFFFFFFF) >= mx if fly else n2 == mx
+            if not stop:
+                nxt[n2] = nxt.get(n2, 0.0) + p * q
+        alive = {k: v for k, v in nxt.items() if v}
+    return out
+
+
+def ec_shop_rows(root, D, P):
+    """every item players can buy: [key, tab, id, currency, price], sorted. NPC shops: the tab contents from tools/oracle.py vendor_sim
+    (its own copy of how the server fills shops); currency = SetVenderType 1-5 (CHARACTER::GetVenderCurrency), else Penya;
+    chip shops pay dwReferValue1; Penya: CDPSrvr::OnBuyItem nCost = GetCost(), (int)( m_fShopCost * nCost ), (int)( shop buy factor
+    * nCost ) (both 1.0 here: float maths), Perin = 100,000,000, at least 1 (no tax). Donation Shop: DSItem rows, dwReferValue1."""
+    from oracle import vendor_sim
+    shops, _ = vendor_sim(root)
+    chip = {}
+    for r in dr_columns(os.path.join(root, 'Spec_Item.txt'), ['ver6', 'dwID', 'dwReferValue1']):
+        if dr_val(r['ver6'], D) > 19:
+            continue
+        c = r['dwReferValue1'].strip()
+        if len(c) >= 2 and c[0] == '"' and c[-1] == '"':
+            c = c[1:-1]
+        chip[dr_val(r['dwID'], D) & 0xFFFFFFFF] = dr_val(c, D)
+    # EXP scroll copies (ids 60000+) carry their original's prices: vendor_sim makes them, look them up by its own props
+    names = {n.lower(): n for n in os.listdir(root)}
+    vt = {}                                                # the NPC blocks walked the way tools/oracle.py vendor_sim walks them
+    from oracle import values, num as onum, read_defines
+    od = read_defines(root, ['defineJob.h', 'defineItem.h', 'defineItemkind.h'])
+    for f in ('character.inc', 'character-etc.inc', 'character-school.inc'):
+        if f not in names:
+            continue
+        t = open(os.path.join(root, names[f]), 'rb').read()[2:].decode('utf-16-le').encode('utf-8', 'replace')
+        v = values(tokens(t))
+        i = 0
+        while i < len(v):
+            key = v[i].decode('utf-8', 'replace'); i += 2
+            depth = 1
+            while depth and i < len(v):
+                tk = v[i]; i += 1
+                if tk == b'{':
+                    depth += 1
+                elif tk == b'}':
+                    depth -= 1
+                elif tk in (b'AddVendorItem', b'AddVenderItem'):
+                    i += 13
+                elif tk in (b'AddVenderItem2', b'AddVendorItem2'):
+                    i += 5
+                elif tk == b'AddShopItem':
+                    i += 5 if v[i + 4] == b')' else 7
+                elif tk == b'SetVenderType':
+                    vt[f + '|' + key] = onum(v[i + 1], od); i += 3
+    perin = D.get('II_SYS_SYS_SCR_PERIN')
+    rows = []
+    for key, tabs in shops.items():
+        v = vt.get(key, 0)
+        cur = v if v in (1, 2, 3, 4, 5) else 0
+        for tab, ids in enumerate(tabs):
+            for iid in ids:
+                if cur:
+                    price = chip.get(iid, chip.get(P.get(iid, {}).get('orig', iid), 0))
+                else:
+                    dw = P[iid]['cost'] if iid in P else 0
+                    c = -1 if dw == 0xFFFFFFFF else (dw - (1 << 32) if dw >= 1 << 31 else dw)
+                    c = dr_int(dr_f32(dr_f32(1.0) * dr_f32(float(c))))
+                    c = dr_int(dr_f32(dr_f32(1.0) * dr_f32(float(c))))
+                    if iid == perin:
+                        c = 100000000
+                    price = max(1, c)
+                rows.append([key, tab, iid, cur, price])
+    ds = names.get('donationshop.inc')
+    if ds:
+        t = open(os.path.join(root, ds), 'rb').read().decode('latin-1')
+        t = re.sub(r'/\*.*?\*/', '', t, flags=re.S)
+        t = re.sub(r'//[^\r\n]*', '', t)
+        m = re.search(r'DONATIONSHOP\s*\{(.*?)\}', t, flags=re.S)
+        seen = set()
+        for _, d in (re.findall(r'DSItem\s+"([^"]*)"\s+(\w+)', m.group(1)) if m else []):
+            iid = ec_num(d, D) & 0xFFFFFFFF
+            if iid in seen or iid == 0:
+                continue
+            seen.add(iid)
+            if chip.get(iid, 0) >= 1:
+                rows.append(['DonationShop.inc', 0, iid, 2, chip[iid]])
+    return sorted(rows)
+
+
+def ec_run(root):
+    D = dr_defines(root)
+    mv = dr_movers(root, D)
+    idx = area_files(root)
+    S = area_strings(idx)
+    W0 = area_worlds(open(idx['world.inc'], 'rb').read(), D, S)
+    maps = []
+    for wid in sorted(W0):
+        f = W0[wid]['file']
+        if not f or f'world/{f}/{f}.rgn'.lower() not in idx:
+            continue
+        recs = ec_read(open(idx[f'world/{f}/{f}.rgn'.lower()], 'rb').read(), D)
+        maps.append({'world': wid, 'file': f, 'lines': ec_server_lines(recs, D, mv)})
+    spots, by = [], {}
+    for m in maps:
+        for ln in m['lines']:
+            k = (m['world'], ln[0])
+            if k not in by:
+                by[k] = {'world': m['world'], 'mover': ln[0], 'count': 0, 'boxes': 0, 'cap': 0.0, 'boxCap': 0.0, 'lines': []}
+                spots.append(by[k])
+            s, c = by[k], ec_cap(ln[1], ln[2])
+            s['count'] += max(0, ln[1]); s['boxes'] += 1; s['cap'] += c; s['boxCap'] = max(s['boxCap'], c); s['lines'].append(ln)
+    out = {'maps': [{'world': m['world'], 'file': m['file'], 'lines': [[l[0], l[1], l[2], l[3]] + list(l[4]) for l in m['lines']]} for m in maps],
+           'spots': [{'world': s['world'], 'mover': s['mover'], 'count': s['count'], 'boxes': s['boxes'], 'cap': s['cap'], 'boxCap': s['boxCap']} for s in spots],
+           'timelines': [], 'made': [], 'hours': [], 'sells': [], 'exact': []}
+    mad = D.get('WI_WORLD_MADRIGAL')
+    # the real spots: every 6th, at 4 speeds
+    for n, s in enumerate(spots[::6]):
+        for sp in (4, 15, 30, None):
+            out['timelines'].append({'world': s['world'], 'mover': s['mover'], 'speed': sp, 'seed': n + 1,
+                                     'r': ec_timeline(s['lines'], sp, n + 1, seconds=900, warmup=120, madrigal=s['world'] == mad)})
+    # made-up lines: times 0, 1, 2, 7, the wrap above 21,845, max 0 / 1 / odd / negative, Madrigal's first line with rates,
+    # day / hour windows (normal, min > max, min == max, outside), the game clock moving across hours
+    W1 = [1, 30, 1, 24]
+    made = [
+        ([(1, 10, 12, 0, W1)], {}),
+        ([(1, 10, 0, 3, W1)], {}),
+        ([(1, 7, 1, 1, W1), (1, 1, 2, 2, W1)], {}),
+        ([(1, 9, 30000, 1, W1)], {}),
+        ([(1, 9, 65535, 1, W1)], {}),
+        ([(1, 0, 10, 1, W1), (1, -3, 10, 2, W1), (1, 5, 7, 3, W1)], {}),
+        ([(1, 20, 12, 0, W1), (1, 20, 12, 1, W1)], {'madrigal': True, 'rebirth': 0.5, 'respawn': 2.0}),
+        ([(1, 20, 12, 0, W1)], {'madrigal': True, 'rebirth': 1.75, 'respawn': 0.3}),
+        ([(1, 8, 9, 1, [1, 30, 3, 5])], {'start': 0}),
+        ([(1, 8, 9, 1, [1, 30, 20, 4])], {'start': 7000000}),
+        ([(1, 8, 9, 1, [1, 30, 6, 6])], {}),
+        ([(1, 8, 9, 1, [5, 9, 1, 24])], {'start': 83 * 86400 * 6 * 1000 // 1000}),
+        ([(1, 8, 9, 1, [1, 0, 1, 24]), (1, 8, 9, 2, [1, 30, 1, 0])], {}),
+        ([(1, 3, 40, 1, W1), (1, 50, 5, 2, W1)], {}),
+        ([(1, 20, 12, 0, W1), (1, 6, 30, 1, W1)], {'rebirth': 0.5, 'respawn': 2.0}),      # first line, not Madrigal: rates unused
+    ]
+    for n, (lines, kw) in enumerate(made):
+        for sp in (0.5, 4, 15, 30, 100, None):
+            out['made'].append({'lines': [[l[0], l[1], l[2], l[3]] + list(l[4]) for l in lines], 'opts': kw, 'speed': sp, 'seed': 100 + n,
+                                'r': ec_timeline(lines, sp, 100 + n, seconds=1800, warmup=0, **kw), 'cap': [ec_cap(l[1], l[2]) for l in lines]})
+    # per kill and per hour: every 9th spot x 3 player levels x 1 / 2 rolls
+    W = DrWorld(root)
+    P = ec_prices(root, D)
+    for n, s in enumerate(spots[::9]):
+        lv0 = mv.get(s['mover'], {}).get('level', 1)
+        for level in (150, lv0, lv0 + 2, max(1, lv0 + 9)):
+            for loops in (1, 2):
+                pk = ec_per_kill(W, P, s['mover'], level, loops, s['world'], 100, n + 1)
+                ex = ec_exact(W, s['mover'], level, loops)
+                cur = {str(k): wh_r12(v) for k, v in sorted(ex.items())}
+                out['hours'].append({'world': s['world'], 'mover': s['mover'], 'level': level, 'loops': loops, 'seed': n + 1, 'kills': 100, 'pk': pk, 'cur': cur,
+                                     'kpm': [min(sp, s['cap']) for sp in (4, 15, 30)]})
+    # exact drops at Event.lua rates x1 (the level-gap steps show) and the monsters with min-max amounts
+    amt = [{'mover': mid} for mid in sorted(W.mons) if mid in mv and any(e[0] == 'item' and e[4] != DR_NONE and e[4] > 1 for e in W.mons[mid]['list'])][:25]
+    for n, s in enumerate(spots[::23] + amt):
+        lv0 = mv.get(s['mover'], {}).get('level', 1)
+        for d in (0, 1, 2, 3, 4, 5, 7, 8):
+            ex = ec_exact(W, s['mover'], lv0 + d, 1 + n % 2, {'item': 1.0, 'piece': 1.0})
+            out['exact'].append({'mover': s['mover'], 'level': lv0 + d, 'loops': 1 + n % 2, 'ex': {str(k): wh_r12(v) for k, v in sorted(ex.items())}})
+    out['prices'] = ec_shop_rows(root, D, P)
+    # the sell price alone: 400 items x upgrade 0 / 3 / 10 / 20
+    pick = sorted(P)[::max(1, len(P) // 400)]
+    pick += [i for i in sorted(P) if P[i]['cost'] == 0xFFFFFFFF or P[i]['cost'] >= 1 << 31 or P[i]['cost'] < 4][:60]   # "=", huge, below 4
+    for iid in pick:
+        out['sells'].append([iid, [ec_sell(P, D, iid, u) for u in (0, 3, 10, 20)]])
+    return out
+
+
 if __name__ == '__main__':
     what = sys.argv[1] if len(sys.argv) > 1 else 'exchange'
     root = sys.argv[2] if len(sys.argv) > 2 else 'test-data/fixtures/Resource'
@@ -16112,6 +16564,8 @@ if __name__ == '__main__':
         print(json.dumps(gf_run(root)))
     elif what == 'rates':
         print(json.dumps(rt_run(root)))
+    elif what == 'economy':                     # Economy: spawn lines, the respawn cap, per kill / per hour, sell prices
+        print(json.dumps(ec_run(root)))
     elif what == 'ownerbuff':                   # Secret Room Winner / Guild Siege Winner: OwnerBuff.txt, who has the buff when, edits
         print(json.dumps(ob_run_all(root)))
     elif what == 'couple':

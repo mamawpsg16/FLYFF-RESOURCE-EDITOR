@@ -6,7 +6,9 @@
 //   spawns    ReadRespawn's monster part (WorldFile.cpp:599-640, #ifdef __WORLDSERVER): a RANK_MATERIAL monster is never spawned,
 //             a RANK_GUARD one only while EVE_PK is on (skipped here: the PK event is off on this server); the respawn time is
 //             cut to (u_short)( time x 0.7 ) (x 0.5 for Aibatt / Mushpang / Burudeng 1-3), not for RANK_BOSS; a flying monster
-//             keeps the line's height
+//             keeps the line's height. Then CRespawner::Add (_Common/Respawn.cpp:241) halves it (m_uTime /= 2; found 2026-10-24
+//             for the Economy task: before, the page showed the time without this half). Each refill then waits that time x
+//             xRandom( 50, 150 ) / 100 + 1 s (CRespawner::Spawn, loaders/economy-sim.js)
 // Not modelled: where in the box each monster appears (random), the respawn timing itself, the AI.
 (function (FRE) {
   'use strict';
@@ -41,6 +43,8 @@
         else if (mv.rankId === RANK.MATERIAL) skipped = 'a material monster: never spawned';
         if (mv.rankId !== RANK.BOSS) seconds = Math.trunc((l.time & 0xFFFF) * (half.has(l.mover) ? 0.5 : 0.7)) & 0xFFFF;   // u_short x double
       } else if (l.type === 5) skipped = 'unknown monster';
+      // CRespawner::Add (_Common/Respawn.cpp:241) halves m_uTime of every line ReadRespawn hands it (not the skipped guard / material)
+      if (!(mv && (mv.rankId === RANK.GUARD || mv.rankId === RANK.MATERIAL))) seconds = Math.floor((seconds & 0xFFFF) / 2);
       return { line: i, mover: l.mover, name: mv ? mv.name : `#${l.mover}`, level: mv ? mv.level : 0, rank: mv ? mv.rankId : 0, count: l.count, attack: l.attack, seconds, skipped };
     });
   }

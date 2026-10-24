@@ -56,6 +56,8 @@ loaders/gifts-sim.js
 loaders/gmcmd.js
 loaders/gmcmd-sim.js
 loaders/where.js
+loaders/spawns.js
+loaders/economy-sim.js
 loaders/rates.js
 loaders/rates-sim.js
 loaders/ownerbuff-sim.js
@@ -146,6 +148,7 @@ ui/boxes.js
 ui/exchange.js
 ui/gmcmd.js
 ui/where.js
+ui/economy.js
 ui/rates.js
 ui/upgrade.js
 ui/sets.js

@@ -315,6 +315,18 @@
       validate(ws, model) { return FRE.gmCmd.checks(model); },
     },
     {
+      // Economy (docs/plans/E-economy.md, loaders/economy-sim.js): what one player earns an hour per farming spot (map + monster:
+      // the spawn lines of every map's .rgn, CWorld::ReadRespawn, and their respawn cap, CRespawner::Spawn) and what things cost
+      // in hours of farming. Read-only, nothing editable; its numbers link to the tasks that change them.
+      id: 'economy', label: 'Economy',
+      required: [], editable: [], client: [],
+      optional: ['propMoverEx.inc', 'propMover.txt', 'propMover.txt.txt', 'propDropEvent.inc', 'except.txt', 'PenyaTable.txt', 'expTable.inc', 'Event.lua', 'propItemEtc.inc'],
+      uses: ['drops', 'npc', 'donation', 'upgrade'],
+      maps: true,
+      parse(ws) { return FRE.economySim.fromWorkspace(ws); },
+      validate() { return []; },
+    },
+    {
       // Where is this item from? (task H, loaders/where.js): every model above parsed read-only, nothing editable.
       // Last, so its parse sees the other models. maps: towns of the NPCs, and whether they stand in the game.
       id: 'where', label: 'Item Sources & Uses',

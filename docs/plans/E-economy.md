@@ -1,6 +1,8 @@
 # Plan: Economy page (what players earn per hour, what things cost in hours)
 
-Asked 2026-10-23 ("what can we do without Windows"); plan written 2026-10-24. Plan only: nothing is built until the user says OK.
+Asked 2026-10-23 ("what can we do without Windows"); plan written 2026-10-24, OK'd the same day ("yes to all").
+
+**Status 2026-10-24: all 3 steps built in one cloud session, waiting for the user's Brave test.** Changes from the plan while building: the currencies use the exact chance (1,000 simulated kills are too noisy for 0.2 % drops), Penya and loot stay simulated; loot is priced per drop (dropped equipment can be upgraded, which raises GetCost); a spot's cap is all its boxes (the biggest box is shown in the tooltip); the dungeon / race-map readers were not merged into `spawns.js` (both stay as they are, tested), but the race map's missing `/2` was fixed (INVESTIGATION.md §1.34).
 Goal: guides `PLANS/Economy Retest/ECONOMY_RETEST_PLAN.md` **Step 1** ("expected rates from the simulators, no game needed"), done by the editor instead of ~30 hand runs of `drops-sim` / `where-sim` / `upgrade-sim`. Its results set the prices of the Penya shops, Waforu (Red Chips), Donaris / Amos (PVP Tokens), the Event Master, the Donation Shop and the mounts (TODOS "Retest the economy", and "Weapon + set sources", which waits for it).
 
 **Read-only task** (like Where is this item from? / GM Commands): it writes no file. Every number links to the task that changes it ("Change this drop" → Monster Drops, "Change this price" → NPC Shops, "Change the rates" → Rates & Buffs), so a price can be fixed in two clicks.
@@ -51,7 +53,14 @@ Per hour = min(speed, cap) × 60 × per-kill. The cap of a spot is the sum of it
 
 Size: M (about 2-3 sessions).
 
-## Questions for the user before building
+## User decisions (2026-10-24: "yes to all")
+
+1. Defaults: player Lv150, kill speeds 4 / 15 / 30 a minute.
+2. Columns: Penya, Sunstone, Moonstone, Red Chip, loot sell value; set pieces and cards as "worth noting"; Perin, Event Tokens, PVP Tokens as "other income" (not from monsters).
+3. Prices in hours: every NPC shop + the Donation Shop + upgrades + the mounts.
+4. A spot = map + monster.
+
+## Questions asked (answered above)
 
 1. Default **player level and kill speeds**: Lv150 and 4 / 15 / 30 a minute (from the retest plan), or others?
 2. Which **currencies / drops** get a column? Proposed: Penya, Sunstone, Moonstone, Red Chip, loot sell value; set pieces and cards as a "worth noting" list. Add Perin, Event Tokens, PVP Tokens (not from monsters: shown as "other income")?

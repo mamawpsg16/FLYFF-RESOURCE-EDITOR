@@ -496,6 +496,53 @@
     $('toasts').textContent = '';
   }
 
+  // the Economy task (?stop=economyspots: the spots table, Traseia by Sunstones; ?stop=economy: also the level bands, Copy):
+  // every spot worked out, the top spot, kill speed, a map filter, sorting, the level bands, Copy)
+  async function economyStage() {
+    const S = FRE.app.state, ctx = FRE.app.ctx;
+    await openTask('economy');
+    const ed = () => $('editor'), views = () => [...document.querySelectorAll('#list .npc')], M = FRE.ui.modules.find(m => m.id === 'economy');
+    ok(S.mode === 'economy' && views().length === 4 && S.ws.editable.size === 0, `Economy: 4 views, nothing editable (got ${views().length})`);
+    await FRE.ui.economy.compute(ctx);
+    const rows = () => [...ed().querySelectorAll('table.ec-table tr[data-spot]')];
+    ok(FRE.ui.economy.mem.rows && rows().length === 100 && /578 spots/.test(ed().textContent), `578 spots worked out, the first 100 shown (got ${rows().length})`);
+    ok(/Dark Usagi Axe Master/.test(rows()[0].textContent) && /Dark Traseia/.test(rows()[0].textContent), `the best Penya spot at Lv150: Dark Usagi Axe Master, Dark Traseia (got ${rows()[0] && rows()[0].textContent.slice(0, 60)})`);
+    const key = rows()[0].dataset.spot;
+    const pen = () => Number(ed().querySelector(`tr[data-spot="${key}"]`).querySelectorAll('td.num')[0].textContent.replace(/,/g, ''));
+    const p15 = pen();
+    click(btnByText(ed().querySelector('.ec-bar'), '4'));
+    ok(M.st.speed === 4 && Math.abs(pen() / p15 - 4 / 15) < 0.001, `4 kills a minute: the hour is 4/15 of 15 a minute (${pen()} vs ${p15})`);
+    const map = [...ed().querySelectorAll('select')].find(x => [...x.options].some(o => o.textContent === 'Every map'));
+    const dt = [...map.options].find(o => o.textContent === 'Traseia');          // Day Traseia: World.inc titles WdRartesia "Traseia"
+    map.value = dt.value; map.dispatchEvent(new Event('change'));
+    ok(rows().length > 0 && rows().every(r => /Traseia/.test(r.textContent) && !/Dark Traseia/.test(r.textContent)), `map filter: only (Day) Traseia (${rows().length} spots)`);
+    click([...ed().querySelectorAll('table.ec-table th')].find(t => /Sunstone/.test(t.textContent)));
+    const sun = rows().map(r => Number(r.querySelectorAll('td.num')[1].textContent.replace(/[,-]/g, '') || 0));
+    ok(M.st.sort === 'sun' && sun.every((v, i) => !i || v <= sun[i - 1]) && sun[0] > 0, `sorted by Sunstones an hour, highest first (${sun.slice(0, 3).join(', ')})`);
+    ok(/What is and is not counted/.test(ed().textContent), 'the "what is and is not counted" note');
+    if (STOP === 'economyspots') { $('toasts').textContent = ''; return; }
+    click(views().find(v => v.dataset.view === 'prices'));
+    const prow = () => [...ed().querySelectorAll('tr[data-price]')];
+    ok(views().length === 4 && prow().length === 100 && /Upgrades/.test(ed().textContent) && /Weapon \/ armor \+0 → \+10/.test(ed().textContent),
+      `Prices in hours: the upgrades table and the first 100 things to buy (got ${prow().length})`);
+    const cur = [...ed().querySelectorAll('select')].find(x => [...x.options].some(o => o.textContent === 'Every currency'));
+    cur.value = '1'; cur.dispatchEvent(new Event('change'));
+    ok(prow().length > 0 && prow().every(r => /Red Chips/.test(r.textContent) && / (h|min)$/.test(r.querySelectorAll('td.num')[1].textContent)),
+      `paid in Red Chips: every row has hours of farming (${prow().length} rows; first ${prow()[0] && prow()[0].querySelectorAll('td.num')[1].textContent})`);
+    cur.value = '5'; cur.dispatchEvent(new Event('change'));
+    ok(prow().length > 0 && prow().every(r => /not from monsters/.test(r.textContent)), `Event Tokens: "not from monsters" (${prow().length} rows)`);
+    cur.value = 'all'; cur.dispatchEvent(new Event('change'));
+    if (STOP === 'economyprices') { $('toasts').textContent = ''; return; }
+    click(views().find(v => v.dataset.view === 'level'));
+    await FRE.ui.economy.computeBands(ctx);
+    const brows = [...ed().querySelectorAll('table.ec-table tr')].slice(1);
+    ok(brows.length === 11 && /Dark Usagi/.test(brows[9].textContent), `11 level bands; 135-149 best for Penya: a Dark Usagi (got ${brows[9] && brows[9].textContent.slice(0, 50)})`);
+    click(views().find(v => v.dataset.view === 'copy'));
+    const ta = ed().querySelector('textarea.ec-copy');
+    ok(ta && /\| Spot \| Map \| Lv \| 4 \/ min \| 15 \/ min \| 30 \/ min \|/.test(ta.value) && /\*\*Sunstone per hour/.test(ta.value), 'Copy as table: Markdown tables per currency at 4 / 15 / 30 a minute');
+    $('toasts').textContent = '';
+  }
+
   // the Mounts task (?stop=mounts: the list and Nightmare Dragon; ?stop=mountsedit: edits, paste, a new block, Save)
   // the Boss Mechanics task (?stop=bosses: the list and Drakul; bossesedit: chance 50 %, tier, Storm, undo; bossessave: Save)
   async function bossesStage() {
@@ -644,13 +691,14 @@
     // the cards are drawn after the patch check (io/patch-state.js reads one C++ file per patch)
     await waitFor(() => document.querySelector('.task-card:not(:disabled)'), 'task cards enabled');
     ok(S.layout.kind === 'real' && S.layout.res === res && S.layout.client === clientDir && !S.layout.backups, 'FLYFF-V19-SOURCE -> Server/Resource + Client, no folder created in it');
-    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 19 && document.querySelector('.task-card[data-task="bosses"]') && document.querySelector('.task-card[data-task="gmcmd"]') && document.querySelector('.task-card[data-task="classbuffs"]') && document.querySelector('.task-card[data-task="antibot"]') && document.querySelector('.task-card[data-task="minievent"]') && document.querySelector('.task-card[data-task="mounts"]') && document.querySelector('.task-card[data-task="consumables"]') && document.querySelector('.task-card[data-task="dungeon"]') && document.querySelector('.task-card[data-task="pvp"]') && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 19 tasks to pick (Boss Mechanics; GM Commands; Class Buffs; Bot Check; Mini Events; Mounts; Consumable Stats; Dungeons; PvP Events; Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
+    ok(/REAL SERVER FILES/.test($('editor').textContent) && document.querySelectorAll('.task-card:not(:disabled)').length === 20 && document.querySelector('.task-card[data-task="economy"]') && document.querySelector('.task-card[data-task="bosses"]') && document.querySelector('.task-card[data-task="gmcmd"]') && document.querySelector('.task-card[data-task="classbuffs"]') && document.querySelector('.task-card[data-task="antibot"]') && document.querySelector('.task-card[data-task="minievent"]') && document.querySelector('.task-card[data-task="mounts"]') && document.querySelector('.task-card[data-task="consumables"]') && document.querySelector('.task-card[data-task="dungeon"]') && document.querySelector('.task-card[data-task="pvp"]') && document.querySelector('.task-card[data-task="weapons"]') && document.querySelector('.task-card[data-task="sets"]') && document.querySelector('.task-card[data-task="upgrade"]') && !document.querySelector('.task-card[data-task="exchange"]') && document.querySelector('.task-card[data-task="drops"]') && document.querySelector('.task-card[data-task="boxes"]') && document.querySelector('.task-card[data-task="where"]') && document.querySelector('.task-card[data-task="rates"]'), 'real-files tag; 20 tasks to pick (Economy; Boss Mechanics; GM Commands; Class Buffs; Bot Check; Mini Events; Mounts; Consumable Stats; Dungeons; PvP Events; Weapon Effects; Set Effects; exchanges are in NPC Shops; Monster Drops; Boxes; Item Sources & Uses; Rates & Buffs; Upgrade Rates)');
     ok(!root.children.has('backups'), 'nothing created inside the source folder');
     if (STOP === 'start') return;
     if (STOP === 'dungeon') { await dungeonStage(); return; }
     if (STOP === 'antibot' || STOP === 'antibotedit') { await antiBotStage(); return; }
     if (STOP === 'minievent' || STOP === 'mineventprizes' || STOP === 'mineventhide' || STOP === 'mineventrace' || STOP === 'mineventweek' || STOP === 'mineventqs' || STOP === 'mineventturnin' || STOP === 'mineventedit' || STOP === 'mineventsave') { await miniEventStage(); return; }
     if (STOP === 'gmcmd' || STOP === 'gmcmdpet') { await gmCmdStage(); return; }
+    if (STOP === 'economy' || STOP === 'economyspots' || STOP === 'economyprices') { await economyStage(); return; }
     if (/^bosses/.test(STOP)) { await bossesStage(); return; }
     if (STOP === 'mounts' || STOP === 'mountsmore' || STOP === 'mountsimple' || STOP === 'mountsgame' || STOP === 'mountsedit' || STOP === 'mountsave') { await mountsStage(); return; }
     // opening a task shows a "Loading…" window at once (the real folder takes seconds) and closes it when done

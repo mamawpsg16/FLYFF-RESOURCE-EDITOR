@@ -14,6 +14,7 @@ import { checkBosses } from './bosses-check.js';
 import { checkMiniEvent, checkTurnIn, checkWeek, checkRace } from './minievent-check.js';
 import { checkAntiBot } from './antibot-check.js';
 import { checkOwnerBuff } from './ownerbuff-check.js';
+import { checkEconomy } from './economy-check.js';
 import { checkGmCmd } from './gmcmd-check.js';
 import { gmCpp } from './run-gmcmd-cpp.js';
 
@@ -4541,6 +4542,35 @@ if (exists(FIXTURES + '/OwnerBuff.txt')) {
   try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py ownerbuff) gave no readable result', e.message); }
   if (py) checkOwnerBuff({ FRE, py, ok, eq, print });
 } else print('  (no OwnerBuff.txt in the fixtures: run tools/refresh-fixtures.sh)');
+
+// ---------------------------------------------------------------- Economy (read-only: spawns, the respawn cap, per hour)
+section('Economy: every map\'s spawn lines, the respawn cap, earnings per hour, NPC sell prices (JS and Python copies agree)');
+{
+  const fs = new Map(); for (const [k, e] of loadFolder(FIXTURES)) fs.set(k, openSource(e));
+  const W = new FRE.Workspace(fs, { only: 'economy' });
+  W.now = () => new Date(2026, 9, 8, 12, 0);          // oracle_sim.py DR_FIXED_NOW (Event.lua rates)
+  W.load();
+  const { dyo, worldFiles } = loadWorldFiles(FIXTURES, W);
+  W.setMapObjects(dyo, worldFiles);
+  const m = W.models.economy, E = FRE.economySim, D = W.defines.defines, J = JSON.stringify;
+  eq(W.editable.size, 0, 'the Economy task: nothing is editable');
+  eq(J([m.maps.length, m.spots.length]), J([69, 578]), 'V19 main: 578 spots (map + monster) on 69 maps with a .rgn');
+  const axe = m.spots.find(s => s.mover === D.get('MI_RABBITAXE'));
+  eq(J(axe && [axe.title, axe.count, axe.boxes, axe.lines[0].seconds]), J(['Dark Traseia', 102, 8, 12]),
+    'Dark Usagi Axe Master: 102 in 8 boxes in Dark Traseia, a refill about every 12 s (file 35 s x 0.7, then / 2 in CRespawner::Add)');
+  const one = { mover: 1, max: 10, seconds: 12, gmIndex: 1, dayMin: 1, dayMax: 30, hourMin: 1, hourMax: 24 };
+  eq(E.capAverage(one).toFixed(4), '36.1156', '10 every 12 s: 36.1 a minute when all die at once (10 / 5 alternate, wait = nTime + 1)');
+  eq(E.respawnRun([one], { speed: 4, seed: 1 }).kills, 240, 'a player killing 4 a minute there kills 240 an hour (the respawn keeps up)');
+  const sh = E.spotHour(W, axe, { level: 150, speed: 15, kills: 300 }, new Map());
+  ok(sh.penya > 2e8 && sh.penya < 5e8, 'Axe Master at Lv150, 15 a minute: 200-500M Penya an hour (retest plan: ~380k a kill)', String(sh.penya));
+  eq(E.sellOne(W, D.get('II_ARM_F_CHR_RABBIT03GLOVES'), 0, W.chars ? W.costs() : null), 1,
+    'Rabbit03 gloves: dwCost "3,260" is one quoted token, GetNumber reads 3, so an NPC pays the minimum of 1 (a data slip)');
+  eq(FRE.afterSave.compute({ changes: [] }).steps.length, 0, 'the Economy task never saves');
+  const [, out] = GLib.spawn_command_line_sync(`python3 ${ORACLE_SIM} economy ${FIXTURES}`);
+  let py = null;
+  try { py = JSON.parse(new TextDecoder().decode(out)); } catch (e) { ok(false, 'the Python copy (oracle_sim.py economy) gave no readable result', e.message); }
+  if (py) checkEconomy({ FRE, py, ws: W, ok, eq, print });
+}
 
 // ---------------------------------------------------------------- GM Commands (FuncTextCmd.cpp, read-only)
 section('GM Commands: the command table per build, the /open stop, typed lines, pet.inc (JS and Python copies agree)');

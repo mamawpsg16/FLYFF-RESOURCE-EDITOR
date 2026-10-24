@@ -487,3 +487,8 @@ details.fold[open] > .fold-head { border-bottom-left-radius: 0; border-bottom-ri
 .bm-card-canvas { background: #1c1c20; border: 1px solid var(--line); border-radius: 6px; width: 100%; max-width: 260px; align-self: center; }
 .bm-paste { display: block; width: 100%; max-width: 40em; margin-top: 6px; font-family: monospace; font-size: 12px; }
 .bm-card .bm-card-canvas { margin-top: auto; }
+
+/* Economy page (ui/economy.js) */
+.ec-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin: 6px 0; }
+.ec-table td { vertical-align: top; }
+.ec-copy { margin-top: 8px; }

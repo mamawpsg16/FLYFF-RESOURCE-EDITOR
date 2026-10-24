@@ -225,7 +225,7 @@
     const editRgn = (make, label) => ctx.editGroup(() => [{ file: RM.KEY, splices: make(ws.files.get(RM.KEY).text, RM.parse(ws.files.get(RM.KEY))) }], label, ['minievent|7']);
     const total = list.filter(x => !x.skipped).reduce((a, x) => a + x.count, 0);
     el.appendChild(h('p.muted.small', `${list.length} spawn spots, ${total} monsters. Each spot keeps this many alive in its area; "aggressive" = how many of them attack on sight. A level 1 Vagrant dies in one hit. `
-      + 'The respawn time the server uses is the file\'s × 0.7 (not for bosses). After saving: Stop Server.bat, then Start Server.bat (the WorldServer reads the map at start). The Client copy is kept the same.'));
+      + 'The respawn time the server uses is the file\'s × 0.7 (not for bosses), then halved (CRespawner::Add); each refill waits a random 50-149 % of it. After saving: Stop Server.bat, then Start Server.bat (the WorldServer reads the map at start). The Client copy is kept the same.'));
     const rows = [h('tr', h('th', 'Monster'), h('th', 'How many'), h('th', 'Aggressive'), h('th', 'Respawn (s)'), h('th', 'Where (from the start)'), h('th', ''))];
     list.forEach((s, i) => {
       const l = rg.lines[i], mid = [(l.rect[0] + l.rect[2]) / 2, (l.rect[1] + l.rect[3]) / 2];
