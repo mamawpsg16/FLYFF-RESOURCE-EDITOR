@@ -5,6 +5,12 @@ export function checkEconomy({ FRE, py, ws, ok, eq, print }) {
   const m = ws.models.economy;
   const line = l => [l.mover, l.max, l.seconds, l.gmIndex, l.dayMin, l.dayMax, l.hourMin, l.hourMax];
   let same = 0;
+  for (const c of py.rgn) {
+    const js = FRE.spawns.read({ text: c.text }, { defines: D }).map(r => [r.version, r.type, r.index, r.max, r.time, r.attack, r.dayMin, r.dayMax, r.hourMin, r.hourMax]);
+    if (J(js) === J(c.recs)) same++; else print(`  rgn text: JS ${J(js)}\n  PY ${J(c.recs)}`);
+  }
+  eq(same, py.rgn.length, `${py.rgn.length} made-up .rgn texts (respawn 1-7, control elements 1 / 2 in v3 / v6 / v7 before a monster line, comments, a region record): the same records`);
+  same = 0;
   const jsMaps = m.maps.map(x => ({ world: x.world, file: x.file, lines: x.lines.map(line) }));
   for (let i = 0; i < py.maps.length; i++) if (J(jsMaps[i]) === J(py.maps[i])) same++; else if (same >= 0) print(`  map ${py.maps[i].file}: JS ${J(jsMaps[i]).slice(0, 300)}\n  PY ${J(py.maps[i]).slice(0, 300)}`);
   eq(same, py.maps.length, `${py.maps.length} maps: the same spawn lines (monster, how many, seconds after the x0.7 / x0.5 cut and the /2 of CRespawner::Add, list place, day / hour window)`);

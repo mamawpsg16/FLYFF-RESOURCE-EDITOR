@@ -16519,6 +16519,19 @@ def ec_run(root):
             ex = ec_exact(W, s['mover'], lv0 + d, 1 + n % 2, {'item': 1.0, 'piece': 1.0})
             out['exact'].append({'mover': s['mover'], 'level': lv0 + d, 'loops': 1 + n % 2, 'ex': {str(k): wh_r12(v) for k, v in sorted(ex.items())}})
     out['prices'] = ec_shop_rows(root, D, P)
+    # made-up .rgn texts: every version 1-7, control elements 1 / 2 in v3 / v6 / v7 followed by a monster line, comments, region records
+    z = lambda n: ' '.join(['0'] * n)
+    ctrl1 = lambda jobs: '1 7 8 9 10 11 12 ' + z(jobs) + ' 1 1 2 ' + z(8) + ' ' + z(9) + ' 1 2 3 ' + z(6)
+    ctrl2 = lambda jobs: '2 7 8 3 9 10 11 4 5 6 7 12 ' + z(jobs) + ' 1 1 2 ' + z(8) + ' ' + z(9) + ' 1 2 3 ' + z(6) + ' 1 2 3 4'
+    rg = [
+        'respawn 5 20 1.0 2.0 3.0 7 30 2 1 2 3 4\nrespawn2 5 21 1 2 3 8 40 1 1 2 3 4 3 9 5 20 1 1\n',
+        'respawn3 2 5 1 2 3 1 60 0 1 2 3 4 1 30 1 24 1 1 ' + ctrl1(16) + '\nrespawn4 5 22 1 2 3 4 50 1 1 2 3 4 1 30 1 24 1 1 3 0.5 0\n',
+        '// a comment respawn7 5 99 1 2 3\nrespawn5 5 23 1 2 3 3 20 1 1 2 3 4 1 30 1 24 1 1 2 0.0 -1 0\n'
+        'respawn6 2 5 1 2 3 1 60 0 1 2 3 4 1 30 1 24 1 1 2 0.0 -1 0 ' + ctrl2(16) + '\nrespawn6 5 24 1 2 3 6 33 2 1 2 3 4 1 30 1 24 1 1 2 0.0 -1 0 0\n',
+        'region3 13 1 1 2 3 "x" 0 0 0\nrespawn7 2 5 1 2 3 1 60 0 1 2 3 4 1 30 1 24 1 1 2 0.0 -1 0 ' + ctrl1(32) + '\n'
+        '/* respawn7 5 98 */ respawn7 5 25 1 2 3 9 70 3 1 2 3 4 1 30 1 24 1 1 2 0.0 -1 0 ' + ctrl2(32) + '\nrespawn7 5 26 1 2 3 2 15 0 1 2 3 4 1 30 1 24 1 1 2 0.0 -1 0 0\n',
+    ]
+    out['rgn'] = [{'text': t, 'recs': [[r['ver'], r['type'], r['index'], r['max'], r['time'], r['attack']] + r['win'] for r in ec_read(t.encode('latin-1'), D)]} for t in rg]
     # the sell price alone: 400 items x upgrade 0 / 3 / 10 / 20
     pick = sorted(P)[::max(1, len(P) // 400)]
     pick += [i for i in sorted(P) if P[i]['cost'] == 0xFFFFFFFF or P[i]['cost'] >= 1 << 31 or P[i]['cost'] < 4][:60]   # "=", huge, below 4

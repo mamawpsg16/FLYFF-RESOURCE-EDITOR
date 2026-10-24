@@ -688,7 +688,7 @@ Python copy: `tools/oracle_sim.py rates` (7 Event.lua files, 9 buff files, 392 t
 - **Sell price** (`CDPSrvr::OnSellItem`): `GetCost() / 4` (C division; GetCost with an upgrade = `(int)( dwCost + dwCost * ( 0.1f + plus * plus / 18.0f ) )`, `Item.cpp:136`), x the Event.lua shop sell factor (none set), at least 1; refused: IK3_EVENTMAIN, IK3_QUEST, Sealed Character, Perin. No Secret Room tax modelled.
 - **Buy price** (`CDPSrvr::OnBuyItem` :~3420): GetCost, `(int)( m_fShopCost * nCost )`, `(int)( buy factor * nCost )`, Perin = 100,000,000, at least 1; chip shops dwReferValue1 in the NPC's currency.
 - **Data slip found**: the 8 Rabbit03 costume pieces (II_ARM_M/F_CHR_RABBIT03HAT / SUIT / GLOVES / SHOES) have dwCost `"3,260"`: one quoted token, `GetNumber` reads 3 (sells for 1 Penya).
-- Python copy `oracle_sim.py economy`: every case agrees; 18 of 18 planted bugs caught. `tests/run-economy.js` runs it alone.
+- Python copy `oracle_sim.py economy`: every case agrees; 19 of 19 planted bugs caught (+1 that cannot change a result: too few v7 control values are skipped by the respawn scan, as in LoadRegion). `tests/run-economy.js` runs it alone.
 
 ## Open questions (your call before Phase 3)
 1. **Folder and mirrors.** The Resource folder is `Server/Resource`. Should saves also update the `Client/` mirrors (`character.inc`, `propItem.txt.txt`, `Spec_Item.txt`, `propMover.txt`; the last two are LF there)? If yes, the user should pick the repo root (or two folders) in the browser.
