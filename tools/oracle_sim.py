@@ -16492,6 +16492,8 @@ def ec_run(root):
         ([(1, 8, 9, 1, [1, 0, 1, 24]), (1, 8, 9, 2, [1, 30, 1, 0])], {}),
         ([(1, 3, 40, 1, W1), (1, 50, 5, 2, W1)], {}),
         ([(1, 20, 12, 0, W1), (1, 6, 30, 1, W1)], {'rebirth': 0.5, 'respawn': 2.0}),      # first line, not Madrigal: rates unused
+        ([(1, 4, 40000, 1, W1), (1, 4, 50000, 2, W1), (1, 4, 60000, 3, W1), (1, 4, 45000, 4, W1)], {}),   # (short) nTime wraps below 0: a refill every second
+        ([(1, 4, 50000, 0, W1), (1, 4, 44000, 1, W1)], {'madrigal': True, 'rebirth': 0.5}),   # the wrapped nTime x the rebirth rate (Madrigal's first line)
     ]
     for n, (lines, kw) in enumerate(made):
         for sp in (0.5, 4, 15, 30, 100, None):
